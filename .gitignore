@@ -1,0 +1,61 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+
+# Unit test / coverage reports
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Data and logs
+*.log
+
+# Model files (uncomment if models are large and stored elsewhere)
+# models/*.pth
+# models/*.ckpt
+# models/*.pkl
+# models/*.h5
+# models/*.weights
+
+# Large data files (uncomment if needed)
+# flight_videos/*.mp4
+# flight_videos/*.avi
+# dataset_frames/*.jpg
+# drone_images/*.jpg
+
+# Outputs you may not want to track
+# output/**/*.png
+# output/**/*.jpg
+# output/**/*.geojson
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.bak
