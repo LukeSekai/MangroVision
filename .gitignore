@@ -40,13 +40,12 @@ htmlcov/
 # models/*.h5
 # models/*.weights
 
-# Large data files (uncomment if needed)
-# flight_videos/*.mp4
-# flight_videos/*.avi
-# dataset_frames/*.jpg
-# drone_images/*.jpg
+# Large data files - excluded from repository
+flight_videos/
+dataset_frames/
+drone_images/
 
-# Outputs you may not want to track
+# Keep output examples for documentation
 # output/**/*.png
 # output/**/*.jpg
 # output/**/*.geojson

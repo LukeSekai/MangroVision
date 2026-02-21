@@ -1,0 +1,27 @@
+{
+  "image_path": "C:\\Users\\Lenovo-Pc\\OneDrive\\Thesis\\thesis_env\\MangroVision\\drone_images\\flight_1_frame_0000.jpg",
+  "image_size": {
+    "width": 3840,
+    "height": 2160
+  },
+  "flight_altitude_meters": 6.0,
+  "camera_angle_degrees": 90,
+  "gsd_meters_per_pixel": 0.0021875,
+  "gsd_cm_per_pixel": 0.21875000000000003,
+  "ground_coverage_meters": {
+    "width": 8.4,
+    "height": 4.7250000000000005,
+    "area": 39.690000000000005
+  },
+  "buffer_distance_meters": 1.0,
+  "buffer_distance_pixels": 457.1428571428571,
+  "num_canopies_detected": 47,
+  "num_planting_points": 0,
+  "statistics": {
+    "total_pixels": 8294400,
+    "danger_pixels": 14409701,
+    "plantable_pixels": 8294400,
+    "danger_percent": 173.7280811252301,
+    "plantable_percent": 100.0
+  }
+}
