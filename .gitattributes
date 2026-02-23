@@ -1,0 +1,2 @@
+*.laz filter=lfs diff=lfs merge=lfs -text
+MAP/odm_georeferencing/odm_georeferenced_model.laz filter=lfs diff=lfs merge=lfs -text
