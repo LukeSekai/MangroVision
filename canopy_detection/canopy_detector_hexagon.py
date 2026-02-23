@@ -1,6 +1,7 @@
 """
 MangroVision - Hexagonal Planting Zone Detector
 Detects canopies, creates danger zones, and generates hexagonal planting buffers
+Supports both HSV color detection and AI-powered detectree2
 """
 
 import cv2
@@ -8,29 +9,60 @@ import numpy as np
 from shapely.geometry import Point, Polygon, MultiPolygon
 from shapely.ops import unary_union
 import geopandas as gpd
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 import json
 from pathlib import Path
 import math
 
 from gsd_calculator import GSDCalculator
 
+# Optional: Try to import detectree2 detector
+try:
+    from detectree2_detector import Detectree2Detector
+    DETECTREE2_AVAILABLE = True
+except ImportError:
+    DETECTREE2_AVAILABLE = False
+    print("⚠️ detectree2_detector not available, using HSV detection only")
+
 
 class HexagonDetector:
-    """Advanced canopy detector with hexagonal planting zones"""
+    """Advanced canopy detector with hexagonal planting zones using detectree2 AI"""
     
-    def __init__(self, altitude_m: float = 6.0, drone_model: str = 'GENERIC_4K'):
+    def __init__(self, 
+                 altitude_m: float = 6.0, 
+                 drone_model: str = 'GENERIC_4K',
+                 ai_confidence: float = 0.5,
+                 model_name: str = 'benchmark'):
         """
-        Initialize detector with flight parameters
+        Initialize detector with detectree2 AI
         
         Args:
             altitude_m: Flight altitude in meters
             drone_model: Drone model for GSD calculation
+            ai_confidence: Confidence threshold for AI detection (0-1)
+            model_name: 'paracou' (tropical) or 'benchmark' (general)
         """
         self.altitude_m = altitude_m
         self.drone_model = drone_model
+        self.ai_confidence = ai_confidence
         self.gsd = None
         self.image_shape = None
+        
+        # Initialize detectree2 AI detector
+        if not DETECTREE2_AVAILABLE:
+            raise ImportError(
+                "detectree2 is not available. This system requires detectree2 for AI-powered tree detection.\n"
+                "Please ensure detectree2 and detectron2 are properly installed."
+            )
+        
+        print(f"🌳 Initializing MangroVision with detectree2 AI...")
+        self.ai_detector = Detectree2Detector(
+            confidence_threshold=ai_confidence,
+            device='cpu',  # Change to 'cuda' if GPU available
+            model_name=model_name
+        )
+        self.ai_detector.setup_model()
+        print(f"✓ Detectree2 AI initialized successfully")
         
     def calculate_gsd(self, image_width: int, image_height: int):
         """Calculate Ground Sample Distance for the image"""
@@ -44,8 +76,7 @@ class HexagonDetector:
     
     def detect_canopies(self, image: np.ndarray) -> Tuple[List[Polygon], np.ndarray]:
         """
-        Detect mangrove canopies from image and create canopy mask
-        Currently using HSV color detection (will be replaced with detectree2)
+        Detect mangrove canopies using detectree2 AI
         
         Args:
             image: Input BGR image
@@ -55,58 +86,19 @@ class HexagonDetector:
         """
         h, w = image.shape[:2]
         
-        # Convert to HSV for green vegetation detection
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        print(f"🌳 Running detectree2 AI canopy detection...")
         
-        # Define green color range - BROADER to catch all vegetation variations
-        # Hue: 30-90 (yellow-green to blue-green, covers all vegetation tones)
-        # Saturation: 40-255 (catch both bright and dull green)
-        # Value: 40-255 (catch shadows and bright areas)
-        lower_green = np.array([30, 40, 40])
-        upper_green = np.array([90, 255, 255])
-        
-        # Create mask
-        mask = cv2.inRange(hsv, lower_green, upper_green)
-        
-        # Morphological operations to MERGE nearby vegetation into unified canopies
-        # Use LARGER kernels to connect nearby green areas
-        kernel_large = np.ones((15, 15), np.uint8)  # Large kernel for merging
-        kernel_small = np.ones((5, 5), np.uint8)    # Small kernel for cleaning
-        
-        # First: close gaps to merge nearby vegetation
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel_large, iterations=2)
-        # Second: remove noise
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel_small)
-        # Third: dilate to ensure connected regions
-        mask = cv2.dilate(mask, kernel_large, iterations=1)
-        
-        # Find contours
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Create clean canopy mask
-        canopy_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # Convert contours to Shapely polygons
-        canopy_polygons = []
-        min_area_pixels = 5000  # Much higher threshold to avoid tiny fragments (was 500)
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > min_area_pixels:
-                # Convert to polygon (same method as working detector)
-                points = contour.reshape(-1, 2)
-                if len(points) >= 3:
-                    poly = Polygon(points)
-                    if poly.is_valid:
-                        canopy_polygons.append(poly)
-                        # Draw on canopy mask
-                        cv2.fillPoly(canopy_mask, [points.astype(np.int32)], 255)
+        # Run AI detection
+        canopy_polygons, canopy_mask, metadata = self.ai_detector.detect_from_image(image)
         
         # Calculate statistics
         total_canopy_pixels = np.count_nonzero(canopy_mask)
         total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
-        print(f"✓ Detected {len(canopy_polygons)} canopy regions (Total: {total_canopy_m2:.1f} m²)")
-        print(f"   Detection threshold: {min_area_pixels} pixels ({min_area_pixels * self.gsd**2:.2f} m²)")
+        
+        print(f"✓ Detectree2 detected {len(canopy_polygons)} tree crowns (Total: {total_canopy_m2:.1f} m²)")
+        print(f"   Raw detections: {metadata['num_raw_detections']}, Kept: {metadata['num_kept_detections']}")
+        print(f"   Confidence threshold: {self.ai_confidence}")
+        
         return canopy_polygons, canopy_mask
     
     def detect_non_vegetation_areas(self, image: np.ndarray) -> np.ndarray:

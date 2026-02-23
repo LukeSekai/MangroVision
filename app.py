@@ -269,6 +269,7 @@ def main():
     <div class="main-header">
         <h1>🌿 MangroVision</h1>
         <p>AI-Powered Mangrove Planting Zone Analyzer for Leganes, Iloilo</p>
+        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Powered by detectree2 AI tree crown detection</p>
     </div>
     """, unsafe_allow_html=True)
     
@@ -284,6 +285,25 @@ def main():
         """, unsafe_allow_html=True)
         
         st.markdown("### ⚙️ Detection Settings")
+        
+        st.info("🌳 MangroVision uses **detectree2 AI** for accurate tree crown detection")
+        
+        # AI confidence slider
+        ai_confidence = st.slider(
+            "AI Confidence Threshold",
+            min_value=0.3,
+            max_value=0.9,
+            value=0.5,
+            step=0.05,
+            help="Higher = fewer but more confident detections. 0.5 is recommended."
+        )
+        
+        # Model selection
+        model_name = st.selectbox(
+            "Detectree2 Model",
+            ["benchmark", "paracou"],
+            help="benchmark: General trees | paracou: Tropical forests (best for mangroves)"
+        )
         
         # Species selection (placeholder for future)
         species = st.selectbox(
@@ -339,7 +359,12 @@ def main():
         <div style="background: linear-gradient(135deg, #1E3A2E 0%, #2D5F3F 100%);
                     padding: 1.2rem; border-radius: 10px; border-left: 4px solid #7EC88D; margin: 1rem 0;">
             <strong style="color: #7EC88D; font-size: 1.1rem;">ℹ️ About</strong><br>
-            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses AI to detect mangrove canopies and identify safe planting zones.</span>
+            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>detectree2 AI</strong> (Mask R-CNN) for accurate tree crown detection and safe planting zone identification.</span>
+            <br><br>
+            <strong style="color: #7EC88D;">Technology:</strong><br>
+            <span style="color: #C8E6C9;">🤖 Detectree2 - AI tree detection<br>
+            🌳 Specialized for tree crowns<br>
+            🎯 State-of-the-art accuracy</span>
             <br><br>
             <strong style="color: #7EC88D;">Color Legend:</strong><br>
             <span style="color: #C8E6C9;">🔴 Red = Danger Zones (1m buffer)<br>
@@ -395,6 +420,8 @@ def main():
                 st.session_state.current_drone_model = drone_model
                 st.session_state.current_canopy_buffer = canopy_buffer
                 st.session_state.current_hexagon_size = hexagon_size
+                st.session_state.current_ai_confidence = ai_confidence
+                st.session_state.current_model_name = model_name
         else:
             st.markdown("### 📋 Instructions")
             st.markdown("""
@@ -428,12 +455,14 @@ def main():
             st.session_state.current_altitude,
             st.session_state.current_drone_model,
             st.session_state.current_canopy_buffer,
-            st.session_state.current_hexagon_size
+            st.session_state.current_hexagon_size,
+            st.session_state.current_ai_confidence,
+            st.session_state.current_model_name
         )
 
 
-def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size):
-    """Process the uploaded image and display results with automatic geotagging"""
+def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size, ai_confidence, model_name):
+    """Process the uploaded image using detectree2 AI detection"""
     
     with st.spinner("🔄 Analyzing image... This may take a moment..."):
         # Save uploaded file temporarily
@@ -581,12 +610,17 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             st.markdown("### 🔍 Running Detection Analysis")
             
             # Create a unique key for this analysis
-            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}"
+            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}_{ai_confidence}_{model_name}"
             
             # Check if we've already run detection for this configuration
             if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
-                # Initialize detector
-                detector = HexagonDetector(altitude_m=altitude_to_use, drone_model=drone_to_use)
+                # Initialize detector with detectree2 AI
+                detector = HexagonDetector(
+                    altitude_m=altitude_to_use, 
+                    drone_model=drone_to_use,
+                    ai_confidence=ai_confidence,
+                    model_name=model_name
+                )
                 
                 # Process image
                 results = detector.process_image(

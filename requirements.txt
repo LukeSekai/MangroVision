@@ -3,6 +3,7 @@
 
 # Core UI Framework
 streamlit>=1.30.0
+streamlit-folium>=0.15.0
 
 # Image Processing
 opencv-python>=4.8.0
@@ -16,6 +17,12 @@ pyproj>=3.6.0
 
 # Data Processing
 pandas>=2.0.0
+
+# AI/ML Dependencies (for detectree2)
+torch>=2.0.0
+gdown>=4.7.0  # For downloading pre-trained models
+# Note: detectron2 and detectree2 require manual installation
+# See installation instructions in README.md
 
 # Backend API (for map-based detection)
 fastapi>=0.104.0
