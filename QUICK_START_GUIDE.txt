@@ -1,0 +1,66 @@
+═══════════════════════════════════════════════════════════════
+    🌿 MANGROVISION - QUICK START GUIDE 🌿
+═══════════════════════════════════════════════════════════════
+
+📌 HOW TO START MANGROVISION
+───────────────────────────────────────────────────────────────
+
+OPTION 1: ONE-CLICK START (Easiest)
+────────────────────────────────────
+1. Double-click: START_MANGROVISION.bat
+2. Wait for browser to open automatically
+3. Your app is ready at: http://localhost:8502
+
+OPTION 2: MANUAL START (Step by Step)
+──────────────────────────────────────
+1. Open PowerShell in this folder
+2. Start the tile server:
+   > venv\Scripts\python.exe start_tile_server.py
+   
+3. Open ANOTHER PowerShell window in this folder
+4. Start MangroVision app:
+   > venv\Scripts\python.exe -m streamlit run app.py
+
+5. Open browser to: http://localhost:8502
+
+
+📌 HOW TO STOP MANGROVISION
+───────────────────────────────────────────────────────────────
+
+OPTION 1: ONE-CLICK STOP
+────────────────────────────────────
+- Double-click: STOP_MANGROVISION.bat
+
+OPTION 2: MANUAL STOP
+────────────────────────────────────
+- Press Ctrl+C in each PowerShell window
+
+
+📌 WHAT RUNS ON WHAT PORT
+───────────────────────────────────────────────────────────────
+- Tile Server:     http://localhost:8080  (serves map tiles)
+- MangroVision UI: http://localhost:8502  (your main interface)
+
+
+📌 TROUBLESHOOTING
+───────────────────────────────────────────────────────────────
+
+Problem: "Port already in use" error
+Solution: Run STOP_MANGROVISION.bat first, then start again
+
+Problem: Map showing gray background
+Solution: Make sure tile server is running on port 8080
+
+Problem: Python not found
+Solution: Make sure you're in the MangroVision folder
+
+Problem: Module not found errors
+Solution: Install dependencies:
+  > venv\Scripts\pip install -r requirements.txt
+
+
+═══════════════════════════════════════════════════════════════
+For more help, see:
+- HOW_TO_USE.md
+- README.md
+═══════════════════════════════════════════════════════════════

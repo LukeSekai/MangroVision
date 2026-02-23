@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MangroVision - Map-Based Planting Zone Detection</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+        }
+        
+        .container {
+            display: grid;
+            grid-template-columns: 350px 1fr;
+            height: 100vh;
+            gap: 0;
+        }
+        
+        /* Sidebar */
+        .sidebar {
+            background: white;
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+        
+        .logo h1 {
+            color: #2D5F3F;
+            font-size: 24px;
+        }
+        
+        .logo-icon {
+            font-size: 32px;
+        }
+        
+        .upload-section {
+            margin-bottom: 30px;
+        }
+        
+        .upload-section h3 {
+            color: #2D5F3F;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        
+        .upload-zone {
+            border: 2px dashed #4A9D6F;
+            border-radius: 10px;
+            padding: 30px;
+            text-align: center;
+            background: #f5f9f7;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .upload-zone:hover {
+            background: #e8f5e9;
+            border-color: #2D5F3F;
+        }
+        
+        .upload-zone.dragover {
+            background: #c8e6c9;
+            transform: scale(1.02);
+        }
+        
+        .upload-icon {
+            font-size: 48px;
+            color: #4A9D6F;
+            margin-bottom: 10px;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .btn {
+            background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            width: 100%;
+            margin-top: 15px;
+            transition: transform 0.2s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+        }
+        
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .preview-section {
+            margin-top: 20px;
+        }
+        
+        .preview-image {
+            width: 100%;
+            border-radius: 8px;
+            margin-top: 10px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        
+        .stats {
+            background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%);
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+        
+        .stat-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 8px 0;
+            font-size: 14px;
+        }
+        
+        .stat-label {
+            color: #555;
+        }
+        
+        .stat-value {
+            font-weight: bold;
+            color: #2D5F3F;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #4A9D6F;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #4A9D6F;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* Map Container */
+        .map-container {
+            position: relative;
+        }
+        
+        #map {
+            height: 100vh;
+            width: 100%;
+        }
+        
+        .map-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        
+        .legend {
+            position: absolute;
+            bottom: 30px;
+            right: 20px;
+            z-index: 1000;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+            min-width: 200px;
+        }
+        
+        .legend h4 {
+            margin-bottom: 10px;
+            color: #2D5F3F;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 8px 0;
+        }
+        
+        .legend-color {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            border: 2px solid #333;
+        }
+        
+        .alert {
+            padding: 12px;
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🌿</span>
+                <h1>MangroVision</h1>
+            </div>
+            
+            <div class="upload-section">
+                <h3>📸 Upload Site Image</h3>
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">📁</div>
+                    <p><strong>Click or drag image here</strong></p>
+                    <p style="color: #666; font-size: 12px; margin-top: 5px;">
+                        JPG, PNG, or JPEG formats
+                    </p>
+                </div>
+                <input type="file" id="fileInput" accept="image/*">
+                
+                <button class="btn" id="analyzeBtn" disabled>
+                    🔍 Analyze & Map Plantable Areas
+                </button>
+            </div>
+            
+            <div class="preview-section" id="previewSection" style="display: none;">
+                <h3>Preview</h3>
+                <img id="previewImage" class="preview-image" alt="Preview">
+            </div>
+            
+            <div id="resultsSection" style="display: none;">
+                <div class="stats">
+                    <h3 style="margin-bottom: 10px; color: #2D5F3F;">📊 Results</h3>
+                    <div class="stat-item">
+                        <span class="stat-label">✅ Safe Planting Areas:</span>
+                        <span class="stat-value" id="plantableCount">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">⚠️ Danger Zones:</span>
+                        <span class="stat-value" id="dangerCount">0</span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-label">Processing Time:</span>
+                        <span class="stat-value" id="processingTime">0 ms</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="loadingSection" style="display: none;">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing image and detecting plantable areas...</p>
+                </div>
+            </div>
+            
+            <div id="alertSection"></div>
+        </div>
+        
+        <!-- Map Container -->
+        <div class="map-container">
+            <div id="map"></div>
+            
+            <div class="legend">
+                <h4>Map Legend</h4>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4CAF50;"></div>
+                    <span>Safe Planting Zones</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #FF5722;"></div>
+                    <span>Canopy Danger Zones</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Leaflet JavaScript -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <script>
+        // Configuration
+        const API_URL = 'http://localhost:8000';  // Your FastAPI backend
+        
+        // Global variables
+        let map;
+        let markersLayer;
+        let tileLayer;
+        let selectedFile = null;
+        
+        // Initialize map
+        async function initMap() {
+            try {
+                // Fetch map metadata from backend
+                const response = await fetch(`${API_URL}/api/map/metadata`);
+                const metadata = await response.json();
+                
+                // Create map centered on your site
+                map = L.map('map').setView(metadata.center, 18);
+                
+                // Add your XYZ tiles (JPG format from WebODM)
+                tileLayer = L.tileLayer('http://localhost:8080/{z}/{x}/{y}.jpg', {
+                    maxZoom: metadata.max_zoom,
+                    minZoom: metadata.min_zoom,
+                    attribution: 'MangroVision Orthophoto | WebODM',
+                    tms: false  // WebODM uses standard XYZ scheme
+                });
+                tileLayer.addTo(map);
+                
+                // Add OpenStreetMap as fallback/reference
+                const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© OpenStreetMap contributors',
+                    opacity: 0.3
+                });
+                // osmLayer.addTo(map);  // Uncomment if you want OSM basemap
+                
+                // Create layer for markers
+                markersLayer = L.layerGroup().addTo(map);
+                
+                // Fit map to orthophoto bounds
+                const bounds = L.latLngBounds(
+                    metadata.bounds.southwest,
+                    metadata.bounds.northeast
+                );
+                map.fitBounds(bounds);
+                
+                console.log('Map initialized successfully', metadata);
+            } catch (error) {
+                console.error('Error initializing map:', error);
+                showAlert('Error loading map. Make sure backend is running at ' + API_URL, 'error');
+            }
+        }
+        
+        // File upload handlers
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInput = document.getElementById('fileInput');
+        const analyzeBtn = document.getElementById('analyzeBtn');
+        
+        uploadZone.addEventListener('click', () => fileInput.click());
+        
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelect(e.target.files[0]);
+        });
+        
+        // Drag and drop
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            handleFileSelect(e.dataTransfer.files[0]);
+        });
+        
+        function handleFileSelect(file) {
+            if (!file || !file.type.startsWith('image/')) {
+                showAlert('Please select a valid image file', 'error');
+                return;
+            }
+            
+            selectedFile = file;
+            
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('previewImage').src = e.target.result;
+                document.getElementById('previewSection').style.display = 'block';
+            };
+            reader.readAsDataURL(file);
+            
+            // Enable analyze button
+            analyzeBtn.disabled = false;
+            showAlert('Image loaded! Click "Analyze" to detect plantable areas.', 'success');
+        }
+        
+        // Analyze button handler
+        analyzeBtn.addEventListener('click', async () => {
+            if (!selectedFile) return;
+            
+            // Show loading
+            document.getElementById('loadingSection').style.display = 'block';
+            document.getElementById('resultsSection').style.display = 'none';
+            analyzeBtn.disabled = true;
+            
+            // Clear existing markers
+            markersLayer.clearLayers();
+            
+            try {
+                // Create form data
+                const formData = new FormData();
+                formData.append('image', selectedFile);
+                formData.append('drone_altitude', '6.0');
+                formData.append('drone_model', 'GENERIC_4K');
+                
+                // Send to backend
+                const response = await fetch(`${API_URL}/api/detect-plantable-area`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                // Hide loading
+                document.getElementById('loadingSection').style.display = 'none';
+                
+                if (result.success) {
+                    // Display results
+                    displayResults(result);
+                    
+                    // Add markers to map
+                    addMarkersToMap(result.markers);
+                    
+                    showAlert(
+                        `Found ${result.plantable_areas_found} plantable zones! Check the map.`,
+                        'success'
+                    );
+                } else {
+                    showAlert('Error: ' + (result.error || 'Detection failed'), 'error');
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showAlert('Failed to connect to backend. Make sure it\'s running.', 'error');
+                document.getElementById('loadingSection').style.display = 'none';
+            } finally {
+                analyzeBtn.disabled = false;
+            }
+        });
+        
+        function displayResults(result) {
+            const plantable = result.markers.filter(m => m.type === 'plantable_zone').length;
+            const danger = result.markers.filter(m => m.type === 'canopy_danger').length;
+            
+            document.getElementById('plantableCount').textContent = plantable;
+            document.getElementById('dangerCount').textContent = danger;
+            document.getElementById('processingTime').textContent = 
+                result.processing_time_ms.toFixed(2) + ' ms';
+            
+            document.getElementById('resultsSection').style.display = 'block';
+        }
+        
+        function addMarkersToMap(markers) {
+            markers.forEach(marker => {
+                const isPlantable = marker.type === 'plantable_zone';
+                const isDanger = marker.type === 'canopy_danger';
+                
+                // Choose icon color and emoji based on type
+                let iconColor, iconHtml, markerLabel;
+                
+                if (isPlantable) {
+                    iconColor = '#4CAF50';
+                    iconHtml = '🌱';
+                    markerLabel = '🌱 Safe Planting Zone';
+                } else if (isDanger) {
+                    iconColor = '#FF5722';
+                    iconHtml = '⚠️';
+                    markerLabel = '⚠️ Danger Zone';
+                } else {
+                    iconColor = '#2196F3';
+                    iconHtml = '📍';
+                    markerLabel = 'Location';
+                }
+                
+                // Create custom icon
+                const customIcon = L.divIcon({
+                    html: `<div style="
+                        background-color: ${iconColor};
+                        width: 30px;
+                        height: 30px;
+                        border-radius: 50%;
+                        border: 3px solid white;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-size: 16px;
+                        box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+                    ">${iconHtml}</div>`,
+                    className: 'custom-marker',
+                    iconSize: [30, 30],
+                    iconAnchor: [15, 15]
+                });
+                
+                // Add marker
+                const mapMarker = L.marker([marker.latitude, marker.longitude], {
+                    icon: customIcon
+                }).addTo(markersLayer);
+                
+                // Add popup
+                const popupContent = `
+                    <div style="padding: 5px;">
+                        <strong>${markerLabel}</strong><br>
+                        <small>Lat: ${marker.latitude.toFixed(6)}</small><br>
+                        <small>Lon: ${marker.longitude.toFixed(6)}</small><br>
+                        ${marker.area_m2 ? `<small>Area: ${marker.area_m2.toFixed(2)} m²</small>` : ''}
+                    </div>
+                `;
+                mapMarker.bindPopup(popupContent);
+            });
+            
+            // Zoom to show all markers
+            if (markers.length > 0) {
+                const group = L.featureGroup(markersLayer.getLayers());
+                map.fitBounds(group.getBounds().pad(0.1));
+            }
+        }
+        
+        function showAlert(message, type) {
+            const alertSection = document.getElementById('alertSection');
+            const alertClass = type === 'error' ? 'alert-error' : 'alert-success';
+            alertSection.innerHTML = `<div class="alert ${alertClass}">${message}</div>`;
+            
+            // Auto-hide after 5 seconds
+            setTimeout(() => {
+                alertSection.innerHTML = '';
+            }, 5000);
+        }
+        
+        // Initialize on page load
+        window.addEventListener('load', initMap);
+    </script>
+</body>
+</html>

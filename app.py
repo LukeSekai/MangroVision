@@ -3,19 +3,36 @@ MangroVision - AI-Powered Mangrove Planting Zone Analyzer
 Beautiful Streamlit UI for the thesis project
 """
 
+import sys
+# Force UTF-8 output so emoji in print() don't crash on Windows (cp1252 terminals)
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
 import streamlit as st
 import cv2
 import numpy as np
+import pandas as pd
 from PIL import Image
-import sys
 from pathlib import Path
 import io
 import json
+import streamlit_folium as st_folium
+import folium
+from pyproj import Transformer
 
 # Add canopy_detection to path
 sys.path.append(str(Path(__file__).parent / "canopy_detection"))
 
 from canopy_detection.canopy_detector_hexagon import HexagonDetector
+from canopy_detection.exif_extractor import ExifExtractor
+from canopy_detection.auto_align import detect_camera_heading, snap_to_cardinal
+from canopy_detection.flight_log_parser import FlightLogParser, snap_to_cardinal as snap_heading
+from canopy_detection.reference_matcher import ReferencePointMatcher
+from canopy_detection.ortho_matcher import (
+    match_drone_to_ortho,
+    drone_pixel_to_gps_via_homography,
+    drone_pixel_to_gps_via_heading,
+)
 
 # Page configuration
 st.set_page_config(
@@ -291,8 +308,8 @@ def main():
         hexagon_size = st.slider(
             "Planting Hexagon Size (meters)",
             min_value=0.3,
-            max_value=1.0,
-            value=0.5,
+            max_value=2.0,
+            value=1.0,
             step=0.1,
             help="Size of hexagonal planting zones (green buffers)"
         )
@@ -326,7 +343,7 @@ def main():
             <br><br>
             <strong style="color: #7EC88D;">Color Legend:</strong><br>
             <span style="color: #C8E6C9;">🔴 Red = Danger Zones (1m buffer)<br>
-            🟢 Green = Planting Zones (0.5m hexagons)</span>
+            🟢 Green = Planting Zones (1m hexagons)</span>
         </div>
         """, unsafe_allow_html=True)
         
@@ -371,7 +388,13 @@ def main():
             
             # Analyze button
             if st.button("🔍 Detect Canopies & Generate Planting Zones", type="primary"):
-                analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size)
+                # Store that analysis was requested
+                st.session_state.run_analysis = True
+                st.session_state.current_file = uploaded_file
+                st.session_state.current_altitude = altitude
+                st.session_state.current_drone_model = drone_model
+                st.session_state.current_canopy_buffer = canopy_buffer
+                st.session_state.current_hexagon_size = hexagon_size
         else:
             st.markdown("### 📋 Instructions")
             st.markdown("""
@@ -398,9 +421,19 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
+    # Run analysis if requested
+    if uploaded_file is not None and st.session_state.get('run_analysis', False):
+        analyze_image(
+            st.session_state.current_file,
+            st.session_state.current_altitude,
+            st.session_state.current_drone_model,
+            st.session_state.current_canopy_buffer,
+            st.session_state.current_hexagon_size
+        )
+
 
 def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size):
-    """Process the uploaded image and display results"""
+    """Process the uploaded image and display results with automatic geotagging"""
     
     with st.spinner("🔄 Analyzing image... This may take a moment..."):
         # Save uploaded file temporarily
@@ -409,21 +442,178 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             f.write(uploaded_file.getbuffer())
         
         try:
-            # Initialize detector
-            detector = HexagonDetector(altitude_m=altitude, drone_model=drone_model)
+            # STEP 1: Extract EXIF metadata (GPS, altitude, drone model)
+            st.markdown("---")
+            st.markdown("### 📡 Extracting Image Metadata")
             
-            # Process image
-            results = detector.process_image(
-                image_path=str(temp_path),
-                canopy_buffer_m=canopy_buffer,
-                hexagon_size_m=hexagon_size
-            )
+            metadata = ExifExtractor.extract_all_metadata(str(temp_path))
             
-            # Create visualization
-            vis_image = detector.visualize_results(results)
+            # Orthophoto map bounds (UTM Zone 51N)
+            bounds_utm = {
+                'north': 1191825.078,
+                'south': 1191650.359,
+                'east': 459097.2828,
+                'west': 458969.3065
+            }
             
-            # Convert BGR to RGB for display
-            vis_image_rgb = cv2.cvtColor(vis_image, cv2.COLOR_BGR2RGB)
+            # Convert to lat/lon for display
+            transformer = Transformer.from_crs("EPSG:32651", "EPSG:4326", always_xy=True)
+            sw_lon, sw_lat = transformer.transform(bounds_utm['west'], bounds_utm['south'])
+            ne_lon, ne_lat = transformer.transform(bounds_utm['east'], bounds_utm['north'])
+            
+            # GPS validation
+            image_gps = None
+            image_center_lat = None
+            image_center_lon = None
+            altitude_to_use = altitude
+            drone_to_use = drone_model
+            gps_valid = False
+            
+            if metadata.get('has_gps'):
+                gps = metadata['gps']
+                image_center_lat = gps['latitude']
+                image_center_lon = gps['longitude']
+                
+                # Check if GPS is within orthophoto bounds
+                if (sw_lat <= image_center_lat <= ne_lat and 
+                    sw_lon <= image_center_lon <= ne_lon):
+                    st.success(f"✅ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (INSIDE map bounds)")
+                    gps_valid = True
+                    image_gps = gps
+                else:
+                    st.warning(f"⚠️ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (OUTSIDE map bounds)")
+                    st.info("Map will show markers, but they may be outside the orthophoto area")
+                    gps_valid = False  # Still process, but warn user
+                    image_gps = gps
+                
+                # Use detected altitude if available
+                if 'relative_altitude' in gps and gps['relative_altitude'] is not None:
+                    altitude_to_use = gps['relative_altitude']
+                    st.info(f"✈️ Using detected altitude: {altitude_to_use:.1f}m (AGL from EXIF)")
+                elif 'altitude' in gps and gps['altitude'] is not None:
+                    altitude_to_use = gps['altitude']
+                    st.info(f"✈️ Using detected altitude: {altitude_to_use:.1f}m (MSL from EXIF)")
+                
+                # Auto-detect drone model
+                if metadata.get('camera'):
+                    drone_to_use = ExifExtractor.detect_drone_model(metadata['camera'])
+                    st.info(f"📷 Detected drone: {drone_to_use.replace('_', ' ')}")
+                
+                # AUTOMATIC HEADING DETECTION
+                st.markdown("---")
+                st.markdown("### 🧭 Camera Heading Detection")
+                
+                camera_heading = 0  # Default
+                heading_source = "Default (North)"
+                
+                # Method 1: Flight Log/SRT File Upload (if available)
+                st.markdown("#### 📁 Method 1: Flight Log (Auto)")
+                with st.expander("ℹ️ Upload SRT file if available"):
+                    st.markdown("""
+                    **If you have DJI .SRT files:**
+                    
+                    These files contain GPS trajectory data that can be used to estimate heading.
+                    However, for **hovering drones** (taking nadir photos), this may not be accurate.
+                    
+                    Upload your `.SRT` file to try automatic extraction.
+                    """)
+                
+                flight_log = st.file_uploader(
+                    "Upload DJI .SRT or flight log file (optional)",
+                    type=['srt', 'txt', 'log', 'csv'],
+                    help="Only works if drone was moving during capture",
+                    key="flight_log_upload"
+                )
+                
+                if flight_log is not None:
+                    temp_path = Path("temp_flight_log") / flight_log.name
+                    temp_path.parent.mkdir(exist_ok=True)
+                    with open(temp_path, 'wb') as f:
+                        f.write(flight_log.getvalue())
+                    
+                    parser = FlightLogParser()
+                    extracted_heading = parser.extract_heading(str(temp_path))
+                    
+                    if extracted_heading is not None:
+                        camera_heading = extracted_heading
+                        heading_source = f"Flight Log ({flight_log.name})"
+                        st.success(f"✅ Heading extracted: {camera_heading:.1f}° from {flight_log.name}")
+                    else:
+                        st.warning("⚠️ Could not extract heading (drone may have been hovering). Use landmark method after analysis.")
+                
+                # Method 2: Landmark-Based Alignment (RECOMMENDED)
+                st.markdown("#### 🎯 Method 2: Landmark Alignment (RECOMMENDED)")
+                st.info("""
+                **Most Accurate Method:**
+                1. First, run analysis with current heading
+                2. After seeing Visual Results and map, identify a clear landmark (tower, building, path junction)
+                3. Click the landmark in both views to auto-calculate rotation
+                4. System will recalculate GPS coordinates with correct heading
+                
+                ⚡ This will be available after running the analysis below.
+                """)
+                
+                # Store landmark alignment flag in session state
+                if 'use_landmark_alignment' not in st.session_state:
+                    st.session_state.use_landmark_alignment = False
+                
+                # Method 3: Manual Fine-tune (fallback)
+                st.markdown("#### ⚙️ Method 3: Manual Adjustment (Fallback)")
+                manual_override = st.checkbox("Use manual heading adjustment", value=False, key="manual_heading_override")
+                
+                if manual_override:
+                    camera_heading = st.slider(
+                        "Manual heading:",
+                        min_value=0, max_value=359, value=int(camera_heading), step=1,
+                        help="0°=North, 90°=East, 180°=South, 270°=West"
+                    )
+                    heading_source = "Manual Override"
+                
+                st.info(f"🧭 Using heading: **{camera_heading:.1f}°** ({heading_source})")
+            else:
+                st.error("❌ No GPS data found in image!")
+                st.warning("Cannot geotag results on map without GPS coordinates.")
+                st.info("Using manual altitude and drone model from sidebar.")
+                camera_heading = 0  # Default if no GPS
+            
+            # STEP 2: Run detection with detected or manual parameters
+            st.markdown("---")
+            st.markdown("### 🔍 Running Detection Analysis")
+            
+            # Create a unique key for this analysis
+            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}"
+            
+            # Check if we've already run detection for this configuration
+            if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
+                # Initialize detector
+                detector = HexagonDetector(altitude_m=altitude_to_use, drone_model=drone_to_use)
+                
+                # Process image
+                results = detector.process_image(
+                    image_path=str(temp_path),
+                    canopy_buffer_m=canopy_buffer,
+                    hexagon_size_m=hexagon_size
+                )
+                
+                # Create visualization
+                vis_image = detector.visualize_results(results)
+                
+                # Convert BGR to RGB for display
+                vis_image_rgb = cv2.cvtColor(vis_image, cv2.COLOR_BGR2RGB)
+                
+                # Store in session state
+                st.session_state.last_analysis_key = analysis_key
+                st.session_state.cached_results = results
+                st.session_state.cached_vis_image = vis_image_rgb
+                st.session_state.cached_detector = detector
+                st.session_state.cached_image_gps = image_gps
+                st.session_state.cached_image_center_lat = image_center_lat
+                st.session_state.cached_image_center_lon = image_center_lon
+            else:
+                # Use cached results
+                results = st.session_state.cached_results
+                vis_image_rgb = st.session_state.cached_vis_image
+                detector = st.session_state.cached_detector
             
             # Display results
             st.markdown('<hr>', unsafe_allow_html=True)
@@ -474,10 +664,31 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 st.markdown("**Detected Zones**")
                 st.markdown("""
                 🟣 **Purple** = Canopy Areas | 🔴 **Red** = 1m Danger Buffer  
-                🟢 **Light Green** = 0.5m Planting Buffer | � **Orange** = Overlap Warning  
+                🟢 **Light Green** = 1m Planting Buffer | 🟠 **Orange** = Overlap Warning
                 �🟩 **Dark Green** = Planting Points
                 """)
                 st.image(vis_image_rgb, width='stretch')
+            
+            # Helper for finding pixel coordinates
+            with st.expander("📏 How to find pixel coordinates for landmark alignment"):
+                img_h, img_w = results['image'].shape[:2]
+                st.markdown(f"""
+                **To use landmark-based heading calibration (see after map):**
+                
+                1. **Identify a clear landmark** visible in both image and map (tower, building, path)
+                2. **Estimate pixel coordinates** in detected zones image:
+                   - Image dimensions: {img_w} × {img_h} pixels
+                   - Center point: ({img_w//2}, {img_h//2})
+                   - Upper-left quarter: X ≈ {img_w//4}, Y ≈ {img_h//4}
+                   - Upper-right quarter: X ≈ {img_w*3//4}, Y ≈ {img_h//4}
+                   - Adjust based on visual position
+                
+                3. **For exact coordinates:** Download image, open in image viewer, hover over landmark
+                4. **Find same landmark on map** (scroll down to map below)
+                5. **Use Landmark Alignment tool** (after map) to auto-calculate heading
+                
+                💡 This eliminates manual guessing and provides accurate GPS transformation!
+                """)
             
             st.markdown("---")
             
@@ -529,7 +740,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 st.markdown("""
                 <div style='background: linear-gradient(135deg, #90EE90 0%, #98FB98 100%); padding: 1rem; border-radius: 8px; text-align: center;'>
                     <h4 style='color: #2D5F3F; margin: 0;'>🟢 Planting Buffer</h4>
-                    <p style='color: #2D5F3F; font-size: 0.9rem; margin: 0.5rem 0 0 0;'>0.5m safe zones</p>
+                    <p style='color: #2D5F3F; font-size: 0.9rem; margin: 0.5rem 0 0 0;'>1m safe zones</p>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -589,14 +800,238 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             with download_col3:
                 st.info("🗺️ Shapefile export for QGIS coming soon!")
             
-            st.success("✅ Analysis complete! Results are ready for QGIS integration.")
+            # STEP 3: Geotag results on orthophoto map
+            # Use cached GPS data if available from previous run
+            map_image_gps = st.session_state.get('cached_image_gps', image_gps)
+            map_center_lat = st.session_state.get('cached_image_center_lat', image_center_lat)
+            map_center_lon = st.session_state.get('cached_image_center_lon', image_center_lon)
+            
+            if map_image_gps is not None:
+                st.markdown("---")
+                st.markdown("### 🗺️ Geotagged Map View")
+                st.info("📍 Showing GPS markers for safe planting locations - each green point shows exact coordinates where mangroves can be planted")
+                
+                # Extract detection data for mapping
+                gsd = results['gsd_m_per_pixel']
+                canopy_polygons = results['canopy_polygons']
+                hexagons = results['hexagons']
+                width, height = results['image_size']
+
+                # ── AUTO-ALIGN: match drone image to orthophoto GeoTIFF ──────
+                # This finds the exact homography so every hexagon pixel maps
+                # to the correct GPS coordinate without needing a heading input.
+                match_key = f"ortho_match_{uploaded_file.name}"
+                if match_key not in st.session_state:
+                    with st.spinner("🔍 Auto-aligning drone image with orthophoto map…"):
+                        match_result = match_drone_to_ortho(
+                            drone_image=results['image'],
+                            center_lat=map_center_lat,
+                            center_lon=map_center_lon,
+                            drone_gsd=gsd,
+                        )
+                    st.session_state[match_key] = match_result
+                else:
+                    match_result = st.session_state[match_key]
+
+                if match_result['success']:
+                    H_matrix = match_result['H']
+                    detected_heading = match_result['heading']
+                    match_conf = match_result['confidence']
+                    st.success(
+                        f"✅ Auto-alignment successful — "
+                        f"{match_result['inliers']}/{match_result['total_matches']} inlier matches, "
+                        f"confidence {match_conf:.0%}, "
+                        f"detected heading {detected_heading:.1f}°"
+                    )
+
+                    def pixel_to_latlon(px, py):
+                        return drone_pixel_to_gps_via_homography(px, py, H_matrix)
+                else:
+                    # Fallback: use heading-based conversion
+                    st.warning(
+                        f"⚠️ Auto-alignment not available ({match_result['error']}). "
+                        f"Using heading-based fallback ({camera_heading}°). "
+                        f"Adjust heading slider for better accuracy."
+                    )
+                    detected_heading = camera_heading
+
+                    def pixel_to_latlon(px, py):
+                        return drone_pixel_to_gps_via_heading(
+                            px, py, width, height,
+                            map_center_lat, map_center_lon,
+                            gsd, camera_heading
+                        )
+                
+                # Create orthophoto map centered on image location
+                ortho_map = folium.Map(
+                    location=[map_center_lat, map_center_lon],
+                    zoom_start=20,
+                    tiles=None,
+                    control_scale=True,
+                    max_bounds=True
+                )
+                
+                # Add orthophoto tile layer (YOUR CUSTOM MAP)
+                folium.TileLayer(
+                    tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
+                    attr='MangroVision Orthophoto | WebODM',
+                    name='Orthophoto',  
+                    
+                    overlay=False,
+                    control=True,
+                    max_zoom=22,
+                    min_zoom=15,
+                    show=True
+                ).add_to(ortho_map)
+                
+                # Add OpenStreetMap reference layer (backup)
+                folium.TileLayer(
+                    tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    attr='© OpenStreetMap contributors',
+                    name='OpenStreetMap',
+                    overlay=False,
+                    control=True,
+                    opacity=1.0,
+                    show=False
+                ).add_to(ortho_map)
+                
+                st.info(f"📍 Map shows GPS markers for each planting location from Visual Results")
+                image_width_m = width * gsd
+                image_height_m = height * gsd
+                
+                # Add image center marker
+                folium.Marker(
+                    location=[map_center_lat, map_center_lon],
+                    popup=f"""📷 <b>Image Center</b><br>
+                    Altitude: {altitude_to_use:.1f}m<br>
+                    GSD: {gsd*100:.2f} cm/pixel<br>
+                    Coverage: {image_width_m:.1f}m × {image_height_m:.1f}m<br>
+                    Heading: {detected_heading:.1f}°""",
+                    icon=folium.Icon(color='blue', icon='camera', prefix='fa'),
+                    tooltip="📷 Image Location"
+                ).add_to(ortho_map)
+                
+                # Add GREEN POINTS for each safe planting hexagon at exact GPS coordinates
+                for i, hexagon in enumerate(hexagons):
+                    px, py = hexagon['center']
+                    lat, lon = pixel_to_latlon(px, py)
+
+                    folium.CircleMarker(
+                        location=[lat, lon],
+                        radius=4,
+                        popup=f"""🌱 <b>Planting Point #{i+1}</b><br>
+                        GPS: {lat:.7f}°, {lon:.7f}°<br>
+                        Pixel: ({int(px)}, {int(py)})<br>
+                        Buffer: {hexagon.get('buffer_radius_m', 'N/A')}m<br>
+                        Area: {hexagon.get('area_m2', hexagon.get('area_sqm', 0)):.2f} m²""",
+                        tooltip=f"🌱 Point #{i+1}",
+                        color='#1B5E20',
+                        fillColor='#4CAF50',
+                        fillOpacity=0.8,
+                        weight=2
+                    ).add_to(ortho_map)
+                
+                # Add layer control
+                folium.LayerControl().add_to(ortho_map)
+                
+                # Display map
+                st_folium.st_folium(ortho_map, width=1400, height=600, key="geo_map", returned_objects=[])
+                
+                # LANDMARK ALIGNMENT INTERFACE (optional precision override)
+                st.markdown("---")
+                st.markdown("### 🎯 Precision Override (Optional)")
+
+                with st.expander("📍 Use this only if auto-alignment failed or markers are still off"):
+                    st.markdown("""
+                    **When to use this:**
+                    - Auto-alignment shows a warning above (image outside orthophoto, or too few matches)
+                    - Green dots are clearly shifted on the map
+
+                    **Steps:**
+                    1. Find a clear landmark visible in both Visual Results and the map (e.g. water tower corner)
+                    2. Note its pixel coordinates from the Visual Results image
+                    3. Right-click the same landmark on the map to get its GPS coordinates
+                    4. Enter both below and click **Calculate Heading**
+                    5. Copy the result into the **Manual Adjustment** slider above and re-run
+                    """)
+
+                    meters_per_degree_lat = 111320.0
+                    meters_per_degree_lon = 111320.0 * np.cos(np.radians(map_center_lat))
+
+                    st.warning("⚠️ Choose a landmark near the image edges for best accuracy")
+
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("##### 📸 Landmark in Visual Results")
+                        st.caption(f"Image size: {width}×{height} pixels")
+                        landmark_px_x = st.number_input("Pixel X:", min_value=0, max_value=width, value=width//2, key="landmark_px_x")
+                        landmark_px_y = st.number_input("Pixel Y:", min_value=0, max_value=height, value=height//2, key="landmark_px_y")
+
+                    with col2:
+                        st.markdown("##### 🗺️ Same Landmark on Map")
+                        st.caption("Right-click the landmark on the map to read its GPS")
+                        landmark_lat = st.number_input("Latitude:",  min_value=-90.0,  max_value=90.0,  value=map_center_lat, format="%.7f", key="landmark_lat")
+                        landmark_lon = st.number_input("Longitude:", min_value=-180.0, max_value=180.0, value=map_center_lon, format="%.7f", key="landmark_lon")
+
+                    if st.button("🧮 Calculate Heading from Landmark", type="primary"):
+                        matcher = ReferencePointMatcher()
+                        matcher.add_point_pair((landmark_px_x, landmark_px_y), (landmark_lat, landmark_lon))
+                        calculated_heading = matcher.calculate_rotation(
+                            image_center_px=(width / 2, height / 2),
+                            map_center_latlon=(map_center_lat, map_center_lon),
+                            gsd=gsd,
+                            meters_per_degree_lat=meters_per_degree_lat,
+                            meters_per_degree_lon=meters_per_degree_lon,
+                        )
+                        if calculated_heading is not None:
+                            st.success(f"✅ Calculated heading: **{calculated_heading:.1f}°** — enter this in the Manual Adjustment slider above and re-run.")
+                        else:
+                            st.error("❌ Could not calculate heading. Please check your coordinates.")
+                
+                # Show planting coordinates table
+                st.markdown("---")
+                st.markdown("### 📍 Planting Location Coordinates")
+                st.info("ℹ️ Use Visual Results above to see where each point is located in the analyzed image")
+                
+                # Create coordinate dataframe with GPS
+                coord_data = []
+                for i, hexagon in enumerate(hexagons, 1):
+                    px, py = hexagon['center']
+                    lat, lon = pixel_to_latlon(px, py)
+                    coord_data.append({
+                        "Point #": i,
+                        "Latitude": f"{lat:.7f}",
+                        "Longitude": f"{lon:.7f}",
+                        "Pixel X": int(px),
+                        "Pixel Y": int(py),
+                        "Buffer (m)": hexagon['buffer_radius_m'],
+                        "Area (m²)": round(hexagon['area_m2'], 2)
+                    })
+                
+                if coord_data:
+                    df = pd.DataFrame(coord_data)
+                    st.dataframe(df, use_container_width=True)
+                    
+                    # Download CSV button
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Coordinate List (CSV)",
+                        data=csv,
+                        file_name=f"planting_coordinates_{uploaded_file.name}.csv",
+                        mime="text/csv"
+                    )
+                
+                st.success(f"✅ Analysis complete! {len(hexagons)} GPS-tagged planting locations shown on map. Use Visual Results to see exact positions.")
+            else:
+                st.warning("⚠️ GPS mapping skipped - no GPS data in image")
+                st.success("✅ Analysis complete! Results ready for export.")
             
         except Exception as e:
             st.error(f"❌ Error processing image: {str(e)}")
             st.exception(e)
         
         finally:
-            # Cleanup
+            # Cleanup temporary files
             if temp_path.exists():
                 temp_path.unlink()
 

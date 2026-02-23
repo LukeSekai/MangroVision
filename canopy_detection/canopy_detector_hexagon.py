@@ -102,8 +102,75 @@ class HexagonDetector:
                         # Draw on canopy mask
                         cv2.fillPoly(canopy_mask, [points.astype(np.int32)], 255)
         
-        print(f"✓ Detected {len(canopy_polygons)} canopy regions")
+        # Calculate statistics
+        total_canopy_pixels = np.count_nonzero(canopy_mask)
+        total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
+        print(f"✓ Detected {len(canopy_polygons)} canopy regions (Total: {total_canopy_m2:.1f} m²)")
+        print(f"   Detection threshold: {min_area_pixels} pixels ({min_area_pixels * self.gsd**2:.2f} m²)")
         return canopy_polygons, canopy_mask
+    
+    def detect_non_vegetation_areas(self, image: np.ndarray) -> np.ndarray:
+        """
+        Detect non-vegetation areas in the image (bridges, roads, water, buildings)
+        These areas should NOT have planting zones
+        
+        Args:
+            image: Input BGR image
+            
+        Returns:
+            Binary mask where 255 = non-vegetation (forbidden), 0 = potential planting area
+        """
+        h, w = image.shape[:2]
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        # Initialize combined mask
+        forbidden_mask = np.zeros((h, w), dtype=np.uint8)
+        
+        # 1. DETECT GRAY AREAS (concrete bridges, roads, buildings)
+        # Gray has low saturation and mid-range value
+        lower_gray = np.array([0, 0, 60])      # Low saturation, moderate brightness
+        upper_gray = np.array([180, 50, 220])  # Any hue, low saturation
+        gray_mask = cv2.inRange(hsv, lower_gray, upper_gray)
+        
+        # 2. DETECT WATER (blue/dark areas)
+        # Water appears blue or very dark
+        lower_water1 = np.array([90, 40, 20])   # Blue water
+        upper_water1 = np.array([130, 255, 180])
+        water_mask1 = cv2.inRange(hsv, lower_water1, upper_water1)
+        
+        lower_water2 = np.array([0, 0, 0])      # Dark water/shadows
+        upper_water2 = np.array([180, 255, 40])
+        water_mask2 = cv2.inRange(hsv, lower_water2, upper_water2)
+        
+        water_mask = cv2.bitwise_or(water_mask1, water_mask2)
+        
+        # 3. DETECT BRIGHT/WHITE AREAS (concrete, white buildings)
+        lower_white = np.array([0, 0, 220])
+        upper_white = np.array([180, 30, 255])
+        white_mask = cv2.inRange(hsv, lower_white, upper_white)
+        
+        # Combine all non-vegetation masks
+        forbidden_mask = cv2.bitwise_or(forbidden_mask, gray_mask)
+        forbidden_mask = cv2.bitwise_or(forbidden_mask, water_mask)
+        forbidden_mask = cv2.bitwise_or(forbidden_mask, white_mask)
+        
+        # Clean up the mask - remove small noise
+        kernel_clean = np.ones((5, 5), np.uint8)
+        forbidden_mask = cv2.morphologyEx(forbidden_mask, cv2.MORPH_OPEN, kernel_clean)
+        
+        # Expand forbidden areas slightly to be safe
+        kernel_expand = np.ones((10, 10), np.uint8)
+        forbidden_mask = cv2.dilate(forbidden_mask, kernel_expand, iterations=1)
+        
+        # Calculate statistics
+        forbidden_pixels = np.count_nonzero(forbidden_mask)
+        forbidden_m2 = forbidden_pixels * (self.gsd ** 2)
+        forbidden_pct = (forbidden_pixels / (h * w)) * 100
+        
+        print(f"✓ Detected non-vegetation areas: {forbidden_m2:.1f} m² ({forbidden_pct:.1f}% of image)")
+        print(f"   (bridges, roads, water, buildings automatically excluded)")
+        
+        return forbidden_mask
     
     def create_danger_zones(self, canopy_polygons: List[Polygon], canopy_mask: np.ndarray, buffer_m: float = 1.0) -> Tuple[Polygon, np.ndarray]:
         """
@@ -129,6 +196,7 @@ class HexagonDetector:
         
         # Convert buffer distance to pixels
         buffer_pixels = buffer_m / self.gsd
+        print(f"   Buffer calculation: {buffer_m}m ÷ {self.gsd:.5f}m/px = {buffer_pixels:.1f} pixels")
         
         # Create buffers around each canopy (includes canopy + buffer)
         buffered = [poly.buffer(buffer_pixels) for poly in canopy_polygons]
@@ -197,7 +265,7 @@ class HexagonDetector:
     def generate_hexagonal_planting_zones(
         self, 
         plantable_zone: Polygon, 
-        hexagon_size_m: float = 0.5,
+        hexagon_size_m: float = 1.0,
         maximize_coverage: bool = True
     ) -> List[Dict]:
         """
@@ -207,7 +275,7 @@ class HexagonDetector:
         
         Args:
             plantable_zone: Available planting area
-            hexagon_size_m: Hexagon buffer size in meters (default 0.5m)
+            hexagon_size_m: Hexagon buffer size in meters (default 1.0m)
             maximize_coverage: Try to fit hexagons in all available spaces
             
         Returns:
@@ -285,21 +353,21 @@ class HexagonDetector:
                 hexagon_buffer = self.create_hexagon(x, y, buffer_radius_pixels)
                 hexagon_core = self.create_hexagon(x, y, core_radius_pixels)
                 
-                # CRITICAL: Only check if CORE (actual planting point) is in plantable zone
-                # The buffer can overlap with danger zones - that's just spacing!
-                # Only the exact planting location (core) must be safe
+                # STRICT CHECK: ENTIRE hexagon buffer must be in plantable zone
+                # This prevents ANY overlap with danger zones (no orange hexagons)
+                # Only 100% safe green hexagons will be placed
                 is_in_plantable = False
                 
                 if isinstance(plantable_zone, MultiPolygon):
-                    # Check if core is within plantable zone
-                    is_in_plantable = plantable_zone.contains(hexagon_core) or \
-                                     (plantable_zone.intersects(hexagon_core) and \
-                                      hexagon_core.intersection(plantable_zone).area / hexagon_core.area >= 0.95)
+                    # Check if ENTIRE BUFFER is within plantable zone
+                    is_in_plantable = plantable_zone.contains(hexagon_buffer) or \
+                                     (plantable_zone.intersects(hexagon_buffer) and \
+                                      hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area >= 0.99)
                 else:
-                    # Check if core is within plantable zone
-                    is_in_plantable = plantable_zone.contains(hexagon_core) or \
-                                     (plantable_zone.intersects(hexagon_core) and \
-                                      hexagon_core.intersection(plantable_zone).area / hexagon_core.area >= 0.95)
+                    # Check if ENTIRE BUFFER is within plantable zone
+                    is_in_plantable = plantable_zone.contains(hexagon_buffer) or \
+                                     (plantable_zone.intersects(hexagon_buffer) and \
+                                      hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area >= 0.99)
                 
                 # Check that cores don't overlap and buffers overlap by max 0.1m
                 # CRITICAL: Check against BOTH existing hexagons AND newly placed ones
@@ -355,7 +423,7 @@ class HexagonDetector:
         self, 
         image_path: str,
         canopy_buffer_m: float = 1.0,
-        hexagon_size_m: float = 0.5
+        hexagon_size_m: float = 1.0
     ) -> Dict:
         """
         Complete processing pipeline
@@ -437,7 +505,7 @@ class HexagonDetector:
         Create visualization with proper color separation and overlap detection:
         - Purple: Canopy areas (detected vegetation)
         - Red: 1m danger buffer zones (no overlap)
-        - Light green: 0.5m hexagon buffers (safe planting zone, no overlap)
+        - Light green: 1m hexagon buffers (safe planting zone, no overlap)
         - Orange: Overlap between danger buffer and planting buffer (WARNING)
         - Dark green: Hexagon cores (exact planting points)
         
@@ -509,7 +577,7 @@ class HexagonDetector:
         legend_items = [
             ("CANOPIES:", (128, 0, 128), f"{results['canopy_count']} detected"),
             ("DANGER BUFFER (1m):", (0, 0, 255), f"{results['danger_area_m2']:.1f} m2"),
-            ("PLANTING BUFFER (0.5m):", (144, 238, 144), f"Safe zones"),
+            ("PLANTING BUFFER (1m):", (144, 238, 144), f"Safe zones"),
             ("OVERLAP WARNING:", (0, 165, 255), f"{overlap_area_m2:.1f} m2" if overlap_area_m2 > 0 else "None"),
             ("PLANTING POINTS:", (0, 255, 0), f"{results['hexagon_count']} locations"),
         ]
@@ -557,7 +625,7 @@ if __name__ == "__main__":
     results = detector.process_image(
         image_path=image_path,
         canopy_buffer_m=1.0,
-        hexagon_size_m=0.5
+        hexagon_size_m=1.0
     )
     
     # Visualize
