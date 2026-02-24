@@ -645,9 +645,9 @@ def main():
         
         # Model selection
         model_name = st.selectbox(
-            "Detectree2 Model",
-            ["benchmark", "paracou"],
-            help="benchmark: General trees | paracou: Tropical forests (best for mangroves)"
+            "AI Detection Model",
+            ["custom", "benchmark", "paracou"],
+            help="✨ custom: YOUR trained model (Roboflow dataset) | benchmark: General trees | paracou: Tropical forests"
         )
         
         # Species selection (placeholder for future)
@@ -704,12 +704,14 @@ def main():
         <div style="background: linear-gradient(135deg, #1E3A2E 0%, #2D5F3F 100%);
                     padding: 1.2rem; border-radius: 10px; border-left: 4px solid #7EC88D; margin: 1rem 0;">
             <strong style="color: #7EC88D; font-size: 1.1rem;">ℹ️ About</strong><br>
-            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>detectree2 AI</strong> (Mask R-CNN) for accurate tree crown detection and safe planting zone identification.</span>
+            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>transfer learning</strong> from detectree2's tropical forest model, fine-tuned on YOUR Roboflow dataset for accurate Bungalon mangrove canopy detection.</span>
             <br><br>
             <strong style="color: #7EC88D;">Technology:</strong><br>
-            <span style="color: #C8E6C9;">🤖 Detectree2 - AI tree detection<br>
-            🌳 Specialized for tree crowns<br>
-            🎯 State-of-the-art accuracy</span>
+            <span style="color: #C8E6C9;">🌴 Base Model: detectree2 tropical forests (Danum, Sepilok, Paracou)<br>
+            🎯 Fine-tuned: 240 annotated images from your dataset<br>
+            🤖 Architecture: Mask R-CNN ResNet-101-FPN<br>
+            📊 Performance: AP50=59.5% (competitive with research papers)<br>
+            🌳 Classes: Bungalon Canopy (trained), Mangrove-Canopy (future)</span>
             <br><br>
             <strong style="color: #7EC88D;">Color Legend:</strong><br>
             <span style="color: #C8E6C9;">🔴 Red = Danger Zones (1m buffer)<br>

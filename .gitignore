@@ -33,12 +33,21 @@ htmlcov/
 # Data and logs
 *.log
 
-# Model files (LARGE - download separately)
+# Model files (LARGE - download separately via Google Drive)
 models/*.pth
 models/*.ckpt
 models/*.pkl
 models/*.h5
 models/*.weights
+
+# Custom trained models (share via Google Drive ~810 MB total)
+models/custom_mangrove_model/
+models/230103_randresize_full.pth
+models/230717_tropical_base.pth
+
+# Training outputs and datasets
+training_data/
+metrics.json
 
 # Large data files - excluded from repository
 flight_videos/

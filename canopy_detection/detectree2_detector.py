@@ -50,53 +50,87 @@ class Detectree2Detector:
         
     def setup_model(self):
         """
-        Setup Mask R-CNN with detectree2 pre-trained weights for tropical tree crowns
-        Uses model trained on real aerial tree imagery (Paracou, Danum, Sepilok)
+        Setup Mask R-CNN with custom-trained mangrove model
+        Priority: Custom Model > Detectree2 Tropical > COCO Base
         """
-        print(f"⚙️ Setting up detectree2 tropical tree crown detector...")
+        print(f"⚙️ Setting up AI mangrove canopy detector...")
         
-        cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file(
-            "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"  # Base architecture
-        ))
-        
-        # Configure for tree detection (1 class: tree crown)
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
-        cfg.MODEL.DEVICE = self.device
-        
-        # Optimize for dense canopy - INCREASE limits for more detections
-        cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 6000  # Increased from 3000
-        cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000  # Increased from 1000
-        
-        # Lower NMS threshold to keep more overlapping detections
-        cfg.MODEL.RPN.NMS_THRESH = 0.6  # Default 0.7, lower = fewer removals
-        
-        # Load detectree2 tropical tree crown model
-        # Try new optimized model first, then fall back to base model
         model_dir = Path(__file__).parent.parent / 'models'
-        tropical_models = [
-            (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
-            (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)')
-        ]
         
-        model_loaded = False
-        for model_path, model_name in tropical_models:
-            if model_path.exists():
-                print(f"   ✅ Loading {model_name}")
-                print(f"   📍 Trained on: Danum, Sepilok, Paracou tropical forests")
-                print(f"   🌳 Optimized for: Closed-canopy aerial tree detection")
-                cfg.MODEL.WEIGHTS = str(model_path)
-                model_loaded = True
-                break
+        # PRIORITY 1: Check for custom-trained Roboflow model (BEST)
+        custom_model_path = model_dir / 'custom_mangrove_model' / 'model_final.pth'
         
-        if not model_loaded:
-            print(f"   ⚠️ No tropical model found in: {model_dir}")
-            print(f"   📥 Download from: https://zenodo.org/record/7123579")
-            print(f"   ⚠️ Falling back to COCO weights (less accurate)")
-            cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
-                "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
-            )
+        if custom_model_path.exists():
+            # Load custom model trained on Roboflow dataset (Mangrove + Bungalon)
+            print(f"   🎯 Loading CUSTOM-TRAINED Model")
+            print(f"   📍 Trained on: YOUR Roboflow dataset (240 images)")
+            print(f"   🌳 Base: detectree2 tropical forest model (transfer learning)")
+            print(f"   🏆 Classes: Mangrove-Canopy, Bungalon Canopy")
+            print(f"   📊 Performance: AP50=59.5%, AP=38.3% (Bungalon)")
+            
+            cfg = get_cfg()
+            # Use R-101 architecture to match training configuration
+            cfg.merge_from_file(model_zoo.get_config_file(
+                "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"  # R-101 (matches training)
+            ))
+            
+            # Configure for 2 mangrove classes
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2  # Mangrove-Canopy, Bungalon Canopy
+            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
+            cfg.MODEL.DEVICE = self.device
+            
+            # Optimize for dense canopy - INCREASE limits for more detections
+            cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 6000  # Increased from 3000
+            cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000  # Increased from 1000
+            
+            # Lower NMS threshold to keep more overlapping detections
+            cfg.MODEL.RPN.NMS_THRESH = 0.6  # Default 0.7, lower = fewer removals
+            
+            # Load custom weights
+            cfg.MODEL.WEIGHTS = str(custom_model_path)
+            
+        else:
+            # PRIORITY 2: Try detectree2 tropical models
+            print(f"   ⚠️ Custom model not found at: {custom_model_path}")
+            print(f"   📥 Falling back to detectree2 tropical models...")
+            
+            cfg = get_cfg()
+            cfg.merge_from_file(model_zoo.get_config_file(
+                "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"  # Base architecture
+            ))
+            
+            # Configure for tree detection (1 class: tree crown)
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  
+            cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
+            cfg.MODEL.DEVICE = self.device
+            
+            # Optimize for dense canopy
+            cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 6000
+            cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000
+            cfg.MODEL.RPN.NMS_THRESH = 0.6
+            
+            # Try tropical models
+            tropical_models = [
+                (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
+                (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)')
+            ]
+            
+            model_loaded = False
+            for model_path, model_name in tropical_models:
+                if model_path.exists():
+                    print(f"   ✅ Loading {model_name}")
+                    print(f"   📍 Trained on: Danum, Sepilok, Paracou tropical forests")
+                    cfg.MODEL.WEIGHTS = str(model_path)
+                    model_loaded = True
+                    break
+            
+            # PRIORITY 3: Fall back to COCO
+            if not model_loaded:
+                print(f"   ⚠️ No tropical model found in: {model_dir}")
+                print(f"   ⚠️ Using COCO base weights (less accurate)")
+                cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
+                    "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
+                )
         
         self.cfg = cfg
         self.predictor = DefaultPredictor(cfg)
