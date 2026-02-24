@@ -20,9 +20,14 @@ pandas>=2.0.0
 
 # AI/ML Dependencies (for detectree2)
 torch>=2.0.0
+torchvision>=0.15.0
 gdown>=4.7.0  # For downloading pre-trained models
-# Note: detectron2 and detectree2 require manual installation
-# See installation instructions in README.md
+
+# Detectree2 & Samgeo (Geospatial ML)
+segment-geospatial>=0.10.0  # Includes detectree2 wrapper (samgeo.detectree2)
+# Note: detectron2 requires manual installation from Meta's GitHub
+# pip install 'git+https://github.com/facebookresearch/detectron2.git'
+# See INSTALL_SAMGEO_DETECTREE2.md for complete installation guide
 
 # Backend API (for map-based detection)
 fastapi>=0.104.0

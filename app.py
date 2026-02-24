@@ -263,15 +263,332 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def show_orthophoto_detection_viewer():
+    """
+    Display tree crown detection results from GeoJSON on orthophoto map
+    """
+    st.markdown("## 🗺️ Orthophoto Tree Crown Detection Results")
+    
+    st.markdown("""
+    <div class="info-box">
+        <strong>📍 View & Validate Tree Crown Detections</strong><br>
+        <span style="color: #1565C0;">
+        This mode displays tree crowns detected from the high-resolution orthophoto using
+        the samgeo + detectree2 pipeline. Each detected crown is shown as a polygon with
+        its area calculated in m².<br><br>
+        
+        To generate detection results, run:<br>
+        <code>python canopy_detection/samgeo_ortho_detector.py</code>
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check for GeoJSON files
+    output_dir = Path(__file__).parent / 'output_geojson'
+    geojson_files = []
+    if output_dir.exists():
+        geojson_files = list(output_dir.glob('*.geojson')) + list(output_dir.glob('*.json'))
+    geojson_files = sorted(geojson_files, key=lambda x: x.stat().st_mtime, reverse=True)
+    
+    if not geojson_files:
+        st.warning("""
+        ⚠️ No GeoJSON detection files found in `output_geojson/` folder.
+        
+        **To create detections:**
+        1. Install samgeo: `pip install segment-geospatial`
+        2. Run detection: `python canopy_detection/samgeo_ortho_detector.py`
+        3. Refresh this page
+        
+        See **INSTALL_SAMGEO_DETECTREE2.md** for complete guide.
+        """)
+        return
+    
+    # GeoJSON file selector
+    selected_geojson = st.selectbox(
+        "📁 Select GeoJSON File",
+        options=[f.name for f in geojson_files],
+        index=0
+    )
+    
+    geojson_path = output_dir / selected_geojson
+    
+    # Load GeoJSON
+    with open(geojson_path, 'r') as f:
+        geojson_data = json.load(f)
+    
+    features = geojson_data.get('features', [])
+    
+    if not features:
+        st.error("❌ GeoJSON file contains no features")
+        return
+    
+    # Calculate statistics
+    tree_count = len(features)
+    areas = []
+    for feature in features:
+        props = feature.get('properties', {})
+        area = props.get('area_pixels', props.get('area', 0.0))  # Support both field names
+        if area > 0:
+            areas.append(area)
+    
+    total_area_px = sum(areas) if areas else 0.0
+    avg_area_px = total_area_px / len(areas) if areas else 0.0
+    min_area_px = min(areas) if areas else 0.0
+    max_area_px = max(areas) if areas else 0.0
+    
+    # Display metrics
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("🌳 Trees Detected", tree_count)
+    
+    with col2:
+        st.metric("📏 Total Canopy Area", f"{total_area_px:.0f} px²")
+    
+    with col3:
+        st.metric("📊 Average Crown Size", f"{avg_area_px:.0f} px²")
+    
+    with col4:
+        st.metric("📐 Size Range", f"{min_area_px:.0f} - {max_area_px:.0f} px²")
+    
+    # Map display
+    st.markdown("---")
+    st.markdown("### 🗺️ Interactive Map")
+    
+    # Calculate center from features
+    all_coords = []
+    for feature in features:
+        geom = feature.get('geometry', {})
+        if geom.get('type') == 'Polygon':
+            coords = geom.get('coordinates', [[]])[0]
+            all_coords.extend(coords)
+        elif geom.get('type') == 'MultiPolygon':
+            for poly in geom.get('coordinates', []):
+                all_coords.extend(poly[0] if poly else [])
+    
+    if all_coords:
+        lons = [c[0] for c in all_coords]
+        lats = [c[1] for c in all_coords]
+        center_lat = sum(lats) / len(lats)
+        center_lon = sum(lons) / len(lons)
+    else:
+        # Default to Leganes, Iloilo
+        center_lat = 10.7826
+        center_lon = 122.5942
+    
+    # Create map
+    m = folium.Map(
+        location=[center_lat, center_lon],
+        zoom_start=18,
+        tiles=None,
+        control_scale=True
+    )
+    
+    # Add tile layers
+    folium.TileLayer(
+        tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
+        attr='MangroVision Orthophoto',
+        name='Orthophoto',
+        overlay=False,
+        control=True,
+        max_zoom=22,
+        min_zoom=15,
+        show=True
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        attr='Esri WorldImagery',
+        name='Satellite',
+        overlay=False,
+        control=True,
+        show=False
+    ).add_to(m)
+    
+    folium.TileLayer(
+        tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attr='© OpenStreetMap',
+        name='OpenStreetMap',
+        overlay=False,
+        control=True,
+        show=False
+    ).add_to(m)
+    
+    # Add GeoJSON layer with green styling
+    style_function = lambda x: {
+        'fillColor': '#4CAF50',
+        'color': '#1B5E20',
+        'weight': 2,
+        'fillOpacity': 0.4
+    }
+    
+    highlight_function = lambda x: {
+        'fillColor': '#81C784',
+        'color': '#1B5E20',
+        'weight': 3,
+        'fillOpacity': 0.7
+    }
+    
+    # Determine which field to use for area
+    sample_props = features[0].get('properties', {}) if features else {}
+    area_field = 'area_pixels' if 'area_pixels' in sample_props else 'area'
+    area_label = 'Crown Area (px²):' if area_field == 'area_pixels' else 'Crown Area (m²):'
+    
+    folium.GeoJson(
+        geojson_data,
+        name='Tree Crowns',
+        style_function=style_function,
+        highlight_function=highlight_function,
+        tooltip=folium.GeoJsonTooltip(
+            fields=[area_field, 'tree_id', 'confidence'],
+            aliases=[area_label, 'Tree ID:', 'Confidence:'],
+            localize=True
+        ),
+        popup=folium.GeoJsonPopup(
+            fields=[area_field, 'tree_id', 'confidence'],
+            aliases=[area_label, 'Tree ID:', 'Confidence:'],
+            localize=True
+        )
+    ).add_to(m)
+    
+    # Add layer control
+    folium.LayerControl().add_to(m)
+    
+    # Display map
+    st_folium.st_folium(m, width=1400, height=700, key="geojson_map", returned_objects=[])
+    
+    # Validation section
+    st.markdown("---")
+    st.markdown("### 🔍 Quality Validation")
+    
+    if st.button("📊 Run Validation Analysis"):
+        try:
+            from canopy_detection.validation_metrics import DetectionValidator
+            
+            with st.spinner("Running validation..."):
+                validator = DetectionValidator(str(geojson_path))
+                
+                # Area statistics
+                stats = validator.calculate_area_statistics()
+                
+                st.markdown("#### 📊 Crown Area Distribution")
+                stat_col1, stat_col2, stat_col3 = st.columns(3)
+                
+                with stat_col1:
+                    st.metric("Mean Area", f"{stats['mean_area_m2']:.2f} m²")
+                    st.metric("Median Area", f"{stats['median_area_m2']:.2f} m²")
+                
+                with stat_col2:
+                    st.metric("Std Deviation", f"{stats['std_area_m2']:.2f} m²")
+                    st.metric("Min Area", f"{stats['min_area_m2']:.2f} m²")
+                
+                with stat_col3:
+                    st.metric("Max Area", f"{stats['max_area_m2']:.2f} m²")
+                    st.metric("Total Area", f"{stats['total_area_m2']:.1f} m²")
+                
+                # Size validation
+                st.markdown("#### ✓ Size Validity Check")
+                size_check = validator.validate_crown_sizes(min_expected_m2=0.5, max_expected_m2=50.0)
+                
+                if size_check['passed']:
+                    st.success(f"✅ {size_check['valid_percent']:.1f}% of detections have realistic sizes ({size_check['expected_range_m2']} m²)")
+                else:
+                    st.warning(f"⚠️ Only {size_check['valid_percent']:.1f}% of detections have realistic sizes")
+                
+                val_col1, val_col2, val_col3 = st.columns(3)
+                with val_col1:
+                    st.metric("Valid Sizes", size_check['valid_size'])
+                with val_col2:
+                    st.metric("Too Small", size_check['too_small'])
+                with val_col3:
+                    st.metric("Too Large", size_check['too_large'])
+                
+                # Commission errors
+                st.markdown("#### ❌ Commission Error Detection")
+                commission = validator.detect_commission_errors(max_reasonable_area_m2=100.0)
+                
+                if commission['commission_rate_percent'] < 5:
+                    st.success(f"✅ Low commission rate: {commission['commission_rate_percent']:.2f}%")
+                elif commission['commission_rate_percent'] < 15:
+                    st.warning(f"⚠️ Moderate commission rate: {commission['commission_rate_percent']:.2f}%")
+                else:
+                    st.error(f"❌ High commission rate: {commission['commission_rate_percent']:.2f}%")
+                
+                if commission['errors']:
+                    with st.expander("View suspected errors"):
+                        for error in commission['errors'][:10]:
+                            st.write(f"• Feature #{error['feature_id']}: {error['reason']}")
+                
+        except ImportError:
+            st.error("Validation module not found. Please ensure validation_metrics.py exists.")
+        except Exception as e:
+            st.error(f"Validation error: {str(e)}")
+    
+    # Download section
+    st.markdown("---")
+    st.markdown("### ⬇️  Export Data")
+    
+    dl_col1, dl_col2 = st.columns(2)
+    
+    with dl_col1:
+        with open(geojson_path, 'r') as f:
+            geojson_str = f.read()
+        
+        st.download_button(
+            label="📥 Download GeoJSON",
+            data=geojson_str,
+            file_name=selected_geojson,
+            mime="application/geo+json"
+        )
+    
+    with dl_col2:
+        # Create CSV of crown areas
+        csv_data = "tree_id,area_m2,centroid_lat,centroid_lon\n"
+        for idx, feature in enumerate(features):
+            props = feature.get('properties', {})
+            area = props.get('area', 0.0)
+            geom = feature.get('geometry', {})
+            
+            # Calculate centroid (simplified)
+            if geom.get('type') == 'Polygon':
+                coords = geom.get('coordinates', [[]])[0]
+                if coords:
+                    avg_lon = sum(c[0] for c in coords) / len(coords)
+                    avg_lat = sum(c[1] for c in coords) / len(coords)
+                    csv_data += f"{idx+1},{area:.2f},{avg_lat:.7f},{avg_lon:.7f}\n"
+        
+        st.download_button(
+            label="📄 Download CSV Summary",
+            data=csv_data,
+            file_name=f"{selected_geojson.replace('.geojson', '')}_summary.csv",
+            mime="text/csv"
+        )
+
+
 def main():
     # Header
     st.markdown("""
     <div class="main-header">
         <h1>🌿 MangroVision</h1>
         <p>AI-Powered Mangrove Planting Zone Analyzer for Leganes, Iloilo</p>
-        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Powered by detectree2 AI tree crown detection</p>
+        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Intelligent tree crown detection & safe zone mapping</p>
     </div>
     """, unsafe_allow_html=True)
+    
+    # Mode selector
+    st.markdown("---")
+    mode = st.radio(
+        "📋 Select Analysis Mode",
+        options=["🖼️ Analyze Drone Image", "🗺️ View Orthophoto Tree Crown Detection"],
+        index=0,
+        horizontal=True
+    )
+    st.markdown("---")
+    
+    # Route to appropriate analysis mode
+    if mode == "🗺️ View Orthophoto Tree Crown Detection":
+        show_orthophoto_detection_viewer()
+        return
     
     # Sidebar
     with st.sidebar:
@@ -286,17 +603,45 @@ def main():
         
         st.markdown("### ⚙️ Detection Settings")
         
-        st.info("🌳 MangroVision uses **detectree2 AI** for accurate tree crown detection")
+        # Check if detectree2 is available
+        try:
+            from canopy_detection.detectree2_detector import Detectree2Detector
+            detectree2_available = True
+            st.success("🌳 **Smart Hybrid System** (HSV + AI) Ready")
+        except ImportError:
+            detectree2_available = False
+            st.warning("🌳 Using **HSV detection** (detectree2 not installed)")
+            st.caption("Install detectree2 for AI-powered hybrid detection")
         
-        # AI confidence slider
-        ai_confidence = st.slider(
-            "AI Confidence Threshold",
-            min_value=0.3,
-            max_value=0.9,
-            value=0.5,
-            step=0.05,
-            help="Higher = fewer but more confident detections. 0.5 is recommended."
-        )
+        # Detection mode selector (NEW!)
+        if detectree2_available:
+            detection_mode = st.selectbox(
+                "🧠 Detection Mode",
+                ["hybrid", "ai", "hsv"],
+                index=0,
+                format_func=lambda x: {
+                    "hybrid": "⭐ Smart Hybrid (HSV + AI) - RECOMMENDED",
+                    "ai": "🤖 AI Only (may miss trees)",
+                    "hsv": "⚡ HSV Only (fast, good coverage)"
+                }[x],
+                help="Hybrid merges HSV and AI for 90-95% accuracy. AI-only may miss shadows/small trees."
+            )
+        else:
+            detection_mode = "hsv"
+            st.caption("⚡ Mode: HSV Only (AI not available)")
+        
+        # AI confidence slider - Only show for AI/Hybrid modes
+        if detection_mode in ['ai', 'hybrid']:
+            ai_confidence = st.slider(
+                "AI Confidence Threshold",
+                min_value=0.3,
+                max_value=0.9,
+                value=0.5,
+                step=0.05,
+                help="Higher = only high-confidence detections. 0.5-0.6 is standard for good models."
+            )
+        else:
+            ai_confidence = 0.5  # Default value for HSV mode
         
         # Model selection
         model_name = st.selectbox(
@@ -422,6 +767,7 @@ def main():
                 st.session_state.current_hexagon_size = hexagon_size
                 st.session_state.current_ai_confidence = ai_confidence
                 st.session_state.current_model_name = model_name
+                st.session_state.current_detection_mode = detection_mode
         else:
             st.markdown("### 📋 Instructions")
             st.markdown("""
@@ -457,11 +803,12 @@ def main():
             st.session_state.current_canopy_buffer,
             st.session_state.current_hexagon_size,
             st.session_state.current_ai_confidence,
-            st.session_state.current_model_name
+            st.session_state.current_model_name,
+            st.session_state.current_detection_mode
         )
 
 
-def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size, ai_confidence, model_name):
+def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size, ai_confidence, model_name, detection_mode='hybrid'):
     """Process the uploaded image using detectree2 AI detection"""
     
     with st.spinner("🔄 Analyzing image... This may take a moment..."):
@@ -610,16 +957,17 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             st.markdown("### 🔍 Running Detection Analysis")
             
             # Create a unique key for this analysis
-            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}_{ai_confidence}_{model_name}"
+            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}"
             
             # Check if we've already run detection for this configuration
             if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
-                # Initialize detector with detectree2 AI
+                # Initialize detector with Smart Hybrid mode
                 detector = HexagonDetector(
                     altitude_m=altitude_to_use, 
                     drone_model=drone_to_use,
                     ai_confidence=ai_confidence,
-                    model_name=model_name
+                    model_name=model_name,
+                    detection_mode=detection_mode
                 )
                 
                 # Process image

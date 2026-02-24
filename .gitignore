@@ -33,22 +33,43 @@ htmlcov/
 # Data and logs
 *.log
 
-# Model files (uncomment if models are large and stored elsewhere)
-# models/*.pth
-# models/*.ckpt
-# models/*.pkl
-# models/*.h5
-# models/*.weights
+# Model files (LARGE - download separately)
+models/*.pth
+models/*.ckpt
+models/*.pkl
+models/*.h5
+models/*.weights
 
 # Large data files - excluded from repository
 flight_videos/
 dataset_frames/
 drone_images/
 
-# Keep output examples for documentation
-# output/**/*.png
-# output/**/*.jpg
-# output/**/*.geojson
+# Output and test results
+output/
+output_geojson/
+*.jpg
+*.png
+!README_assets/*.png
+
+# MAP tiles (large orthophoto tiles)
+MAP/*/
+!MAP/odm_georeferencing/
+!MAP/odm_orthophoto/odm_orthophoto.tif
+
+# Temporary and debug files
+temp_*.jpg
+temp_*.png
+debug_*.py
+debug_*.jpg
+diagnose_*.py
+check_*.py
+test_*.jpg
+test_*.png
+temp_flight_log/
+
+# Archived documentation
+docs_archive/
 
 # OS files
 .DS_Store
