@@ -136,19 +136,21 @@ class ProperDetectree2Detector:
     
     def detect_from_image(self, 
                          image: np.ndarray,
-                         tile_size: int = 512,
-                         overlap: float = 0.25) -> Tuple[List[Polygon], np.ndarray, Dict]:
+                         gsd: float = None,
+                         tile_size: int = 1024,
+                         overlap: float = 0.125) -> Tuple[List[Polygon], np.ndarray, Dict, List[str]]:
         """
-        Detect tree crowns using proper detectree2 tiled inference
-        OPTIMIZED: 512px tiles with 25% overlap (matches training data size)
+        Detect tree crowns using proper detectree2 tiled inference with species classification
+        OPTIMIZED: 1024px tiles with 12.5% overlap
         
         Args:
             image: Input BGR image
-            tile_size: Size of tiles for detection (default 512px, matches training)
-            overlap: Overlap fraction between tiles (default 0.25 = 25%)
+            gsd: Ground Sample Distance (optional, for compatibility)
+            tile_size: Size of tiles for detection (default 1024px)
+            overlap: Overlap fraction between tiles (default 0.125 = 12.5%)
             
         Returns:
-            Tuple of (polygons, mask, metadata)
+            Tuple of (polygons, mask, metadata, species_list)
         """
         if self.predictor is None:
             self.setup_model()
@@ -162,8 +164,8 @@ class ProperDetectree2Detector:
         veg_percent = 100 * veg_pixels / (h * w)
         print(f"   Phase 1: HSV found {veg_percent:.1f}% vegetation coverage")
         
-        # Calculate stride based on overlap
-        stride = int(tile_size * (1 - overlap))
+        # Calculate stride based on overlap (ensure it's at least 1)
+        stride = max(1, int(tile_size * (1 - overlap)))
         
         # PHASE 2: Generate tiles - ONLY process tiles with vegetation
         tiles = []
@@ -202,11 +204,21 @@ class ProperDetectree2Detector:
             instances = outputs["instances"].to("cpu")
             scores = instances.scores.numpy()
             masks = instances.pred_masks.numpy()
+            pred_classes = instances.pred_classes.numpy() if len(instances) > 0 else np.array([])
             
-            # Store each detection with global coordinates
+            # Species mapping
+            # Only Bungalon was annotated in training
+            class_names = {
+                0: "Unknown",  # Generic canopy (not labeled)
+                1: "Bungalon"  # Specifically annotated
+            }
+            
+            # Store each detection with global coordinates and species
             for i in range(len(scores)):
                 if scores[i] >= self.confidence_threshold:
                     mask = masks[i].astype(np.uint8)
+                    species_class = int(pred_classes[i]) if i < len(pred_classes) else 0
+                    species_name = class_names.get(species_class, "Unknown")
                     
                     # Find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -226,7 +238,8 @@ class ProperDetectree2Detector:
                                     all_instances.append({
                                         'polygon': poly,
                                         'score': scores[i],
-                                        'contour': contour_global
+                                        'contour': contour_global,
+                                        'species': species_name
                                     })
                             except:
                                 continue
@@ -235,8 +248,14 @@ class ProperDetectree2Detector:
         
         # DISABLE NMS - Keep all detections for dense canopy
         final_polygons = [inst['polygon'] for inst in all_instances]
+        species_list = [inst['species'] for inst in all_instances]
+        
+        # Count species
+        bungalon_count = species_list.count("Bungalon")
+        unknown_count = len(species_list) - bungalon_count
         
         print(f"   ✅ {len(final_polygons)} trees detected (NMS disabled for dense canopy)")
+        print(f"   Species: {bungalon_count} Bungalon, {unknown_count} Unknown")
         
         # Create combined mask
         combined_mask = np.zeros((h, w), dtype=np.uint8)
@@ -253,10 +272,12 @@ class ProperDetectree2Detector:
             'overlap': overlap,
             'raw_detections': len(all_instances),
             'final_trees': len(final_polygons),
-            'detection_method': 'detectree2_official'
+            'detection_method': 'detectree2_official',
+            'bungalon_count': bungalon_count,
+            'unknown_count': unknown_count
         }
         
-        return final_polygons, combined_mask, metadata
+        return final_polygons, combined_mask, metadata, species_list
     
     def _nms_polygons(self, instances: List[Dict], iou_threshold: float = 0.5) -> List[Polygon]:
         """

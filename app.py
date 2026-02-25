@@ -33,6 +33,11 @@ from canopy_detection.ortho_matcher import (
     drone_pixel_to_gps_via_homography,
     drone_pixel_to_gps_via_heading,
 )
+from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
+
+# Load forbidden zones (towers, bridges, houses) once at startup
+_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_zones.geojson"
+_forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
 
 # Page configuration
 st.set_page_config(
@@ -645,9 +650,9 @@ def main():
         
         # Model selection
         model_name = st.selectbox(
-            "AI Detection Model",
-            ["custom", "benchmark", "paracou"],
-            help="✨ custom: YOUR trained model (Roboflow dataset) | benchmark: General trees | paracou: Tropical forests"
+            "Detectree2 Model",
+            ["benchmark", "paracou"],
+            help="benchmark: General trees | paracou: Tropical forests (best for mangroves)"
         )
         
         # Species selection (placeholder for future)
@@ -704,14 +709,12 @@ def main():
         <div style="background: linear-gradient(135deg, #1E3A2E 0%, #2D5F3F 100%);
                     padding: 1.2rem; border-radius: 10px; border-left: 4px solid #7EC88D; margin: 1rem 0;">
             <strong style="color: #7EC88D; font-size: 1.1rem;">ℹ️ About</strong><br>
-            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>transfer learning</strong> from detectree2's tropical forest model, fine-tuned on YOUR Roboflow dataset for accurate Bungalon mangrove canopy detection.</span>
+            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>detectree2 AI</strong> (Mask R-CNN) for accurate tree crown detection and safe planting zone identification.</span>
             <br><br>
             <strong style="color: #7EC88D;">Technology:</strong><br>
-            <span style="color: #C8E6C9;">🌴 Base Model: detectree2 tropical forests (Danum, Sepilok, Paracou)<br>
-            🎯 Fine-tuned: 240 annotated images from your dataset<br>
-            🤖 Architecture: Mask R-CNN ResNet-101-FPN<br>
-            📊 Performance: AP50=59.5% (competitive with research papers)<br>
-            🌳 Classes: Bungalon Canopy (trained), Mangrove-Canopy (future)</span>
+            <span style="color: #C8E6C9;">🤖 Detectree2 - AI tree detection<br>
+            � Specialized for tree crowns<br>
+            🎯 State-of-the-art accuracy</span>
             <br><br>
             <strong style="color: #7EC88D;">Color Legend:</strong><br>
             <span style="color: #C8E6C9;">🔴 Red = Danger Zones (1m buffer)<br>
@@ -979,7 +982,58 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     hexagon_size_m=hexagon_size
                 )
                 
-                # Create visualization
+                # ── EARLY FORBIDDEN ZONE FILTERING ────────────────────────
+                # Filter hexagons BEFORE visualization so the Visual Results
+                # image also excludes planting points on bridges/towers/houses.
+                results['_forbidden_filtered'] = 0
+                if image_gps is not None and _forbidden_filter.zone_count > 0:
+                    _gsd = results['gsd_m_per_pixel']
+                    _w, _h = results['image_size']
+                    
+                    # Run ortho-matching (result is cached for reuse in map section)
+                    _match_key = f"ortho_match_{uploaded_file.name}"
+                    if _match_key not in st.session_state:
+                        _match_result = match_drone_to_ortho(
+                            drone_image=results['image'],
+                            center_lat=image_center_lat,
+                            center_lon=image_center_lon,
+                            drone_gsd=_gsd,
+                        )
+                        st.session_state[_match_key] = _match_result
+                    else:
+                        _match_result = st.session_state[_match_key]
+                    
+                    # Build pixel→GPS converter
+                    if _match_result['success']:
+                        _H = _match_result['H']
+                        def _px_to_gps(px, py):
+                            return drone_pixel_to_gps_via_homography(px, py, _H)
+                    else:
+                        def _px_to_gps(px, py):
+                            return drone_pixel_to_gps_via_heading(
+                                px, py, _w, _h,
+                                image_center_lat, image_center_lon,
+                                _gsd, camera_heading
+                            )
+                    
+                    # Filter: keep only hexagons outside forbidden zones
+                    _safe = []
+                    _filtered = 0
+                    for _hex in results['hexagons']:
+                        _px, _py = _hex['center']
+                        _lat, _lon = _px_to_gps(_px, _py)
+                        _hex['_gps_lat'] = _lat
+                        _hex['_gps_lon'] = _lon
+                        if _forbidden_filter.is_safe_location(_lat, _lon):
+                            _safe.append(_hex)
+                        else:
+                            _filtered += 1
+                    
+                    results['hexagons'] = _safe
+                    results['hexagon_count'] = len(_safe)
+                    results['_forbidden_filtered'] = _filtered
+                
+                # Create visualization (now with filtered hexagons)
                 vis_image = detector.visualize_results(results)
                 
                 # Convert BGR to RGB for display
@@ -1049,7 +1103,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 st.markdown("""
                 🟣 **Purple** = Canopy Areas | 🔴 **Red** = 1m Danger Buffer  
                 🟢 **Light Green** = 1m Planting Buffer | 🟠 **Orange** = Overlap Warning
-                �🟩 **Dark Green** = Planting Points
+                🟩 **Dark Green** = Planting Points
                 """)
                 st.image(vis_image_rgb, width='stretch')
             
@@ -1198,12 +1252,11 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 # Extract detection data for mapping
                 gsd = results['gsd_m_per_pixel']
                 canopy_polygons = results['canopy_polygons']
-                hexagons = results['hexagons']
+                hexagons = results['hexagons']  # Already filtered by forbidden zones
                 width, height = results['image_size']
+                forbidden_filtered_count = results.get('_forbidden_filtered', 0)
 
-                # ── AUTO-ALIGN: match drone image to orthophoto GeoTIFF ──────
-                # This finds the exact homography so every hexagon pixel maps
-                # to the correct GPS coordinate without needing a heading input.
+                # ── AUTO-ALIGN: reuse cached ortho match ─────────────────
                 match_key = f"ortho_match_{uploaded_file.name}"
                 if match_key not in st.session_state:
                     with st.spinner("🔍 Auto-aligning drone image with orthophoto map…"):
@@ -1245,6 +1298,13 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                             map_center_lat, map_center_lon,
                             gsd, camera_heading
                         )
+                
+                # ── Map Display Options ──────────────────────────────────
+                show_forbidden_zones = st.checkbox(
+                    "🚫 Show forbidden zone boundaries (red polygons)",
+                    value=False,
+                    help="Toggle visibility of forbidden zones on the map. Filtering is always active."
+                )
                 
                 # Create orthophoto map centered on image location
                 ortho_map = folium.Map(
@@ -1295,17 +1355,50 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     tooltip="📷 Image Location"
                 ).add_to(ortho_map)
                 
-                # Add GREEN POINTS for each safe planting hexagon at exact GPS coordinates
-                for i, hexagon in enumerate(hexagons):
-                    px, py = hexagon['center']
-                    lat, lon = pixel_to_latlon(px, py)
+                # ── Hexagons are already filtered by forbidden zones ────
+                # (filtering was done before visualization so Visual Results
+                #  image also excludes forbidden zone hexagons)
+                safe_hexagons = hexagons  # Already safe — filtered earlier
+
+                if forbidden_filtered_count > 0:
+                    st.warning(f"🚫 {forbidden_filtered_count} planting points filtered out (inside forbidden zones: towers, bridges, houses). {len(safe_hexagons)} safe points remain.")
+
+                # ── Draw forbidden zone polygons on the map (red) ─────────
+                if show_forbidden_zones and _forbidden_filter.forbidden_polygons:
+                    fz_group = folium.FeatureGroup(name='🚫 Forbidden Zones')
+                    for poly in _forbidden_filter.forbidden_polygons:
+                        # Shapely polygon coords are (lon, lat); Folium needs (lat, lon)
+                        coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+                        folium.Polygon(
+                            locations=coords,
+                            color='red',
+                            fill=True,
+                            fillColor='red',
+                            fillOpacity=0.35,
+                            weight=2,
+                            tooltip='🚫 Forbidden Zone (tower/bridge/house)',
+                        ).add_to(fz_group)
+                    fz_group.add_to(ortho_map)
+
+                # Ensure hexagons have GPS coords (compute if not pre-computed)
+                for hexagon in safe_hexagons:
+                    if '_gps_lat' not in hexagon:
+                        px, py = hexagon['center']
+                        lat, lon = pixel_to_latlon(px, py)
+                        hexagon['_gps_lat'] = lat
+                        hexagon['_gps_lon'] = lon
+
+                # Add GREEN POINTS only for safe planting hexagons
+                for i, hexagon in enumerate(safe_hexagons):
+                    lat = hexagon['_gps_lat']
+                    lon = hexagon['_gps_lon']
 
                     folium.CircleMarker(
                         location=[lat, lon],
                         radius=4,
                         popup=f"""🌱 <b>Planting Point #{i+1}</b><br>
                         GPS: {lat:.7f}°, {lon:.7f}°<br>
-                        Pixel: ({int(px)}, {int(py)})<br>
+                        Pixel: ({int(hexagon['center'][0])}, {int(hexagon['center'][1])})<br>
                         Buffer: {hexagon.get('buffer_radius_m', 'N/A')}m<br>
                         Area: {hexagon.get('area_m2', hexagon.get('area_sqm', 0)):.2f} m²""",
                         tooltip=f"🌱 Point #{i+1}",
@@ -1377,11 +1470,12 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 st.markdown("### 📍 Planting Location Coordinates")
                 st.info("ℹ️ Use Visual Results above to see where each point is located in the analyzed image")
                 
-                # Create coordinate dataframe with GPS
+                # Create coordinate dataframe with GPS (only safe hexagons)
                 coord_data = []
-                for i, hexagon in enumerate(hexagons, 1):
+                for i, hexagon in enumerate(safe_hexagons, 1):
+                    lat = hexagon['_gps_lat']
+                    lon = hexagon['_gps_lon']
                     px, py = hexagon['center']
-                    lat, lon = pixel_to_latlon(px, py)
                     coord_data.append({
                         "Point #": i,
                         "Latitude": f"{lat:.7f}",
@@ -1405,7 +1499,10 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         mime="text/csv"
                     )
                 
-                st.success(f"✅ Analysis complete! {len(hexagons)} GPS-tagged planting locations shown on map. Use Visual Results to see exact positions.")
+                if forbidden_filtered_count > 0:
+                    st.success(f"✅ Analysis complete! {len(safe_hexagons)} safe planting locations shown on map ({forbidden_filtered_count} filtered out from forbidden zones). Use Visual Results to see exact positions.")
+                else:
+                    st.success(f"✅ Analysis complete! {len(safe_hexagons)} GPS-tagged planting locations shown on map. Use Visual Results to see exact positions.")
             else:
                 st.warning("⚠️ GPS mapping skipped - no GPS data in image")
                 st.success("✅ Analysis complete! Results ready for export.")

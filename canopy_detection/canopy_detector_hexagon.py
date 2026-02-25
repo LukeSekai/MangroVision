@@ -120,7 +120,18 @@ class HexagonDetector:
             hsv_polygons, hsv_mask = self._detect_hsv(image)
             
             # Step 2: AI Detection (high-confidence canopies)
-            ai_polygons, ai_mask, metadata = self.ai_detector.detect_from_image(image)
+            try:
+                ai_result = self.ai_detector.detect_from_image(image)
+                # Handle both 2-value and 3-value returns
+                if len(ai_result) == 3:
+                    ai_polygons, ai_mask, metadata = ai_result
+                else:
+                    ai_polygons, ai_mask = ai_result
+                    metadata = {}
+            except Exception as e:
+                print(f"   ⚠️ AI detection failed: {e}")
+                print(f"   Falling back to HSV-only detection")
+                return hsv_polygons, hsv_mask
             
             # Step 3: Merge results (UNION - keep all unique detections)
             combined_polygons = self._merge_detections(hsv_polygons, ai_polygons)
@@ -144,7 +155,18 @@ class HexagonDetector:
             # AI ONLY MODE
             print(f"🌳 Running AI-only detection...")
             
-            canopy_polygons, canopy_mask, metadata = self.ai_detector.detect_from_image(image)
+            try:
+                ai_result = self.ai_detector.detect_from_image(image)
+                # Handle both 2-value and 3-value returns
+                if len(ai_result) == 3:
+                    canopy_polygons, canopy_mask, metadata = ai_result
+                else:
+                    canopy_polygons, canopy_mask = ai_result
+                    metadata = {}
+            except Exception as e:
+                print(f"   ⚠️ AI detection failed: {e}")
+                print(f"   Falling back to HSV detection")
+                return self._detect_hsv(image)
             
             total_canopy_pixels = np.count_nonzero(canopy_mask)
             total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
@@ -275,6 +297,167 @@ class HexagonDetector:
                 merged.append(hsv_poly)
         
         return merged
+    
+    def detect_structures(self, image: np.ndarray, canopy_mask: np.ndarray = None) -> Tuple[List[Polygon], np.ndarray]:
+        """
+        Detect man-made structures (bridges, towers, buildings) using color analysis.
+        Uses canopy mask to EXCLUDE all vegetation first - structures are what's left
+        that is NOT green vegetation and NOT water/mud/bare soil.
+        NO BUFFER ZONES - just exact footprint of structures
+        
+        Args:
+            image: Input BGR image
+            canopy_mask: Binary mask of detected canopy/vegetation (to exclude from search)
+            
+        Returns:
+            Tuple of (List of structure polygons, binary structure mask)
+        """
+        h, w = image.shape[:2]
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # ── Step 1: Build a vegetation exclusion mask ──────────────────────────
+        # Exclude all GREEN pixels first (mangroves, grass, any vegetation)
+        lower_green1 = np.array([35, 30, 30])
+        upper_green1 = np.array([90, 255, 255])
+        green_mask = cv2.inRange(hsv, lower_green1, upper_green1)
+        
+        # Also exclude DARK pixels (shadows, water, dark mud)
+        # EXPANDED range to catch darker mud areas
+        lower_dark = np.array([0, 0, 0])
+        upper_dark = np.array([180, 255, 100])  # Increased from 50 to 100 to catch more mud
+        dark_mask = cv2.inRange(hsv, lower_dark, upper_dark)
+        
+        # Also exclude BROWN/TAN bare soil - EXPANDED ranges
+        # Range 1: Brown/tan soil (original)
+        lower_soil1 = np.array([8, 20, 60])
+        upper_soil1 = np.array([30, 200, 180])
+        soil_mask1 = cv2.inRange(hsv, lower_soil1, upper_soil1)
+        
+        # Range 2: Gray/light mud (catches desaturated tan/gray mud)
+        # REFINED to avoid tower colors - lower saturation only
+        lower_soil2 = np.array([0, 0, 50])      # Low saturation, mid-low brightness
+        upper_soil2 = np.array([35, 35, 150])   # Reduced saturation from 60 to 35 (avoid tower)
+        soil_mask2 = cv2.inRange(hsv, lower_soil2, upper_soil2)
+        
+        # Range 3: Very light mud/sand
+        # REFINED to avoid tower - lower saturation and specific brightness
+        lower_soil3 = np.array([15, 10, 120])   # Light tan/beige areas
+        upper_soil3 = np.array([35, 50, 200])   # Reduced saturation from 80 to 50
+        soil_mask3 = cv2.inRange(hsv, lower_soil3, upper_soil3)
+        
+        # Combine all soil/mud masks
+        soil_mask = cv2.bitwise_or(soil_mask1, soil_mask2)
+        soil_mask = cv2.bitwise_or(soil_mask, soil_mask3)
+        
+        # Build combined exclusion zone
+        exclusion_mask = cv2.bitwise_or(green_mask, dark_mask)
+        exclusion_mask = cv2.bitwise_or(exclusion_mask, soil_mask)
+        
+        # Also exclude provided canopy mask (AI-detected trees)
+        if canopy_mask is not None:
+            exclusion_mask = cv2.bitwise_or(exclusion_mask, canopy_mask)
+        
+        # ── Step 2: What remains = candidate structures ────────────────────────
+        # Invert exclusion to get non-vegetation, non-soil, non-dark pixels
+        candidate_mask = cv2.bitwise_not(exclusion_mask)
+        
+        # ── Step 3: Detect GRAY/CONCRETE/METAL colors ─────────────────────────
+        # Low saturation = man-made materials (concrete, metal, painted wood)
+        # MADE MORE RESTRICTIVE to avoid false positives with mud
+        # Requires higher brightness to distinguish from mud
+        lower_manmade = np.array([0, 0, 100])   # Increased from 70 to 100 (brighter)
+        upper_manmade = np.array([180, 40, 230]) # Reduced saturation threshold from 45 to 40
+        manmade_color = cv2.inRange(hsv, lower_manmade, upper_manmade)
+        
+        # ── Step 4: Detect RED/RUST/ORANGE METAL (towers, bridges) ────────────
+        # Expanded to catch entire tower including shadowed/lighter parts
+        
+        # Red range 1: Bright red/rust (upper part of tower)
+        lower_red1 = np.array([0, 60, 80])      # Reduced saturation from 80 to 60, increased value
+        upper_red1 = np.array([10, 255, 255])   # Full value range
+        red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+        
+        # Red range 2: Wraparound hue (170-180)
+        lower_red2 = np.array([165, 60, 80])
+        upper_red2 = np.array([180, 255, 255])
+        red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+        
+        # Orange/brown range: Rusty metal, painted towers
+        lower_orange = np.array([8, 50, 70])    # Orange-brown hue
+        upper_orange = np.array([25, 255, 220])
+        orange_mask = cv2.inRange(hsv, lower_orange, upper_orange)
+        
+        # Dark red/brown: Shadowed parts of tower
+        lower_dark_red = np.array([0, 40, 40])   # Lower thresholds to catch shadows
+        upper_dark_red = np.array([15, 255, 120])
+        dark_red_mask = cv2.inRange(hsv, lower_dark_red, upper_dark_red)
+        
+        # Combine all metal/tower colors
+        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
+        red_mask = cv2.bitwise_or(red_mask, orange_mask)
+        red_mask = cv2.bitwise_or(red_mask, dark_red_mask)
+        
+        # Fill holes in tower mask BEFORE combining with other structures
+        kernel_fill_tower = np.ones((15, 15), np.uint8)
+        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_fill_tower, iterations=2)
+        
+        # ── Step 5: Combine - must be man-made color AND NOT excluded ──────────
+        structure_mask = cv2.bitwise_or(manmade_color, red_mask)
+        structure_mask = cv2.bitwise_and(structure_mask, candidate_mask)
+        
+        # ── Step 6: Morphological cleanup ─────────────────────────────────────
+        # Additional cleanup to connect nearby structure parts
+        kernel_close = np.ones((9, 9), np.uint8)  # Increased from 7x7 to 9x9
+        structure_mask = cv2.morphologyEx(structure_mask, cv2.MORPH_CLOSE, kernel_close, iterations=4)
+        kernel_open = np.ones((5, 5), np.uint8)
+        structure_mask = cv2.morphologyEx(structure_mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
+        
+        # Find contours of structures
+        contours, _ = cv2.findContours(structure_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        structure_polygons = []
+        # Minimum area for structures (5 m² - filters out tiny noise)
+        min_area_m2 = 5.0
+        min_area_pixels = int(min_area_m2 / (self.gsd ** 2)) if self.gsd else 500
+        
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area > min_area_pixels:
+                # Simplify contour
+                epsilon = 0.01 * cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, epsilon, True)
+                points = approx.reshape(-1, 2)
+                
+                if len(points) >= 3:
+                    poly = Polygon(points)
+                    if poly.is_valid:
+                        structure_polygons.append(poly)
+                    elif not poly.is_valid:
+                        poly = poly.buffer(0)
+                        if poly.is_valid and not poly.is_empty:
+                            if isinstance(poly, Polygon):
+                                structure_polygons.append(poly)
+                            elif isinstance(poly, MultiPolygon):
+                                structure_polygons.extend(list(poly.geoms))
+        
+        # Calculate statistics
+        structure_pixels = np.count_nonzero(structure_mask)
+        structure_m2 = structure_pixels * (self.gsd ** 2)
+        
+        # Calculate what was excluded (for debugging)
+        excluded_pixels = np.count_nonzero(exclusion_mask)
+        excluded_m2 = excluded_pixels * (self.gsd ** 2)
+        total_pixels = h * w
+        total_m2 = total_pixels * (self.gsd ** 2)
+        
+        print(f"✓ Structure detection breakdown:")
+        print(f"   Total area: {total_m2:.1f} m²")
+        print(f"   Excluded (vegetation/mud/water): {excluded_m2:.1f} m² ({excluded_pixels/total_pixels*100:.1f}%)")
+        print(f"   Structures detected: {len(structure_polygons)} ({structure_m2:.1f} m²)")
+        print(f"   No buffer applied - exact footprint only")
+        
+        return structure_polygons, structure_mask
     
     def detect_non_vegetation_areas(self, image: np.ndarray) -> np.ndarray:
         """
@@ -470,122 +653,174 @@ class HexagonDetector:
         hexagon_size_m: float,
         existing_hexagons: List[Dict],
         max_overlap_m: float = 0.1,
-        min_clearance_m: float = 2.5
+        min_clearance_m: float = 0.5
     ) -> List[Dict]:
         """
-        Place hexagons of a specific size in plantable zone
-        Core must be fully in plantable zone, buffers can overlap up to max_overlap_m
+        MAXIMIZED PLACEMENT with proper hexagonal tessellation.
+        Tries multiple grid phase offsets and picks the best one,
+        then fills remaining gaps with a secondary scan.
+        
+        Rules:
+          - Dark green CORE must be ≥90% inside plantable zone
+          - Light green BUFFER must be ≥70% inside plantable zone (max 30% red overlap)
+          - Hexagons follow a perfect tessellation grid (no gaps between neighbors)
         
         Args:
             plantable_zone: Available planting area
-            hexagon_size_m: Size of hexagons to place
+            hexagon_size_m: Size of hexagons to place (buffer circumradius in meters)
             existing_hexagons: Already placed hexagons to avoid
-            max_overlap_m: Maximum allowed overlap between buffers in meters (default 0.1m)
-            min_clearance_m: Minimum safe clearance from danger zones (default 2.5m)
+            max_overlap_m: Maximum allowed overlap between buffers in meters
+            min_clearance_m: Minimum clearance for center point
             
         Returns:
             List of newly placed hexagons
         """
-        # The hexagon_size_m represents the BUFFER radius
+        # The hexagon_size_m represents the BUFFER radius (circumradius R)
         buffer_radius_pixels = hexagon_size_m / self.gsd
         core_radius_pixels = buffer_radius_pixels * 0.2
         
-        # Minimum clearance to ensure we only place in TRULY open areas
-        min_clearance_pixels = min_clearance_m / self.gsd
-        
-        # Get bounding box
-        if isinstance(plantable_zone, MultiPolygon):
-            bounds = plantable_zone.bounds
-        else:
-            bounds = plantable_zone.bounds
-        
+        # Get bounding box (expand slightly to catch edge hexagons)
+        bounds = plantable_zone.bounds
         minx, miny, maxx, maxy = bounds
         
-        # CONSERVATIVE spacing - only check areas with significant clearance
-        # This prevents placing hexagons in tiny gaps between canopies
-        search_spacing_m = 1.0  # Search every 1m (increased from 0.25m)
-        search_spacing_pixels = search_spacing_m / self.gsd
+        # Expand bounds by one full buffer radius so edge hexagons aren't missed
+        minx -= buffer_radius_pixels
+        miny -= buffer_radius_pixels
+        maxx += buffer_radius_pixels
+        maxy += buffer_radius_pixels
         
-        h_spacing = search_spacing_pixels
-        v_spacing = search_spacing_pixels * 0.866  # Hexagonal offset
+        # PROPER HEXAGONAL TESSELLATION GRID
+        # For flat-top hexagons with circumradius R:
+        #   - Same-row horizontal spacing = √3 * R (buffers share edges, no gaps)
+        #   - Vertical row spacing = 3/2 * R
+        #   - Odd rows offset by √3/2 * R
+        R = buffer_radius_pixels
+        h_spacing = np.sqrt(3) * R   # ~1.732 * R between centers in same row
+        v_spacing = 1.5 * R          # 3/2 * R between rows
         
+        # ── Phase 1: Try multiple grid offsets, keep best ────────────────
+        # The fixed grid origin can miss valid areas. By trying several
+        # phase shifts (fractions of the grid cell), we find the alignment
+        # that covers the most plantable area.
+        num_phases = 5  # Try 5×5 = 25 phase combinations
+        best_hexagons = []
+        
+        for phase_y_i in range(num_phases):
+            for phase_x_i in range(num_phases):
+                phase_x = (phase_x_i / num_phases) * h_spacing
+                phase_y = (phase_y_i / num_phases) * v_spacing
+                
+                candidate = self._tessellate_grid(
+                    plantable_zone, R, buffer_radius_pixels, core_radius_pixels,
+                    h_spacing, v_spacing, minx + phase_x, miny + phase_y, maxx, maxy
+                )
+                
+                if len(candidate) > len(best_hexagons):
+                    best_hexagons = candidate
+        
+        print(f"    Phase 1 (best grid alignment): {len(best_hexagons)} hexagons")
+        
+        # ── Phase 2: Fill remaining gaps ─────────────────────────────────
+        # After choosing the best grid, scan for leftover plantable pockets
+        # that the grid missed. Place additional hexagons that don't overlap
+        # with already-placed ones.
+        placed_centers = set()
+        for h in best_hexagons:
+            # Quantize to grid to track occupancy
+            cx, cy = h['center']
+            placed_centers.add((round(cx, 1), round(cy, 1)))
+        
+        # Use a finer sub-grid search: half-cell offsets
+        extra_hexagons = []
+        sub_offsets = [
+            (h_spacing * 0.25, v_spacing * 0.25),
+            (h_spacing * 0.75, v_spacing * 0.25),
+            (h_spacing * 0.25, v_spacing * 0.75),
+            (h_spacing * 0.75, v_spacing * 0.75),
+            (h_spacing * 0.5, v_spacing * 0.5),
+        ]
+        
+        for dx, dy in sub_offsets:
+            candidates = self._tessellate_grid(
+                plantable_zone, R, buffer_radius_pixels, core_radius_pixels,
+                h_spacing, v_spacing, minx + dx, miny + dy, maxx, maxy
+            )
+            for c in candidates:
+                cx, cy = c['center']
+                # Check this hexagon doesn't overlap any already-placed hexagon
+                too_close = False
+                for placed in best_hexagons + extra_hexagons:
+                    px, py = placed['center']
+                    dist = np.sqrt((cx - px)**2 + (cy - py)**2)
+                    # Minimum distance for non-overlapping buffers
+                    min_dist = buffer_radius_pixels + placed['buffer_radius_m'] / self.gsd
+                    # Allow tiny tolerance (1 pixel)
+                    if dist < min_dist - 1:
+                        too_close = True
+                        break
+                if not too_close:
+                    extra_hexagons.append(c)
+        
+        if extra_hexagons:
+            print(f"    Phase 2 (gap filling): +{len(extra_hexagons)} extra hexagons")
+        
+        all_hexagons = best_hexagons + extra_hexagons
+        return all_hexagons
+    
+    def _tessellate_grid(
+        self,
+        plantable_zone,
+        R: float,
+        buffer_radius_pixels: float,
+        core_radius_pixels: float,
+        h_spacing: float,
+        v_spacing: float,
+        start_x: float,
+        start_y: float,
+        max_x: float,
+        max_y: float
+    ) -> List[Dict]:
+        """
+        Place hexagons on a single tessellation grid with given origin.
+        Returns list of valid hexagons.
+        """
         hexagons = []
-        
         row = 0
-        y = miny + core_radius_pixels  # Start from edge + core radius
+        y = start_y
         
-        while y < maxy:
-            # Offset every other row for better coverage
-            x_offset = search_spacing_pixels * 0.5 if row % 2 == 1 else 0
-            x = minx + core_radius_pixels + x_offset  # Start from edge + core radius
+        while y <= max_y:
+            # Proper tessellation offset: odd rows shift right by √3/2 * R
+            x_offset = (np.sqrt(3) / 2) * R if row % 2 == 1 else 0
+            x = start_x + x_offset
             
-            while x < maxx:
-                # Create hexagon buffer
+            while x <= max_x:
+                center_point = Point(x, y)
+                
+                # Quick reject: center must be in plantable zone
+                if not plantable_zone.contains(center_point):
+                    x += h_spacing
+                    continue
+                
                 hexagon_buffer = self.create_hexagon(x, y, buffer_radius_pixels)
                 hexagon_core = self.create_hexagon(x, y, core_radius_pixels)
                 
-                # Create clearance circle to check for sufficient safe space
-                clearance_circle = Point(x, y).buffer(min_clearance_pixels)
+                # CORE must be ≥90% inside plantable zone
+                core_ratio = 0.0
+                if plantable_zone.intersects(hexagon_core):
+                    core_ratio = hexagon_core.intersection(plantable_zone).area / hexagon_core.area
                 
-                # STRICT CHECKS for safe planting:
-                # 1. Entire hexagon buffer must be in plantable zone
-                # 2. Must have minimum clearance radius (2.5m default) of safe space
-                # This prevents planting in tiny gaps between tree canopies
-                is_in_plantable = False
-                has_clearance = False
+                # BUFFER must be ≥70% inside plantable zone (max 30% red overlap)
+                buffer_safe_ratio = 0.0
+                if plantable_zone.intersects(hexagon_buffer):
+                    buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area
                 
-                if isinstance(plantable_zone, MultiPolygon):
-                    # Check if ENTIRE BUFFER is within plantable zone
-                    is_in_plantable = plantable_zone.contains(hexagon_buffer) or \
-                                     (plantable_zone.intersects(hexagon_buffer) and \
-                                      hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area >= 0.99)
-                    
-                    # Check if clearance circle has at least 80% within plantable zone
-                    # (ensures significant open space around the planting point)
-                    if is_in_plantable and plantable_zone.intersects(clearance_circle):
-                        clearance_ratio = clearance_circle.intersection(plantable_zone).area / clearance_circle.area
-                        has_clearance = clearance_ratio >= 0.80
-                else:
-                    # Check if ENTIRE BUFFER is within plantable zone
-                    is_in_plantable = plantable_zone.contains(hexagon_buffer) or \
-                                     (plantable_zone.intersects(hexagon_buffer) and \
-                                      hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area >= 0.99)
-                    
-                    # Check if clearance circle has at least 80% within plantable zone
-                    if is_in_plantable and plantable_zone.intersects(clearance_circle):
-                        clearance_ratio = clearance_circle.intersection(plantable_zone).area / clearance_circle.area
-                        has_clearance = clearance_ratio >= 0.80
-                
-                # Check that cores don't overlap and buffers overlap by max 0.1m
-                # CRITICAL: Check against BOTH existing hexagons AND newly placed ones
-                has_overlap = False
-                if is_in_plantable and has_clearance:
-                    # Combine existing hexagons with newly placed hexagons
-                    all_placed_hexagons = existing_hexagons + hexagons
-                    
-                    for placed in all_placed_hexagons:
-                        px, py = placed['center']
-                        distance = np.sqrt((x - px)**2 + (y - py)**2)
-                        
-                        # Calculate minimum distance:
-                        # Distance between centers = sum of buffer radii - allowed overlap
-                        placed_buffer_radius = placed['buffer_radius_m'] / self.gsd
-                        max_overlap_pixels = max_overlap_m / self.gsd
-                        
-                        # Buffers can overlap by up to max_overlap_m
-                        min_distance = (buffer_radius_pixels + placed_buffer_radius) - max_overlap_pixels
-                        
-                        if distance < min_distance:
-                            has_overlap = True
-                            break
-                
-                if is_in_plantable and has_clearance and not has_overlap:
+                if core_ratio >= 0.90 and buffer_safe_ratio >= 0.70:
                     hex_dict = {
                         'buffer': hexagon_buffer,
                         'core': hexagon_core,
                         'center': (x, y),
-                        'buffer_radius_m': hexagon_size_m,
-                        'core_radius_m': hexagon_size_m * 0.2,
+                        'buffer_radius_m': buffer_radius_pixels * self.gsd,
+                        'core_radius_m': core_radius_pixels * self.gsd,
                         'area_m2': hexagon_core.area * (self.gsd ** 2)
                     }
                     hexagons.append(hex_dict)
@@ -644,10 +879,12 @@ class HexagonDetector:
         # Step 2: Create danger zones (canopy + 1m buffer) with mask
         danger_zone, danger_mask = self.create_danger_zones(canopy_polygons, canopy_mask, canopy_buffer_m)
         
-        # Step 3: Identify plantable zones
+        # Step 3: Identify plantable zones (avoid canopy buffers)
+        # Note: Man-made structures (towers, bridges, houses) are filtered
+        # via forbidden_zones.geojson in the Streamlit app instead.
         plantable_zone = self.identify_plantable_zones(danger_zone)
         
-        # Step 4: Generate maximized hexagonal planting zones
+        # Step 6: Generate maximized hexagonal planting zones
         hexagons = self.generate_hexagonal_planting_zones(plantable_zone, hexagon_size_m, maximize_coverage=True)
         
         # Calculate statistics
@@ -689,12 +926,14 @@ class HexagonDetector:
     
     def visualize_results(self, results: Dict, output_path: str = None):
         """
-        Create visualization with proper color separation and overlap detection:
+        Create visualization with proper color separation:
         - Purple: Canopy areas (detected vegetation)
-        - Red: 1m danger buffer zones (no overlap)
-        - Light green: 1m hexagon buffers (safe planting zone, no overlap)
-        - Orange: Overlap between danger buffer and planting buffer (WARNING)
+        - Red: 1m danger buffer zones around canopies
+        - Light green: 1m hexagon buffers (safe planting zone)
         - Dark green: Hexagon cores (exact planting points)
+        
+        Note: Man-made structures (towers, bridges, houses) are filtered
+        via forbidden_zones.geojson in the Streamlit app instead.
         
         Args:
             results: Results dictionary from process_image()
@@ -725,25 +964,18 @@ class HexagonDetector:
         buffer_only_mask[danger_mask > 0] = 255
         buffer_only_mask[canopy_mask > 0] = 0
         
-        # Detect OVERLAP between danger buffer and hexagon buffer
-        overlap_mask = np.zeros_like(canopy_mask)
-        overlap_mask[(buffer_only_mask > 0) & (hexagon_buffer_mask > 0)] = 255
-        
-        # Remove overlaps from individual masks to avoid double-coloring
-        buffer_only_mask[overlap_mask > 0] = 0
-        hexagon_buffer_mask[overlap_mask > 0] = 0
-        
         # Layer 1: Draw canopy areas in PURPLE
         overlay[canopy_mask > 0] = (128, 0, 128)  # Purple for canopies
         
-        # Layer 2: Draw danger buffer zones in RED (no overlap areas)
+        # Layer 2: Draw danger buffer zones in RED
         overlay[buffer_only_mask > 0] = (0, 0, 255)  # Red for danger buffer
         
-        # Layer 3: Draw hexagon buffers in LIGHT GREEN (no overlap areas)
+        # Layer 4: Draw hexagon buffers in LIGHT GREEN
         overlay[hexagon_buffer_mask > 0] = (144, 238, 144)  # Light green for safe buffer
         
-        # Layer 4: Draw OVERLAP areas in ORANGE (warning)
-        overlay[overlap_mask > 0] = (0, 165, 255)  # Orange for overlap/warning
+        # Layer 4.5: OVERLAP DETECTION - hexagon buffers overlapping with danger zones = ORANGE WARNING
+        overlap_mask = cv2.bitwise_and(hexagon_buffer_mask, danger_mask)
+        overlay[overlap_mask > 0] = (0, 165, 255)  # Orange warning for overlap
         
         # Layer 5: Draw hexagon cores in DARK GREEN (actual planting points)
         for hex_info in results['hexagons']:
@@ -756,17 +988,14 @@ class HexagonDetector:
         # Blend with original image
         result_img = cv2.addWeighted(image, 0.4, overlay, 0.6, 0)
         
-        # Add legend with overlap indicator
+        # Add legend
         legend_y = 30
-        overlap_count = np.count_nonzero(overlap_mask)
-        overlap_area_m2 = overlap_count * (results['gsd_m_per_pixel'] ** 2)
         
         legend_items = [
             ("CANOPIES:", (128, 0, 128), f"{results['canopy_count']} detected"),
-            ("DANGER BUFFER (1m):", (0, 0, 255), f"{results['danger_area_m2']:.1f} m2"),
-            ("PLANTING BUFFER (1m):", (144, 238, 144), f"Safe zones"),
-            ("OVERLAP WARNING:", (0, 165, 255), f"{overlap_area_m2:.1f} m2" if overlap_area_m2 > 0 else "None"),
-            ("PLANTING POINTS:", (0, 255, 0), f"{results['hexagon_count']} locations"),
+            ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m²"),
+            ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
+            ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m²")
         ]
         
         for label, color, value in legend_items:
