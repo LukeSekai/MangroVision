@@ -34,10 +34,18 @@ from canopy_detection.ortho_matcher import (
     drone_pixel_to_gps_via_heading,
 )
 from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
+from planting_database import (
+    save_analysis, find_overlapping_analyses, count_nearby_points,
+    get_all_stats, get_all_planting_points, delete_analysis,
+)
 
 # Load forbidden zones (towers, bridges, houses) once at startup
 _FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_zones.geojson"
 _forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
+
+# Load eroded zones (user-drawn erosion areas) once at startup
+_ERODED_ZONES_PATH = Path(__file__).parent / "eroded_zones.geojson"
+_eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))  # Reuse same class
 
 # Page configuration
 st.set_page_config(
@@ -268,309 +276,426 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-def show_orthophoto_detection_viewer():
+def _reload_eroded_filter():
+    """Reload eroded zones from disk (called after saving new zones)"""
+    global _eroded_filter
+    _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))
+
+
+def show_eroded_zone_editor():
     """
-    Display tree crown detection results from GeoJSON on orthophoto map
+    Map-based editor for marking eroded zones.
+    Users draw polygons on the orthophoto map to designate eroded areas
+    that should be excluded from planting, even if space is available.
     """
-    st.markdown("## 🗺️ Orthophoto Tree Crown Detection Results")
-    
+    from folium.plugins import Draw
+
+    st.markdown("## 🗺️ Mark Eroded Zones")
+
     st.markdown("""
     <div class="info-box">
-        <strong>📍 View & Validate Tree Crown Detections</strong><br>
+        <strong>🏜️ Eroded Zone Editor</strong><br>
         <span style="color: #1565C0;">
-        This mode displays tree crowns detected from the high-resolution orthophoto using
-        the samgeo + detectree2 pipeline. Each detected crown is shown as a polygon with
-        its area calculated in m².<br><br>
-        
-        To generate detection results, run:<br>
-        <code>python canopy_detection/samgeo_ortho_detector.py</code>
+        Draw polygons on the map to mark <strong>eroded areas</strong> where mangroves
+        should <strong>not</strong> be planted. These zones will be excluded from
+        planting recommendations just like forbidden zones (towers, bridges, houses).<br><br>
+        <strong>How to use:</strong><br>
+        1. Use the polygon draw tool (▣) on the left side of the map<br>
+        2. Click points on the map to define the eroded area boundary<br>
+        3. Double-click to finish the polygon<br>
+        4. Click <strong>"💾 Save Eroded Zones"</strong> to save<br>
+        5. Saved zones will automatically be applied when analyzing drone images
         </span>
     </div>
     """, unsafe_allow_html=True)
-    
-    # Check for GeoJSON files
-    output_dir = Path(__file__).parent / 'output_geojson'
-    geojson_files = []
-    if output_dir.exists():
-        geojson_files = list(output_dir.glob('*.geojson')) + list(output_dir.glob('*.json'))
-    geojson_files = sorted(geojson_files, key=lambda x: x.stat().st_mtime, reverse=True)
-    
-    if not geojson_files:
-        st.warning("""
-        ⚠️ No GeoJSON detection files found in `output_geojson/` folder.
-        
-        **To create detections:**
-        1. Install samgeo: `pip install segment-geospatial`
-        2. Run detection: `python canopy_detection/samgeo_ortho_detector.py`
-        3. Refresh this page
-        
-        See **INSTALL_SAMGEO_DETECTREE2.md** for complete guide.
-        """)
-        return
-    
-    # GeoJSON file selector
-    selected_geojson = st.selectbox(
-        "📁 Select GeoJSON File",
-        options=[f.name for f in geojson_files],
-        index=0
-    )
-    
-    geojson_path = output_dir / selected_geojson
-    
-    # Load GeoJSON
-    with open(geojson_path, 'r') as f:
-        geojson_data = json.load(f)
-    
-    features = geojson_data.get('features', [])
-    
-    if not features:
-        st.error("❌ GeoJSON file contains no features")
-        return
-    
-    # Calculate statistics
-    tree_count = len(features)
-    areas = []
-    for feature in features:
-        props = feature.get('properties', {})
-        area = props.get('area_pixels', props.get('area', 0.0))  # Support both field names
-        if area > 0:
-            areas.append(area)
-    
-    total_area_px = sum(areas) if areas else 0.0
-    avg_area_px = total_area_px / len(areas) if areas else 0.0
-    min_area_px = min(areas) if areas else 0.0
-    max_area_px = max(areas) if areas else 0.0
-    
-    # Display metrics
-    col1, col2, col3, col4 = st.columns(4)
-    
+
+    # Load existing eroded zones for display
+    existing_zones = []
+    if _ERODED_ZONES_PATH.exists():
+        try:
+            with open(_ERODED_ZONES_PATH, 'r', encoding='utf-8') as f:
+                existing_data = json.load(f)
+            existing_zones = existing_data.get('features', [])
+        except Exception:
+            existing_zones = []
+
+    # Stats
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric("🌳 Trees Detected", tree_count)
-    
+        st.metric("🏜️ Eroded Zones Saved", len(existing_zones))
     with col2:
-        st.metric("📏 Total Canopy Area", f"{total_area_px:.0f} px²")
-    
-    with col3:
-        st.metric("📊 Average Crown Size", f"{avg_area_px:.0f} px²")
-    
-    with col4:
-        st.metric("📐 Size Range", f"{min_area_px:.0f} - {max_area_px:.0f} px²")
-    
-    # Map display
+        st.metric("🚫 Forbidden Zones (structures)", _forbidden_filter.zone_count)
+
     st.markdown("---")
-    st.markdown("### 🗺️ Interactive Map")
-    
-    # Calculate center from features
-    all_coords = []
-    for feature in features:
-        geom = feature.get('geometry', {})
-        if geom.get('type') == 'Polygon':
-            coords = geom.get('coordinates', [[]])[0]
-            all_coords.extend(coords)
-        elif geom.get('type') == 'MultiPolygon':
-            for poly in geom.get('coordinates', []):
-                all_coords.extend(poly[0] if poly else [])
-    
-    if all_coords:
-        lons = [c[0] for c in all_coords]
-        lats = [c[1] for c in all_coords]
-        center_lat = sum(lats) / len(lats)
-        center_lon = sum(lons) / len(lons)
-    else:
-        # Default to Leganes, Iloilo
-        center_lat = 10.7826
-        center_lon = 122.5942
-    
-    # Create map
+
+    # Default center: Leganes mangrove area
+    center_lat = 10.7800
+    center_lon = 122.6253
+
+    # Create map with drawing tools
     m = folium.Map(
         location=[center_lat, center_lon],
-        zoom_start=18,
+        zoom_start=19,
         tiles=None,
-        control_scale=True
+        control_scale=True,
     )
-    
-    # Add tile layers
+
+    # Orthophoto tile layer
     folium.TileLayer(
         tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
-        attr='MangroVision Orthophoto',
+        attr='MangroVision Orthophoto | WebODM',
         name='Orthophoto',
         overlay=False,
         control=True,
         max_zoom=22,
         min_zoom=15,
-        show=True
+        show=True,
     ).add_to(m)
-    
+
+    # Satellite fallback
     folium.TileLayer(
         tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
         attr='Esri WorldImagery',
         name='Satellite',
         overlay=False,
         control=True,
-        show=False
+        show=False,
     ).add_to(m)
-    
+
+    # OSM reference
     folium.TileLayer(
         tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        attr='© OpenStreetMap',
+        attr='© OpenStreetMap contributors',
         name='OpenStreetMap',
         overlay=False,
         control=True,
-        show=False
+        show=False,
     ).add_to(m)
-    
-    # Add GeoJSON layer with green styling
-    style_function = lambda x: {
-        'fillColor': '#4CAF50',
-        'color': '#1B5E20',
-        'weight': 2,
-        'fillOpacity': 0.4
-    }
-    
-    highlight_function = lambda x: {
-        'fillColor': '#81C784',
-        'color': '#1B5E20',
-        'weight': 3,
-        'fillOpacity': 0.7
-    }
-    
-    # Determine which field to use for area
-    sample_props = features[0].get('properties', {}) if features else {}
-    area_field = 'area_pixels' if 'area_pixels' in sample_props else 'area'
-    area_label = 'Crown Area (px²):' if area_field == 'area_pixels' else 'Crown Area (m²):'
-    
-    folium.GeoJson(
-        geojson_data,
-        name='Tree Crowns',
-        style_function=style_function,
-        highlight_function=highlight_function,
-        tooltip=folium.GeoJsonTooltip(
-            fields=[area_field, 'tree_id', 'confidence'],
-            aliases=[area_label, 'Tree ID:', 'Confidence:'],
-            localize=True
-        ),
-        popup=folium.GeoJsonPopup(
-            fields=[area_field, 'tree_id', 'confidence'],
-            aliases=[area_label, 'Tree ID:', 'Confidence:'],
-            localize=True
-        )
-    ).add_to(m)
-    
-    # Add layer control
-    folium.LayerControl().add_to(m)
-    
-    # Display map
-    st_folium.st_folium(m, width=1400, height=700, key="geojson_map", returned_objects=[])
-    
-    # Validation section
-    st.markdown("---")
-    st.markdown("### 🔍 Quality Validation")
-    
-    if st.button("📊 Run Validation Analysis"):
-        try:
-            from canopy_detection.validation_metrics import DetectionValidator
-            
-            with st.spinner("Running validation..."):
-                validator = DetectionValidator(str(geojson_path))
-                
-                # Area statistics
-                stats = validator.calculate_area_statistics()
-                
-                st.markdown("#### 📊 Crown Area Distribution")
-                stat_col1, stat_col2, stat_col3 = st.columns(3)
-                
-                with stat_col1:
-                    st.metric("Mean Area", f"{stats['mean_area_m2']:.2f} m²")
-                    st.metric("Median Area", f"{stats['median_area_m2']:.2f} m²")
-                
-                with stat_col2:
-                    st.metric("Std Deviation", f"{stats['std_area_m2']:.2f} m²")
-                    st.metric("Min Area", f"{stats['min_area_m2']:.2f} m²")
-                
-                with stat_col3:
-                    st.metric("Max Area", f"{stats['max_area_m2']:.2f} m²")
-                    st.metric("Total Area", f"{stats['total_area_m2']:.1f} m²")
-                
-                # Size validation
-                st.markdown("#### ✓ Size Validity Check")
-                size_check = validator.validate_crown_sizes(min_expected_m2=0.5, max_expected_m2=50.0)
-                
-                if size_check['passed']:
-                    st.success(f"✅ {size_check['valid_percent']:.1f}% of detections have realistic sizes ({size_check['expected_range_m2']} m²)")
-                else:
-                    st.warning(f"⚠️ Only {size_check['valid_percent']:.1f}% of detections have realistic sizes")
-                
-                val_col1, val_col2, val_col3 = st.columns(3)
-                with val_col1:
-                    st.metric("Valid Sizes", size_check['valid_size'])
-                with val_col2:
-                    st.metric("Too Small", size_check['too_small'])
-                with val_col3:
-                    st.metric("Too Large", size_check['too_large'])
-                
-                # Commission errors
-                st.markdown("#### ❌ Commission Error Detection")
-                commission = validator.detect_commission_errors(max_reasonable_area_m2=100.0)
-                
-                if commission['commission_rate_percent'] < 5:
-                    st.success(f"✅ Low commission rate: {commission['commission_rate_percent']:.2f}%")
-                elif commission['commission_rate_percent'] < 15:
-                    st.warning(f"⚠️ Moderate commission rate: {commission['commission_rate_percent']:.2f}%")
-                else:
-                    st.error(f"❌ High commission rate: {commission['commission_rate_percent']:.2f}%")
-                
-                if commission['errors']:
-                    with st.expander("View suspected errors"):
-                        for error in commission['errors'][:10]:
-                            st.write(f"• Feature #{error['feature_id']}: {error['reason']}")
-                
-        except ImportError:
-            st.error("Validation module not found. Please ensure validation_metrics.py exists.")
-        except Exception as e:
-            st.error(f"Validation error: {str(e)}")
-    
-    # Download section
-    st.markdown("---")
-    st.markdown("### ⬇️  Export Data")
-    
-    dl_col1, dl_col2 = st.columns(2)
-    
-    with dl_col1:
-        with open(geojson_path, 'r') as f:
-            geojson_str = f.read()
-        
-        st.download_button(
-            label="📥 Download GeoJSON",
-            data=geojson_str,
-            file_name=selected_geojson,
-            mime="application/geo+json"
-        )
-    
-    with dl_col2:
-        # Create CSV of crown areas
-        csv_data = "tree_id,area_m2,centroid_lat,centroid_lon\n"
-        for idx, feature in enumerate(features):
-            props = feature.get('properties', {})
-            area = props.get('area', 0.0)
+
+    # Show existing eroded zones (orange)
+    if existing_zones:
+        eroded_group = folium.FeatureGroup(name='🏜️ Eroded Zones (saved)')
+        for i, feature in enumerate(existing_zones):
             geom = feature.get('geometry', {})
-            
-            # Calculate centroid (simplified)
             if geom.get('type') == 'Polygon':
-                coords = geom.get('coordinates', [[]])[0]
-                if coords:
-                    avg_lon = sum(c[0] for c in coords) / len(coords)
-                    avg_lat = sum(c[1] for c in coords) / len(coords)
-                    csv_data += f"{idx+1},{area:.2f},{avg_lat:.7f},{avg_lon:.7f}\n"
-        
-        st.download_button(
-            label="📄 Download CSV Summary",
-            data=csv_data,
-            file_name=f"{selected_geojson.replace('.geojson', '')}_summary.csv",
-            mime="text/csv"
+                coords_raw = geom['coordinates'][0]
+                coords = [(c[1], c[0]) for c in coords_raw]  # (lon,lat) → (lat,lon)
+                folium.Polygon(
+                    locations=coords,
+                    color='#FF6F00',
+                    fill=True,
+                    fillColor='#FF6F00',
+                    fillOpacity=0.35,
+                    weight=2,
+                    tooltip=f'🏜️ Eroded Zone #{i+1} (saved)',
+                ).add_to(eroded_group)
+        eroded_group.add_to(m)
+
+    # Show existing forbidden zones (red) for reference
+    if _forbidden_filter.forbidden_polygons:
+        fz_group = folium.FeatureGroup(name='🚫 Forbidden Zones (structures)')
+        for poly in _forbidden_filter.forbidden_polygons:
+            coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+            folium.Polygon(
+                locations=coords,
+                color='red',
+                fill=True,
+                fillColor='red',
+                fillOpacity=0.25,
+                weight=1,
+                tooltip='🚫 Forbidden Zone (tower/bridge/house)',
+            ).add_to(fz_group)
+        fz_group.add_to(m)
+
+    # Add Draw control (polygon only)
+    Draw(
+        export=False,
+        draw_options={
+            'polyline': False,
+            'rectangle': True,
+            'circle': False,
+            'circlemarker': False,
+            'marker': False,
+            'polygon': {
+                'allowIntersection': False,
+                'shapeOptions': {
+                    'color': '#FF6F00',
+                    'fillColor': '#FF6F00',
+                    'fillOpacity': 0.4,
+                    'weight': 3,
+                },
+            },
+        },
+        edit_options={'edit': False},
+    ).add_to(m)
+
+    folium.LayerControl().add_to(m)
+
+    # Render map and capture drawn data
+    map_output = st_folium.st_folium(
+        m, width=1400, height=600,
+        key="eroded_zone_map",
+        returned_objects=["all_drawings"],
+    )
+
+    # Process drawn polygons
+    st.markdown("---")
+    st.markdown("### 📝 Drawn Polygons")
+
+    all_drawings = map_output.get("all_drawings") or []
+    new_polygons = []
+    for drawing in all_drawings:
+        geom = drawing.get("geometry", {})
+        if geom.get("type") == "Polygon":
+            new_polygons.append(drawing)
+
+    if new_polygons:
+        st.success(f"✅ {len(new_polygons)} new polygon(s) drawn on map")
+        for i, poly in enumerate(new_polygons):
+            coords = poly['geometry']['coordinates'][0]
+            n_pts = len(coords)
+            st.write(f"  • Polygon #{i+1}: {n_pts} vertices")
+    else:
+        st.info("Draw polygons on the map using the polygon tool (▣) on the left, then click **Save** below.")
+
+    # Save / Clear buttons
+    btn_col1, btn_col2, btn_col3 = st.columns(3)
+
+    with btn_col1:
+        if st.button("💾 Save Eroded Zones", type="primary", use_container_width=True):
+            # Merge new drawings with existing zones
+            features = list(existing_zones)  # Keep existing
+            for poly in new_polygons:
+                feature = {
+                    "type": "Feature",
+                    "properties": {
+                        "zone_type": "eroded",
+                        "label": "Eroded Area",
+                    },
+                    "geometry": poly["geometry"],
+                }
+                features.append(feature)
+
+            geojson_out = {
+                "type": "FeatureCollection",
+                "name": "eroded_zones",
+                "features": features,
+            }
+            with open(_ERODED_ZONES_PATH, 'w', encoding='utf-8') as f:
+                json.dump(geojson_out, f, indent=2)
+
+            _reload_eroded_filter()
+            st.success(f"✅ Saved {len(features)} eroded zone(s) to eroded_zones.geojson")
+            st.rerun()
+
+    with btn_col2:
+        if st.button("🗑️ Clear ALL Eroded Zones", use_container_width=True):
+            geojson_out = {
+                "type": "FeatureCollection",
+                "name": "eroded_zones",
+                "features": [],
+            }
+            with open(_ERODED_ZONES_PATH, 'w', encoding='utf-8') as f:
+                json.dump(geojson_out, f, indent=2)
+
+            _reload_eroded_filter()
+            st.success("🗑️ All eroded zones cleared!")
+            st.rerun()
+
+    with btn_col3:
+        if existing_zones:
+            eroded_str = json.dumps({
+                "type": "FeatureCollection",
+                "name": "eroded_zones",
+                "features": existing_zones,
+            }, indent=2)
+            st.download_button(
+                "📥 Export GeoJSON",
+                data=eroded_str,
+                file_name="eroded_zones.geojson",
+                mime="application/geo+json",
+                use_container_width=True,
+            )
+
+    # Legend
+    st.markdown("""
+    <div style="background: #1E1E1E; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
+        <strong style="color: #fff;">Legend:</strong><br>
+        <span style="color: #FF6F00;">■</span> <span style="color: #ccc;">Eroded Zones (no planting)</span><br>
+        <span style="color: #FF0000;">■</span> <span style="color: #ccc;">Forbidden Zones - structures (no planting)</span><br>
+        <span style="color: #4CAF50;">■</span> <span style="color: #ccc;">Safe for planting (shown in Analyze mode)</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ── Map Analytics View ──────────────────────────────────────────────
+
+def show_map_analytics():
+    """
+    Dashboard showing all saved planting data across the entire map.
+    Aggregate stats + interactive map with every planting point ever saved.
+    """
+    st.markdown("## 📊 Map Analytics — All Planting Data")
+
+    stats = get_all_stats()
+    analyses = stats.get('analyses', [])
+    all_points = stats.get('points', [])
+
+    if stats['total_analyses'] == 0:
+        st.info(
+            "📭 **No analyses saved yet.** Go to **Analyze Drone Image**, "
+            "upload an image, and run detection. The results are automatically "
+            "saved here."
         )
+        return
+
+    # ── Aggregate Metrics ─────────────────────────────────────────
+    st.markdown("### 🧮 Aggregate Statistics")
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("📸 Total Analyses", stats['total_analyses'])
+    m2.metric("🌱 Total Planting Points", stats['total_planting_points'])
+    m3.metric("🟢 Total Plantable Area", f"{stats['total_plantable_m2']:.1f} m²")
+    m4.metric("🌳 Total Canopies Detected", stats['total_canopies'])
+
+    m5, m6, m7, m8 = st.columns(4)
+    m5.metric("🔴 Total Danger Area", f"{stats['total_danger_m2']:.1f} m²")
+    m6.metric("📏 Total Coverage", f"{stats['total_coverage_m2']:.1f} m²")
+    m7.metric("🚫 Forbidden-Filtered", stats['total_forbidden_filtered'])
+    m8.metric("🏜️ Erosion-Filtered", stats['total_eroded_filtered'])
+
+    st.markdown("---")
+
+    # ── Full Map ──────────────────────────────────────────────────
+    st.markdown("### 🗺️ All Planting Locations")
+    st.info(f"Showing **{len(all_points)}** planting points from **{stats['total_analyses']}** analyses")
+
+    # Determine map centre from the average of all analysis centres
+    _lats = [a['center_lat'] for a in analyses if a['center_lat']]
+    _lons = [a['center_lon'] for a in analyses if a['center_lon']]
+    if _lats and _lons:
+        _center = [sum(_lats) / len(_lats), sum(_lons) / len(_lons)]
+    else:
+        _center = [10.780, 122.625]  # Leganes default
+
+    analytics_map = folium.Map(
+        location=_center,
+        zoom_start=18,
+        tiles=None,
+        control_scale=True,
+    )
+
+    # Orthophoto tile layer
+    folium.TileLayer(
+        tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
+        attr='MangroVision Orthophoto | WebODM',
+        name='Orthophoto',
+        overlay=False, control=True,
+        max_zoom=22, min_zoom=15, show=True,
+    ).add_to(analytics_map)
+
+    folium.TileLayer(
+        tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        attr='© OpenStreetMap contributors',
+        name='OpenStreetMap',
+        overlay=False, control=True, show=False,
+    ).add_to(analytics_map)
+
+    # Show forbidden zone polygons (red)
+    if _forbidden_filter.forbidden_polygons:
+        fz = folium.FeatureGroup(name='🚫 Forbidden Zones')
+        for poly in _forbidden_filter.forbidden_polygons:
+            coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+            folium.Polygon(
+                locations=coords, color='red', fill=True,
+                fillColor='red', fillOpacity=0.30, weight=2,
+                tooltip='🚫 Forbidden Zone',
+            ).add_to(fz)
+        fz.add_to(analytics_map)
+
+    # Show eroded zone polygons (orange)
+    if _eroded_filter.forbidden_polygons:
+        ez = folium.FeatureGroup(name='🏜️ Eroded Zones')
+        for poly in _eroded_filter.forbidden_polygons:
+            coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+            folium.Polygon(
+                locations=coords, color='orange', fill=True,
+                fillColor='orange', fillOpacity=0.30, weight=2,
+                tooltip='🏜️ Eroded Zone',
+            ).add_to(ez)
+        ez.add_to(analytics_map)
+
+    # Colour each analysis differently
+    _colours = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0',
+                '#00BCD4', '#CDDC39', '#FF5722', '#607D8B', '#795548']
+
+    for idx, analysis in enumerate(analyses):
+        colour = _colours[idx % len(_colours)]
+        grp = folium.FeatureGroup(name=f"📸 {analysis['image_name']} ({analysis['analyzed_at'][:10]})")
+
+        # Image centre marker
+        if analysis['center_lat'] and analysis['center_lon']:
+            folium.Marker(
+                location=[analysis['center_lat'], analysis['center_lon']],
+                popup=f"📸 <b>{analysis['image_name']}</b><br>"
+                      f"Date: {analysis['analyzed_at']}<br>"
+                      f"Canopies: {analysis['canopy_count']}<br>"
+                      f"Planting pts: {analysis['hexagon_count']}<br>"
+                      f"Plantable: {analysis['plantable_area_m2']:.1f} m²",
+                icon=folium.Icon(color='blue', icon='camera', prefix='fa'),
+                tooltip=f"📸 {analysis['image_name']}",
+            ).add_to(grp)
+
+        grp.add_to(analytics_map)
+
+    # All planting points as a single layer
+    pts_grp = folium.FeatureGroup(name='🌱 All Planting Points')
+    for pt in all_points:
+        folium.CircleMarker(
+            location=[pt['latitude'], pt['longitude']],
+            radius=3,
+            color='#1B5E20',
+            fillColor='#4CAF50',
+            fillOpacity=0.8,
+            weight=1,
+            tooltip=f"🌱 {pt['image_name']} ({pt['analyzed_at'][:10]})",
+            popup=f"🌱 GPS: {pt['latitude']:.7f}°, {pt['longitude']:.7f}°<br>"
+                  f"Image: {pt['image_name']}<br>"
+                  f"Buffer: {pt['buffer_m']}m | Area: {pt['area_m2']:.2f} m²",
+        ).add_to(pts_grp)
+    pts_grp.add_to(analytics_map)
+
+    folium.LayerControl().add_to(analytics_map)
+    st_folium.st_folium(analytics_map, width=1400, height=650, key="analytics_map", returned_objects=[])
+
+    # ── Per-analysis breakdown table ──────────────────────────────
+    st.markdown("---")
+    st.markdown("### 📋 Analysis History")
+
+    for a in analyses:
+        with st.expander(f"📸 {a['image_name']} — {a['analyzed_at']} ({a['hexagon_count']} points)"):
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("🌳 Canopies", a['canopy_count'])
+            c2.metric("🌱 Planting Pts", a['hexagon_count'])
+            c3.metric("🟢 Plantable", f"{a['plantable_area_m2']:.1f} m²")
+            c4.metric("🔴 Danger", f"{a['danger_area_m2']:.1f} m²")
+
+            c5, c6, c7, c8 = st.columns(4)
+            c5.metric("📏 Coverage", f"{a['total_area_m2']:.1f} m²")
+            c6.metric("📐 GSD", f"{a['gsd_cm']:.2f} cm/px" if a['gsd_cm'] else "—")
+            c7.metric("🚫 Forbidden", a['forbidden_filtered'])
+            c8.metric("🏜️ Eroded", a['eroded_filtered'])
+
+            if a['center_lat'] and a['center_lon']:
+                st.caption(f"📍 Centre: {a['center_lat']:.6f}°, {a['center_lon']:.6f}°")
+
+            if st.button(f"🗑️ Delete this analysis", key=f"del_{a['id']}"):
+                delete_analysis(a['id'])
+                st.success("Deleted. Refresh the page to update.")
+                st.rerun()
 
 
 def main():
+
     # Header
     st.markdown("""
     <div class="main-header">
@@ -584,15 +709,20 @@ def main():
     st.markdown("---")
     mode = st.radio(
         "📋 Select Analysis Mode",
-        options=["🖼️ Analyze Drone Image", "🗺️ View Orthophoto Tree Crown Detection"],
+        options=["🖼️ Analyze Drone Image", "🗺️ Mark Eroded Zones", "📊 Map Analytics"],
         index=0,
         horizontal=True
     )
     st.markdown("---")
     
-    # Route to appropriate analysis mode
-    if mode == "🗺️ View Orthophoto Tree Crown Detection":
-        show_orthophoto_detection_viewer()
+    # Route to eroded zone editor
+    if mode == "🗺️ Mark Eroded Zones":
+        show_eroded_zone_editor()
+        return
+    
+    # Route to map analytics
+    if mode == "📊 Map Analytics":
+        show_map_analytics()
         return
     
     # Sidebar
@@ -612,54 +742,23 @@ def main():
         try:
             from canopy_detection.detectree2_detector import Detectree2Detector
             detectree2_available = True
-            st.success("🌳 **Smart Hybrid System** (HSV + AI) Ready")
+            st.success("🌳 **Smart Hybrid** (HSV + AI) Ready")
         except ImportError:
             detectree2_available = False
             st.warning("🌳 Using **HSV detection** (detectree2 not installed)")
-            st.caption("Install detectree2 for AI-powered hybrid detection")
         
-        # Detection mode selector (NEW!)
-        if detectree2_available:
-            detection_mode = st.selectbox(
-                "🧠 Detection Mode",
-                ["hybrid", "ai", "hsv"],
-                index=0,
-                format_func=lambda x: {
-                    "hybrid": "⭐ Smart Hybrid (HSV + AI) - RECOMMENDED",
-                    "ai": "🤖 AI Only (may miss trees)",
-                    "hsv": "⚡ HSV Only (fast, good coverage)"
-                }[x],
-                help="Hybrid merges HSV and AI for 90-95% accuracy. AI-only may miss shadows/small trees."
-            )
-        else:
-            detection_mode = "hsv"
-            st.caption("⚡ Mode: HSV Only (AI not available)")
+        # Hardcoded defaults — hybrid mode with paracou model
+        detection_mode = "hybrid" if detectree2_available else "hsv"
+        model_name = "paracou"
         
-        # AI confidence slider - Only show for AI/Hybrid modes
-        if detection_mode in ['ai', 'hybrid']:
-            ai_confidence = st.slider(
-                "AI Confidence Threshold",
-                min_value=0.3,
-                max_value=0.9,
-                value=0.5,
-                step=0.05,
-                help="Higher = only high-confidence detections. 0.5-0.6 is standard for good models."
-            )
-        else:
-            ai_confidence = 0.5  # Default value for HSV mode
-        
-        # Model selection
-        model_name = st.selectbox(
-            "Detectree2 Model",
-            ["benchmark", "paracou"],
-            help="benchmark: General trees | paracou: Tropical forests (best for mangroves)"
-        )
-        
-        # Species selection (placeholder for future)
-        species = st.selectbox(
-            "Mangrove Species",
-            ["Bungalon (All Species)", "Bungalon - Avicennia", "Bungalon - Rhizophora"],
-            help="Select the mangrove species to detect"
+        # AI confidence slider
+        ai_confidence = st.slider(
+            "AI Confidence Threshold",
+            min_value=0.3,
+            max_value=0.9,
+            value=0.5,
+            step=0.05,
+            help="Higher = only high-confidence detections. 0.5-0.6 is recommended."
         )
         
         st.markdown("---")
@@ -816,11 +915,16 @@ def main():
 def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size, ai_confidence, model_name, detection_mode='hybrid'):
     """Process the uploaded image using detectree2 AI detection"""
     
-    with st.spinner("🔄 Analyzing image... This may take a moment..."):
+    # ── Progress bar for user feedback ─────────────────────────────
+    progress_bar = st.progress(0, text="⏳ Preparing analysis...")
+    
+    with st.container():
         # Save uploaded file temporarily
         temp_path = Path("temp_upload.jpg")
         with open(temp_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
+        
+        progress_bar.progress(5, text="📡 Extracting image metadata...")
         
         try:
             # STEP 1: Extract EXIF metadata (GPS, altitude, drone model)
@@ -861,6 +965,18 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     st.success(f"✅ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (INSIDE map bounds)")
                     gps_valid = True
                     image_gps = gps
+                    
+                    # ── Check for existing planting data in this area ──────
+                    _overlaps = find_overlapping_analyses(image_center_lat, image_center_lon)
+                    if _overlaps:
+                        _existing_pts = count_nearby_points(image_center_lat, image_center_lon)
+                        _names = ', '.join(set(o['image_name'] for o in _overlaps[:3]))
+                        st.warning(
+                            f"⚠️ **This area already has planting data!** "
+                            f"{len(_overlaps)} previous analysis(es) found nearby "
+                            f"({_names}), with {_existing_pts} planting points saved. "
+                            f"Running analysis again will add new points to the database."
+                        )
                 else:
                     st.warning(f"⚠️ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (OUTSIDE map bounds)")
                     st.info("Map will show markers, but they may be outside the orthophoto area")
@@ -961,6 +1077,8 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             st.markdown("---")
             st.markdown("### 🔍 Running Detection Analysis")
             
+            progress_bar.progress(15, text="🔍 Initializing AI detector...")
+            
             # Create a unique key for this analysis
             analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}"
             
@@ -975,12 +1093,18 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     detection_mode=detection_mode
                 )
                 
+                progress_bar.progress(25, text="🌳 Detecting canopies (HSV + AI)... This may take a moment")
+                
                 # Process image
                 results = detector.process_image(
                     image_path=str(temp_path),
                     canopy_buffer_m=canopy_buffer,
                     hexagon_size_m=hexagon_size
                 )
+                
+                progress_bar.progress(60, text="⬡ Generating planting hexagons...")
+                
+                progress_bar.progress(65, text="🚫 Filtering forbidden & eroded zones...")
                 
                 # ── EARLY FORBIDDEN ZONE FILTERING ────────────────────────
                 # Filter hexagons BEFORE visualization so the Visual Results
@@ -1016,22 +1140,30 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                                 _gsd, camera_heading
                             )
                     
-                    # Filter: keep only hexagons outside forbidden zones
+                    # Filter: keep only hexagons outside forbidden AND eroded zones
                     _safe = []
-                    _filtered = 0
+                    _forbidden_hexes = []
+                    _eroded_hexes = []
                     for _hex in results['hexagons']:
                         _px, _py = _hex['center']
                         _lat, _lon = _px_to_gps(_px, _py)
                         _hex['_gps_lat'] = _lat
                         _hex['_gps_lon'] = _lon
-                        if _forbidden_filter.is_safe_location(_lat, _lon):
-                            _safe.append(_hex)
+                        if not _forbidden_filter.is_safe_location(_lat, _lon):
+                            _forbidden_hexes.append(_hex)
+                        elif not _eroded_filter.is_safe_location(_lat, _lon):
+                            _eroded_hexes.append(_hex)
                         else:
-                            _filtered += 1
+                            _safe.append(_hex)
                     
                     results['hexagons'] = _safe
                     results['hexagon_count'] = len(_safe)
-                    results['_forbidden_filtered'] = _filtered
+                    results['_forbidden_filtered'] = len(_forbidden_hexes)
+                    results['_eroded_filtered'] = len(_eroded_hexes)
+                    results['_forbidden_hexagons'] = _forbidden_hexes
+                    results['_eroded_hexagons'] = _eroded_hexes
+                
+                progress_bar.progress(75, text="🎨 Creating visualization...")
                 
                 # Create visualization (now with filtered hexagons)
                 vis_image = detector.visualize_results(results)
@@ -1052,6 +1184,11 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 results = st.session_state.cached_results
                 vis_image_rgb = st.session_state.cached_vis_image
                 detector = st.session_state.cached_detector
+            
+            progress_bar.progress(90, text="📊 Preparing results...")
+            
+            # ✅ Analysis complete — fill progress bar
+            progress_bar.progress(100, text="✅ Analysis complete!")
             
             # Display results
             st.markdown('<hr>', unsafe_allow_html=True)
@@ -1252,9 +1389,12 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 # Extract detection data for mapping
                 gsd = results['gsd_m_per_pixel']
                 canopy_polygons = results['canopy_polygons']
-                hexagons = results['hexagons']  # Already filtered by forbidden zones
+                hexagons = results['hexagons']  # Already filtered by forbidden & eroded zones
                 width, height = results['image_size']
                 forbidden_filtered_count = results.get('_forbidden_filtered', 0)
+                eroded_filtered_count = results.get('_eroded_filtered', 0)
+                forbidden_hexagons = results.get('_forbidden_hexagons', [])
+                eroded_hexagons = results.get('_eroded_hexagons', [])
 
                 # ── AUTO-ALIGN: reuse cached ortho match ─────────────────
                 match_key = f"ortho_match_{uploaded_file.name}"
@@ -1300,11 +1440,19 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         )
                 
                 # ── Map Display Options ──────────────────────────────────
-                show_forbidden_zones = st.checkbox(
-                    "🚫 Show forbidden zone boundaries (red polygons)",
-                    value=False,
-                    help="Toggle visibility of forbidden zones on the map. Filtering is always active."
-                )
+                _opt_col1, _opt_col2 = st.columns(2)
+                with _opt_col1:
+                    show_forbidden_zones = st.checkbox(
+                        "🚫 Show forbidden zones (red)",
+                        value=False,
+                        help="Toggle visibility of forbidden zones on the map. Filtering is always active."
+                    )
+                with _opt_col2:
+                    show_eroded_zones = st.checkbox(
+                        "🏜️ Show eroded zones (orange)",
+                        value=False,
+                        help="Toggle visibility of eroded zones on the map. Filtering is always active."
+                    )
                 
                 # Create orthophoto map centered on image location
                 ortho_map = folium.Map(
@@ -1355,13 +1503,18 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     tooltip="📷 Image Location"
                 ).add_to(ortho_map)
                 
-                # ── Hexagons are already filtered by forbidden zones ────
+                # ── Hexagons are already filtered by forbidden & eroded zones ──
                 # (filtering was done before visualization so Visual Results
-                #  image also excludes forbidden zone hexagons)
+                #  image also excludes forbidden/eroded zone hexagons)
                 safe_hexagons = hexagons  # Already safe — filtered earlier
 
+                _filter_msgs = []
                 if forbidden_filtered_count > 0:
-                    st.warning(f"🚫 {forbidden_filtered_count} planting points filtered out (inside forbidden zones: towers, bridges, houses). {len(safe_hexagons)} safe points remain.")
+                    _filter_msgs.append(f"🚫 {forbidden_filtered_count} in forbidden zones (towers/bridges/houses)")
+                if eroded_filtered_count > 0:
+                    _filter_msgs.append(f"🏜️ {eroded_filtered_count} in eroded zones")
+                if _filter_msgs:
+                    st.warning(f"Planting points filtered out: {'; '.join(_filter_msgs)}. {len(safe_hexagons)} safe points remain.")
 
                 # ── Draw forbidden zone polygons on the map (red) ─────────
                 if show_forbidden_zones and _forbidden_filter.forbidden_polygons:
@@ -1380,6 +1533,22 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         ).add_to(fz_group)
                     fz_group.add_to(ortho_map)
 
+                # ── Draw eroded zone polygons on the map (orange) ─────────
+                if show_eroded_zones and _eroded_filter.forbidden_polygons:
+                    ez_group = folium.FeatureGroup(name='🏜️ Eroded Zones')
+                    for poly in _eroded_filter.forbidden_polygons:
+                        coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+                        folium.Polygon(
+                            locations=coords,
+                            color='orange',
+                            fill=True,
+                            fillColor='orange',
+                            fillOpacity=0.35,
+                            weight=2,
+                            tooltip='🏜️ Eroded Zone (erosion area — not plantable)',
+                        ).add_to(ez_group)
+                    ez_group.add_to(ortho_map)
+
                 # Ensure hexagons have GPS coords (compute if not pre-computed)
                 for hexagon in safe_hexagons:
                     if '_gps_lat' not in hexagon:
@@ -1387,6 +1556,46 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         lat, lon = pixel_to_latlon(px, py)
                         hexagon['_gps_lat'] = lat
                         hexagon['_gps_lon'] = lon
+
+                # Add RED X markers for forbidden-filtered hexagons
+                if show_forbidden_zones and forbidden_hexagons:
+                    fz_pts = folium.FeatureGroup(name='🚫 Filtered Points (Forbidden)')
+                    for fh in forbidden_hexagons:
+                        lat = fh['_gps_lat']
+                        lon = fh['_gps_lon']
+                        folium.CircleMarker(
+                            location=[lat, lon],
+                            radius=4,
+                            color='#B71C1C',
+                            fillColor='#F44336',
+                            fillOpacity=0.7,
+                            weight=2,
+                            tooltip='🚫 Filtered (forbidden zone)',
+                            popup=f"""🚫 <b>Filtered Point</b><br>
+                            Reason: Inside forbidden zone<br>
+                            GPS: {lat:.7f}°, {lon:.7f}°""",
+                        ).add_to(fz_pts)
+                    fz_pts.add_to(ortho_map)
+
+                # Add ORANGE X markers for eroded-filtered hexagons
+                if show_eroded_zones and eroded_hexagons:
+                    ez_pts = folium.FeatureGroup(name='🏜️ Filtered Points (Eroded)')
+                    for eh in eroded_hexagons:
+                        lat = eh['_gps_lat']
+                        lon = eh['_gps_lon']
+                        folium.CircleMarker(
+                            location=[lat, lon],
+                            radius=4,
+                            color='#E65100',
+                            fillColor='#FF9800',
+                            fillOpacity=0.7,
+                            weight=2,
+                            tooltip='🏜️ Filtered (eroded zone)',
+                            popup=f"""🏜️ <b>Filtered Point</b><br>
+                            Reason: Inside eroded zone<br>
+                            GPS: {lat:.7f}°, {lon:.7f}°""",
+                        ).add_to(ez_pts)
+                    ez_pts.add_to(ortho_map)
 
                 # Add GREEN POINTS only for safe planting hexagons
                 for i, hexagon in enumerate(safe_hexagons):
@@ -1503,11 +1712,33 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     st.success(f"✅ Analysis complete! {len(safe_hexagons)} safe planting locations shown on map ({forbidden_filtered_count} filtered out from forbidden zones). Use Visual Results to see exact positions.")
                 else:
                     st.success(f"✅ Analysis complete! {len(safe_hexagons)} GPS-tagged planting locations shown on map. Use Visual Results to see exact positions.")
+                
+                # ── Save analysis to database ───────────────────────
+                _save_key = f"saved_{st.session_state.get('last_analysis_key', '')}"
+                if _save_key not in st.session_state:
+                    try:
+                        _aid, _new, _skipped = save_analysis(
+                            image_name=uploaded_file.name,
+                            center_lat=map_center_lat,
+                            center_lon=map_center_lon,
+                            results=results,
+                            hexagons=safe_hexagons,
+                        )
+                        st.session_state[_save_key] = _aid
+                        if _skipped > 0:
+                            st.info(f"💾 Saved {_new} new planting points (Analysis #{_aid}). {_skipped} duplicate points skipped (already in database). View all in **Map Analytics**.")
+                        else:
+                            st.info(f"💾 Planting data saved (Analysis #{_aid}, {_new} points). View all in **Map Analytics** mode.")
+                    except Exception as _db_err:
+                        st.warning(f"⚠️ Could not save to database: {_db_err}")
+                else:
+                    st.caption(f"💾 Already saved (Analysis #{st.session_state[_save_key]})")
             else:
                 st.warning("⚠️ GPS mapping skipped - no GPS data in image")
                 st.success("✅ Analysis complete! Results ready for export.")
             
         except Exception as e:
+            progress_bar.progress(100, text="❌ Error during analysis")
             st.error(f"❌ Error processing image: {str(e)}")
             st.exception(e)
         

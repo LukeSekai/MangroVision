@@ -111,6 +111,8 @@ class HexagonDetector:
             Tuple of (List of Shapely Polygon objects, binary canopy mask)
         """
         h, w = image.shape[:2]
+        # Reset AI metadata each run
+        self._ai_metadata = {}
         
         if self.detection_mode == 'hybrid' and self.ai_detector is not None:
             # SMART HYBRID: Run both HSV and AI, then merge results
@@ -128,6 +130,8 @@ class HexagonDetector:
                 else:
                     ai_polygons, ai_mask = ai_result
                     metadata = {}
+                # Store AI metadata (contains per-class masks and class info)
+                self._ai_metadata = metadata
             except Exception as e:
                 print(f"   ⚠️ AI detection failed: {e}")
                 print(f"   Falling back to HSV-only detection")
@@ -143,9 +147,16 @@ class HexagonDetector:
             total_canopy_pixels = np.count_nonzero(combined_mask)
             total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
             
+            class_counts = metadata.get('class_counts', {})
+            bungalon_count = class_counts.get(1, 0)
+            other_ai_count = class_counts.get(0, 0)
+            
             print(f"✓ Hybrid Detection Results:")
             print(f"   - HSV found: {len(hsv_polygons)} crowns")
             print(f"   - AI found: {len(ai_polygons)} crowns")
+            if bungalon_count > 0:
+                print(f"     → Bungalon Canopy: {bungalon_count}")
+                print(f"     → Mangrove-Canopy: {other_ai_count}")
             print(f"   - Merged total: {len(combined_polygons)} crowns ({total_canopy_m2:.1f} m²)")
             print(f"   - Method: UNION (best of both worlds)")
             
@@ -163,6 +174,7 @@ class HexagonDetector:
                 else:
                     canopy_polygons, canopy_mask = ai_result
                     metadata = {}
+                self._ai_metadata = metadata
             except Exception as e:
                 print(f"   ⚠️ AI detection failed: {e}")
                 print(f"   Falling back to HSV detection")
@@ -913,7 +925,8 @@ class HexagonDetector:
             'danger_mask': danger_mask,
             'plantable_zone': plantable_zone,
             'hexagons': hexagons,
-            'image': image
+            'image': image,
+            'ai_metadata': getattr(self, '_ai_metadata', {}),
         }
         
         print(f"\n✅ Processing complete!")
@@ -927,7 +940,8 @@ class HexagonDetector:
     def visualize_results(self, results: Dict, output_path: str = None):
         """
         Create visualization with proper color separation:
-        - Purple: Canopy areas (detected vegetation)
+        - Teal/Cyan: Bungalon Canopy (AI-classified)
+        - Purple: Other canopy areas (Mangrove-Canopy / HSV detected)
         - Red: 1m danger buffer zones around canopies
         - Light green: 1m hexagon buffers (safe planting zone)
         - Dark green: Hexagon cores (exact planting points)
@@ -952,6 +966,14 @@ class HexagonDetector:
         canopy_mask = results['canopy_mask']
         danger_mask = results['danger_mask']
         
+        # Get per-class masks from AI metadata
+        ai_metadata = results.get('ai_metadata', {})
+        bungalon_mask = ai_metadata.get('bungalon_mask', None)
+        other_canopy_mask = ai_metadata.get('other_canopy_mask', None)
+        class_counts = ai_metadata.get('class_counts', {})
+        bungalon_count = class_counts.get(1, 0)
+        other_ai_count = class_counts.get(0, 0)
+        
         # Create hexagon buffer mask
         hexagon_buffer_mask = np.zeros((h, w), dtype=np.uint8)
         for hex_info in results['hexagons']:
@@ -964,8 +986,23 @@ class HexagonDetector:
         buffer_only_mask[danger_mask > 0] = 255
         buffer_only_mask[canopy_mask > 0] = 0
         
-        # Layer 1: Draw canopy areas in PURPLE
-        overlay[canopy_mask > 0] = (128, 0, 128)  # Purple for canopies
+        # Layer 1: Draw canopy areas with class-specific coloring
+        if bungalon_mask is not None and other_canopy_mask is not None:
+            # Non-Bungalon canopy areas (purple) - includes HSV-only detections
+            # HSV-only areas = canopy_mask minus all AI masks
+            hsv_only_mask = canopy_mask.copy()
+            hsv_only_mask[bungalon_mask > 0] = 0
+            hsv_only_mask[other_canopy_mask > 0] = 0
+            
+            # Draw other AI canopy (Mangrove-Canopy class) in purple
+            overlay[other_canopy_mask > 0] = (128, 0, 128)  # Purple for Mangrove-Canopy
+            # Draw HSV-only detections in purple too
+            overlay[hsv_only_mask > 0] = (128, 0, 128)  # Purple for HSV-detected
+            # Draw Bungalon Canopy in TEAL/CYAN (stands out from purple)
+            overlay[bungalon_mask > 0] = (255, 255, 0)  # Cyan/Teal in BGR for Bungalon
+        else:
+            # No class info available - all purple (fallback)
+            overlay[canopy_mask > 0] = (128, 0, 128)  # Purple for canopies
         
         # Layer 2: Draw danger buffer zones in RED
         overlay[buffer_only_mask > 0] = (0, 0, 255)  # Red for danger buffer
@@ -991,12 +1028,22 @@ class HexagonDetector:
         # Add legend
         legend_y = 30
         
-        legend_items = [
-            ("CANOPIES:", (128, 0, 128), f"{results['canopy_count']} detected"),
-            ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m²"),
-            ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
-            ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m²")
-        ]
+        # Build legend items based on whether class info is available
+        if bungalon_count > 0:
+            legend_items = [
+                ("BUNGALON CANOPY:", (255, 255, 0), f"{bungalon_count} detected"),
+                ("OTHER CANOPY:", (128, 0, 128), f"{results['canopy_count'] - bungalon_count} detected"),
+                ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m\u00b2"),
+                ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
+                ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m\u00b2")
+            ]
+        else:
+            legend_items = [
+                ("CANOPIES:", (128, 0, 128), f"{results['canopy_count']} detected"),
+                ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m\u00b2"),
+                ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
+                ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m\u00b2")
+            ]
         
         for label, color, value in legend_items:
             # Draw color box

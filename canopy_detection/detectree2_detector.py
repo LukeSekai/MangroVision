@@ -285,11 +285,10 @@ class Detectree2Detector:
         # PHASE 2: Detectree2 AI - Separate vegetation into individual crowns
         print(f"   Phase 2: AI crown structure detection...")
         
-        # Tile parameters - OPTIMIZED FOR SPEED & CLEANER VISUAL RESULTS
-        # Larger tiles = fewer processing boundaries = cleaner output
-        # 6K image: 512px = 55 tiles vs 1024px = 15 tiles (70% reduction!)
-        tile_size = 1024  # Increased from 512px for fewer tiles
-        overlap = 128  # 12.5% overlap (128/1024) sufficient for edge detection
+        # Tile parameters - OPTIMIZED for detectree2 training size
+        # Model was trained on ~400px tiles, use similar size for best results
+        tile_size = 512  # Reduced from 800 to match training data better
+        overlap = 128  # 25% overlap (128/512) for good edge detection
         stride = tile_size - overlap
         
         # Generate tiles - ONLY process tiles with significant vegetation
