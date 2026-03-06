@@ -124,12 +124,17 @@ class HexagonDetector:
             # Step 2: AI Detection (high-confidence canopies)
             try:
                 ai_result = self.ai_detector.detect_from_image(image)
-                # Handle both 2-value and 3-value returns
-                if len(ai_result) == 3:
-                    ai_polygons, ai_mask, metadata = ai_result
+                # Handle 2, 3, or 4-value returns from different detector versions
+                if isinstance(ai_result, (list, tuple)):
+                    if len(ai_result) >= 4:
+                        ai_polygons, ai_mask, metadata = ai_result[0], ai_result[1], ai_result[2]
+                    elif len(ai_result) == 3:
+                        ai_polygons, ai_mask, metadata = ai_result
+                    else:
+                        ai_polygons, ai_mask = ai_result[0], ai_result[1]
+                        metadata = {}
                 else:
-                    ai_polygons, ai_mask = ai_result
-                    metadata = {}
+                    raise ValueError(f"Unexpected AI result type: {type(ai_result)}")
                 # Store AI metadata (contains per-class masks and class info)
                 self._ai_metadata = metadata
             except Exception as e:
@@ -168,12 +173,17 @@ class HexagonDetector:
             
             try:
                 ai_result = self.ai_detector.detect_from_image(image)
-                # Handle both 2-value and 3-value returns
-                if len(ai_result) == 3:
-                    canopy_polygons, canopy_mask, metadata = ai_result
+                # Handle 2, 3, or 4-value returns from different detector versions
+                if isinstance(ai_result, (list, tuple)):
+                    if len(ai_result) >= 4:
+                        canopy_polygons, canopy_mask, metadata = ai_result[0], ai_result[1], ai_result[2]
+                    elif len(ai_result) == 3:
+                        canopy_polygons, canopy_mask, metadata = ai_result
+                    else:
+                        canopy_polygons, canopy_mask = ai_result[0], ai_result[1]
+                        metadata = {}
                 else:
-                    canopy_polygons, canopy_mask = ai_result
-                    metadata = {}
+                    raise ValueError(f"Unexpected AI result type: {type(ai_result)}")
                 self._ai_metadata = metadata
             except Exception as e:
                 print(f"   ⚠️ AI detection failed: {e}")
@@ -214,10 +224,23 @@ class HexagonDetector:
         h, w = image.shape[:2]
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
-        # Enhanced HSV ranges for mangroves (catches dark/shadowed canopies)
-        lower_green = np.array([20, 30, 30])   # Lower threshold for shadowed areas
+        # ── Primary green range (bright/normal canopy) ────────────────────
+        lower_green = np.array([20, 25, 25])   # Lowered S/V to catch more shaded canopy
         upper_green = np.array([95, 255, 255])  # Wider hue range
         canopy_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+        # ── Dark canopy range (deep shade under dense mangroves) ─────────
+        # Many mangrove pixels have very low V (dark shadow) but green hue
+        lower_dark_green = np.array([20, 15, 10])
+        upper_dark_green = np.array([95, 255, 25])
+        dark_canopy = cv2.inRange(hsv, lower_dark_green, upper_dark_green)
+        canopy_mask = cv2.bitwise_or(canopy_mask, dark_canopy)
+
+        # ── Yellow-green transitional canopy (sun-lit tips) ──────────────
+        lower_yg = np.array([15, 30, 30])
+        upper_yg = np.array([20, 255, 255])
+        yg_mask = cv2.inRange(hsv, lower_yg, upper_yg)
+        canopy_mask = cv2.bitwise_or(canopy_mask, yg_mask)
         
         # Multi-scale morphological operations (better gap filling)
         # Small kernel: Connect nearby pixels
@@ -510,6 +533,9 @@ class HexagonDetector:
         lower_white = np.array([0, 0, 220])
         upper_white = np.array([180, 30, 255])
         white_mask = cv2.inRange(hsv, lower_white, upper_white)
+        
+        # NOTE: Do NOT exclude brown mud/bare soil — that's where mangroves
+        # should be planted!  Only exclude water, concrete, and buildings.
         
         # Combine all non-vegetation masks
         forbidden_mask = cv2.bitwise_or(forbidden_mask, gray_mask)
@@ -893,7 +919,9 @@ class HexagonDetector:
         
         # Step 3: Identify plantable zones (avoid canopy buffers)
         # Note: Man-made structures (towers, bridges, houses) are filtered
-        # via forbidden_zones.geojson in the Streamlit app instead.
+        # via forbidden_zones.geojson in the Streamlit app.
+        # Note: Points outside orthophoto coverage are filtered in the
+        # map section of app.py via is_inside_any_orthophoto().
         plantable_zone = self.identify_plantable_zones(danger_zone)
         
         # Step 6: Generate maximized hexagonal planting zones

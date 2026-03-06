@@ -32,6 +32,9 @@ from canopy_detection.ortho_matcher import (
     match_drone_to_ortho,
     drone_pixel_to_gps_via_homography,
     drone_pixel_to_gps_via_heading,
+    select_orthophoto,
+    is_inside_any_orthophoto,
+    is_ortho_pixel_vegetation,
 )
 from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
 from planting_database import (
@@ -342,13 +345,13 @@ def show_eroded_zone_editor():
 
     # Orthophoto tile layer
     folium.TileLayer(
-        tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
-        attr='MangroVision Orthophoto | WebODM',
+        tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        attr='MangroVision Orthophoto | QGIS',
         name='Orthophoto',
         overlay=False,
         control=True,
-        max_zoom=22,
-        min_zoom=15,
+        max_zoom=20,
+        min_zoom=10,
         show=True,
     ).add_to(m)
 
@@ -586,11 +589,11 @@ def show_map_analytics():
 
     # Orthophoto tile layer
     folium.TileLayer(
-        tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
-        attr='MangroVision Orthophoto | WebODM',
+        tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        attr='MangroVision Orthophoto | QGIS',
         name='Orthophoto',
         overlay=False, control=True,
-        max_zoom=22, min_zoom=15, show=True,
+        max_zoom=20, min_zoom=10, show=True,
     ).add_to(analytics_map)
 
     folium.TileLayer(
@@ -933,12 +936,15 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             
             metadata = ExifExtractor.extract_all_metadata(str(temp_path))
             
-            # Orthophoto map bounds (UTM Zone 51N)
+            # Orthophoto map bounds — derived from ALL 3 WebODM orthophotos
+            # 1st MAP: W=458971.9 E=459095.3 S=1191652.1 N=1191823.2
+            # 2nd MAP: W=458878.8 E=459027.1 S=1191652.5 N=1191788.4
+            # 3rd MAP: W=458847.6 E=459039.3 S=1191556.9 N=1191711.0
             bounds_utm = {
-                'north': 1191825.078,
-                'south': 1191650.359,
-                'east': 459097.2828,
-                'west': 458969.3065
+                'north': 1191823.193,    # 1st MAP top
+                'south': 1191556.918,    # 3rd MAP bottom
+                'east':  459095.262,     # 1st MAP right
+                'west':  458847.596      # 3rd MAP left
             }
             
             # Convert to lat/lon for display
@@ -1002,6 +1008,12 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 
                 camera_heading = 0  # Default
                 heading_source = "Default (North)"
+                
+                # Method 0: Check EXIF GPSImgDirection (most reliable if present)
+                if gps.get('heading') is not None:
+                    camera_heading = float(gps['heading'])
+                    heading_source = "EXIF GPSImgDirection"
+                    st.success(f"✅ Heading from EXIF metadata: {camera_heading:.1f}°")
                 
                 # Method 1: Flight Log/SRT File Upload (if available)
                 st.markdown("#### 📁 Method 1: Flight Log (Auto)")
@@ -1465,14 +1477,14 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 
                 # Add orthophoto tile layer (YOUR CUSTOM MAP)
                 folium.TileLayer(
-                    tiles="http://localhost:8080/{z}/{x}/{y}.jpg",
-                    attr='MangroVision Orthophoto | WebODM',
+                    tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+                    attr='MangroVision Orthophoto | QGIS',
                     name='Orthophoto',  
                     
                     overlay=False,
                     control=True,
-                    max_zoom=22,
-                    min_zoom=15,
+                    max_zoom=20,
+                    min_zoom=10,
                     show=True
                 ).add_to(ortho_map)
                 
@@ -1556,6 +1568,29 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         lat, lon = pixel_to_latlon(px, py)
                         hexagon['_gps_lat'] = lat
                         hexagon['_gps_lon'] = lon
+
+                # ── CLIP: Remove planting points that land OUTSIDE orthophoto map ──
+                _before_clip = len(safe_hexagons)
+                safe_hexagons = [
+                    h for h in safe_hexagons
+                    if is_inside_any_orthophoto(h['_gps_lat'], h['_gps_lon'])
+                ]
+                _clipped_out = _before_clip - len(safe_hexagons)
+                if _clipped_out > 0:
+                    st.info(f"🗺️ {_clipped_out} planting points removed — outside orthophoto map coverage. {len(safe_hexagons)} remain.")
+
+                # ── ORTHO VEGETATION CHECK: Remove points on existing canopy ──
+                # Cross-reference each point against the orthophoto — if the
+                # ortho pixel is green vegetation, the drone-image detector
+                # missed that canopy, so we remove it here.
+                _before_veg = len(safe_hexagons)
+                safe_hexagons = [
+                    h for h in safe_hexagons
+                    if not is_ortho_pixel_vegetation(h['_gps_lat'], h['_gps_lon'])
+                ]
+                _veg_removed = _before_veg - len(safe_hexagons)
+                if _veg_removed > 0:
+                    st.info(f"🌳 {_veg_removed} planting points removed — orthophoto shows existing canopy at those locations. {len(safe_hexagons)} remain.")
 
                 # Add RED X markers for forbidden-filtered hexagons
                 if show_forbidden_zones and forbidden_hexagons:

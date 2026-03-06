@@ -342,12 +342,12 @@
                 // Create map centered on your site
                 map = L.map('map').setView(metadata.center, 18);
                 
-                // Add your XYZ tiles (JPG format from WebODM)
-                tileLayer = L.tileLayer('http://localhost:8080/{z}/{x}/{y}.jpg', {
+                // Add your XYZ tiles (JPG format from QGIS export - CURRENT)
+                tileLayer = L.tileLayer('http://localhost:8080/CURRENT/{z}/{x}/{y}.png', {
                     maxZoom: metadata.max_zoom,
                     minZoom: metadata.min_zoom,
-                    attribution: 'MangroVision Orthophoto | WebODM',
-                    tms: false  // WebODM uses standard XYZ scheme
+                    attribution: 'MangroVision Orthophoto | QGIS',
+                    tms: false
                 });
                 tileLayer.addTo(map);
                 

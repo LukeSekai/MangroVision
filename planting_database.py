@@ -11,12 +11,52 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 _DB_PATH = Path(__file__).parent / "planting_zones.db"
+_DB_INITIALIZED = False
 
 
 def _get_connection() -> sqlite3.Connection:
+    global _DB_INITIALIZED
     conn = sqlite3.connect(str(_DB_PATH))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
+    if not _DB_INITIALIZED:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS analyses (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                image_name  TEXT    NOT NULL,
+                analyzed_at TEXT    NOT NULL,
+                center_lat  REAL,
+                center_lon  REAL,
+                altitude_m  REAL,
+                gsd_cm      REAL,
+                coverage_w  REAL,
+                coverage_h  REAL,
+                total_area_m2       REAL,
+                canopy_count        INTEGER,
+                danger_area_m2      REAL,
+                plantable_area_m2   REAL,
+                hexagon_count       INTEGER,
+                forbidden_filtered  INTEGER DEFAULT 0,
+                eroded_filtered     INTEGER DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS planting_points (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                analysis_id INTEGER NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
+                point_num   INTEGER NOT NULL,
+                latitude    REAL    NOT NULL,
+                longitude   REAL    NOT NULL,
+                pixel_x     INTEGER,
+                pixel_y     INTEGER,
+                buffer_m    REAL,
+                area_m2     REAL
+            );
+            CREATE INDEX IF NOT EXISTS idx_points_latlon
+                ON planting_points(latitude, longitude);
+            CREATE INDEX IF NOT EXISTS idx_analyses_center
+                ON analyses(center_lat, center_lon);
+        """)
+        conn.commit()
+        _DB_INITIALIZED = True
     return conn
 
 

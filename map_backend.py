@@ -51,13 +51,13 @@ class OrthophotoMetadata:
     This should match your WebODM output
     """
     def __init__(self):
-        # ✅ ACTUAL COORDINATES from WebODM output (UTM Zone 51N)
-        # These are in UTM meters, will be converted to lat/lon automatically
+        # ✅ ACTUAL COORDINATES from MAP2 (QGIS XYZ tile export, UTM Zone 51N)
+        # Derived from tile numbers: zoom=15, X=27545, Y=15396-15397
         self.bounds_utm = {
-            'north': 1191825.078,    # Top (northing)
-            'south': 1191650.359,    # Bottom (northing)
-            'east': 459097.2828,     # Right (easting)
-            'west': 458969.3065      # Left (easting)
+            'north': 1192801.364,    # Top (northing)
+            'south': 1190413.218,    # Bottom (northing)
+            'east': 459482.114,      # Right (easting)
+            'west': 458283.947       # Left (easting)
         }
         
         # Convert UTM to Lat/Lon for web map
@@ -189,8 +189,8 @@ def get_map_metadata():
             (ORTHO_METADATA.bounds['north'] + ORTHO_METADATA.bounds['south']) / 2,
             (ORTHO_METADATA.bounds['east'] + ORTHO_METADATA.bounds['west']) / 2
         ],
-        "tile_url": "/tiles/{z}/{x}/{y}.png",  # Update with your tile server URL
-        "max_zoom": 20,
+        "tile_url": "http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        "max_zoom": 22,
         "min_zoom": 15,
         "gsd_cm": ORTHO_METADATA.gsd_cm
     }
