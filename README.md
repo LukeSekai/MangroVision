@@ -29,6 +29,12 @@ This system uses a **Smart Hybrid approach** combining HSV color detection and d
 
 ---
 
+## 🏗️ Architecture
+
+For a detailed description of the software architecture, component mapping, and data flow, see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
+---
+
 ## 📁 Project Structure
 
 ```
