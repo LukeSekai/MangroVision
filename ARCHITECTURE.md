@@ -6,7 +6,7 @@ This document describes the actual software architecture of MangroVision as impl
 
 ## Architecture Diagram Accuracy Assessment
 
-The proposed architecture diagram identifies three layers (UI, Backend Logic, Data Access) with the following components. Here is how each maps to the actual implementation:
+The revised architecture diagram identifies three layers (UI, Backend Logic, Data Access) with the following components. Here is how each maps to the actual implementation:
 
 ### UI Layer
 
@@ -15,7 +15,6 @@ The proposed architecture diagram identifies three layers (UI, Backend Logic, Da
 | Drone Imagery Upload | ✅ Accurate | `app.py` — Streamlit file upload widget; `map_frontend.html` — drag-and-drop upload zone |
 | GIS Interface | ✅ Accurate | `map_frontend.html` — Leaflet map with XYZ orthophoto tiles; `app.py` — Folium maps with OpenStreetMap base layers |
 | Interactive Map Visualization | ✅ Accurate | `app.py` — Folium-based interactive maps with green/red markers, popups, and layer controls; `map_frontend.html` — Leaflet markers with custom icons |
-| Review Reforestation Plan | ⚠️ Partial | Results are displayed inline (canopy count, danger area, plantable area, hexagon count) with download buttons for PNG/JSON/GeoJSON/CSV — but there is no dedicated "Review Reforestation Plan" page or workflow step |
 
 ### Backend Logic Layer
 
@@ -31,9 +30,7 @@ The proposed architecture diagram identifies three layers (UI, Backend Logic, Da
 
 | Diagram Component | Accuracy | Actual Implementation |
 |---|---|---|
-| Output and Export Module | ⚠️ Inline | Export functionality is embedded directly in `app.py` as Streamlit download buttons (PNG visualization, JSON statistics, GeoJSON tree crowns, CSV summary). There is no separate export module. |
-| Result Processing Module | ⚠️ Inline | Result aggregation and formatting happens inline within `app.py` and `map_backend.py` endpoints. There is no separate result processing module. |
-| SQLite Database | ❌ **Does not exist** | The codebase does **not** use SQLite or any database. All results are returned as in-memory JSON via FastAPI responses or saved as flat files (JSON, GeoJSON, CSV, PNG) to the `output/` directory. |
+| File Storage | ✅ Accurate | All persistence is file-based. Detection results are saved as JSON, GeoJSON, CSV, and PNG files to the `output/` directory. No database is used. |
 
 ### Components Missing from the Diagram
 
@@ -253,44 +250,39 @@ flowchart TD
 
 ---
 
-## Key Differences from the Proposed Diagram
+## Accuracy Summary
 
-### 1. No SQLite Database
+**Overall accuracy: 11/11 components correct** — The revised diagram is a significant improvement over the original proposed diagram.
 
-The diagram shows an SQLite database at the bottom of the Data Access Layer. **This does not exist in the codebase.** All persistence is file-based:
-- Detection results → JSON files in `output/`
-- Tree crown polygons → GeoJSON files in `output_geojson/`
-- Visualizations → PNG files in `output/`
-- Tabular exports → CSV downloads via Streamlit
+### Improvements over the Original Diagram
 
-### 2. Result Processing and Export Are Not Separate Modules
+The revised diagram corrects several major inaccuracies from the original:
 
-The diagram shows "Result Processing Module" and "Output and Export Module" as distinct components. In practice, result aggregation and export are handled inline within `app.py` (Streamlit download buttons) and `map_backend.py` (FastAPI JSON responses). There are no standalone modules for these functions.
+1. **✅ SQLite Database removed → File Storage** — The original diagram incorrectly showed an SQLite database. The revised diagram correctly shows "File Storage", which matches the actual implementation (JSON, GeoJSON, CSV, PNG files in `output/`).
 
-### 3. Missing Components
+2. **✅ "Result Processing Module" and "Output and Export Module" removed** — The original diagram showed these as separate components, but they do not exist as standalone modules. The revised diagram correctly omits them; result processing and export are handled inline within `app.py` and `map_backend.py`.
 
-The diagram omits several modules that are integral to the system:
+3. **✅ "Review Reforestation Plan" removed** — The original diagram included this as a UI component, but no dedicated review page or workflow step exists in the codebase. The revised diagram correctly omits it.
 
-- **Flight Log Parser** — Heading extraction from DJI `.SRT` files is essential for accurate GPS mapping
-- **Auto-Alignment & Reference Matcher** — Two alternative methods for determining camera heading
-- **Orthophoto Matcher** — Homography-based pixel-to-GPS conversion using WebODM GeoTIFFs
-- **GSD Calculator** — Required for converting pixel measurements to real-world distances
-- **Detectree2 AI Detector** — The AI detection backend is a separate wrapper module
-- **Validation Metrics** — Quality checks for commission/omission errors
-- **FastAPI Backend** — REST API layer that serves the Leaflet web map frontend
-- **Configuration Module** — Centralized settings for detection parameters, CRS, and drone presets
+4. **✅ Correct backend data flow** — The revised diagram shows Drone Imagery Upload feeding into both EXIF Metadata Extraction and Mangrove Canopy Detection (in parallel), which both feed into the Geospatial Processing Engine. This accurately represents the actual processing pipeline in `app.py` where `ExifExtractor.extract_all_metadata()` and `detector.process_image()` run on the uploaded image, with their outputs combined for geospatial coordinate conversion.
 
-### 4. Data Flow Corrections
+5. **✅ Geospatial Processing Engine → Biological Exclusion Buffer → Hexagonal Grid Tessellation** — This sequential flow accurately mirrors the actual pipeline: `create_danger_zones()` → `generate_hexagonal_planting_zones()`.
 
-**Diagram flow:** Drone Upload → GIS Interface → Interactive Map → Review Plan
+6. **✅ File Storage ↔ Interactive Map Visualization** — The bidirectional connection between File Storage and Interactive Map correctly represents how map visualizations read from and export to the file-based storage layer.
 
-**Actual flow:** Drone Upload → EXIF Extraction + Heading Detection → GSD Calculation → Canopy Detection (HSV/AI/Hybrid) → Buffer Creation → Plantable Zone → Hexagonal Grid → Forbidden Zone Filtering → GPS Conversion → Map Visualization + Export
+### Remaining Minor Gaps
 
-The actual flow is a linear processing pipeline rather than a UI-navigation sequence. The GIS Interface and Interactive Map are output destinations, not intermediate processing steps.
+The following are not inaccuracies but rather simplifications in the diagram that could be expanded for completeness:
 
-### 5. Dual UI Architecture
+1. **Dual UI not distinguished** — The diagram shows a single UI layer. In practice, there are two independent interfaces:
+   - **Streamlit App** (`app.py`) — Full-featured analysis with Folium maps
+   - **Leaflet Web Map** (`map_frontend.html` + `map_backend.py`) — Standalone map with FastAPI backend
 
-The diagram shows a single UI layer. In reality, there are two independent user interfaces:
-
-1. **Streamlit App** (`app.py`) — Full-featured analysis workflow with sidebar settings, detection mode selection, and inline map visualization using Folium
-2. **Leaflet Web Map** (`map_frontend.html` + `map_backend.py`) — Standalone full-screen map interface with drag-and-drop upload, backed by FastAPI REST endpoints
+2. **Supporting modules not shown** — The diagram focuses on core components. The following supporting modules are part of the system but are reasonably omitted from a high-level diagram:
+   - Flight Log Parser (`flight_log_parser.py`) — DJI `.SRT` heading extraction
+   - Auto-Alignment (`auto_align.py`) — SIFT/ORB feature matching for heading
+   - Reference Matcher (`reference_matcher.py`) — Landmark-based rotation
+   - GSD Calculator (`gsd_calculator.py`) — Ground sample distance from altitude
+   - Detectree2 AI Detector (`detectree2_detector.py`) — Mask R-CNN wrapper
+   - Validation Metrics (`validation_metrics.py`) — Detection quality checks
+   - Configuration (`config.py`) — Centralized settings
