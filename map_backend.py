@@ -25,6 +25,9 @@ import math
 
 app = FastAPI(title="MangroVision Map API")
 
+TILESET_PATH = "NEW%20MAP"
+TILE_EXT = "jpg"
+
 # Enable CORS for frontend access
 app.add_middleware(
     CORSMiddleware,
@@ -189,7 +192,7 @@ def get_map_metadata():
             (ORTHO_METADATA.bounds['north'] + ORTHO_METADATA.bounds['south']) / 2,
             (ORTHO_METADATA.bounds['east'] + ORTHO_METADATA.bounds['west']) / 2
         ],
-        "tile_url": "http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        "tile_url": f"http://localhost:8080/{TILESET_PATH}/{{z}}/{{x}}/{{y}}.{TILE_EXT}",
         "max_zoom": 22,
         "min_zoom": 15,
         "gsd_cm": ORTHO_METADATA.gsd_cm
