@@ -15,6 +15,7 @@ SQLite with WAL journal mode for concurrent-read performance.
 
 import sqlite3
 import json
+import hashlib
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional, Tuple
@@ -170,6 +171,76 @@ def get_user_by_email(email: str) -> Optional[dict]:
     row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def _hash_password(password: str) -> str:
+    """Return SHA-256 password hash (hex)."""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+
+
+def get_user_by_name(full_name: str) -> Optional[dict]:
+    """Lookup a user by full name. Returns dict or None."""
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE lower(full_name) = lower(?)",
+        (full_name.strip(),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def ensure_admin_user() -> int:
+    """
+    Ensure a default admin planner exists.
+    Default credentials: username=admin, password=admin123
+    """
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT id FROM users WHERE lower(full_name) = 'admin'"
+    ).fetchone()
+    if row:
+        uid = row['id']
+    else:
+        cur = conn.execute("""
+            INSERT INTO users (full_name, email, role, organization, password_hash)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            'admin',
+            'admin@mangrovision.local',
+            'planner',
+            'MangroVision',
+            _hash_password('admin123'),
+        ))
+        uid = cur.lastrowid
+        conn.commit()
+    conn.close()
+    return uid
+
+
+def authenticate_user(username: str, password: str) -> Optional[dict]:
+    """Authenticate using full_name + password. Returns user dict on success."""
+    if not username or not password:
+        return None
+
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT * FROM users WHERE lower(full_name) = lower(?)",
+        (username.strip(),),
+    ).fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    user = dict(row)
+    stored_hash = user.get('password_hash') or ''
+    if not stored_hash:
+        return None
+
+    if stored_hash == _hash_password(password):
+        return user
+
+    return None
 
 
 def get_or_create_default_user() -> int:

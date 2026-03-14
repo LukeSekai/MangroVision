@@ -16,6 +16,9 @@ from PIL import Image
 from pathlib import Path
 import io
 import json
+import base64
+from datetime import datetime
+import time
 import streamlit_folium as st_folium
 import folium
 from pyproj import Transformer
@@ -40,15 +43,17 @@ from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
 from planting_database import (
     save_analysis, find_overlapping_analyses, count_nearby_points,
     get_all_stats, get_all_planting_points, delete_analysis,
+    authenticate_user, ensure_admin_user, update_last_login, get_user_by_name,
 )
 
 # Load forbidden zones (towers, bridges, houses) once at startup
-_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_zones.geojson"
+_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_final.geojson"
 _forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
 
 # Load eroded zones (user-drawn erosion areas) once at startup
 _ERODED_ZONES_PATH = Path(__file__).parent / "eroded_zones.geojson"
 _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))  # Reuse same class
+_LOGIN_BG_PATH = Path(__file__).parent / "assets" / "mangrovebg.jpg"
 
 # Page configuration
 st.set_page_config(
@@ -275,8 +280,407 @@ st.markdown("""
         background: linear-gradient(90deg, transparent, #4A9D6F, transparent);
         opacity: 0.5;
     }
+
+    /* Form submit button (Sign In) should match green theme */
+    .stFormSubmitButton > button {
+        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
+        color: white !important;
+        border: none !important;
+        padding: 0.75rem 2rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+        border-radius: 8px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        transition: all 0.3s ease;
+        width: 100%;
+    }
+
+    .stFormSubmitButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
+    }
+
+    .stFormSubmitButton > button:focus,
+    .stFormSubmitButton > button:active {
+        outline: none !important;
+        border: 1px solid #7EC88D !important;
+        box-shadow: 0 0 0 2px rgba(126, 200, 141, 0.35) !important;
+        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
+    }
+
+    /* Auth panel */
+    .auth-shell {
+        padding: 1.1rem 1.1rem 0.35rem 1.1rem;
+        border-radius: 12px;
+        background: linear-gradient(160deg, #060d1e 0%, #0a162d 100%);
+        border: 1px solid #2a446a;
+        margin-bottom: 0.9rem;
+    }
+
+    .auth-title {
+        color: #dff5e6;
+        font-size: 1.9rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .auth-subtitle {
+        color: #b8d4ff;
+        font-size: 0.95rem;
+        margin-top: 0.1rem;
+        margin-bottom: 0.65rem;
+    }
+
+    .auth-time {
+        color: #e7f1ff;
+        font-weight: 600;
+        background: rgba(48, 85, 135, 0.26);
+        border: 1px solid rgba(92, 136, 199, 0.42);
+        border-radius: 10px;
+        padding: 0.52rem 0.7rem;
+        margin-bottom: 0.45rem;
+    }
+
+    /* Opaque login form card */
+    div[data-testid="stForm"] {
+        background: linear-gradient(160deg, #050b18 0%, #0a152b 100%) !important;
+        border: 1px solid rgba(92, 136, 199, 0.36) !important;
+        border-radius: 12px !important;
+        padding: 1rem !important;
+    }
+
+    div[data-testid="stForm"] label,
+    div[data-testid="stForm"] p,
+    div[data-testid="stForm"] span {
+        color: #e6f0ff !important;
+    }
+
+    .auth-stage {
+        text-align: center;
+        color: #dff5e6;
+        padding: 1.2rem 0.4rem;
+        border-radius: 12px;
+        background: linear-gradient(160deg, #0f1f19 0%, #142920 100%);
+        border: 1px solid #2d5f3f;
+    }
+
+    .user-chip {
+        background: linear-gradient(145deg, #173728 0%, #24563c 100%);
+        border: 1px solid rgba(126, 200, 141, 0.45);
+        color: #e8fff0;
+        padding: 0.85rem;
+        border-radius: 10px;
+        margin-bottom: 0.65rem;
+        font-size: 0.86rem;
+        line-height: 1.4;
+    }
+
+    .user-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 0.5rem;
+        padding: 0.24rem 0;
+        border-bottom: 1px dashed rgba(126, 200, 141, 0.32);
+    }
+
+    .user-row:last-child {
+        border-bottom: none;
+    }
+
+    .user-label {
+        color: #b9eac8;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        flex: 0 0 38%;
+    }
+
+    .user-value {
+        color: #f0fff5;
+        font-weight: 700;
+        flex: 1;
+        text-align: right;
+        word-break: break-word;
+    }
+
+    /* Login input polish */
+    div[data-testid="stTextInput"] input:focus,
+    div[data-testid="stTextInput"] input[aria-invalid="true"] {
+        border-color: #4A9D6F !important;
+        box-shadow: 0 0 0 1px #4A9D6F !important;
+        outline: none !important;
+    }
+
+    div[data-testid="stTextInput"] [data-baseweb="input"]:focus-within {
+        border-color: #4A9D6F !important;
+        box-shadow: 0 0 0 1px #4A9D6F !important;
+    }
 </style>
 """, unsafe_allow_html=True)
+
+
+def _set_auth_query(is_logged_in: bool, username: str = ""):
+    """Persist simple auth marker in URL so browser refresh can restore login."""
+    try:
+        if is_logged_in:
+            st.query_params["auth"] = "1"
+            st.query_params["user"] = username
+        else:
+            st.query_params.clear()
+    except Exception:
+        pass
+
+
+def _get_login_bg_data_uri() -> str:
+    """Load local login placeholder image and return a data URI for CSS background-image."""
+    try:
+        image_bytes = _LOGIN_BG_PATH.read_bytes()
+        ext = _LOGIN_BG_PATH.suffix.lower()
+        mime = "image/svg+xml" if ext == ".svg" else "image/png"
+        b64 = base64.b64encode(image_bytes).decode("ascii")
+        return f"data:{mime};base64,{b64}"
+    except Exception:
+        # Fallback to a tiny embedded gradient SVG so login never looks blank.
+        fallback_svg = (
+            "<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='520' viewBox='0 0 1200 520'>"
+            "<defs><linearGradient id='g' x1='0' x2='1' y1='0' y2='1'>"
+            "<stop offset='0%' stop-color='#173728'/><stop offset='100%' stop-color='#2f7650'/>"
+            "</linearGradient></defs><rect width='1200' height='520' fill='url(#g)'/>"
+            "<circle cx='210' cy='130' r='150' fill='rgba(126,200,141,0.18)'/>"
+            "<circle cx='980' cy='390' r='180' fill='rgba(223,245,230,0.13)'/>"
+            "</svg>"
+        )
+        b64 = base64.b64encode(fallback_svg.encode("utf-8")).decode("ascii")
+        return f"data:image/svg+xml;base64,{b64}"
+
+
+def _restore_auth_from_query():
+    """Restore login state from query params and database user row."""
+    if st.session_state.get('logged_in'):
+        return
+    try:
+        auth_flag = st.query_params.get("auth", "")
+        auth_user = st.query_params.get("user", "")
+    except Exception:
+        return
+
+    if str(auth_flag) == "1" and str(auth_user).strip():
+        user = get_user_by_name(str(auth_user).strip())
+        if user:
+            st.session_state.logged_in = True
+            st.session_state.user_id = user.get('id')
+            st.session_state.username = user.get('full_name')
+            st.session_state.last_login = user.get('last_login')
+
+
+def _init_auth_state():
+    """Initialize authentication-related session keys."""
+    if 'logged_in' not in st.session_state:
+        st.session_state.logged_in = False
+    if 'auth_stage' not in st.session_state:
+        st.session_state.auth_stage = 'login'
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = None
+    if 'username' not in st.session_state:
+        st.session_state.username = None
+    if 'last_login' not in st.session_state:
+        st.session_state.last_login = None
+    if 'pending_user' not in st.session_state:
+        st.session_state.pending_user = None
+    if 'clear_login_fields' not in st.session_state:
+        st.session_state.clear_login_fields = False
+    _restore_auth_from_query()
+
+
+def _render_login_screen() -> bool:
+    """Render login UI; return True when authenticated."""
+    _init_auth_state()
+    if st.session_state.logged_in:
+        return True
+
+    ensure_admin_user()
+    now_str = datetime.now().strftime("%B %d, %Y | %I:%M:%S %p")
+    login_bg_data_uri = _get_login_bg_data_uri()
+
+    st.markdown(
+        f"""
+        <style>
+            [data-testid="stAppViewContainer"] {{
+                position: relative;
+                overflow: hidden;
+                isolation: isolate;
+                background: transparent !important;
+            }}
+
+            [data-testid="stAppViewContainer"]::before {{
+                content: "";
+                position: fixed;
+                inset: 0;
+                background-image: url('{login_bg_data_uri}');
+                background-size: cover;
+                background-position: center;
+                filter: blur(8px);
+                transform: scale(1.06);
+                z-index: -2;
+                pointer-events: none;
+            }}
+
+            [data-testid="stAppViewContainer"]::after {{
+                content: "";
+                position: fixed;
+                inset: 0;
+                background: linear-gradient(135deg, rgba(6, 17, 14, 0.74) 0%, rgba(10, 23, 18, 0.68) 50%, rgba(17, 48, 33, 0.66) 100%);
+                z-index: -1;
+                pointer-events: none;
+            }}
+
+            [data-testid="stAppViewContainer"],
+            [data-testid="stAppViewContainer"] > .main,
+            [data-testid="stHeader"],
+            [data-testid="stToolbar"] {{
+                background: transparent !important;
+                position: relative;
+                z-index: 2;
+            }}
+
+            [data-testid="stAppViewContainer"] [data-testid="block-container"] {{
+                position: relative;
+                z-index: 3;
+            }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if st.session_state.auth_stage == 'success':
+        left, mid, right = st.columns([1, 1.12, 1])
+        with mid:
+            st.markdown("""
+            <div class="auth-stage">
+                <h2 style="margin:0;">MangroVision</h2>
+                <p style="margin:0.4rem 0 0 0; color:#9fd0af;">Login successful</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+        time.sleep(0.9)
+        st.session_state.auth_stage = 'loading'
+        st.rerun()
+
+    if st.session_state.auth_stage == 'loading':
+        left, mid, right = st.columns([1, 1.12, 1])
+        with mid:
+            st.markdown("""
+            <div class="auth-stage">
+                <h2 style="margin:0;">MangroVision</h2>
+                <p style="margin:0.4rem 0 0.8rem 0; color:#9fd0af;">Loading workspace</p>
+            </div>
+            """, unsafe_allow_html=True)
+            progress = st.progress(0, text="Starting modules...")
+            for i in range(1, 101, 20):
+                time.sleep(0.14)
+                progress.progress(i, text="Loading MangroVision...")
+
+        pending = st.session_state.get('pending_user')
+        if pending:
+            update_last_login(pending['id'])
+            st.session_state.logged_in = True
+            st.session_state.user_id = pending['id']
+            st.session_state.username = pending['full_name']
+            st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
+            st.session_state.clear_login_fields = True
+            _set_auth_query(True, pending['full_name'])
+
+        st.session_state.pending_user = None
+        st.session_state.auth_stage = 'login'
+        st.rerun()
+
+    left, mid, right = st.columns([1, 1.12, 1])
+    with mid:
+        with st.container():
+            st.markdown(f"""
+            <div class="auth-shell">
+                <div class="auth-title">MangroVision</div>
+                <div class="auth-subtitle">Planner Login</div>
+                <div class="auth-time">Date & Time: {now_str}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.session_state.get('clear_login_fields'):
+                st.session_state.pop('login_username', None)
+                st.session_state.pop('login_password', None)
+                st.session_state.clear_login_fields = False
+
+            with st.form("login_form", clear_on_submit=False):
+                username = st.text_input("Username", placeholder="Enter username", key="login_username")
+                password = st.text_input("Password", type="password", placeholder="Enter password", key="login_password")
+                login_clicked = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+
+            if login_clicked:
+                user = authenticate_user(username.strip(), password)
+                if user:
+                    st.session_state.pending_user = user
+                    st.session_state.clear_login_fields = True
+                    st.session_state.auth_stage = 'success'
+                    st.rerun()
+                else:
+                    st.error("Invalid username or password.")
+
+    return False
+
+
+def _render_user_panel():
+    """Render logged-in user info and logout action in the sidebar."""
+    now_str = datetime.now().strftime("%b %d, %Y %I:%M %p")
+    last_login = st.session_state.get('last_login')
+    if last_login:
+        try:
+            last_login = datetime.fromisoformat(str(last_login)).strftime("%b %d, %Y %I:%M %p")
+        except ValueError:
+            pass
+
+    st.markdown("### User Session")
+    st.markdown(
+        f"""
+        <div class="user-chip">
+            <div class="user-row"><span class="user-label">User</span><span class="user-value">{st.session_state.get('username', 'Unknown')}</span></div>
+            <div class="user-row"><span class="user-label">Now</span><span class="user-value">{now_str}</span></div>
+            <div class="user-row"><span class="user-label">Last Login</span><span class="user-value">{last_login or 'First login'}</span></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    if st.button("Logout", use_container_width=True):
+        st.session_state.logged_in = False
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.session_state.last_login = None
+        st.session_state.clear_login_fields = True
+        st.session_state.auth_stage = 'login'
+        _set_auth_query(False)
+        st.rerun()
+    st.markdown("---")
+
+
+def _render_header_datetime_live():
+    """Render realtime datetime (with seconds) for the main header."""
+    def _clock_markup() -> str:
+        now_str = datetime.now().strftime("%B %d, %Y | %I:%M:%S %p")
+        return (
+            "<div style='margin-top:-1.1rem; margin-bottom:1rem; padding:0.55rem 0.85rem; "
+            "border-radius:10px; background:rgba(126, 200, 141, 0.15); "
+            "border:1px solid rgba(126, 200, 141, 0.35); color:#dff5e6; "
+            f"font-weight:600; width:fit-content;'>🕒 {now_str}</div>"
+        )
+
+    # Re-render only this fragment every second when supported.
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="1s")
+        def _clock_fragment():
+            st.markdown(_clock_markup(), unsafe_allow_html=True)
+        _clock_fragment()
+    else:
+        st.markdown(_clock_markup(), unsafe_allow_html=True)
 
 
 def _reload_eroded_filter():
@@ -345,7 +749,7 @@ def show_eroded_zone_editor():
 
     # Orthophoto tile layer
     folium.TileLayer(
-        tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
         attr='MangroVision Orthophoto | QGIS',
         name='Orthophoto',
         overlay=False,
@@ -589,7 +993,7 @@ def show_map_analytics():
 
     # Orthophoto tile layer
     folium.TileLayer(
-        tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
         attr='MangroVision Orthophoto | QGIS',
         name='Orthophoto',
         overlay=False, control=True,
@@ -699,6 +1103,9 @@ def show_map_analytics():
 
 def main():
 
+    if not _render_login_screen():
+        return
+
     # Header
     st.markdown("""
     <div class="main-header">
@@ -707,6 +1114,7 @@ def main():
         <p style="font-size: 0.9rem; margin-top: 0.5rem;">Intelligent tree crown detection & safe zone mapping</p>
     </div>
     """, unsafe_allow_html=True)
+    _render_header_datetime_live()
     
     # Mode selector
     st.markdown("---")
@@ -730,6 +1138,8 @@ def main():
     
     # Sidebar
     with st.sidebar:
+        _render_user_panel()
+
         # Logo header
         st.markdown("""
         <div style="background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%); 
@@ -1452,13 +1862,21 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                         )
                 
                 # ── Map Display Options ──────────────────────────────────
+                if 'show_forbidden_zones' not in st.session_state:
+                    st.session_state.show_forbidden_zones = False
+
                 _opt_col1, _opt_col2 = st.columns(2)
                 with _opt_col1:
-                    show_forbidden_zones = st.checkbox(
-                        "🚫 Show forbidden zones (red)",
-                        value=False,
-                        help="Toggle visibility of forbidden zones on the map. Filtering is always active."
-                    )
+                    _fz_btn_label = "🚫 Hide Forbidden Zone" if st.session_state.show_forbidden_zones else "🚫 Show Forbidden Zone"
+                    if st.button(
+                        _fz_btn_label,
+                        key="toggle_forbidden_zone_button",
+                        use_container_width=True,
+                        help="Show or hide forbidden-zone polygons on the map. Filtering is always active."
+                    ):
+                        st.session_state.show_forbidden_zones = not st.session_state.show_forbidden_zones
+
+                    show_forbidden_zones = st.session_state.show_forbidden_zones
                 with _opt_col2:
                     show_eroded_zones = st.checkbox(
                         "🏜️ Show eroded zones (orange)",
@@ -1477,7 +1895,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 
                 # Add orthophoto tile layer (YOUR CUSTOM MAP)
                 folium.TileLayer(
-                    tiles="http://localhost:8080/CURRENT/{z}/{x}/{y}.png",
+                    tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
                     attr='MangroVision Orthophoto | QGIS',
                     name='Orthophoto',  
                     
@@ -1758,6 +2176,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                             center_lon=map_center_lon,
                             results=results,
                             hexagons=safe_hexagons,
+                            user_id=st.session_state.get('user_id'),
                         )
                         st.session_state[_save_key] = _aid
                         if _skipped > 0:
