@@ -172,6 +172,14 @@ def get_user_by_email(email: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
+def get_user_by_name(full_name: str) -> Optional[dict]:
+    """Lookup a user by full_name. Returns dict or None."""
+    conn = _get_connection()
+    row = conn.execute("SELECT * FROM users WHERE full_name = ?", (full_name,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def get_or_create_default_user() -> int:
     """Return the id of the default planner; create if absent."""
     conn = _get_connection()
@@ -190,6 +198,37 @@ def get_or_create_default_user() -> int:
         conn.commit()
     conn.close()
     return uid
+
+
+def ensure_admin_user() -> int:
+    """Ensure thesis demo admin account exists; return user id."""
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT id FROM users WHERE full_name = ?",
+        ('admin123',),
+    ).fetchone()
+    if row:
+        uid = row['id']
+    else:
+        cur = conn.execute("""
+            INSERT INTO users (full_name, email, role, organization, password_hash)
+            VALUES (?, ?, 'planner', 'Leganes Municipal ENRO', ?)
+        """, ('admin123', 'admin123@mangrovision.local', 'admin123'))
+        uid = cur.lastrowid
+        conn.commit()
+    conn.close()
+    return uid
+
+
+def authenticate_user(username: str, password: str) -> Optional[dict]:
+    """Authenticate using full_name as username and password_hash as password."""
+    conn = _get_connection()
+    row = conn.execute("""
+        SELECT * FROM users
+        WHERE full_name = ? AND password_hash = ?
+    """, (username, password)).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def update_last_login(user_id: int):
@@ -666,3 +705,4 @@ def import_geojson_to_exclusion_zones(
 
 # ── Initialise on import ────────────────────────────────────────────
 init_db()
+ensure_admin_user()
