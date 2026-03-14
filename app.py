@@ -45,6 +45,9 @@ from planting_database import (
     get_all_stats, get_all_planting_points, delete_analysis,
     authenticate_user, ensure_admin_user, update_last_login, get_user_by_name,
 )
+from waypoint_export import (
+    generate_gpx, generate_kml, generate_geojson, hexagons_to_waypoints,
+)
 
 # Load forbidden zones (towers, bridges, houses) once at startup
 _FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_final.geojson"
@@ -1100,6 +1103,66 @@ def show_map_analytics():
                 st.success("Deleted. Refresh the page to update.")
                 st.rerun()
 
+    # ── Bulk Export All Planting Points ────────────────────────────
+    if all_points:
+        st.markdown("---")
+        st.markdown("### 📡 Export All Planting Points")
+        st.info(f"Export all **{len(all_points)}** saved planting points for field navigation")
+
+        _bulk_wps = hexagons_to_waypoints(all_points)
+        _bulk_meta = {
+            "image_name": "all_analyses",
+            "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+            "total_points": len(_bulk_wps),
+        }
+
+        _bc1, _bc2, _bc3, _bc4 = st.columns(4)
+        with _bc1:
+            _bulk_csv = pd.DataFrame([{
+                "Point #": w["point_num"],
+                "Latitude": f"{w['lat']:.7f}",
+                "Longitude": f"{w['lon']:.7f}",
+                "Buffer (m)": w.get("buffer_m", ""),
+                "Area (m²)": w.get("area_m2", ""),
+                "Status": w.get("status", "planned"),
+            } for w in _bulk_wps]).to_csv(index=False)
+            st.download_button(
+                label="📥 CSV",
+                data=_bulk_csv,
+                file_name="mangrovision_all_points.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="bulk_csv",
+            )
+        with _bc2:
+            st.download_button(
+                label="📡 GPX (GPS)",
+                data=generate_gpx(_bulk_wps, _bulk_meta),
+                file_name="mangrovision_all_points.gpx",
+                mime="application/gpx+xml",
+                use_container_width=True,
+                key="bulk_gpx",
+            )
+        with _bc3:
+            st.download_button(
+                label="🌍 KML (Google Earth)",
+                data=generate_kml(_bulk_wps, _bulk_meta),
+                file_name="mangrovision_all_points.kml",
+                mime="application/vnd.google-earth.kml+xml",
+                use_container_width=True,
+                key="bulk_kml",
+            )
+        with _bc4:
+            st.download_button(
+                label="🗺️ GeoJSON (QGIS)",
+                data=generate_geojson(_bulk_wps, _bulk_meta),
+                file_name="mangrovision_all_points.geojson",
+                mime="application/geo+json",
+                use_container_width=True,
+                key="bulk_geojson",
+            )
+        st.caption("💡 GPX works with Garmin, Locus Map, OsmAnd. KML opens in Google Earth. GeoJSON imports into QGIS.")
+
 
 def main():
 
@@ -1795,7 +1858,25 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 )
             
             with download_col3:
-                st.info("🗺️ Shapefile export for QGIS coming soon!")
+                # GeoJSON export (for QGIS)
+                _export_wps = hexagons_to_waypoints(
+                    results.get('hexagons', []),
+                    image_name=uploaded_file.name,
+                )
+                _export_meta = {
+                    "image_name": uploaded_file.name,
+                    "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+                    "detection_mode": detection_mode,
+                }
+                if _export_wps:
+                    st.download_button(
+                        label="🗺️ Download GeoJSON",
+                        data=generate_geojson(_export_wps, _export_meta),
+                        file_name=f"mangrovision_{uploaded_file.name}.geojson",
+                        mime="application/geo+json",
+                    )
+                else:
+                    st.info("🗺️ GeoJSON available after GPS mapping (below)")
             
             # STEP 3: Geotag results on orthophoto map
             # Use cached GPS data if available from previous run
@@ -2152,14 +2233,54 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     df = pd.DataFrame(coord_data)
                     st.dataframe(df, use_container_width=True)
                     
-                    # Download CSV button
-                    csv = df.to_csv(index=False)
-                    st.download_button(
-                        label="📥 Download Coordinate List (CSV)",
-                        data=csv,
-                        file_name=f"planting_coordinates_{uploaded_file.name}.csv",
-                        mime="text/csv"
+                    # ── Waypoint Export Buttons ────────────────────────
+                    st.markdown("#### 📡 Export Waypoints for Field Navigation")
+                    _wp_list = hexagons_to_waypoints(
+                        safe_hexagons,
+                        image_name=uploaded_file.name,
                     )
+                    _wp_meta = {
+                        "image_name": uploaded_file.name,
+                        "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+                        "detection_mode": detection_mode,
+                        "total_points": len(_wp_list),
+                    }
+
+                    _dl1, _dl2, _dl3, _dl4 = st.columns(4)
+                    with _dl1:
+                        csv = df.to_csv(index=False)
+                        st.download_button(
+                            label="📥 CSV",
+                            data=csv,
+                            file_name=f"planting_coordinates_{uploaded_file.name}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                        )
+                    with _dl2:
+                        st.download_button(
+                            label="📡 GPX (GPS)",
+                            data=generate_gpx(_wp_list, _wp_meta),
+                            file_name=f"planting_waypoints_{uploaded_file.name}.gpx",
+                            mime="application/gpx+xml",
+                            use_container_width=True,
+                        )
+                    with _dl3:
+                        st.download_button(
+                            label="🌍 KML (Google Earth)",
+                            data=generate_kml(_wp_list, _wp_meta),
+                            file_name=f"planting_waypoints_{uploaded_file.name}.kml",
+                            mime="application/vnd.google-earth.kml+xml",
+                            use_container_width=True,
+                        )
+                    with _dl4:
+                        st.download_button(
+                            label="🗺️ GeoJSON (QGIS)",
+                            data=generate_geojson(_wp_list, _wp_meta),
+                            file_name=f"planting_waypoints_{uploaded_file.name}.geojson",
+                            mime="application/geo+json",
+                            use_container_width=True,
+                        )
+                    st.caption("💡 GPX works with Garmin, Locus Map, OsmAnd. KML opens in Google Earth. GeoJSON imports into QGIS.")
                 
                 if forbidden_filtered_count > 0:
                     st.success(f"✅ Analysis complete! {len(safe_hexagons)} safe planting locations shown on map ({forbidden_filtered_count} filtered out from forbidden zones). Use Visual Results to see exact positions.")
