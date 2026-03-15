@@ -954,8 +954,8 @@ def show_map_analytics():
     if stats['total_analyses'] == 0:
         st.info(
             "📭 **No analyses saved yet.** Go to **Analyze Drone Image**, "
-            "upload an image, and run detection. The results are automatically "
-            "saved here."
+            "upload an image, run detection, then click **💾 Save to database**. "
+            "Saved results will appear here."
         )
         return
 
@@ -1227,15 +1227,9 @@ def main():
         detection_mode = "hybrid" if detectree2_available else "hsv"
         model_name = "paracou"
         
-        # AI confidence slider
-        ai_confidence = st.slider(
-            "AI Confidence Threshold",
-            min_value=0.3,
-            max_value=0.9,
-            value=0.5,
-            step=0.05,
-            help="Higher = only high-confidence detections. 0.5-0.6 is recommended."
-        )
+        # Keep AI confidence fixed for consistent hybrid behavior.
+        ai_confidence = 0.80
+        st.caption("AI Confidence Threshold: fixed at 0.80")
         
         st.markdown("---")
         
@@ -1259,47 +1253,9 @@ def main():
             help="Size of hexagonal planting zones (green buffers)"
         )
         
-        st.markdown("---")
-        
-        st.markdown("### 🚁 Flight Parameters")
-        
-        altitude = st.number_input(
-            "Flight Altitude (meters)",
-            min_value=3.0,
-            max_value=20.0,
-            value=6.0,
-            step=0.5,
-            help="Drone flight altitude"
-        )
-        
-        drone_model = st.selectbox(
-            "Drone Model",
-            ["GENERIC_4K", "DJI_MINI_3", "DJI_MAVIC_3", "DJI_AIR_2S", "DJI_PHANTOM_4"],
-            help="Select your drone model for accurate GSD calculation"
-        )
-        
-        st.markdown("---")
-        
-        st.markdown("""
-        <div style="background: linear-gradient(135deg, #1E3A2E 0%, #2D5F3F 100%);
-                    padding: 1.2rem; border-radius: 10px; border-left: 4px solid #7EC88D; margin: 1rem 0;">
-            <strong style="color: #7EC88D; font-size: 1.1rem;">ℹ️ About</strong><br>
-            <span style="color: #C8E6C9; line-height: 1.6;">MangroVision uses <strong>detectree2 AI</strong> (Mask R-CNN) for accurate tree crown detection and safe planting zone identification.</span>
-            <br><br>
-            <strong style="color: #7EC88D;">Technology:</strong><br>
-            <span style="color: #C8E6C9;">🤖 Detectree2 - AI tree detection<br>
-            � Specialized for tree crowns<br>
-            🎯 State-of-the-art accuracy</span>
-            <br><br>
-            <strong style="color: #7EC88D;">Color Legend:</strong><br>
-            <span style="color: #C8E6C9;">🔴 Red = Danger Zones (1m buffer)<br>
-            🟢 Green = Planting Zones (1m hexagons)</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        st.markdown("<p style='color: #7EC88D; font-weight: 600;'>👥 Thesis Project 2026</p>", unsafe_allow_html=True)
-        st.markdown("<p style='color: #C8E6C9;'>GIS-Based Analysis for Leganes</p>", unsafe_allow_html=True)
+        # Hidden defaults (Flight Parameters panel removed from sidebar UI).
+        altitude = 6.0
+        drone_model = "GENERIC_4K"
     
     # Main content area
     col1, col2 = st.columns([1, 1])
@@ -1454,7 +1410,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                             f"⚠️ **This area already has planting data!** "
                             f"{len(_overlaps)} previous analysis(es) found nearby "
                             f"({_names}), with {_existing_pts} planting points saved. "
-                            f"Running analysis again will add new points to the database."
+                            f"Run detection, then save only if you want to update the database."
                         )
                 else:
                     st.warning(f"⚠️ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (OUTSIDE map bounds)")
@@ -1564,8 +1520,16 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             
             progress_bar.progress(15, text="🔍 Initializing AI detector...")
             
-            # Create a unique key for this analysis
-            analysis_key = f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}"
+            # Create a unique key for this analysis.
+            # Include detector file timestamp so code changes invalidate old cached visual outputs.
+            try:
+                detector_code_mtime = int((Path(__file__).parent / "canopy_detection" / "canopy_detector_hexagon.py").stat().st_mtime)
+            except Exception:
+                detector_code_mtime = 0
+            analysis_key = (
+                f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
+                f"{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}_{detector_code_mtime}"
+            )
             
             # Check if we've already run detection for this configuration
             if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
@@ -2287,27 +2251,31 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 else:
                     st.success(f"✅ Analysis complete! {len(safe_hexagons)} GPS-tagged planting locations shown on map. Use Visual Results to see exact positions.")
                 
-                # ── Save analysis to database ───────────────────────
+                # ── Manual save to database ──────────────────────────
                 _save_key = f"saved_{st.session_state.get('last_analysis_key', '')}"
-                if _save_key not in st.session_state:
-                    try:
-                        _aid, _new, _skipped = save_analysis(
-                            image_name=uploaded_file.name,
-                            center_lat=map_center_lat,
-                            center_lon=map_center_lon,
-                            results=results,
-                            hexagons=safe_hexagons,
-                            user_id=st.session_state.get('user_id'),
-                        )
-                        st.session_state[_save_key] = _aid
-                        if _skipped > 0:
-                            st.info(f"💾 Saved {_new} new planting points (Analysis #{_aid}). {_skipped} duplicate points skipped (already in database). View all in **Map Analytics**.")
-                        else:
-                            st.info(f"💾 Planting data saved (Analysis #{_aid}, {_new} points). View all in **Map Analytics** mode.")
-                    except Exception as _db_err:
-                        st.warning(f"⚠️ Could not save to database: {_db_err}")
+                if _save_key in st.session_state:
+                    st.caption(f"💾 Already saved (Analysis #{st.session_state[_save_key]}).")
                 else:
-                    st.caption(f"💾 Already saved (Analysis #{st.session_state[_save_key]})")
+                    st.info("Results are not yet saved to Map Analytics.")
+                    _save_btn_key = f"save_btn_{st.session_state.get('last_analysis_key', 'current')}"
+                    if st.button("💾 Save to database", key=_save_btn_key, type="primary"):
+                        try:
+                            _aid, _new, _skipped = save_analysis(
+                                image_name=uploaded_file.name,
+                                center_lat=map_center_lat,
+                                center_lon=map_center_lon,
+                                results=results,
+                                hexagons=safe_hexagons,
+                                user_id=st.session_state.get('user_id'),
+                            )
+                            st.session_state[_save_key] = _aid
+                            if _skipped > 0:
+                                st.success(f"✅ Saved {_new} new planting points (Analysis #{_aid}). {_skipped} duplicates skipped.")
+                            else:
+                                st.success(f"✅ Planting data saved (Analysis #{_aid}, {_new} points).")
+                            st.caption("Saved points are now available in **Map Analytics**.")
+                        except Exception as _db_err:
+                            st.warning(f"⚠️ Could not save to database: {_db_err}")
             else:
                 st.warning("⚠️ GPS mapping skipped - no GPS data in image")
                 st.success("✅ Analysis complete! Results ready for export.")
