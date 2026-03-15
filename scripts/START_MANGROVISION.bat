@@ -9,11 +9,11 @@ echo      Starting MangroVision System
 echo ================================================
 echo.
 
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 REM Start Tile Server in background
 echo [1/2] Starting Tile Server on port 8080...
-start "MangroVision Tile Server" cmd /c "venv\Scripts\python.exe start_tile_server.py"
+start "MangroVision Tile Server" cmd /c "venv\Scripts\python.exe server\start_tile_server.py"
 timeout /t 2 /nobreak >nul
 
 REM Start Streamlit App

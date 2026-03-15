@@ -21,7 +21,8 @@ from datetime import datetime
 from typing import List, Dict, Optional, Tuple
 
 # ── Database path ───────────────────────────────────────────────────
-_DB_PATH = Path(__file__).parent / "planting_zones.db"
+# parent.parent → project root (this file is in database/ subfolder)
+_DB_PATH = Path(__file__).parent.parent / "planting_zones.db"
 _DB_INITIALIZED = False
 
 

@@ -1,6 +1,6 @@
 import sys, sqlite3
-sys.path.insert(0, '.')
-from planting_database import *
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from database.planting_database import *
 
 conn = sqlite3.connect('planting_zones.db')
 tables = sorted(r[0] for r in conn.execute(

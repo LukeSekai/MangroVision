@@ -1,7 +1,7 @@
 """Quick test of the updated 5-table schema."""
 import sys, sqlite3
-sys.path.insert(0, '.')
-from planting_database import *
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+from database.planting_database import *
 
 DB = "planting_zones.db"
 conn = sqlite3.connect(DB)

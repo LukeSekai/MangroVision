@@ -1,9 +1,9 @@
 """Full integration test: simulate what app.py does with the database."""
 import sys, os
-sys.path.insert(0, r'c:\Users\Lenovo-Pc\OneDrive\Thesis\thesis_env\MangroVision')
-os.chdir(r'c:\Users\Lenovo-Pc\OneDrive\Thesis\thesis_env\MangroVision')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-from planting_database import (
+from database.planting_database import (
     save_analysis, find_overlapping_analyses, count_nearby_points,
     get_all_stats, get_all_planting_points, delete_analysis,
 )

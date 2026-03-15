@@ -25,7 +25,7 @@ class CORSHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     # Change to MAP directory
     import os
-    map_dir = Path(__file__).parent / "MAP"
+    map_dir = Path(__file__).parent.parent / "MAP"
     if map_dir.exists():
         os.chdir(map_dir)
         print(f"📁 Serving tiles from: {map_dir}")

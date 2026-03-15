@@ -11,9 +11,10 @@ import sys, os
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Add project root to sys.path (parent of tests/)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-from waypoint_export import (
+from export.waypoint_export import (
     generate_gpx, generate_kml, generate_geojson, hexagons_to_waypoints,
 )
 import xml.etree.ElementTree as ET

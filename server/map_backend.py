@@ -16,7 +16,7 @@ from datetime import datetime
 import sys
 
 # Import your existing detector
-sys.path.append(str(Path(__file__).parent / "canopy_detection"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 from canopy_detection.canopy_detector_hexagon import HexagonDetector
 
 # GIS libraries for coordinate transformation

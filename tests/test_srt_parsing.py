@@ -1,7 +1,8 @@
 """
 Quick test to verify SRT parsing works with your DJI files
 """
-import sys
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from pathlib import Path
 
 # Add canopy_detection to path

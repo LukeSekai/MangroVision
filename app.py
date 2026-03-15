@@ -28,9 +28,6 @@ sys.path.append(str(Path(__file__).parent / "canopy_detection"))
 
 from canopy_detection.canopy_detector_hexagon import HexagonDetector
 from canopy_detection.exif_extractor import ExifExtractor
-from canopy_detection.auto_align import detect_camera_heading, snap_to_cardinal
-from canopy_detection.flight_log_parser import FlightLogParser, snap_to_cardinal as snap_heading
-from canopy_detection.reference_matcher import ReferencePointMatcher
 from canopy_detection.ortho_matcher import (
     match_drone_to_ortho,
     drone_pixel_to_gps_via_homography,
@@ -40,21 +37,21 @@ from canopy_detection.ortho_matcher import (
     is_ortho_pixel_vegetation,
 )
 from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
-from planting_database import (
+from database.planting_database import (
     save_analysis, find_overlapping_analyses, count_nearby_points,
     get_all_stats, get_all_planting_points, delete_analysis,
     authenticate_user, ensure_admin_user, update_last_login, get_user_by_name,
 )
-from waypoint_export import (
+from export.waypoint_export import (
     generate_gpx, generate_kml, generate_geojson, hexagons_to_waypoints,
 )
 
 # Load forbidden zones (towers, bridges, houses) once at startup
-_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_final.geojson"
+_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "data" / "zones" / "forbidden_final.geojson"
 _forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
 
 # Load eroded zones (user-drawn erosion areas) once at startup
-_ERODED_ZONES_PATH = Path(__file__).parent / "eroded_zones.geojson"
+_ERODED_ZONES_PATH = Path(__file__).parent / "data" / "zones" / "eroded_zones.geojson"
 _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))  # Reuse same class
 _LOGIN_BG_PATH = Path(__file__).parent / "assets" / "mangrovebg.jpg"
 
@@ -1475,83 +1472,14 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     drone_to_use = ExifExtractor.detect_drone_model(metadata['camera'])
                     st.info(f"📷 Detected drone: {drone_to_use.replace('_', ' ')}")
                 
-                # AUTOMATIC HEADING DETECTION
-                st.markdown("---")
-                st.markdown("### 🧭 Camera Heading Detection")
-                
+                # AUTOMATIC HEADING DETECTION (Silent EXIF extraction)
                 camera_heading = 0  # Default
                 heading_source = "Default (North)"
                 
-                # Method 0: Check EXIF GPSImgDirection (most reliable if present)
                 if gps.get('heading') is not None:
                     camera_heading = float(gps['heading'])
                     heading_source = "EXIF GPSImgDirection"
                     st.success(f"✅ Heading from EXIF metadata: {camera_heading:.1f}°")
-                
-                # Method 1: Flight Log/SRT File Upload (if available)
-                st.markdown("#### 📁 Method 1: Flight Log (Auto)")
-                with st.expander("ℹ️ Upload SRT file if available"):
-                    st.markdown("""
-                    **If you have DJI .SRT files:**
-                    
-                    These files contain GPS trajectory data that can be used to estimate heading.
-                    However, for **hovering drones** (taking nadir photos), this may not be accurate.
-                    
-                    Upload your `.SRT` file to try automatic extraction.
-                    """)
-                
-                flight_log = st.file_uploader(
-                    "Upload DJI .SRT or flight log file (optional)",
-                    type=['srt', 'txt', 'log', 'csv'],
-                    help="Only works if drone was moving during capture",
-                    key="flight_log_upload"
-                )
-                
-                if flight_log is not None:
-                    temp_path = Path("temp_flight_log") / flight_log.name
-                    temp_path.parent.mkdir(exist_ok=True)
-                    with open(temp_path, 'wb') as f:
-                        f.write(flight_log.getvalue())
-                    
-                    parser = FlightLogParser()
-                    extracted_heading = parser.extract_heading(str(temp_path))
-                    
-                    if extracted_heading is not None:
-                        camera_heading = extracted_heading
-                        heading_source = f"Flight Log ({flight_log.name})"
-                        st.success(f"✅ Heading extracted: {camera_heading:.1f}° from {flight_log.name}")
-                    else:
-                        st.warning("⚠️ Could not extract heading (drone may have been hovering). Use landmark method after analysis.")
-                
-                # Method 2: Landmark-Based Alignment (RECOMMENDED)
-                st.markdown("#### 🎯 Method 2: Landmark Alignment (RECOMMENDED)")
-                st.info("""
-                **Most Accurate Method:**
-                1. First, run analysis with current heading
-                2. After seeing Visual Results and map, identify a clear landmark (tower, building, path junction)
-                3. Click the landmark in both views to auto-calculate rotation
-                4. System will recalculate GPS coordinates with correct heading
-                
-                ⚡ This will be available after running the analysis below.
-                """)
-                
-                # Store landmark alignment flag in session state
-                if 'use_landmark_alignment' not in st.session_state:
-                    st.session_state.use_landmark_alignment = False
-                
-                # Method 3: Manual Fine-tune (fallback)
-                st.markdown("#### ⚙️ Method 3: Manual Adjustment (Fallback)")
-                manual_override = st.checkbox("Use manual heading adjustment", value=False, key="manual_heading_override")
-                
-                if manual_override:
-                    camera_heading = st.slider(
-                        "Manual heading:",
-                        min_value=0, max_value=359, value=int(camera_heading), step=1,
-                        help="0°=North, 90°=East, 180°=South, 270°=West"
-                    )
-                    heading_source = "Manual Override"
-                
-                st.info(f"🧭 Using heading: **{camera_heading:.1f}°** ({heading_source})")
             else:
                 st.error("❌ No GPS data found in image!")
                 st.warning("Cannot geotag results on map without GPS coordinates.")

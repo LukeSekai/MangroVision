@@ -1,9 +1,9 @@
 """Quick test for the new 4-table database schema."""
 import sys, os
-sys.path.insert(0, r'c:\Users\Lenovo-Pc\OneDrive\Thesis\thesis_env\MangroVision')
-os.chdir(r'c:\Users\Lenovo-Pc\OneDrive\Thesis\thesis_env\MangroVision')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+os.chdir(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
-import planting_database as db
+import database.planting_database as db
 import sqlite3
 
 conn = sqlite3.connect('planting_zones.db')

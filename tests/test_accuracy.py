@@ -6,7 +6,8 @@ Shows detection quality metrics and visual comparison
 import cv2
 import numpy as np
 from pathlib import Path
-import sys
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 # Add parent to path
 sys.path.append(str(Path(__file__).parent))

@@ -1,6 +1,6 @@
 """Quick test for ortho_matcher - test multiple images/datasets"""
 import sys
-sys.path.insert(0, '.')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import cv2
 from canopy_detection.ortho_matcher import match_drone_to_ortho, drone_pixel_to_gps_via_homography, gps_to_ortho_pixel
 

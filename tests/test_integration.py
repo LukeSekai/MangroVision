@@ -2,7 +2,8 @@
 Test script to verify pure detectree2 AI detection integration
 """
 
-import sys
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from pathlib import Path
 import numpy as np
 import cv2

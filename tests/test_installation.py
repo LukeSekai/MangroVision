@@ -2,6 +2,8 @@
 Test script to verify detectree2 installation and basic functionality
 Run this first to ensure everything is set up correctly
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 
 import torch
 import numpy as np

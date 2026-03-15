@@ -1,6 +1,8 @@
 """
 Test the hybrid HSV+AI approach for speed improvements
 """
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import cv2
 import time
 from pathlib import Path

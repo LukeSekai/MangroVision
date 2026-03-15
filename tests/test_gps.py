@@ -1,4 +1,4 @@
-import sys; sys.path.insert(0, '.')
+import sys; sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from canopy_detection.exif_extractor import ExifExtractor
 ex = ExifExtractor()
 for img in ['drone_images/dataset_with_gps/frame_0049.jpg',

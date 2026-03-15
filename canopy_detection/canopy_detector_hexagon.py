@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import math
 
-from gsd_calculator import GSDCalculator
+from .gsd_calculator import GSDCalculator
 
 # Optional: Try to import detectree2 detector
 try:

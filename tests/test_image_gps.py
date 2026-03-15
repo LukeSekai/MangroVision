@@ -1,5 +1,6 @@
 """Quick test to check GPS data and heading from all three drone image folders"""
 import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 from pathlib import Path
 sys.path.append(str(Path(__file__).parent / "canopy_detection"))
 
