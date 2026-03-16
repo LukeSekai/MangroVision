@@ -12,6 +12,7 @@ import streamlit as st
 import cv2
 import numpy as np
 import pandas as pd
+import inspect
 from PIL import Image
 from pathlib import Path
 import io
@@ -28,16 +29,12 @@ sys.path.append(str(Path(__file__).parent / "canopy_detection"))
 
 from canopy_detection.canopy_detector_hexagon import HexagonDetector
 from canopy_detection.exif_extractor import ExifExtractor
-from canopy_detection.auto_align import detect_camera_heading, snap_to_cardinal
-from canopy_detection.flight_log_parser import FlightLogParser, snap_to_cardinal as snap_heading
-from canopy_detection.reference_matcher import ReferencePointMatcher
 from canopy_detection.ortho_matcher import (
     match_drone_to_ortho,
     drone_pixel_to_gps_via_homography,
     drone_pixel_to_gps_via_heading,
     select_orthophoto,
     is_inside_any_orthophoto,
-    is_ortho_pixel_vegetation,
 )
 from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
 from planting_database import (
@@ -57,6 +54,7 @@ _forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
 _ERODED_ZONES_PATH = Path(__file__).parent / "eroded_zones.geojson"
 _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))  # Reuse same class
 _LOGIN_BG_PATH = Path(__file__).parent / "assets" / "mangrovebg.jpg"
+
 
 # Page configuration
 st.set_page_config(
@@ -419,6 +417,7 @@ st.markdown("""
         border-color: #4A9D6F !important;
         box-shadow: 0 0 0 1px #4A9D6F !important;
     }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -481,25 +480,23 @@ def _init_auth_state():
     """Initialize authentication-related session keys."""
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
-    if 'auth_stage' not in st.session_state:
-        st.session_state.auth_stage = 'login'
     if 'user_id' not in st.session_state:
         st.session_state.user_id = None
     if 'username' not in st.session_state:
         st.session_state.username = None
     if 'last_login' not in st.session_state:
         st.session_state.last_login = None
-    if 'pending_user' not in st.session_state:
-        st.session_state.pending_user = None
     if 'clear_login_fields' not in st.session_state:
         st.session_state.clear_login_fields = False
+    if 'show_login_success' not in st.session_state:
+        st.session_state.show_login_success = False
     _restore_auth_from_query()
 
 
 def _render_login_screen() -> bool:
     """Render login UI; return True when authenticated."""
     _init_auth_state()
-    if st.session_state.logged_in:
+    if st.session_state.logged_in and not st.session_state.get('show_login_success', False):
         return True
 
     ensure_admin_user()
@@ -556,47 +553,22 @@ def _render_login_screen() -> bool:
         unsafe_allow_html=True,
     )
 
-    if st.session_state.auth_stage == 'success':
+    if st.session_state.get('show_login_success', False):
         left, mid, right = st.columns([1, 1.12, 1])
         with mid:
-            st.markdown("""
-            <div class="auth-stage">
-                <h2 style="margin:0;">MangroVision</h2>
-                <p style="margin:0.4rem 0 0 0; color:#9fd0af;">Login successful</p>
-            </div>
-            """, unsafe_allow_html=True)
-
-        time.sleep(0.9)
-        st.session_state.auth_stage = 'loading'
+            st.markdown(
+                """
+                <div class="auth-stage">
+                    <h2 style="margin:0;">MangroVision</h2>
+                    <p style="margin:0.4rem 0 0 0; color:#9fd0af;">Login successful</p>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+        time.sleep(1.0)
+        st.session_state.show_login_success = False
         st.rerun()
-
-    if st.session_state.auth_stage == 'loading':
-        left, mid, right = st.columns([1, 1.12, 1])
-        with mid:
-            st.markdown("""
-            <div class="auth-stage">
-                <h2 style="margin:0;">MangroVision</h2>
-                <p style="margin:0.4rem 0 0.8rem 0; color:#9fd0af;">Loading workspace</p>
-            </div>
-            """, unsafe_allow_html=True)
-            progress = st.progress(0, text="Starting modules...")
-            for i in range(1, 101, 20):
-                time.sleep(0.14)
-                progress.progress(i, text="Loading MangroVision...")
-
-        pending = st.session_state.get('pending_user')
-        if pending:
-            update_last_login(pending['id'])
-            st.session_state.logged_in = True
-            st.session_state.user_id = pending['id']
-            st.session_state.username = pending['full_name']
-            st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
-            st.session_state.clear_login_fields = True
-            _set_auth_query(True, pending['full_name'])
-
-        st.session_state.pending_user = None
-        st.session_state.auth_stage = 'login'
-        st.rerun()
+        return False
 
     left, mid, right = st.columns([1, 1.12, 1])
     with mid:
@@ -622,9 +594,14 @@ def _render_login_screen() -> bool:
             if login_clicked:
                 user = authenticate_user(username.strip(), password)
                 if user:
-                    st.session_state.pending_user = user
+                    update_last_login(user['id'])
+                    st.session_state.logged_in = True
+                    st.session_state.user_id = user['id']
+                    st.session_state.username = user['full_name']
+                    st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
                     st.session_state.clear_login_fields = True
-                    st.session_state.auth_stage = 'success'
+                    st.session_state.show_login_success = True
+                    _set_auth_query(True, user['full_name'])
                     st.rerun()
                 else:
                     st.error("Invalid username or password.")
@@ -659,7 +636,7 @@ def _render_user_panel():
         st.session_state.username = None
         st.session_state.last_login = None
         st.session_state.clear_login_fields = True
-        st.session_state.auth_stage = 'login'
+        st.session_state.show_login_success = False
         _set_auth_query(False)
         st.rerun()
     st.markdown("---")
@@ -1214,22 +1191,28 @@ def main():
         
         st.markdown("### ⚙️ Detection Settings")
         
-        # Check if detectree2 is available
+        # Check if detectree2 is available (prefer official integration path).
         try:
-            from canopy_detection.detectree2_detector import Detectree2Detector
+            from canopy_detection.detectree2_proper import ProperDetectree2Detector  # noqa: F401
             detectree2_available = True
-            st.success("🌳 **Smart Hybrid** (HSV + AI) Ready")
+            st.success("🌳 **AI-only detectree2** Ready (HSV merge disabled)")
         except ImportError:
-            detectree2_available = False
-            st.warning("🌳 Using **HSV detection** (detectree2 not installed)")
+            try:
+                from canopy_detection.detectree2_detector import Detectree2Detector  # noqa: F401
+                detectree2_available = True
+                st.success("🌳 **AI-only detectree2** Ready (HSV merge disabled)")
+            except ImportError:
+                detectree2_available = False
+                st.warning("🌳 Using **HSV detection** (detectree2 not installed)")
         
-        # Hardcoded defaults — hybrid mode with paracou model
-        detection_mode = "hybrid" if detectree2_available else "hsv"
+        # Hardcoded defaults - AI-only mode with HSV fallback if AI backend is unavailable.
+        detection_mode = "ai" if detectree2_available else "hsv"
         model_name = "paracou"
         
-        # Keep AI confidence fixed for consistent hybrid behavior.
-        ai_confidence = 0.80
-        st.caption("AI Confidence Threshold: fixed at 0.80")
+        # Keep AI confidence fixed for consistent AI-only behavior.
+        ai_confidence = 0.75
+        st.caption("AI Confidence Threshold: fixed at 0.75 (AI-only mode)")
+        ai_runtime_tuning = {}
         
         st.markdown("---")
         
@@ -1304,6 +1287,7 @@ def main():
                 st.session_state.current_ai_confidence = ai_confidence
                 st.session_state.current_model_name = model_name
                 st.session_state.current_detection_mode = detection_mode
+                st.session_state.current_ai_runtime_tuning = ai_runtime_tuning
         else:
             st.markdown("### 📋 Instructions")
             st.markdown("""
@@ -1340,11 +1324,22 @@ def main():
             st.session_state.current_hexagon_size,
             st.session_state.current_ai_confidence,
             st.session_state.current_model_name,
-            st.session_state.current_detection_mode
+            st.session_state.current_detection_mode,
+            st.session_state.get('current_ai_runtime_tuning', {})
         )
 
 
-def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_size, ai_confidence, model_name, detection_mode='hybrid'):
+def analyze_image(
+    uploaded_file,
+    altitude,
+    drone_model,
+    canopy_buffer,
+    hexagon_size,
+    ai_confidence,
+    model_name,
+    detection_mode='ai',
+    ai_runtime_tuning=None,
+):
     """Process the uploaded image using detectree2 AI detection"""
     
     # ── Progress bar for user feedback ─────────────────────────────
@@ -1431,82 +1426,12 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     drone_to_use = ExifExtractor.detect_drone_model(metadata['camera'])
                     st.info(f"📷 Detected drone: {drone_to_use.replace('_', ' ')}")
                 
-                # AUTOMATIC HEADING DETECTION
-                st.markdown("---")
-                st.markdown("### 🧭 Camera Heading Detection")
-                
-                camera_heading = 0  # Default
+                # Automatic heading only (manual heading UI removed).
+                camera_heading = 0.0
                 heading_source = "Default (North)"
-                
-                # Method 0: Check EXIF GPSImgDirection (most reliable if present)
                 if gps.get('heading') is not None:
                     camera_heading = float(gps['heading'])
                     heading_source = "EXIF GPSImgDirection"
-                    st.success(f"✅ Heading from EXIF metadata: {camera_heading:.1f}°")
-                
-                # Method 1: Flight Log/SRT File Upload (if available)
-                st.markdown("#### 📁 Method 1: Flight Log (Auto)")
-                with st.expander("ℹ️ Upload SRT file if available"):
-                    st.markdown("""
-                    **If you have DJI .SRT files:**
-                    
-                    These files contain GPS trajectory data that can be used to estimate heading.
-                    However, for **hovering drones** (taking nadir photos), this may not be accurate.
-                    
-                    Upload your `.SRT` file to try automatic extraction.
-                    """)
-                
-                flight_log = st.file_uploader(
-                    "Upload DJI .SRT or flight log file (optional)",
-                    type=['srt', 'txt', 'log', 'csv'],
-                    help="Only works if drone was moving during capture",
-                    key="flight_log_upload"
-                )
-                
-                if flight_log is not None:
-                    temp_path = Path("temp_flight_log") / flight_log.name
-                    temp_path.parent.mkdir(exist_ok=True)
-                    with open(temp_path, 'wb') as f:
-                        f.write(flight_log.getvalue())
-                    
-                    parser = FlightLogParser()
-                    extracted_heading = parser.extract_heading(str(temp_path))
-                    
-                    if extracted_heading is not None:
-                        camera_heading = extracted_heading
-                        heading_source = f"Flight Log ({flight_log.name})"
-                        st.success(f"✅ Heading extracted: {camera_heading:.1f}° from {flight_log.name}")
-                    else:
-                        st.warning("⚠️ Could not extract heading (drone may have been hovering). Use landmark method after analysis.")
-                
-                # Method 2: Landmark-Based Alignment (RECOMMENDED)
-                st.markdown("#### 🎯 Method 2: Landmark Alignment (RECOMMENDED)")
-                st.info("""
-                **Most Accurate Method:**
-                1. First, run analysis with current heading
-                2. After seeing Visual Results and map, identify a clear landmark (tower, building, path junction)
-                3. Click the landmark in both views to auto-calculate rotation
-                4. System will recalculate GPS coordinates with correct heading
-                
-                ⚡ This will be available after running the analysis below.
-                """)
-                
-                # Store landmark alignment flag in session state
-                if 'use_landmark_alignment' not in st.session_state:
-                    st.session_state.use_landmark_alignment = False
-                
-                # Method 3: Manual Fine-tune (fallback)
-                st.markdown("#### ⚙️ Method 3: Manual Adjustment (Fallback)")
-                manual_override = st.checkbox("Use manual heading adjustment", value=False, key="manual_heading_override")
-                
-                if manual_override:
-                    camera_heading = st.slider(
-                        "Manual heading:",
-                        min_value=0, max_value=359, value=int(camera_heading), step=1,
-                        help="0°=North, 90°=East, 180°=South, 270°=West"
-                    )
-                    heading_source = "Manual Override"
-                
                 st.info(f"🧭 Using heading: **{camera_heading:.1f}°** ({heading_source})")
             else:
                 st.error("❌ No GPS data found in image!")
@@ -1521,19 +1446,30 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             progress_bar.progress(15, text="🔍 Initializing AI detector...")
             
             # Create a unique key for this analysis.
-            # Include detector file timestamp so code changes invalidate old cached visual outputs.
+            # Include detector backend mtimes so code changes invalidate cached results.
             try:
-                detector_code_mtime = int((Path(__file__).parent / "canopy_detection" / "canopy_detector_hexagon.py").stat().st_mtime)
+                canopy_code_mtime = int((Path(__file__).parent / "canopy_detection" / "canopy_detector_hexagon.py").stat().st_mtime)
             except Exception:
-                detector_code_mtime = 0
+                canopy_code_mtime = 0
+            try:
+                proper_code_mtime = int((Path(__file__).parent / "canopy_detection" / "detectree2_proper.py").stat().st_mtime)
+            except Exception:
+                proper_code_mtime = 0
+            try:
+                fallback_code_mtime = int((Path(__file__).parent / "canopy_detection" / "detectree2_detector.py").stat().st_mtime)
+            except Exception:
+                fallback_code_mtime = 0
+            tuning_fingerprint = json.dumps(ai_runtime_tuning or {}, sort_keys=True)
             analysis_key = (
                 f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
-                f"{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}_{detector_code_mtime}"
+                f"{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}_"
+                f"{canopy_code_mtime}_{proper_code_mtime}_{fallback_code_mtime}_"
+                f"{tuning_fingerprint}"
             )
             
             # Check if we've already run detection for this configuration
             if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
-                # Initialize detector with Smart Hybrid mode
+                # Initialize detector with AI-only mode
                 detector = HexagonDetector(
                     altitude_m=altitude_to_use, 
                     drone_model=drone_to_use,
@@ -1541,8 +1477,24 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                     model_name=model_name,
                     detection_mode=detection_mode
                 )
+                if (
+                    ai_runtime_tuning
+                    and getattr(detector, "ai_detector", None) is not None
+                    and hasattr(detector.ai_detector, "set_runtime_tuning")
+                ):
+                    try:
+                        set_tuning_fn = detector.ai_detector.set_runtime_tuning
+                        accepted = set(inspect.signature(set_tuning_fn).parameters.keys())
+                        tuned_kwargs = {
+                            k: v for k, v in ai_runtime_tuning.items()
+                            if k in accepted
+                        }
+                        if tuned_kwargs:
+                            set_tuning_fn(**tuned_kwargs)
+                    except Exception as _tuning_err:
+                        st.warning(f"AI tuning values could not be fully applied: {_tuning_err}")
                 
-                progress_bar.progress(25, text="🌳 Detecting canopies (HSV + AI)... This may take a moment")
+                progress_bar.progress(25, text="🌳 Detecting canopies (AI-only detectree2)... This may take a moment")
                 
                 # Process image
                 results = detector.process_image(
@@ -1676,8 +1628,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             
             # Image comparison
             st.markdown("### 🖼️ Visual Results")
-            
-            img_col1, img_col2 = st.columns(2)
+            img_col1, img_col2 = st.columns(2, gap="large")
             
             with img_col1:
                 st.markdown("**Original Image**")
@@ -1686,33 +1637,12 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
             
             with img_col2:
                 st.markdown("**Detected Zones**")
-                st.markdown("""
-                🟣 **Purple** = Canopy Areas | 🔴 **Red** = 1m Danger Buffer  
-                🟢 **Light Green** = 1m Planting Buffer | 🟠 **Orange** = Overlap Warning
-                🟩 **Dark Green** = Planting Points
-                """)
                 st.image(vis_image_rgb, width='stretch')
-            
-            # Helper for finding pixel coordinates
-            with st.expander("📏 How to find pixel coordinates for landmark alignment"):
-                img_h, img_w = results['image'].shape[:2]
-                st.markdown(f"""
-                **To use landmark-based heading calibration (see after map):**
-                
-                1. **Identify a clear landmark** visible in both image and map (tower, building, path)
-                2. **Estimate pixel coordinates** in detected zones image:
-                   - Image dimensions: {img_w} × {img_h} pixels
-                   - Center point: ({img_w//2}, {img_h//2})
-                   - Upper-left quarter: X ≈ {img_w//4}, Y ≈ {img_h//4}
-                   - Upper-right quarter: X ≈ {img_w*3//4}, Y ≈ {img_h//4}
-                   - Adjust based on visual position
-                
-                3. **For exact coordinates:** Download image, open in image viewer, hover over landmark
-                4. **Find same landmark on map** (scroll down to map below)
-                5. **Use Landmark Alignment tool** (after map) to auto-calculate heading
-                
-                💡 This eliminates manual guessing and provides accurate GPS transformation!
-                """)
+
+            st.caption(
+                "Legend: 🟣 Canopy Areas | 🔴 1m Danger Buffer | 🟢 1m Planting Buffer | "
+                "🟠 Overlap Warning | 🟩 Planting Points"
+            )
             
             st.markdown("---")
             
@@ -1772,7 +1702,7 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 st.markdown("""
                 <div style='background: linear-gradient(135deg, #FF8C00 0%, #FFA500 100%); padding: 1rem; border-radius: 8px; text-align: center;'>
                     <h4 style='color: white; margin: 0;'>🟠 Overlap</h4>
-                    <p style='color: white; font-size: 0.9rem; margin: 0.5rem 0 0 0;'>Warning zone</p>
+                    <p style='color: white; font-size: 0.9rem; margin: 0.5rem 0 0 0;'>Buffer warning zone</p>
                 </div>
                 """, unsafe_allow_html=True)
             
@@ -2042,19 +1972,6 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 if _clipped_out > 0:
                     st.info(f"🗺️ {_clipped_out} planting points removed — outside orthophoto map coverage. {len(safe_hexagons)} remain.")
 
-                # ── ORTHO VEGETATION CHECK: Remove points on existing canopy ──
-                # Cross-reference each point against the orthophoto — if the
-                # ortho pixel is green vegetation, the drone-image detector
-                # missed that canopy, so we remove it here.
-                _before_veg = len(safe_hexagons)
-                safe_hexagons = [
-                    h for h in safe_hexagons
-                    if not is_ortho_pixel_vegetation(h['_gps_lat'], h['_gps_lon'])
-                ]
-                _veg_removed = _before_veg - len(safe_hexagons)
-                if _veg_removed > 0:
-                    st.info(f"🌳 {_veg_removed} planting points removed — orthophoto shows existing canopy at those locations. {len(safe_hexagons)} remain.")
-
                 # Add RED X markers for forbidden-filtered hexagons
                 if show_forbidden_zones and forbidden_hexagons:
                     fz_pts = folium.FeatureGroup(name='🚫 Filtered Points (Forbidden)')
@@ -2120,57 +2037,6 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
                 
                 # Display map
                 st_folium.st_folium(ortho_map, width=1400, height=600, key="geo_map", returned_objects=[])
-                
-                # LANDMARK ALIGNMENT INTERFACE (optional precision override)
-                st.markdown("---")
-                st.markdown("### 🎯 Precision Override (Optional)")
-
-                with st.expander("📍 Use this only if auto-alignment failed or markers are still off"):
-                    st.markdown("""
-                    **When to use this:**
-                    - Auto-alignment shows a warning above (image outside orthophoto, or too few matches)
-                    - Green dots are clearly shifted on the map
-
-                    **Steps:**
-                    1. Find a clear landmark visible in both Visual Results and the map (e.g. water tower corner)
-                    2. Note its pixel coordinates from the Visual Results image
-                    3. Right-click the same landmark on the map to get its GPS coordinates
-                    4. Enter both below and click **Calculate Heading**
-                    5. Copy the result into the **Manual Adjustment** slider above and re-run
-                    """)
-
-                    meters_per_degree_lat = 111320.0
-                    meters_per_degree_lon = 111320.0 * np.cos(np.radians(map_center_lat))
-
-                    st.warning("⚠️ Choose a landmark near the image edges for best accuracy")
-
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.markdown("##### 📸 Landmark in Visual Results")
-                        st.caption(f"Image size: {width}×{height} pixels")
-                        landmark_px_x = st.number_input("Pixel X:", min_value=0, max_value=width, value=width//2, key="landmark_px_x")
-                        landmark_px_y = st.number_input("Pixel Y:", min_value=0, max_value=height, value=height//2, key="landmark_px_y")
-
-                    with col2:
-                        st.markdown("##### 🗺️ Same Landmark on Map")
-                        st.caption("Right-click the landmark on the map to read its GPS")
-                        landmark_lat = st.number_input("Latitude:",  min_value=-90.0,  max_value=90.0,  value=map_center_lat, format="%.7f", key="landmark_lat")
-                        landmark_lon = st.number_input("Longitude:", min_value=-180.0, max_value=180.0, value=map_center_lon, format="%.7f", key="landmark_lon")
-
-                    if st.button("🧮 Calculate Heading from Landmark", type="primary"):
-                        matcher = ReferencePointMatcher()
-                        matcher.add_point_pair((landmark_px_x, landmark_px_y), (landmark_lat, landmark_lon))
-                        calculated_heading = matcher.calculate_rotation(
-                            image_center_px=(width / 2, height / 2),
-                            map_center_latlon=(map_center_lat, map_center_lon),
-                            gsd=gsd,
-                            meters_per_degree_lat=meters_per_degree_lat,
-                            meters_per_degree_lon=meters_per_degree_lon,
-                        )
-                        if calculated_heading is not None:
-                            st.success(f"✅ Calculated heading: **{calculated_heading:.1f}°** — enter this in the Manual Adjustment slider above and re-run.")
-                        else:
-                            st.error("❌ Could not calculate heading. Please check your coordinates.")
                 
                 # Show planting coordinates table
                 st.markdown("---")
@@ -2293,3 +2159,4 @@ def analyze_image(uploaded_file, altitude, drone_model, canopy_buffer, hexagon_s
 
 if __name__ == "__main__":
     main()
+

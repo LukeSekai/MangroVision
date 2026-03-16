@@ -37,9 +37,9 @@ class HexagonDetector:
     def __init__(self, 
                  altitude_m: float = 6.0, 
                  drone_model: str = 'GENERIC_4K',
-                 ai_confidence: float = 0.8,
+                 ai_confidence: float = 0.75,
                  model_name: str = 'benchmark',
-                 detection_mode: str = 'hybrid'):
+                 detection_mode: str = 'ai'):
         """
         Initialize detector with Smart Hybrid detection
         
@@ -53,24 +53,30 @@ class HexagonDetector:
                 - 'ai': AI only (75-85% accuracy, may miss trees)
                 - 'hsv': HSV only (85-90% accuracy, fast)
         """
+        # Force AI-only evaluation path: disable HSV+AI merge mode.
+        if detection_mode == 'hybrid':
+            print("   Hybrid mode disabled for evaluation; forcing AI-only mode.")
+            detection_mode = 'ai'
+
         self.altitude_m = altitude_m
         self.drone_model = drone_model
-        # Keep AI confidence fixed at 0.80 for AI-driven modes.
-        self.ai_confidence = 0.80 if detection_mode in ['ai', 'hybrid'] else ai_confidence
+        # Keep AI confidence fixed at 0.75 for AI-driven modes.
+        self.ai_confidence = 0.75 if detection_mode in ['ai', 'hybrid'] else ai_confidence
         self.detection_mode = detection_mode
         self.gsd = None
         self.image_shape = None
         self.use_ai = DETECTREE2_AVAILABLE
         self._last_ai_filter_stats = {}
         self._last_hsv_merge_stats = {}
+        self._last_hexagon_placement_stats = {}
 
-        if detection_mode in ['ai', 'hybrid'] and abs(float(ai_confidence) - 0.80) > 1e-6:
-            print(f"   AI confidence fixed at 0.80 (requested: {ai_confidence:.2f})")
+        if detection_mode in ['ai', 'hybrid'] and abs(float(ai_confidence) - 0.75) > 1e-6:
+            print(f"   AI confidence fixed at 0.75 (requested: {ai_confidence:.2f})")
 
         # Initialize detectree2 AI detector if needed (for 'ai' or 'hybrid' modes)
         if detection_mode in ['ai', 'hybrid'] and DETECTREE2_AVAILABLE:
-            print(f"ðŸŒ³ Initializing MangroVision with Smart Hybrid System...")
-            print(f"   Mode: {detection_mode.upper()} (HSV + AI merger)" if detection_mode == 'hybrid' else f"   Mode: {detection_mode.upper()}")
+            print(f"ðŸŒ³ Initializing MangroVision with AI detection system...")
+            print(f"   Mode: {detection_mode.upper()}")
             try:
                 # Try proper detectree2 integration first
                 self.ai_detector = ProperDetectree2Detector(
@@ -79,9 +85,14 @@ class HexagonDetector:
                 )
                 self.ai_detector.setup_model()
                 print(f"âœ“ Detectree2 AI initialized successfully")
-            except (NameError, AttributeError):
+            except Exception:
                 # Fallback to custom detector
-                self.ai_detector = Detectree2Detector(
+                try:
+                    detector_cls = Detectree2Detector
+                except NameError:
+                    from detectree2_detector import Detectree2Detector as detector_cls
+
+                self.ai_detector = detector_cls(
                     confidence_threshold=self.ai_confidence,
                     device='cpu',
                     model_name=model_name
@@ -129,7 +140,10 @@ class HexagonDetector:
 
             # Step 2: AI Detection (high-confidence canopies)
             try:
-                ai_result = self.ai_detector.detect_from_image(image)
+                try:
+                    ai_result = self.ai_detector.detect_from_image(image, gsd=self.gsd)
+                except TypeError:
+                    ai_result = self.ai_detector.detect_from_image(image)
                 # Handle 2, 3, or 4-value returns from different detector versions
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
@@ -178,7 +192,10 @@ class HexagonDetector:
             print(f"?? Running AI-only detection...")
 
             try:
-                ai_result = self.ai_detector.detect_from_image(image)
+                try:
+                    ai_result = self.ai_detector.detect_from_image(image, gsd=self.gsd)
+                except TypeError:
+                    ai_result = self.ai_detector.detect_from_image(image)
                 # Handle 2, 3, or 4-value returns from different detector versions
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
@@ -912,18 +929,24 @@ class HexagonDetector:
         self, 
         plantable_zone: Polygon, 
         hexagon_size_m: float = 1.0,
-        maximize_coverage: bool = True
+        maximize_coverage: bool = True,
+        danger_mask: Optional[np.ndarray] = None,
+        canopy_mask: Optional[np.ndarray] = None
     ) -> List[Dict]:
         """
         Generate maximized hexagonal planting zones
-        Only the core (exact planting point) must be in safe zone
-        Buffers can overlap with danger zones and each other (max 0.1m overlap)
-        
+        Core-safe mode:
+        - Planting core (dark green) must stay fully out of danger zones
+        - Buffer may partially overlap danger zones (visual warning in orange)
+        - Neighbor buffers do not overlap (0.0m)
+
         Args:
             plantable_zone: Available planting area
             hexagon_size_m: Hexagon buffer size in meters (default 1.0m)
             maximize_coverage: Try to fit hexagons in all available spaces
-            
+            danger_mask: Optional raster danger mask used to enforce core safety
+            canopy_mask: Optional canopy mask; combined with danger mask for display-consistent core safety
+
         Returns:
             List of hexagon dictionaries with geometry and metadata
         """
@@ -934,10 +957,15 @@ class HexagonDetector:
         plantable_area_m2 = plantable_zone.area * (self.gsd ** 2)
         print(f"  Plantable area to fill: {plantable_area_m2:.2f} mÂ2")
         
-        # Single-size hexagon generation with core-based safety check
-        print(f"  Placing {hexagon_size_m}m hexagons (0.1m overlap allowed)...")
+        # Single-size hexagon generation with core-safe no-overlap mode
+        print(f"  Placing {hexagon_size_m}m hexagons (core-safe, 0.0m overlap)...")
         hexagons = self._place_hexagons_of_size(
-            plantable_zone, hexagon_size_m, [], max_overlap_m=0.1
+            plantable_zone,
+            hexagon_size_m,
+            [],
+            max_overlap_m=0.0,
+            danger_mask=danger_mask,
+            canopy_mask=canopy_mask
         )
         
         print(f"âœ“ Generated {len(hexagons)} planting zones")
@@ -948,8 +976,10 @@ class HexagonDetector:
         plantable_zone: Polygon,
         hexagon_size_m: float,
         existing_hexagons: List[Dict],
-        max_overlap_m: float = 0.1,
-        min_clearance_m: float = 0.5
+        max_overlap_m: float = 0.0,
+        min_clearance_m: float = 0.5,
+        danger_mask: Optional[np.ndarray] = None,
+        canopy_mask: Optional[np.ndarray] = None
     ) -> List[Dict]:
         """
         MAXIMIZED PLACEMENT with proper hexagonal tessellation.
@@ -957,8 +987,9 @@ class HexagonDetector:
         then fills remaining gaps with a secondary scan.
         
         Rules:
-          - Dark green CORE must be â‰¥90% inside plantable zone
-          - Light green BUFFER must be â‰¥70% inside plantable zone (max 30% red overlap)
+          - Dark green CORE must be fully outside danger zone
+          - Light green BUFFER should mostly stay in plantable zone (>=70%)
+          - Neighbor buffers can overlap up to configured max_overlap_m
           - Hexagons follow a perfect tessellation grid (no gaps between neighbors)
         
         Args:
@@ -984,6 +1015,27 @@ class HexagonDetector:
         miny -= buffer_radius_pixels
         maxx += buffer_radius_pixels
         maxy += buffer_radius_pixels
+
+        # Raster-space guard: enforce core safety against the exact displayed danger mask.
+        danger_distance_map = None
+        if isinstance(danger_mask, np.ndarray) and danger_mask.ndim == 2:
+            try:
+                combined_danger = danger_mask.copy()
+                if isinstance(canopy_mask, np.ndarray) and canopy_mask.ndim == 2 and canopy_mask.shape == danger_mask.shape:
+                    combined_danger = cv2.bitwise_or(combined_danger, canopy_mask)
+                safe_pixels = (combined_danger == 0).astype(np.uint8)
+                danger_distance_map = cv2.distanceTransform(safe_pixels, cv2.DIST_L2, 5)
+            except Exception:
+                danger_distance_map = None
+
+        placement_stats = {
+            'center_outside': 0,
+            'core_clearance_fail': 0,
+            'core_ratio_fail': 0,
+            'buffer_ratio_fail': 0,
+            'accepted': 0
+        }
+        self._last_hexagon_placement_stats = {}
         
         # PROPER HEXAGONAL TESSELLATION GRID
         # For flat-top hexagons with circumradius R:
@@ -1008,7 +1060,9 @@ class HexagonDetector:
                 
                 candidate = self._tessellate_grid(
                     plantable_zone, R, buffer_radius_pixels, core_radius_pixels,
-                    h_spacing, v_spacing, minx + phase_x, miny + phase_y, maxx, maxy
+                    h_spacing, v_spacing, minx + phase_x, miny + phase_y, maxx, maxy,
+                    danger_distance_map=danger_distance_map,
+                    placement_stats=placement_stats
                 )
                 
                 if len(candidate) > len(best_hexagons):
@@ -1039,19 +1093,21 @@ class HexagonDetector:
         for dx, dy in sub_offsets:
             candidates = self._tessellate_grid(
                 plantable_zone, R, buffer_radius_pixels, core_radius_pixels,
-                h_spacing, v_spacing, minx + dx, miny + dy, maxx, maxy
+                h_spacing, v_spacing, minx + dx, miny + dy, maxx, maxy,
+                danger_distance_map=danger_distance_map,
+                placement_stats=placement_stats
             )
             for c in candidates:
                 cx, cy = c['center']
                 # Check this hexagon doesn't overlap any already-placed hexagon
                 too_close = False
+                allowed_overlap_px = (max_overlap_m / self.gsd) if (self.gsd and max_overlap_m > 0) else 0.0
                 for placed in best_hexagons + extra_hexagons:
                     px, py = placed['center']
                     dist = np.sqrt((cx - px)**2 + (cy - py)**2)
                     # Minimum distance for non-overlapping buffers
                     min_dist = buffer_radius_pixels + placed['buffer_radius_m'] / self.gsd
-                    # Allow tiny tolerance (1 pixel)
-                    if dist < min_dist - 1:
+                    if dist < (min_dist - allowed_overlap_px):
                         too_close = True
                         break
                 if not too_close:
@@ -1059,6 +1115,16 @@ class HexagonDetector:
         
         if extra_hexagons:
             print(f"    Phase 2 (gap filling): +{len(extra_hexagons)} extra hexagons")
+
+        self._last_hexagon_placement_stats = placement_stats
+        print(
+            "    Placement diagnostics: "
+            f"accepted={placement_stats.get('accepted', 0)}, "
+            f"center_outside={placement_stats.get('center_outside', 0)}, "
+            f"core_clearance_fail={placement_stats.get('core_clearance_fail', 0)}, "
+            f"core_ratio_fail={placement_stats.get('core_ratio_fail', 0)}, "
+            f"buffer_ratio_fail={placement_stats.get('buffer_ratio_fail', 0)}"
+        )
         
         all_hexagons = best_hexagons + extra_hexagons
         return all_hexagons
@@ -1074,7 +1140,9 @@ class HexagonDetector:
         start_x: float,
         start_y: float,
         max_x: float,
-        max_y: float
+        max_y: float,
+        danger_distance_map: Optional[np.ndarray] = None,
+        placement_stats: Optional[Dict[str, int]] = None
     ) -> List[Dict]:
         """
         Place hexagons on a single tessellation grid with given origin.
@@ -1094,32 +1162,63 @@ class HexagonDetector:
                 
                 # Quick reject: center must be in plantable zone
                 if not plantable_zone.contains(center_point):
+                    if placement_stats is not None:
+                        placement_stats['center_outside'] = placement_stats.get('center_outside', 0) + 1
                     x += h_spacing
                     continue
                 
                 hexagon_buffer = self.create_hexagon(x, y, buffer_radius_pixels)
                 hexagon_core = self.create_hexagon(x, y, core_radius_pixels)
-                
-                # CORE must be â‰¥90% inside plantable zone
+
+                # Root-cause fix: enforce core safety in raster space against danger mask.
+                # If center does not have at least core-radius clearance, the core would
+                # visually land in red/purple danger areas due to vector/raster mismatch.
+                if danger_distance_map is not None:
+                    cx = int(round(x))
+                    cy = int(round(y))
+                    if (
+                        cx < 0 or cy < 0
+                        or cy >= danger_distance_map.shape[0]
+                        or cx >= danger_distance_map.shape[1]
+                        or float(danger_distance_map[cy, cx]) < (core_radius_pixels + 0.5)
+                    ):
+                        if placement_stats is not None:
+                            placement_stats['core_clearance_fail'] = placement_stats.get('core_clearance_fail', 0) + 1
+                        x += h_spacing
+                        continue
+
                 core_ratio = 0.0
                 if plantable_zone.intersects(hexagon_core):
-                    core_ratio = hexagon_core.intersection(plantable_zone).area / hexagon_core.area
-                
-                # BUFFER must be â‰¥70% inside plantable zone (max 30% red overlap)
+                    core_ratio = hexagon_core.intersection(plantable_zone).area / max(hexagon_core.area, 1e-9)
+
                 buffer_safe_ratio = 0.0
                 if plantable_zone.intersects(hexagon_buffer):
-                    buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / hexagon_buffer.area
-                
-                if core_ratio >= 0.90 and buffer_safe_ratio >= 0.70:
-                    hex_dict = {
-                        'buffer': hexagon_buffer,
-                        'core': hexagon_core,
-                        'center': (x, y),
-                        'buffer_radius_m': buffer_radius_pixels * self.gsd,
-                        'core_radius_m': core_radius_pixels * self.gsd,
-                        'area_m2': hexagon_core.area * (self.gsd ** 2)
-                    }
-                    hexagons.append(hex_dict)
+                    buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / max(hexagon_buffer.area, 1e-9)
+
+                # Core must stay fully safe; buffer can overlap danger up to 30%.
+                if core_ratio < 0.99:
+                    if placement_stats is not None:
+                        placement_stats['core_ratio_fail'] = placement_stats.get('core_ratio_fail', 0) + 1
+                    x += h_spacing
+                    continue
+                if buffer_safe_ratio < 0.70:
+                    if placement_stats is not None:
+                        placement_stats['buffer_ratio_fail'] = placement_stats.get('buffer_ratio_fail', 0) + 1
+                    x += h_spacing
+                    continue
+
+                if placement_stats is not None:
+                    placement_stats['accepted'] = placement_stats.get('accepted', 0) + 1
+
+                hex_dict = {
+                    'buffer': hexagon_buffer,
+                    'core': hexagon_core,
+                    'center': (x, y),
+                    'buffer_radius_m': buffer_radius_pixels * self.gsd,
+                    'core_radius_m': core_radius_pixels * self.gsd,
+                    'area_m2': hexagon_core.area * (self.gsd ** 2)
+                }
+                hexagons.append(hex_dict)
                 
                 x += h_spacing
             
@@ -1183,7 +1282,13 @@ class HexagonDetector:
         plantable_zone = self.identify_plantable_zones(danger_zone)
         
         # Step 6: Generate maximized hexagonal planting zones
-        hexagons = self.generate_hexagonal_planting_zones(plantable_zone, hexagon_size_m, maximize_coverage=True)
+        hexagons = self.generate_hexagonal_planting_zones(
+            plantable_zone,
+            hexagon_size_m,
+            maximize_coverage=True,
+            danger_mask=danger_mask,
+            canopy_mask=canopy_mask
+        )
         
         # Calculate statistics
         total_area_m2 = w * h * (self.gsd ** 2)
@@ -1219,7 +1324,7 @@ class HexagonDetector:
         print(f"   Canopies: {len(canopy_polygons)}")
         print(f"   Danger area: {danger_area_m2:.2f} mÂ2 ({results['danger_percentage']:.1f}%)")
         print(f"   Plantable area: {plantable_area_m2:.2f} mÂ2 ({results['plantable_percentage']:.1f}%)")
-        print(f"   Planting zones: {len(hexagons)} (0.1m overlap allowed)\n")
+        print(f"   Planting zones: {len(hexagons)} (0.0m buffer overlap, core-safe)\n")
         
         return results
     
@@ -1295,10 +1400,10 @@ class HexagonDetector:
         
         # Layer 4: Draw hexagon buffers in LIGHT GREEN
         overlay[hexagon_buffer_mask > 0] = (144, 238, 144)  # Light green for safe buffer
-        
-        # Layer 4.5: OVERLAP DETECTION - hexagon buffers overlapping with danger zones = ORANGE WARNING
+
+        # Layer 4.5: Overlap warning (buffer intersects danger zone)
         overlap_mask = cv2.bitwise_and(hexagon_buffer_mask, danger_mask)
-        overlay[overlap_mask > 0] = (0, 165, 255)  # Orange warning for overlap
+        overlay[overlap_mask > 0] = (0, 165, 255)  # Orange warning
         
         # Layer 5: Draw hexagon cores in DARK GREEN (actual planting points)
         for hex_info in results['hexagons']:
@@ -1365,7 +1470,7 @@ class HexagonDetector:
 
 
 if __name__ == "__main__":
-    # Test the detector with core-based checking and 0.1m overlap
+    # Test the detector with core-safe overlap placement
     detector = HexagonDetector(altitude_m=6.0, drone_model='GENERIC_4K')
     
     # Process flight_2_frame_0042 which has some plantable area
@@ -1381,12 +1486,13 @@ if __name__ == "__main__":
     vis = detector.visualize_results(results, "../output/hexagon_maximized_test.png")
     
     print(f"\n{'='*60}")
-    print(f"FINAL RESULTS - Core-Based Safety + 0.1m Overlap")
+    print(f"FINAL RESULTS - Core-Safe Overlap Placement")
     print(f"{'='*60}")
     print(f"Canopies detected: {results['canopy_count']}")
     print(f"Danger zones: {results['danger_area_m2']:.2f} mÂ2")
     print(f"Plantable area: {results['plantable_area_m2']:.2f} mÂ2")
     print(f"Total planting zones: {results['hexagon_count']}")
     print(f"{'='*60}")
+
 
 

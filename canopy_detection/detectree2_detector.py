@@ -42,11 +42,40 @@ class Detectree2Detector:
         self.model_name = model_name
         self.predictor = None
         self.cfg = None
+        self.model_path = None
+        self.loaded_model_name = None
+        self.runtime_tuning = {
+            "tile_veg_threshold": 0.002,
+            "min_crown_m2": 0.05,
+            "max_crown_m2": 50.0,
+            "separate_threshold_m2": 10.0,
+            "overlap_validation_ratio": 0.15,
+        }
         
         print(f"🌳 Initializing AI Tree Canopy Structure Detector")
         print(f"   Using Detectron2 Mask R-CNN for segmentation")
         print(f"   Device: {device}")
         print(f"   Confidence threshold: {confidence_threshold}")
+
+    def set_runtime_tuning(
+        self,
+        tile_veg_threshold: float = None,
+        min_crown_m2: float = None,
+        max_crown_m2: float = None,
+        separate_threshold_m2: float = None,
+        overlap_validation_ratio: float = None,
+    ):
+        """Update non-threshold inference tuning parameters."""
+        if tile_veg_threshold is not None:
+            self.runtime_tuning["tile_veg_threshold"] = max(0.0, min(float(tile_veg_threshold), 1.0))
+        if min_crown_m2 is not None:
+            self.runtime_tuning["min_crown_m2"] = max(0.01, float(min_crown_m2))
+        if max_crown_m2 is not None:
+            self.runtime_tuning["max_crown_m2"] = max(self.runtime_tuning["min_crown_m2"], float(max_crown_m2))
+        if separate_threshold_m2 is not None:
+            self.runtime_tuning["separate_threshold_m2"] = max(0.05, float(separate_threshold_m2))
+        if overlap_validation_ratio is not None:
+            self.runtime_tuning["overlap_validation_ratio"] = max(0.0, min(float(overlap_validation_ratio), 1.0))
         
     def setup_model(self):
         """
@@ -88,6 +117,8 @@ class Detectree2Detector:
             
             # Load custom weights
             cfg.MODEL.WEIGHTS = str(custom_model_path)
+            self.model_path = str(custom_model_path)
+            self.loaded_model_name = "Custom Mangrove Model"
             
         else:
             # PRIORITY 2: Try detectree2 tropical models
@@ -109,11 +140,14 @@ class Detectree2Detector:
             cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000
             cfg.MODEL.RPN.NMS_THRESH = 0.6
             
-            # Try tropical models
-            tropical_models = [
+            # Try latest model-garden checkpoints first, then legacy tropical models.
+            tropical_models = []
+            latest_model_garden = sorted(model_dir.glob("250312*.pth"))
+            tropical_models.extend([(p, f"Model Garden ({p.name})") for p in latest_model_garden])
+            tropical_models.extend([
                 (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
                 (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)')
-            ]
+            ])
             
             model_loaded = False
             for model_path, model_name in tropical_models:
@@ -121,6 +155,8 @@ class Detectree2Detector:
                     print(f"   ✅ Loading {model_name}")
                     print(f"   📍 Trained on: Danum, Sepilok, Paracou tropical forests")
                     cfg.MODEL.WEIGHTS = str(model_path)
+                    self.model_path = str(model_path)
+                    self.loaded_model_name = model_name
                     model_loaded = True
                     break
             
@@ -131,6 +167,8 @@ class Detectree2Detector:
                 cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url(
                     "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
                 )
+                self.model_path = cfg.MODEL.WEIGHTS
+                self.loaded_model_name = "COCO Base"
         
         self.cfg = cfg
         self.predictor = DefaultPredictor(cfg)
@@ -253,7 +291,7 @@ class Detectree2Detector:
             # If scipy/skimage not available or watershed fails, return original
             return [mask]
     
-    def detect_from_image(self, image: np.ndarray) -> Tuple[List[Polygon], np.ndarray, dict]:
+    def detect_from_image(self, image: np.ndarray, gsd: Optional[float] = None) -> Tuple[List[Polygon], np.ndarray, dict]:
         """
         Detect tree crowns using detectree2 pre-trained model with tiled inference.
         
@@ -291,9 +329,10 @@ class Detectree2Detector:
         overlap = 128  # 25% overlap (128/512) for good edge detection
         stride = tile_size - overlap
         
-        # Generate tiles - ONLY process tiles with significant vegetation
+        # Generate tiles - keep nearly all non-empty vegetation tiles for better recall
         tiles = []
         tiles_checked = 0
+        veg_tile_threshold = float(self.runtime_tuning.get("tile_veg_threshold", 0.002))
         for y in range(0, h, stride):
             for x in range(0, w, stride):
                 x_end = min(x + tile_size, w)
@@ -310,8 +349,8 @@ class Detectree2Detector:
                 tile_area = (x_end - x) * (y_end - y)
                 veg_ratio = veg_pixels / tile_area if tile_area > 0 else 0
                 
-                # Skip tiles with less than 10% vegetation (saves processing time)
-                if veg_ratio >= 0.10:
+                # Very light prefilter to avoid missing sparse canopy clusters
+                if veg_ratio >= veg_tile_threshold:
                     tiles.append((x, y, x_end, y_end))
         
         skipped_tiles = tiles_checked - len(tiles)
@@ -322,15 +361,15 @@ class Detectree2Detector:
         all_detections = []  # Store (polygon, score) for each detection
         total_detections = 0
         
-        # GSD-based size thresholds
-        gsd = 0.0113
-        MIN_CROWN_M2 = 0.3
-        MAX_CROWN_M2 = 50.0
-        SEPARATE_THRESHOLD_M2 = 10.0  # More aggressive watershed
+        # GSD-based size thresholds (use detected GSD when available)
+        gsd_used = gsd if (gsd is not None and gsd > 0) else 0.0113
+        MIN_CROWN_M2 = float(self.runtime_tuning.get("min_crown_m2", 0.05))
+        MAX_CROWN_M2 = float(self.runtime_tuning.get("max_crown_m2", 50.0))
+        SEPARATE_THRESHOLD_M2 = float(self.runtime_tuning.get("separate_threshold_m2", 10.0))
         
-        min_area_px = int(MIN_CROWN_M2 / (gsd ** 2))
-        max_area_px = int(MAX_CROWN_M2 / (gsd ** 2))
-        separate_px = int(SEPARATE_THRESHOLD_M2 / (gsd ** 2))
+        min_area_px = int(MIN_CROWN_M2 / (gsd_used ** 2))
+        max_area_px = int(MAX_CROWN_M2 / (gsd_used ** 2))
+        separate_px = int(SEPARATE_THRESHOLD_M2 / (gsd_used ** 2))
         
         for tile_idx, (x1, y1, x2, y2) in enumerate(tiles):
             if tile_idx % 5 == 0:
@@ -410,9 +449,9 @@ class Detectree2Detector:
             overlap = cv2.bitwise_and(crown_mask, vegetation_mask)
             overlap_ratio = np.count_nonzero(overlap) / np.count_nonzero(crown_mask)
             
-            # Require at least 40% overlap with vegetation (standard validation)
+            # Require at least 25% overlap with vegetation (improves recall on sparse crowns)
             # Filters out non-vegetation false positives
-            if overlap_ratio >= 0.40:
+            if overlap_ratio >= float(self.runtime_tuning.get("overlap_validation_ratio", 0.15)):
                 validated_detections.append((poly, score))
             else:
                 filtered_non_vegetation += 1
@@ -439,13 +478,25 @@ class Detectree2Detector:
         
         metadata = {
             'num_tiles': len(tiles),
+            'num_tiles_checked': int(tiles_checked),
+            'num_tiles_processed': len(tiles),
+            'num_tiles_skipped': int(skipped_tiles),
             'total_ai_detections': total_detections,
+            'raw_detections': total_detections,
             'num_detected_canopies': kept_canopies,
+            'final_trees': kept_canopies,
             'filtered_non_vegetation': filtered_non_vegetation,
             'vegetation_coverage_percent': float(veg_percent),
             'detection_method': 'hsv_guided_detectree2',
             'tile_size': tile_size,
-            'overlap': overlap
+            'overlap': overlap,
+            'tile_veg_threshold': float(veg_tile_threshold),
+            'gsd_used': float(gsd_used),
+            'min_crown_m2': float(MIN_CROWN_M2),
+            'max_crown_m2': float(MAX_CROWN_M2),
+            'overlap_validation_ratio': float(self.runtime_tuning.get("overlap_validation_ratio", 0.15)),
+            'model_path': self.model_path,
+            'model_name': self.loaded_model_name,
         }
         
         return canopy_polygons, combined_mask, metadata

@@ -102,6 +102,18 @@ C:\Users\Lenovo-Pc\OneDrive\Thesis\thesis_env\Scripts\python.exe test_installati
 
 This will verify that detectron2 and detectree2 are working correctly.
 
+### 1.5 Runtime Dependency Preflight
+
+```powershell
+python tools/check_runtime_deps.py
+```
+
+If anything is missing:
+
+```powershell
+pip install -r requirements.txt
+```
+
 ### 2. Add Your Drone Images
 
 Place your 90-degree drone shot images in the `drone_images/` folder:
@@ -120,6 +132,23 @@ This will:
 - Create 1-meter buffer zones (danger zones)
 - Identify safe planting zones
 - Save visualizations and results to `output/`
+
+### 4. Batch Validation (Before/After Comparison)
+
+```powershell
+python tools/batch_eval_canopy.py ^
+  --images-dir drone_images/dataset_with_gps ^
+  --pattern *.jpg ^
+  --output-csv output/batch_eval_results.csv ^
+  --detection-mode hybrid ^
+  --ai-confidence 0.75
+```
+
+The CSV includes:
+- model path/name used
+- tiles checked/processed/skipped
+- raw detections vs final trees
+- canopy/plantable/hexagon counts per image
 
 ---
 

@@ -9,11 +9,12 @@ from pathlib import Path
 from typing import Tuple, List, Dict
 import torch
 from shapely.geometry import Polygon
-import json
+import geopandas as gpd
 
 # Official detectree2 imports
-from detectree2.models.train import setup_cfg, get_tree_dicts
+from detectree2.models.train import setup_cfg
 from detectree2.models.predict import predict_on_data
+from detectree2.models.outputs import clean_crowns
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
 from detectron2 import model_zoo
@@ -39,11 +40,52 @@ class ProperDetectree2Detector:
         self.device = device
         self.predictor = None
         self.cfg = None
+        self.model_path = None
+        self.model_name = None
+        self.runtime_tuning = {
+            "tile_veg_threshold": 0.002,
+            "min_crown_m2": 0.05,
+            "max_crown_m2": 60.0,
+            "cleanup_iou": 0.75,
+            "fallback_nms_iou": 0.90,
+            "tile_size": 512,
+            "tile_overlap": 0.25,
+            "use_clean_crowns": False,
+        }
         
         print(f"🌳 Initializing Proper Detectree2 Library")
         print(f"   Using official detectree2 prediction pipeline")
         print(f"   Device: {device}")
         print(f"   Confidence threshold: {confidence_threshold}")
+
+    def set_runtime_tuning(
+        self,
+        tile_veg_threshold: float = None,
+        min_crown_m2: float = None,
+        max_crown_m2: float = None,
+        cleanup_iou: float = None,
+        fallback_nms_iou: float = None,
+        tile_size: float = None,
+        tile_overlap: float = None,
+        use_clean_crowns: bool = None,
+    ):
+        """Update non-threshold inference tuning parameters."""
+        if tile_veg_threshold is not None:
+            self.runtime_tuning["tile_veg_threshold"] = max(0.0, min(float(tile_veg_threshold), 1.0))
+        if min_crown_m2 is not None:
+            self.runtime_tuning["min_crown_m2"] = max(0.01, float(min_crown_m2))
+        if max_crown_m2 is not None:
+            self.runtime_tuning["max_crown_m2"] = max(self.runtime_tuning["min_crown_m2"], float(max_crown_m2))
+        if cleanup_iou is not None:
+            self.runtime_tuning["cleanup_iou"] = max(0.05, min(float(cleanup_iou), 0.95))
+        if fallback_nms_iou is not None:
+            self.runtime_tuning["fallback_nms_iou"] = max(0.05, min(float(fallback_nms_iou), 0.99))
+        if tile_size is not None:
+            self.runtime_tuning["tile_size"] = int(max(256, min(float(tile_size), 2048)))
+        if tile_overlap is not None:
+            self.runtime_tuning["tile_overlap"] = max(0.0, min(float(tile_overlap), 0.6))
+        if use_clean_crowns is not None:
+            self.runtime_tuning["use_clean_crowns"] = bool(use_clean_crowns)
         
     def setup_model(self, model_path: str = None):
         """
@@ -54,20 +96,26 @@ class ProperDetectree2Detector:
         """
         print(f"⚙️ Setting up detectree2 model...")
         
+        selected_model_name = None
+
         # Find model file
         if model_path is None:
             model_dir = Path(__file__).parent.parent / 'models'
-            
-            # Look for detectree2 models in order of preference (BEST FIRST)
-            model_candidates = [
+
+            # Prefer latest model-garden checkpoints first, then local custom/legacy.
+            latest_model_garden = sorted(model_dir.glob("250312*.pth"))
+            model_candidates = [(p, f"Model Garden ({p.name})") for p in latest_model_garden]
+            model_candidates.extend([
+                (model_dir / 'custom_mangrove_model' / 'model_final.pth', 'Custom Mangrove Model'),
                 (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
                 (model_dir / 'detectree2_model.pth', 'Custom Model'),
-                (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)')
-            ]
-            
+                (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)'),
+            ])
+             
             for candidate, model_name in model_candidates:
                 if candidate.exists():
                     model_path = str(candidate)
+                    selected_model_name = model_name
                     print(f"   ✅ Loading {model_name}")
                     break
             
@@ -77,29 +125,46 @@ class ProperDetectree2Detector:
                     f"Download from: https://github.com/PatBall1/detectree2/releases"
                 )
         
-        # Setup config using Mask R-CNN R101-FPN
-        cfg = get_cfg()
-        cfg.merge_from_file(model_zoo.get_config_file(
-            "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
-        ))
-        
-        # Detectree2 configuration
-        cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1  # Only 1 class: tree crown
+        # Prefer official detectree2 setup_cfg path, then fall back to manual config.
+        cfg = None
+        try:
+            cfg = setup_cfg(update_model=model_path)
+        except TypeError:
+            # Some versions may expose a different setup_cfg signature.
+            try:
+                cfg = setup_cfg(model_path)
+            except Exception:
+                cfg = None
+        except Exception:
+            cfg = None
+
+        if cfg is None:
+            cfg = get_cfg()
+            cfg.merge_from_file(model_zoo.get_config_file(
+                "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml"
+            ))
+            cfg.MODEL.WEIGHTS = model_path
+
+        # Single-class by default; local custom model path is 2-class in this project.
+        if "custom_mangrove_model" in str(model_path).replace("\\", "/"):
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
+        else:
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
         cfg.MODEL.DEVICE = self.device
-        cfg.MODEL.WEIGHTS = model_path
-        
-        # Optimize for dense canopy - INCREASE limits for more detections
-        cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 6000  # Increased proposals
-        cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000  # Keep more detections
-        cfg.MODEL.RPN.NMS_THRESH = 0.6  # Lower NMS threshold
+
+        # Keep more proposals in dense canopies.
+        cfg.MODEL.RPN.PRE_NMS_TOPK_TEST = 6000
+        cfg.MODEL.RPN.POST_NMS_TOPK_TEST = 3000
+        cfg.MODEL.RPN.NMS_THRESH = 0.6
         cfg.TEST.DETECTIONS_PER_IMAGE = 1000
-        
-        # Input format
         cfg.INPUT.FORMAT = "BGR"
-        
+         
         self.cfg = cfg
         self.predictor = DefaultPredictor(cfg)
+        self.model_path = str(model_path)
+        self.model_name = selected_model_name or Path(model_path).name
         
         print(f"✅ Detectree2 Model Loaded!")
         return self.predictor
@@ -116,18 +181,18 @@ class ProperDetectree2Detector:
         """
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         
-        # Green vegetation ranges
+        # Range 1: yellow-green to pure green.
         lower_green1 = np.array([25, 30, 20])
         upper_green1 = np.array([85, 255, 255])
         mask1 = cv2.inRange(hsv, lower_green1, upper_green1)
-        
+
+        # Range 2: blue-green canopy tones in shadow.
         lower_green2 = np.array([85, 20, 20])
         upper_green2 = np.array([100, 255, 255])
         mask2 = cv2.inRange(hsv, lower_green2, upper_green2)
-        
+
         vegetation_mask = cv2.bitwise_or(mask1, mask2)
-        
-        # Clean up noise
+
         kernel = np.ones((5, 5), np.uint8)
         vegetation_mask = cv2.morphologyEx(vegetation_mask, cv2.MORPH_OPEN, kernel)
         vegetation_mask = cv2.morphologyEx(vegetation_mask, cv2.MORPH_CLOSE, kernel)
@@ -137,24 +202,27 @@ class ProperDetectree2Detector:
     def detect_from_image(self, 
                          image: np.ndarray,
                          gsd: float = None,
-                         tile_size: int = 1024,
-                         overlap: float = 0.125) -> Tuple[List[Polygon], np.ndarray, Dict, List[str]]:
+                         tile_size: int = 512,
+                         overlap: float = 0.25) -> Tuple[List[Polygon], np.ndarray, Dict]:
         """
-        Detect tree crowns using proper detectree2 tiled inference with species classification
-        OPTIMIZED: 1024px tiles with 12.5% overlap
+        Detect tree crowns using detectree2 tiled inference.
+        Uses official setup_cfg for model config and clean_crowns for overlap cleanup.
         
         Args:
             image: Input BGR image
             gsd: Ground Sample Distance (optional, for compatibility)
-            tile_size: Size of tiles for detection (default 1024px)
-            overlap: Overlap fraction between tiles (default 0.125 = 12.5%)
+            tile_size: Size of tiles for detection (default 512px)
+            overlap: Overlap fraction between tiles (default 0.25 = 25%)
             
         Returns:
-            Tuple of (polygons, mask, metadata, species_list)
+            Tuple of (polygons, mask, metadata)
         """
         if self.predictor is None:
             self.setup_model()
         
+        tile_size = int(self.runtime_tuning.get("tile_size", tile_size))
+        overlap = float(self.runtime_tuning.get("tile_overlap", overlap))
+        overlap = max(0.0, min(overlap, 0.6))
         h, w = image.shape[:2]
         print(f"🌳 Running detectree2 on {w}x{h} image...")
         
@@ -164,34 +232,53 @@ class ProperDetectree2Detector:
         veg_percent = 100 * veg_pixels / (h * w)
         print(f"   Phase 1: HSV found {veg_percent:.1f}% vegetation coverage")
         
-        # Calculate stride based on overlap (ensure it's at least 1)
-        stride = max(1, int(tile_size * (1 - overlap)))
-        
-        # PHASE 2: Generate tiles - ONLY process tiles with vegetation
-        tiles = []
+        veg_tile_threshold = float(self.runtime_tuning.get("tile_veg_threshold", 0.002))
+
+        stride = max(1, int(tile_size * (1.0 - overlap)))
+        tiles: List[Tuple[int, int, int, int]] = []
         tiles_checked = 0
+
+        # PHASE 2: Select only tiles with sufficient vegetation coverage.
         for y in range(0, h, stride):
             for x in range(0, w, stride):
                 x_end = min(x + tile_size, w)
                 y_end = min(y + tile_size, h)
-                
                 tiles_checked += 1
-                
-                # OPTIMIZATION: Skip tiles without vegetation
+
+                if veg_tile_threshold <= 0.0:
+                    tiles.append((x, y, x_end, y_end))
+                    continue
+
                 tile_veg_mask = vegetation_mask[y:y_end, x:x_end]
                 veg_ratio = np.count_nonzero(tile_veg_mask) / ((x_end - x) * (y_end - y))
-                
-                # Only process tiles with at least 10% vegetation
-                if veg_ratio >= 0.10:
+                if veg_ratio >= veg_tile_threshold:
                     tiles.append((x, y, x_end, y_end))
-        
-        skipped_tiles = tiles_checked - len(tiles)
+
+        # Safety fallback: if pre-filter rejects everything, scan all tiles.
+        if not tiles:
+            print("   [WARN] Vegetation pre-filter skipped all tiles; using full image tiling fallback")
+            for y in range(0, h, stride):
+                for x in range(0, w, stride):
+                    x_end = min(x + tile_size, w)
+                    y_end = min(y + tile_size, h)
+                    tiles.append((x, y, x_end, y_end))
+
+        skipped_tiles = max(0, tiles_checked - len(tiles))
         print(f"   Phase 2: Processing {len(tiles)} tiles with vegetation (skipped {skipped_tiles} empty)")
         print(f"   Tile size: {tile_size}px, overlap: {int(overlap*100)}%")
         
         # Run detection on each tile
         all_instances = []
-        
+        min_crown_m2 = float(self.runtime_tuning.get("min_crown_m2", 0.05))
+        max_crown_m2 = float(self.runtime_tuning.get("max_crown_m2", 60.0))
+        gsd_used = float(gsd) if (gsd is not None and gsd > 0) else None
+        if gsd_used is not None:
+            min_area_px = max(20.0, min_crown_m2 / (gsd_used ** 2))
+            max_area_px = max(1000.0, max_crown_m2 / (gsd_used ** 2))
+        else:
+            min_area_px = 80.0
+            max_area_px = 120000.0
+         
         for tile_idx, (x1, y1, x2, y2) in enumerate(tiles):
             if tile_idx % 10 == 0:
                 print(f"   Tile {tile_idx+1}/{len(tiles)}...")
@@ -204,21 +291,11 @@ class ProperDetectree2Detector:
             instances = outputs["instances"].to("cpu")
             scores = instances.scores.numpy()
             masks = instances.pred_masks.numpy()
-            pred_classes = instances.pred_classes.numpy() if len(instances) > 0 else np.array([])
-            
-            # Species mapping
-            # Only Bungalon was annotated in training
-            class_names = {
-                0: "Unknown",  # Generic canopy (not labeled)
-                1: "Bungalon"  # Specifically annotated
-            }
-            
-            # Store each detection with global coordinates and species
+
+            # Store each detection with global coordinates and confidence.
             for i in range(len(scores)):
                 if scores[i] >= self.confidence_threshold:
                     mask = masks[i].astype(np.uint8)
-                    species_class = int(pred_classes[i]) if i < len(pred_classes) else 0
-                    species_name = class_names.get(species_class, "Unknown")
                     
                     # Find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -234,29 +311,34 @@ class ProperDetectree2Detector:
                             try:
                                 points = contour_global.reshape(-1, 2)
                                 poly = Polygon(points)
-                                if poly.is_valid and poly.area > 100:  # Min 100 pixels
+                                if poly.is_valid and (min_area_px <= poly.area <= max_area_px):
                                     all_instances.append({
                                         'polygon': poly,
                                         'score': scores[i],
-                                        'contour': contour_global,
-                                        'species': species_name
+                                        'contour': contour_global
                                     })
                             except:
                                 continue
-        
+         
         print(f"   Found {len(all_instances)} detections")
-        
-        # DISABLE NMS - Keep all detections for dense canopy
-        final_polygons = [inst['polygon'] for inst in all_instances]
-        species_list = [inst['species'] for inst in all_instances]
-        
-        # Count species
-        bungalon_count = species_list.count("Bungalon")
-        unknown_count = len(species_list) - bungalon_count
-        
-        print(f"   ✅ {len(final_polygons)} trees detected (NMS disabled for dense canopy)")
-        print(f"   Species: {bungalon_count} Bungalon, {unknown_count} Unknown")
-        
+
+        # High-recall default: skip aggressive clean_crowns unless explicitly enabled.
+        use_clean_crowns = bool(self.runtime_tuning.get("use_clean_crowns", False))
+        if use_clean_crowns:
+            final_polygons = self._clean_with_detectree2_outputs(all_instances)
+            if not final_polygons:
+                final_polygons = self._nms_polygons(
+                    all_instances,
+                    iou_threshold=float(self.runtime_tuning.get("fallback_nms_iou", 0.90))
+                )
+        else:
+            final_polygons = self._nms_polygons(
+                all_instances,
+                iou_threshold=float(self.runtime_tuning.get("fallback_nms_iou", 0.90))
+            )
+
+        print(f"   ✅ {len(final_polygons)} trees detected after cleanup")
+         
         # Create combined mask
         combined_mask = np.zeros((h, w), dtype=np.uint8)
         for poly in final_polygons:
@@ -268,16 +350,60 @@ class ProperDetectree2Detector:
         
         metadata = {
             'num_tiles': len(tiles),
+            'num_tiles_checked': int(tiles_checked),
+            'num_tiles_processed': len(tiles),
+            'num_tiles_skipped': int(skipped_tiles),
             'tile_size': tile_size,
             'overlap': overlap,
+            'tile_veg_threshold': float(veg_tile_threshold),
             'raw_detections': len(all_instances),
+            'total_ai_detections': len(all_instances),
             'final_trees': len(final_polygons),
-            'detection_method': 'detectree2_official',
-            'bungalon_count': bungalon_count,
-            'unknown_count': unknown_count
+            'num_detected_canopies': len(final_polygons),
+            'gsd_used': gsd_used,
+            'min_crown_m2': min_crown_m2,
+            'max_crown_m2': max_crown_m2,
+            'model_path': self.model_path,
+            'model_name': self.model_name,
+            'cleanup_iou': float(self.runtime_tuning.get("cleanup_iou", 0.75)),
+            'fallback_nms_iou': float(self.runtime_tuning.get("fallback_nms_iou", 0.90)),
+            'use_clean_crowns': use_clean_crowns,
+            'detection_method': 'detectree2_official'
         }
-        
-        return final_polygons, combined_mask, metadata, species_list
+         
+        return final_polygons, combined_mask, metadata
+
+    def _clean_with_detectree2_outputs(self, instances: List[Dict]) -> List[Polygon]:
+        """Apply detectree2 clean_crowns overlap-cleaning on polygon outputs."""
+        if not instances:
+            return []
+        try:
+            crowns = gpd.GeoDataFrame(
+                {
+                    "geometry": [i["polygon"] for i in instances],
+                    "Confidence_score": [float(i["score"]) for i in instances],
+                },
+                geometry="geometry",
+            )
+            cleanup_iou = float(self.runtime_tuning.get("cleanup_iou", 0.75))
+            cleaned = clean_crowns(crowns, cleanup_iou, confidence=self.confidence_threshold)
+            if cleaned is None or cleaned.empty:
+                return []
+            polygons: List[Polygon] = []
+            for geom in cleaned.geometry:
+                if geom is None or geom.is_empty:
+                    continue
+                if isinstance(geom, Polygon):
+                    polygons.append(geom)
+                else:
+                    try:
+                        polygons.extend([g for g in geom.geoms if isinstance(g, Polygon)])
+                    except Exception:
+                        continue
+            return polygons
+        except Exception as e:
+            print(f"   ⚠️ detectree2 clean_crowns unavailable/failed: {e}")
+            return []
     
     def _nms_polygons(self, instances: List[Dict], iou_threshold: float = 0.5) -> List[Polygon]:
         """
@@ -305,7 +431,7 @@ class ProperDetectree2Detector:
                     if iou > iou_threshold:
                         should_keep = False
                         break
-                except:
+                except Exception:
                     continue
             
             if should_keep:
@@ -315,7 +441,7 @@ class ProperDetectree2Detector:
 
 
 # Convenience function for backward compatibility
-def detect_trees_detectree2(image: np.ndarray, 
+def detect_trees_detectree2(image: np.ndarray,
                             confidence: float = 0.5,
                             tile_size: int = 800) -> Tuple[List[Polygon], np.ndarray, Dict]:
     """
