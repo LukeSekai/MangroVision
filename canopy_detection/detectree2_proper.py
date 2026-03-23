@@ -6,7 +6,7 @@ Uses the official detectree2 library for accurate tree crown delineation
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional, Callable, Any
 import torch
 from shapely.geometry import Polygon
 import geopandas as gpd
@@ -27,7 +27,7 @@ class ProperDetectree2Detector:
     """
     
     def __init__(self, 
-                 confidence_threshold: float = 0.5,
+                 confidence_threshold: float = 0.75,
                  device: str = 'cpu'):
         """
         Initialize proper detectree2 detector
@@ -203,7 +203,8 @@ class ProperDetectree2Detector:
                          image: np.ndarray,
                          gsd: float = None,
                          tile_size: int = 512,
-                         overlap: float = 0.25) -> Tuple[List[Polygon], np.ndarray, Dict]:
+                         overlap: float = 0.25,
+                         progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None) -> Tuple[List[Polygon], np.ndarray, Dict]:
         """
         Detect tree crowns using detectree2 tiled inference.
         Uses official setup_cfg for model config and clean_crowns for overlap cleanup.
@@ -219,6 +220,15 @@ class ProperDetectree2Detector:
         """
         if self.predictor is None:
             self.setup_model()
+
+        def _emit_progress(event: str, payload: Dict[str, Any]) -> None:
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(event, payload)
+            except Exception:
+                # Progress reporting must never interrupt detection.
+                pass
         
         tile_size = int(self.runtime_tuning.get("tile_size", tile_size))
         overlap = float(self.runtime_tuning.get("tile_overlap", overlap))
@@ -266,6 +276,16 @@ class ProperDetectree2Detector:
         skipped_tiles = max(0, tiles_checked - len(tiles))
         print(f"   Phase 2: Processing {len(tiles)} tiles with vegetation (skipped {skipped_tiles} empty)")
         print(f"   Tile size: {tile_size}px, overlap: {int(overlap*100)}%")
+        _emit_progress(
+            "tile_setup",
+            {
+                "total_tiles": len(tiles),
+                "checked_tiles": int(tiles_checked),
+                "skipped_tiles": int(skipped_tiles),
+                "tile_size": int(tile_size),
+                "overlap": float(overlap),
+            },
+        )
         
         # Run detection on each tile
         all_instances = []
@@ -280,8 +300,16 @@ class ProperDetectree2Detector:
             max_area_px = 120000.0
          
         for tile_idx, (x1, y1, x2, y2) in enumerate(tiles):
+            current_tile = tile_idx + 1
+            _emit_progress(
+                "tile_progress",
+                {
+                    "current_tile": int(current_tile),
+                    "total_tiles": len(tiles),
+                },
+            )
             if tile_idx % 10 == 0:
-                print(f"   Tile {tile_idx+1}/{len(tiles)}...")
+                print(f"   Tile {current_tile}/{len(tiles)}...")
             
             tile = image[y1:y2, x1:x2]
             
@@ -338,6 +366,14 @@ class ProperDetectree2Detector:
             )
 
         print(f"   ✅ {len(final_polygons)} trees detected after cleanup")
+        _emit_progress(
+            "tile_complete",
+            {
+                "total_tiles": len(tiles),
+                "raw_detections": int(len(all_instances)),
+                "final_trees": int(len(final_polygons)),
+            },
+        )
          
         # Create combined mask
         combined_mask = np.zeros((h, w), dtype=np.uint8)

@@ -7,7 +7,7 @@ Focuses on detecting tree crown STRUCTURES regardless of species
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict, Callable, Any
 import torch
 from shapely.geometry import Polygon
 import gdown
@@ -291,7 +291,12 @@ class Detectree2Detector:
             # If scipy/skimage not available or watershed fails, return original
             return [mask]
     
-    def detect_from_image(self, image: np.ndarray, gsd: Optional[float] = None) -> Tuple[List[Polygon], np.ndarray, dict]:
+    def detect_from_image(
+        self,
+        image: np.ndarray,
+        gsd: Optional[float] = None,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> Tuple[List[Polygon], np.ndarray, dict]:
         """
         Detect tree crowns using detectree2 pre-trained model with tiled inference.
         
@@ -309,6 +314,15 @@ class Detectree2Detector:
         """
         if self.predictor is None:
             self.setup_model()
+
+        def _emit_progress(event: str, payload: Dict[str, Any]) -> None:
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(event, payload)
+            except Exception:
+                # Progress reporting should never break inference.
+                pass
         
         h, w = image.shape[:2]
         print(f"🌳 Running detectree2 tree crown detection on {w}x{h} image...")
@@ -356,6 +370,16 @@ class Detectree2Detector:
         skipped_tiles = tiles_checked - len(tiles)
         print(f"   Tiling: {len(tiles)} tiles with vegetation (skipped {skipped_tiles} empty tiles)")
         print(f"   Tile size: {tile_size}px, overlap: {overlap}px")
+        _emit_progress(
+            "tile_setup",
+            {
+                "total_tiles": len(tiles),
+                "checked_tiles": int(tiles_checked),
+                "skipped_tiles": int(skipped_tiles),
+                "tile_size": int(tile_size),
+                "overlap": int(overlap),
+            },
+        )
         
         # Run AI on each tile - collect individual detections
         all_detections = []  # Store (polygon, score) for each detection
@@ -372,8 +396,16 @@ class Detectree2Detector:
         separate_px = int(SEPARATE_THRESHOLD_M2 / (gsd_used ** 2))
         
         for tile_idx, (x1, y1, x2, y2) in enumerate(tiles):
+            current_tile = tile_idx + 1
+            _emit_progress(
+                "tile_progress",
+                {
+                    "current_tile": int(current_tile),
+                    "total_tiles": len(tiles),
+                },
+            )
             if tile_idx % 5 == 0:
-                print(f"   Processing tile {tile_idx+1}/{len(tiles)}...")
+                print(f"   Processing tile {current_tile}/{len(tiles)}...")
             
             tile = image[y1:y2, x1:x2]
             
@@ -475,6 +507,14 @@ class Detectree2Detector:
         print(f"✅ Detectree2 Results:")
         print(f"   ✓ {kept_canopies} individual tree crowns detected")
         print(f"   Pipeline: HSV vegetation -> AI crown separation -> Validation")
+        _emit_progress(
+            "tile_complete",
+            {
+                "total_tiles": len(tiles),
+                "raw_detections": int(total_detections),
+                "final_trees": int(kept_canopies),
+            },
+        )
         
         metadata = {
             'num_tiles': len(tiles),

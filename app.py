@@ -649,7 +649,7 @@ def _render_header_datetime_live():
         return (
             "<div style='margin-top:-1.1rem; margin-bottom:1rem; padding:0.55rem 0.85rem; "
             "border-radius:10px; background:rgba(126, 200, 141, 0.15); "
-            "border:1px solid rgba(126, 200, 141, 0.35); color:#dff5e6; "
+            "border:1px solid rgba(126, 200, 141, 0.35); color:black; "
             f"font-weight:600; width:fit-content;'>🕒 {now_str}</div>"
         )
 
@@ -903,6 +903,49 @@ def show_eroded_zone_editor():
                 mime="application/geo+json",
                 use_container_width=True,
             )
+
+    # Delete one saved zone at a time (without clearing everything)
+    if existing_zones:
+        st.markdown("### 🧹 Delete Individual Eroded Zone")
+
+        zone_labels = []
+        for idx, feature in enumerate(existing_zones, 1):
+            coords = (feature.get("geometry", {}) or {}).get("coordinates", [[]])[0]
+            zone_labels.append(f"Zone #{idx} ({len(coords)} vertices)")
+
+        sel_col1, sel_col2 = st.columns([3, 1])
+        with sel_col1:
+            selected_zone = st.selectbox(
+                "Select saved zone to delete",
+                options=zone_labels,
+                key="eroded_zone_delete_select",
+            )
+        with sel_col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(
+                "🗑️ Delete Selected",
+                key="delete_selected_eroded_zone",
+                use_container_width=True,
+            ):
+                selected_index = zone_labels.index(selected_zone)
+                updated_features = [
+                    feature for i, feature in enumerate(existing_zones)
+                    if i != selected_index
+                ]
+                geojson_out = {
+                    "type": "FeatureCollection",
+                    "name": "eroded_zones",
+                    "features": updated_features,
+                }
+                with open(_ERODED_ZONES_PATH, "w", encoding="utf-8") as f:
+                    json.dump(geojson_out, f, indent=2)
+
+                _reload_eroded_filter()
+                st.success(
+                    f"✅ Deleted Zone #{selected_index + 1}. "
+                    f"{len(updated_features)} zone(s) remain."
+                )
+                st.rerun()
 
     # Legend
     st.markdown("""
@@ -1344,6 +1387,7 @@ def analyze_image(
     
     # ── Progress bar for user feedback ─────────────────────────────
     progress_bar = st.progress(0, text="⏳ Preparing analysis...")
+    tile_status = st.empty()
     
     with st.container():
         # Save uploaded file temporarily
@@ -1495,13 +1539,112 @@ def analyze_image(
                         st.warning(f"AI tuning values could not be fully applied: {_tuning_err}")
                 
                 progress_bar.progress(25, text="🌳 Detecting canopies (AI-only detectree2)... This may take a moment")
-                
+                detection_progress_state = {"total_tiles": None, "last_ui_tile": 0}
+
+                def _estimate_total_tiles(image_file):
+                    """Estimate full tile grid count before vegetation prefilter runs."""
+                    if getattr(detector, "ai_detector", None) is None:
+                        return None
+                    image_preview = cv2.imread(str(image_file))
+                    if image_preview is None:
+                        return None
+                    img_h, img_w = image_preview.shape[:2]
+                    runtime_cfg = getattr(detector.ai_detector, "runtime_tuning", {}) or {}
+                    tile_size = int(runtime_cfg.get("tile_size", 512))
+                    overlap_val = runtime_cfg.get("tile_overlap", runtime_cfg.get("overlap", None))
+                    if overlap_val is None:
+                        overlap_px = 128
+                    else:
+                        overlap_f = float(overlap_val)
+                        overlap_px = int(tile_size * overlap_f) if 0.0 <= overlap_f < 1.0 else int(overlap_f)
+                    stride = max(1, tile_size - overlap_px)
+                    x_count = len(range(0, img_w, stride))
+                    y_count = len(range(0, img_h, stride))
+                    return int(x_count * y_count)
+
+                estimated_tiles = _estimate_total_tiles(temp_path)
+                if estimated_tiles:
+                    tile_status.info(
+                        f"🧩 Tile estimate: about {estimated_tiles} total tiles. "
+                        f"Checking vegetation tiles..."
+                    )
+                else:
+                    tile_status.info("🧩 Tile counter initializing...")
+
+                def _on_detection_progress(event, payload):
+                    if not isinstance(payload, dict):
+                        payload = {}
+                    try:
+                        if event == "tile_setup":
+                            total_tiles = int(payload.get("total_tiles") or 0)
+                            skipped_tiles = int(payload.get("skipped_tiles") or 0)
+                            detection_progress_state["total_tiles"] = total_tiles
+                            if total_tiles > 0:
+                                setup_text = f"Detecting canopies... {total_tiles} tiles to process"
+                                if skipped_tiles > 0:
+                                    setup_text += f" ({skipped_tiles} skipped)"
+                                progress_bar.progress(26, text=setup_text)
+                                tile_status.info(
+                                    f"Tile workload: {total_tiles} to process"
+                                    + (f" ({skipped_tiles} skipped)" if skipped_tiles > 0 else "")
+                                )
+                        elif event == "tile_progress":
+                            total_tiles = int(
+                                payload.get("total_tiles")
+                                or detection_progress_state.get("total_tiles")
+                                or 0
+                            )
+                            current_tile = int(payload.get("current_tile") or 0)
+                            if total_tiles > 0:
+                                tile_fraction = min(1.0, max(0.0, current_tile / total_tiles))
+                                bar_value = min(58, 26 + int(tile_fraction * 32))
+                                update_every = max(1, total_tiles // 50)
+                                show_tile_update = (
+                                    current_tile == 1
+                                    or current_tile == total_tiles
+                                    or current_tile - detection_progress_state["last_ui_tile"] >= update_every
+                                )
+                                progress_bar.progress(
+                                    bar_value,
+                                    text=f"Detecting canopies... Tile {current_tile}/{total_tiles}",
+                                )
+                                if show_tile_update:
+                                    tile_status.info(f"Processing tile {current_tile}/{total_tiles}")
+                                    detection_progress_state["last_ui_tile"] = current_tile
+                        elif event == "tile_complete":
+                            total_tiles = int(
+                                payload.get("total_tiles")
+                                or detection_progress_state.get("total_tiles")
+                                or 0
+                            )
+                            if total_tiles > 0:
+                                progress_bar.progress(
+                                    58,
+                                    text=f"AI tile detection finished ({total_tiles}/{total_tiles})",
+                                )
+                                tile_status.success(f"Tile pass complete: {total_tiles}/{total_tiles}")
+                    except Exception as _cb_err:
+                        # UI progress updates must not interrupt image processing.
+                        print(f"[Tile UI callback warning] {_cb_err}")
                 # Process image
                 results = detector.process_image(
                     image_path=str(temp_path),
                     canopy_buffer_m=canopy_buffer,
-                    hexagon_size_m=hexagon_size
+                    hexagon_size_m=hexagon_size,
+                    progress_callback=_on_detection_progress,
                 )
+
+                if detection_progress_state.get("total_tiles") in (None, 0):
+                    ai_meta = results.get("ai_metadata", {}) if isinstance(results, dict) else {}
+                    fallback_tiles = int(
+                        ai_meta.get("num_tiles")
+                        or ai_meta.get("num_tiles_processed")
+                        or 0
+                    )
+                    if fallback_tiles > 0:
+                        tile_status.info(f"AI processed {fallback_tiles} tiles.")
+                    else:
+                        tile_status.info("Tile count unavailable for this detection run.")
                 
                 progress_bar.progress(60, text="⬡ Generating planting hexagons...")
                 
@@ -1585,6 +1728,7 @@ def analyze_image(
                 results = st.session_state.cached_results
                 vis_image_rgb = st.session_state.cached_vis_image
                 detector = st.session_state.cached_detector
+                tile_status.info("Using cached analysis results (no live tile processing).")
             
             progress_bar.progress(90, text="📊 Preparing results...")
             
@@ -2159,4 +2303,5 @@ def analyze_image(
 
 if __name__ == "__main__":
     main()
+
 

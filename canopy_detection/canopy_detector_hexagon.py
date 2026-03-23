@@ -9,7 +9,7 @@ import numpy as np
 from shapely.geometry import Point, Polygon, MultiPolygon
 from shapely.ops import unary_union
 import geopandas as gpd
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, List, Dict, Optional, Callable, Any
 import json
 from pathlib import Path
 import math
@@ -117,8 +117,38 @@ class HexagonDetector:
         # Store as (height, width) to match numpy convention
         self.image_shape = (image_height, image_width)
         return self.gsd
+
+    def _run_ai_detection(
+        self,
+        image: np.ndarray,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ):
+        """Call AI detector with backward-compatible kwargs."""
+        detect_fn = self.ai_detector.detect_from_image
+        attempts = [
+            {"gsd": self.gsd, "progress_callback": progress_callback},
+            {"gsd": self.gsd},
+            {"progress_callback": progress_callback},
+            {},
+        ]
+
+        last_type_error = None
+        for kwargs in attempts:
+            try:
+                return detect_fn(image, **kwargs)
+            except TypeError as err:
+                last_type_error = err
+                continue
+
+        if last_type_error is not None:
+            raise last_type_error
+        return detect_fn(image)
     
-    def detect_canopies(self, image: np.ndarray) -> Tuple[List[Polygon], np.ndarray]:
+    def detect_canopies(
+        self,
+        image: np.ndarray,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> Tuple[List[Polygon], np.ndarray]:
         """
         Smart Hybrid Detection: Merges HSV + AI for maximum accuracy
 
@@ -140,10 +170,10 @@ class HexagonDetector:
 
             # Step 2: AI Detection (high-confidence canopies)
             try:
-                try:
-                    ai_result = self.ai_detector.detect_from_image(image, gsd=self.gsd)
-                except TypeError:
-                    ai_result = self.ai_detector.detect_from_image(image)
+                ai_result = self._run_ai_detection(
+                    image,
+                    progress_callback=progress_callback,
+                )
                 # Handle 2, 3, or 4-value returns from different detector versions
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
@@ -192,10 +222,10 @@ class HexagonDetector:
             print(f"?? Running AI-only detection...")
 
             try:
-                try:
-                    ai_result = self.ai_detector.detect_from_image(image, gsd=self.gsd)
-                except TypeError:
-                    ai_result = self.ai_detector.detect_from_image(image)
+                ai_result = self._run_ai_detection(
+                    image,
+                    progress_callback=progress_callback,
+                )
                 # Handle 2, 3, or 4-value returns from different detector versions
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
@@ -1240,7 +1270,8 @@ class HexagonDetector:
         self, 
         image_path: str,
         canopy_buffer_m: float = 1.0,
-        hexagon_size_m: float = 1.0
+        hexagon_size_m: float = 1.0,
+        progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict:
         """
         Complete processing pipeline
@@ -1269,7 +1300,10 @@ class HexagonDetector:
         print(f"   Coverage: {w * self.gsd:.1f}m x {h * self.gsd:.1f}m\n")
         
         # Step 1: Detect canopies with mask
-        canopy_polygons, canopy_mask = self.detect_canopies(image)
+        canopy_polygons, canopy_mask = self.detect_canopies(
+            image,
+            progress_callback=progress_callback,
+        )
         
         # Step 2: Create danger zones (canopy + 1m buffer) with mask
         danger_zone, danger_mask = self.create_danger_zones(canopy_polygons, canopy_mask, canopy_buffer_m)
