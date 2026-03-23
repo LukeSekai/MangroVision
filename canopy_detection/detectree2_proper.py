@@ -13,7 +13,6 @@ import geopandas as gpd
 
 # Official detectree2 imports
 from detectree2.models.train import setup_cfg
-from detectree2.models.predict import predict_on_data
 from detectree2.models.outputs import clean_crowns
 from detectron2.engine import DefaultPredictor
 from detectron2.config import get_cfg
@@ -474,23 +473,3 @@ class ProperDetectree2Detector:
                 keep.append(poly)
         
         return keep
-
-
-# Convenience function for backward compatibility
-def detect_trees_detectree2(image: np.ndarray,
-                            confidence: float = 0.5,
-                            tile_size: int = 800) -> Tuple[List[Polygon], np.ndarray, Dict]:
-    """
-    Detect trees using proper detectree2 library
-    
-    Args:
-        image: Input BGR image
-        confidence: Confidence threshold
-        tile_size: Tile size for detection
-        
-    Returns:
-        Tuple of (polygons, mask, metadata)
-    """
-    detector = ProperDetectree2Detector(confidence_threshold=confidence)
-    detector.setup_model()
-    return detector.detect_from_image(image, tile_size=tile_size)

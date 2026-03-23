@@ -29,7 +29,7 @@ echo   Press Ctrl+C to stop the app
 echo ================================================
 echo.
 
-venv\Scripts\python.exe -m streamlit run app.py
+venv\Scripts\python.exe -m streamlit run app.py --server.port 8502
 
 echo.
 echo MangroVision stopped.

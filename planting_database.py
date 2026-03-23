@@ -1,20 +1,8 @@
 """
-MangroVision Planting Zone Database (Normalized 4-Table Schema)
-================================================================
-Tables:
-  1. users             - Planner accounts (who operates the system)
-  2. analyses          - Per-image analysis results
-  3. planting_points   - Individual GPS-tagged planting locations
-  4. exclusion_zones   - Forbidden & eroded areas (replaces loose GeoJSON)
-
-All foreign keys use ON DELETE CASCADE so removing a user or analysis
-automatically cleans up dependent rows.
-
-SQLite with WAL journal mode for concurrent-read performance.
+MangroVision planting database for users, analyses, and planting points.
 """
 
 import sqlite3
-import json
 import hashlib
 from pathlib import Path
 from datetime import datetime
@@ -44,7 +32,7 @@ def _get_connection() -> sqlite3.Connection:
 
 
 def _create_tables(conn: sqlite3.Connection):
-    """Create the 4-table schema if it doesn't exist."""
+    """Create the current application tables if they don't exist."""
     conn.executescript("""
         -- ============================================================
         -- 1. USERS  (the planner who operates MangroVision)
@@ -120,23 +108,6 @@ def _create_tables(conn: sqlite3.Connection):
         CREATE INDEX IF NOT EXISTS idx_points_status
             ON planting_points(status);
 
-        -- ============================================================
-        -- 4. EXCLUSION_ZONES  (forbidden + eroded areas)
-        -- ============================================================
-        CREATE TABLE IF NOT EXISTS exclusion_zones (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id             INTEGER REFERENCES users(id) ON DELETE SET NULL,
-            zone_type           TEXT    NOT NULL
-                                CHECK(zone_type IN ('forbidden', 'eroded')),
-            geometry_geojson    TEXT    NOT NULL,
-            reason              TEXT,
-            created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_zones_type
-            ON exclusion_zones(zone_type);
-        CREATE INDEX IF NOT EXISTS idx_zones_user
-            ON exclusion_zones(user_id);
     """)
     conn.commit()
 
@@ -150,28 +121,6 @@ def init_db():
 # ====================================================================
 #  User Management
 # ====================================================================
-
-def create_user(full_name: str, email: str, organization: str = None,
-                password_hash: str = None) -> int:
-    """Insert a new planner.  Returns the user id."""
-    conn = _get_connection()
-    cur = conn.execute("""
-        INSERT INTO users (full_name, email, organization, password_hash)
-        VALUES (?, ?, ?, ?)
-    """, (full_name, email, organization, password_hash))
-    uid = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return uid
-
-
-def get_user_by_email(email: str) -> Optional[dict]:
-    """Lookup a user by email.  Returns dict or None."""
-    conn = _get_connection()
-    row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
-    conn.close()
-    return dict(row) if row else None
-
 
 def _hash_password(password: str) -> str:
     """Return SHA-256 password hash (hex)."""
@@ -272,14 +221,6 @@ def update_last_login(user_id: int):
     )
     conn.commit()
     conn.close()
-
-
-def get_all_users() -> List[dict]:
-    """Return all registered users."""
-    conn = _get_connection()
-    rows = conn.execute("SELECT * FROM users ORDER BY created_at").fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
 
 
 # ====================================================================
@@ -550,189 +491,12 @@ def get_all_stats() -> dict:
     return stats
 
 
-def get_all_planting_points() -> List[dict]:
-    """Return every saved planting point with its analysis metadata."""
-    conn = _get_connection()
-    rows = conn.execute("""
-        SELECT pp.latitude, pp.longitude, pp.buffer_m, pp.area_m2,
-               pp.point_num, pp.status,
-               a.image_name, a.analyzed_at, a.id AS analysis_id,
-               u.full_name AS planner_name
-        FROM planting_points pp
-        JOIN analyses a ON a.id = pp.analysis_id
-        LEFT JOIN users u ON u.id = a.user_id
-        ORDER BY a.analyzed_at DESC, pp.point_num
-    """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
 def delete_analysis(analysis_id: int):
     """Remove an analysis and its points (CASCADE handles planting_points)."""
     conn = _get_connection()
     conn.execute("DELETE FROM analyses WHERE id = ?", (analysis_id,))
     conn.commit()
     conn.close()
-
-
-# ====================================================================
-#  Planting Point Status
-# ====================================================================
-
-def update_point_status(point_id: int, status: str):
-    """Update a single planting point's status (planned/planted/skipped)."""
-    assert status in ('planned', 'planted', 'skipped'), f"Invalid status: {status}"
-    conn = _get_connection()
-    conn.execute(
-        "UPDATE planting_points SET status = ? WHERE id = ?",
-        (status, point_id),
-    )
-    conn.commit()
-    conn.close()
-
-
-def get_planting_summary() -> dict:
-    """Return counts of points by status."""
-    conn = _get_connection()
-    rows = conn.execute("""
-        SELECT status, COUNT(*) AS cnt
-        FROM planting_points
-        GROUP BY status
-    """).fetchall()
-    conn.close()
-    return {r['status']: r['cnt'] for r in rows}
-
-
-# ====================================================================
-#  Exclusion Zones (replaces forbidden_zones.geojson + eroded_zones.geojson)
-# ====================================================================
-
-def save_exclusion_zone(
-    zone_type: str,
-    geometry_geojson: str,
-    reason: str = None,
-    user_id: Optional[int] = None,
-) -> int:
-    """
-    Insert a single exclusion zone (forbidden or eroded).
-    geometry_geojson is the GeoJSON geometry string for one polygon/feature.
-    Returns the zone id.
-    """
-    assert zone_type in ('forbidden', 'eroded'), f"Invalid zone_type: {zone_type}"
-    conn = _get_connection()
-    if user_id is None:
-        user_id = get_or_create_default_user()
-    cur = conn.execute("""
-        INSERT INTO exclusion_zones (user_id, zone_type, geometry_geojson, reason)
-        VALUES (?, ?, ?, ?)
-    """, (user_id, zone_type, geometry_geojson, reason))
-    zid = cur.lastrowid
-    conn.commit()
-    conn.close()
-    return zid
-
-
-def get_exclusion_zones(zone_type: Optional[str] = None) -> List[dict]:
-    """
-    Return exclusion zones, optionally filtered by type.
-    Each row includes the full geometry_geojson string.
-    """
-    conn = _get_connection()
-    if zone_type:
-        rows = conn.execute("""
-            SELECT ez.*, u.full_name AS created_by_name
-            FROM exclusion_zones ez
-            LEFT JOIN users u ON u.id = ez.user_id
-            WHERE ez.zone_type = ?
-            ORDER BY ez.created_at
-        """, (zone_type,)).fetchall()
-    else:
-        rows = conn.execute("""
-            SELECT ez.*, u.full_name AS created_by_name
-            FROM exclusion_zones ez
-            LEFT JOIN users u ON u.id = ez.user_id
-            ORDER BY ez.zone_type, ez.created_at
-        """).fetchall()
-    conn.close()
-    return [dict(r) for r in rows]
-
-
-def delete_exclusion_zone(zone_id: int):
-    """Remove a single exclusion zone."""
-    conn = _get_connection()
-    conn.execute("DELETE FROM exclusion_zones WHERE id = ?", (zone_id,))
-    conn.commit()
-    conn.close()
-
-
-def clear_exclusion_zones(zone_type: str):
-    """Remove all zones of a given type (e.g. clear all eroded zones)."""
-    conn = _get_connection()
-    conn.execute("DELETE FROM exclusion_zones WHERE zone_type = ?", (zone_type,))
-    conn.commit()
-    conn.close()
-
-
-def export_exclusion_zones_geojson(zone_type: str) -> dict:
-    """
-    Build a GeoJSON FeatureCollection from stored exclusion zones.
-    Compatible with the existing ForbiddenZoneFilter loader.
-    """
-    zones = get_exclusion_zones(zone_type)
-    features = []
-    for z in zones:
-        try:
-            geom = json.loads(z['geometry_geojson'])
-        except (json.JSONDecodeError, TypeError):
-            continue
-        features.append({
-            "type": "Feature",
-            "properties": {
-                "id": z['id'],
-                "zone_type": z['zone_type'],
-                "reason": z.get('reason'),
-                "created_by": z.get('created_by_name'),
-                "created_at": z.get('created_at'),
-            },
-            "geometry": geom,
-        })
-    return {
-        "type": "FeatureCollection",
-        "name": f"{zone_type}_zones",
-        "features": features,
-    }
-
-
-def import_geojson_to_exclusion_zones(
-    geojson_path: str,
-    zone_type: str,
-    user_id: Optional[int] = None,
-) -> int:
-    """
-    Read a GeoJSON file and insert each Feature as an exclusion zone.
-    Returns the number of zones imported.
-    """
-    path = Path(geojson_path)
-    if not path.exists():
-        return 0
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-
-    features = data.get('features', [])
-    count = 0
-    for feat in features:
-        geom = feat.get('geometry')
-        if geom:
-            props = feat.get('properties', {})
-            reason = props.get('reason') or props.get('name') or zone_type
-            save_exclusion_zone(
-                zone_type=zone_type,
-                geometry_geojson=json.dumps(geom),
-                reason=reason,
-                user_id=user_id,
-            )
-            count += 1
-    return count
 
 
 # ── Initialise on import ────────────────────────────────────────────

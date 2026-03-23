@@ -35,7 +35,7 @@ def main():
     
     # Launch streamlit
     try:
-        subprocess.run([sys.executable, "-m", "streamlit", "run", "app.py"])
+        subprocess.run([sys.executable, "-m", "streamlit", "run", "app.py", "--server.port", "8502"])
     except KeyboardInterrupt:
         print("\n\n✓ MangroVision stopped. Goodbye! 🌿\n")
 

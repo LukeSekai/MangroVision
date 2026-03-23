@@ -22,6 +22,7 @@ from datetime import datetime
 import time
 import streamlit_folium as st_folium
 import folium
+from branca.element import Element
 from pyproj import Transformer
 
 # Add canopy_detection to path
@@ -39,7 +40,7 @@ from canopy_detection.ortho_matcher import (
 from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
 from planting_database import (
     save_analysis, find_overlapping_analyses, count_nearby_points,
-    get_all_stats, get_all_planting_points, delete_analysis,
+    get_all_stats, delete_analysis,
     authenticate_user, ensure_admin_user, update_last_login, get_user_by_name,
 )
 from waypoint_export import (
@@ -47,7 +48,7 @@ from waypoint_export import (
 )
 
 # Load forbidden zones (towers, bridges, houses) once at startup
-_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_final.geojson"
+_FORBIDDEN_ZONES_PATH = Path(__file__).parent / "forbidden_zones.geojson"
 _forbidden_filter = ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH))
 
 # Load eroded zones (user-drawn erosion areas) once at startup
@@ -69,16 +70,17 @@ st.markdown("""
 <style>
     /* Main color scheme */
     :root {
-        --primary-green: #2D5F3F;
-        --secondary-green: #4A9D6F;
-        --accent-green: #7EC88D;
-        --light-green: #C8E6C9;
-        --background: #23395d;
+        --primary-green: #0b120d;
+        --secondary-green: #132119;
+        --accent-green: #24563c;
+        --highlight-green: #78ca95;
+        --light-green: #eef3ef;
+        --background: #edf1ee;
     }
     
     /* Header styling */
     .main-header {
-        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%);
+        background: linear-gradient(135deg, #0b120d 0%, #173728 100%);
         padding: 2rem;
         border-radius: 15px;
         margin-bottom: 2rem;
@@ -94,14 +96,15 @@ st.markdown("""
     }
     
     .main-header p {
-        color: #C8E6C9;
+        color: #d6eadb;
         font-size: 1.2rem;
         margin: 0.5rem 0 0 0;
     }
     
     /* Sidebar styling */
     section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1a1a1a 0%, #2d2d2d 100%);
+        background: linear-gradient(180deg, #08100b 0%, #102018 45%, #173728 100%);
+        border-right: 1px solid rgba(255,255,255,0.08);
     }
     
     section[data-testid="stSidebar"] > div {
@@ -109,32 +112,32 @@ st.markdown("""
     }
     
     section[data-testid="stSidebar"] h3 {
-        color: #7EC88D !important;
+        color: #ccebd7 !important;
         font-weight: 600;
     }
     
     section[data-testid="stSidebar"] label {
-        color: #C8E6C9 !important;
+        color: #eff8f1 !important;
         font-weight: 500;
     }
     
     section[data-testid="stSidebar"] p {
-        color: #B0B0B0 !important;
+        color: #d0e3d7 !important;
     }
     
     section[data-testid="stSidebar"] .stMarkdown {
-        color: #E0E0E0 !important;
+        color: #eef7f0 !important;
     }
-    
+
     /* Sidebar select boxes and inputs */
     section[data-testid="stSidebar"] .stSelectbox > div > div {
-        background-color: #3a3a3a;
-        color: #E0E0E0;
+        background-color: rgba(255, 255, 255, 0.08);
+        color: #eef7f0;
     }
     
     section[data-testid="stSidebar"] input {
-        background-color: #3a3a3a;
-        color: #E0E0E0;
+        background-color: rgba(255, 255, 255, 0.08);
+        color: #eef7f0;
     }
     
     /* Sidebar help text */
@@ -181,7 +184,7 @@ st.markdown("""
     
     /* Button styling */
     .stButton > button {
-        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%);
+        background: linear-gradient(135deg, #173728 0%, #24563c 100%);
         color: white;
         border: none;
         padding: 0.75rem 2rem;
@@ -195,12 +198,12 @@ st.markdown("""
     
     .stButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
+        box-shadow: 0 10px 18px rgba(23, 55, 40, 0.18);
     }
     
     /* Download button */
     .stDownloadButton > button {
-        background: linear-gradient(135deg, #1976D2 0%, #2196F3 100%);
+        background: linear-gradient(135deg, #132119 0%, #24563c 100%);
         color: white;
         border: none;
         padding: 0.75rem 1.5rem;
@@ -259,7 +262,7 @@ st.markdown("""
     /* Metric styling */
     div[data-testid="stMetricValue"] {
         font-size: 2rem;
-        color: #2D5F3F;
+        color: #1e4936;
         font-weight: 700;
     }
     
@@ -366,43 +369,36 @@ st.markdown("""
         border: 1px solid #2d5f3f;
     }
 
-    .user-chip {
-        background: linear-gradient(145deg, #173728 0%, #24563c 100%);
-        border: 1px solid rgba(126, 200, 141, 0.45);
-        color: #e8fff0;
-        padding: 0.85rem;
-        border-radius: 10px;
+    .account-card {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(126, 200, 141, 0.18);
+        color: #eef7f0;
+        padding: 0.95rem 0.9rem;
+        border-radius: 18px;
         margin-bottom: 0.65rem;
-        font-size: 0.86rem;
-        line-height: 1.4;
     }
 
-    .user-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        gap: 0.5rem;
-        padding: 0.24rem 0;
-        border-bottom: 1px dashed rgba(126, 200, 141, 0.32);
-    }
-
-    .user-row:last-child {
-        border-bottom: none;
-    }
-
-    .user-label {
+    .account-kicker {
         color: #b9eac8;
-        font-weight: 600;
-        letter-spacing: 0.2px;
-        flex: 0 0 38%;
+        text-transform: uppercase;
+        letter-spacing: 0.13rem;
+        font-size: 0.7rem;
+        font-weight: 800;
+        margin-bottom: 0.2rem;
     }
 
-    .user-value {
-        color: #f0fff5;
-        font-weight: 700;
-        flex: 1;
-        text-align: right;
-        word-break: break-word;
+    .account-name {
+        color: #ffffff;
+        font-size: 1.02rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .account-caption {
+        color: #d7ece0;
+        font-size: 0.84rem;
+        line-height: 1.5;
+        margin-top: 0.28rem;
     }
 
     /* Login input polish */
@@ -416,6 +412,398 @@ st.markdown("""
     div[data-testid="stTextInput"] [data-baseweb="input"]:focus-within {
         border-color: #4A9D6F !important;
         box-shadow: 0 0 0 1px #4A9D6F !important;
+    }
+
+    /* Workspace shell */
+    html, body, [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > .main {
+        font-family: "Aptos", "Trebuchet MS", sans-serif;
+    }
+
+    [data-testid="stAppViewContainer"] {
+        background:
+            radial-gradient(circle at top center, rgba(36, 86, 60, 0.28) 0%, rgba(36, 86, 60, 0.12) 24%, rgba(237, 241, 238, 0) 44%),
+            linear-gradient(180deg, #08100b 0%, #0f1d15 20%, #183126 34%, #395443 48%, #cad7ce 64%, #e7ede8 76%, #edf1ee 100%);
+    }
+
+    [data-testid="stHeader"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"] {
+        background: transparent !important;
+    }
+
+    [data-testid="stAppViewContainer"] [data-testid="block-container"] {
+        max-width: 1480px;
+        padding-top: 1.35rem;
+        padding-bottom: 2.25rem;
+    }
+
+    .main-header {
+        background: linear-gradient(135deg, #08100b 0%, #102018 46%, #173728 100%);
+        padding: 1.8rem 2rem;
+        border-radius: 28px;
+        margin-bottom: 1rem;
+        box-shadow: 0 28px 50px rgba(8, 16, 11, 0.34);
+        border: 1px solid rgba(195, 222, 203, 0.10);
+    }
+
+    .main-header-grid {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1.2rem;
+        flex-wrap: wrap;
+    }
+
+    .main-kicker {
+        color: rgba(198, 226, 207, 0.86);
+        text-transform: uppercase;
+        letter-spacing: 0.18rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin-bottom: 0.55rem;
+    }
+
+    .main-header h1 {
+        font-size: 3rem;
+        line-height: 1.05;
+        margin-bottom: 0.4rem;
+        text-shadow: none;
+    }
+
+    .main-header p {
+        color: rgba(226, 239, 230, 0.92);
+        font-size: 1.02rem;
+        max-width: 760px;
+    }
+
+    .header-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        justify-content: flex-end;
+        align-content: flex-start;
+        max-width: 420px;
+    }
+
+    .header-badge {
+        background: rgba(255, 255, 255, 0.12);
+        color: #f2fbf5;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        padding: 0.55rem 0.8rem;
+        border-radius: 999px;
+        font-size: 0.84rem;
+        font-weight: 600;
+        backdrop-filter: blur(8px);
+    }
+
+    .section-hero {
+        background: linear-gradient(160deg, rgba(11, 18, 13, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%);
+        border: 1px solid rgba(120, 202, 149, 0.10);
+        border-radius: 24px;
+        padding: 1.2rem 1.35rem;
+        margin: 0.4rem 0 1rem 0;
+        box-shadow: 0 20px 40px rgba(8, 16, 11, 0.24);
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 1rem;
+        flex-wrap: wrap;
+    }
+
+    .section-kicker {
+        color: #8fd3a7;
+        text-transform: uppercase;
+        letter-spacing: 0.16rem;
+        font-size: 0.76rem;
+        font-weight: 800;
+        margin-bottom: 0.42rem;
+    }
+
+    .section-hero h2 {
+        color: #f1f8f3;
+        margin: 0;
+        font-size: 1.8rem;
+        font-weight: 800;
+    }
+
+    .section-hero p {
+        color: #cadbcc;
+        margin: 0.42rem 0 0 0;
+        max-width: 760px;
+        line-height: 1.6;
+    }
+
+    .section-hero-badges {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+    }
+
+    .section-hero-badges span {
+        background: rgba(255, 255, 255, 0.06);
+        color: #e4f3e8;
+        border: 1px solid rgba(143, 211, 167, 0.12);
+        border-radius: 999px;
+        padding: 0.48rem 0.78rem;
+        font-size: 0.82rem;
+        font-weight: 700;
+    }
+
+    .workspace-card,
+    .preview-card {
+        background: linear-gradient(160deg, rgba(11, 18, 13, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%);
+        border: 1px solid rgba(120, 202, 149, 0.10);
+        border-radius: 24px;
+        padding: 1.15rem 1.25rem;
+        box-shadow: 0 20px 40px rgba(8, 16, 11, 0.22);
+        margin-bottom: 1rem;
+    }
+
+    .control-card {
+        background: rgba(255, 255, 255, 0.95);
+        border: 1px solid rgba(19, 33, 25, 0.10);
+        border-radius: 24px;
+        padding: 1.15rem 1.25rem;
+        box-shadow: 0 18px 38px rgba(19, 41, 32, 0.08);
+        margin-bottom: 1rem;
+    }
+
+    .operations-strip {
+        background: linear-gradient(160deg, rgba(11, 18, 13, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%);
+        border: 1px solid rgba(120, 202, 149, 0.10);
+        border-radius: 24px;
+        padding: 1rem 1.2rem;
+        margin: 1rem 0 1rem 0;
+        box-shadow: 0 20px 40px rgba(8, 16, 11, 0.22);
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.9rem;
+        flex-wrap: wrap;
+    }
+
+    .operations-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .operations-meta span {
+        background: rgba(255, 255, 255, 0.06);
+        color: #eef7f1;
+        border: 1px solid rgba(143, 211, 167, 0.10);
+        border-radius: 999px;
+        padding: 0.42rem 0.72rem;
+        font-size: 0.82rem;
+        font-weight: 700;
+    }
+
+    .control-card .operations-meta span {
+        background: #eef4f0;
+        color: #173728;
+        border: 1px solid rgba(19, 33, 25, 0.08);
+    }
+
+    .panel-kicker {
+        color: #2f7252;
+        text-transform: uppercase;
+        letter-spacing: 0.14rem;
+        font-size: 0.74rem;
+        font-weight: 800;
+        margin-bottom: 0.4rem;
+    }
+
+    .panel-title {
+        color: #1e4936;
+        font-size: 1.45rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .panel-copy {
+        color: #54695e;
+        line-height: 1.6;
+        margin: 0.45rem 0 0 0;
+    }
+
+    .workspace-card .panel-kicker,
+    .preview-card .panel-kicker,
+    .operations-strip .panel-kicker {
+        color: #8fd3a7;
+    }
+
+    .workspace-card .panel-title,
+    .preview-card .panel-title,
+    .operations-strip .panel-title {
+        color: #f1f8f3;
+    }
+
+    .workspace-card .panel-copy,
+    .preview-card .panel-copy,
+    .operations-strip .panel-copy {
+        color: #cadbcc;
+    }
+
+    .panel-caption {
+        color: #667b73;
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .layer-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.85rem;
+    }
+
+    .layer-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.44rem 0.72rem;
+        border-radius: 999px;
+        font-size: 0.82rem;
+        font-weight: 700;
+        border: 1px solid rgba(19, 33, 25, 0.10);
+        background: rgba(255, 255, 255, 0.82);
+        color: #173728;
+    }
+
+    .layer-dot {
+        width: 0.62rem;
+        height: 0.62rem;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .system-list {
+        margin: 0.55rem 0 0 0;
+        padding-left: 1rem;
+        color: #486159;
+        line-height: 1.75;
+    }
+
+    .system-list li {
+        margin-bottom: 0.15rem;
+    }
+
+    .empty-preview {
+        border: 1px dashed rgba(40, 92, 68, 0.24);
+        border-radius: 20px;
+        padding: 1.5rem 1.2rem;
+        background: linear-gradient(135deg, #f6faf7 0%, #edf4f0 100%);
+        color: #52675f;
+    }
+
+    .sidebar-brand {
+        background: linear-gradient(155deg, #09100b 0%, #102018 55%, #173728 100%);
+        padding: 1.2rem 1rem;
+        border-radius: 18px;
+        border: 1px solid rgba(157, 226, 189, 0.18);
+        margin-bottom: 1rem;
+    }
+
+    .sidebar-brand h2 {
+        color: white;
+        margin: 0;
+        font-size: 1.55rem;
+        font-weight: 800;
+    }
+
+    .sidebar-brand p {
+        color: #dbeee1 !important;
+        margin: 0.35rem 0 0 0;
+        font-size: 0.9rem;
+    }
+
+    .sidebar-brand span {
+        color: #a8dfbb;
+        text-transform: uppercase;
+        letter-spacing: 0.14rem;
+        font-size: 0.72rem;
+        font-weight: 800;
+    }
+
+    section[data-testid="stFileUploader"] {
+        background: linear-gradient(160deg, #0d1610 0%, #16271d 100%);
+        border-radius: 18px;
+        padding: 0.35rem;
+        border: 1px dashed rgba(120, 202, 149, 0.24);
+    }
+
+    section[data-testid="stFileUploader"] * {
+        color: #eef7f1 !important;
+    }
+
+    div[data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.94);
+        border: 1px solid rgba(29, 75, 49, 0.08);
+        border-radius: 18px;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 12px 28px rgba(21, 45, 35, 0.08);
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.08);
+        border: 1px solid rgba(157, 226, 189, 0.14);
+        box-shadow: none;
+    }
+
+    section[data-testid="stSidebar"] div[data-testid="stMetricLabel"],
+    section[data-testid="stSidebar"] div[data-testid="stMetricValue"] {
+        color: #f1faf4 !important;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button {
+        justify-content: flex-start;
+        min-height: 3.5rem;
+        background: rgba(255, 255, 255, 0.08);
+        color: #f4fbf5;
+        border: 1px solid rgba(223, 245, 230, 0.12);
+        border-radius: 18px;
+        box-shadow: none;
+        padding: 0.85rem 1rem;
+        font-size: 1rem;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background: rgba(255, 255, 255, 0.12);
+        transform: none;
+        box-shadow: none;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #1f4a34 0%, #2a6748 100%);
+        border-color: rgba(143, 211, 167, 0.28);
+        box-shadow: 0 14px 24px rgba(8, 16, 11, 0.22);
+    }
+
+    .time-chip {
+        margin-top: 0.55rem;
+        margin-bottom: 0.9rem;
+        padding: 0.7rem 0.9rem;
+        border-radius: 16px;
+        background: #f4f8f5;
+        border: 1px solid rgba(19, 33, 25, 0.10);
+        color: #173728;
+        box-shadow: 0 12px 26px rgba(19, 41, 32, 0.06);
+        width: fit-content;
+    }
+
+    .time-chip span {
+        display: block;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.11rem;
+        color: #5d7668;
+        font-weight: 800;
+        margin-bottom: 0.16rem;
+    }
+
+    .time-chip strong {
+        font-size: 0.98rem;
     }
 
 </style>
@@ -610,27 +998,18 @@ def _render_login_screen() -> bool:
 
 
 def _render_user_panel():
-    """Render logged-in user info and logout action in the sidebar."""
-    now_str = datetime.now().strftime("%b %d, %Y %I:%M %p")
-    last_login = st.session_state.get('last_login')
-    if last_login:
-        try:
-            last_login = datetime.fromisoformat(str(last_login)).strftime("%b %d, %Y %I:%M %p")
-        except ValueError:
-            pass
-
-    st.markdown("### User Session")
+    """Render a compact logged-in account panel in the sidebar."""
     st.markdown(
         f"""
-        <div class="user-chip">
-            <div class="user-row"><span class="user-label">User</span><span class="user-value">{st.session_state.get('username', 'Unknown')}</span></div>
-            <div class="user-row"><span class="user-label">Now</span><span class="user-value">{now_str}</span></div>
-            <div class="user-row"><span class="user-label">Last Login</span><span class="user-value">{last_login or 'First login'}</span></div>
+        <div class="account-card">
+            <div class="account-kicker">Account</div>
+            <p class="account-name">{st.session_state.get('username', 'Unknown')}</p>
+            <div class="account-caption">Authenticated access to the MangroVision planning workspace.</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    if st.button("Logout", use_container_width=True):
+    if st.button("Log Out", use_container_width=True):
         st.session_state.logged_in = False
         st.session_state.user_id = None
         st.session_state.username = None
@@ -639,7 +1018,6 @@ def _render_user_panel():
         st.session_state.show_login_success = False
         _set_auth_query(False)
         st.rerun()
-    st.markdown("---")
 
 
 def _render_header_datetime_live():
@@ -647,13 +1025,34 @@ def _render_header_datetime_live():
     def _clock_markup() -> str:
         now_str = datetime.now().strftime("%B %d, %Y | %I:%M:%S %p")
         return (
-            "<div style='margin-top:-1.1rem; margin-bottom:1rem; padding:0.55rem 0.85rem; "
-            "border-radius:10px; background:rgba(126, 200, 141, 0.15); "
-            "border:1px solid rgba(126, 200, 141, 0.35); color:black; "
+            "<div style='margin-top:0.55rem; margin-bottom:0.9rem; padding:0.65rem 0.9rem; "
+            "border-radius:14px; background:rgba(255, 255, 255, 0.88); "
+            "border:1px solid rgba(26, 70, 52, 0.10); color:#17392c; "
+            "box-shadow:0 12px 26px rgba(19, 41, 32, 0.08); "
             f"font-weight:600; width:fit-content;'>🕒 {now_str}</div>"
         )
 
     # Re-render only this fragment every second when supported.
+    if hasattr(st, "fragment"):
+        @st.fragment(run_every="1s")
+        def _clock_fragment():
+            st.markdown(_clock_markup(), unsafe_allow_html=True)
+        _clock_fragment()
+    else:
+        st.markdown(_clock_markup(), unsafe_allow_html=True)
+
+
+def _render_workspace_clock():
+    """Render a compact live clock for the analysis console."""
+    def _clock_markup() -> str:
+        now_str = datetime.now().strftime("%B %d, %Y | %I:%M:%S %p")
+        return (
+            "<div class='time-chip'>"
+            "<span>Operations Time</span>"
+            f"<strong>{now_str}</strong>"
+            "</div>"
+        )
+
     if hasattr(st, "fragment"):
         @st.fragment(run_every="1s")
         def _clock_fragment():
@@ -669,15 +1068,224 @@ def _reload_eroded_filter():
     _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))
 
 
+def _render_section_banner(kicker: str, title: str, subtitle: str, badges=None):
+    """Render a reusable section banner for the workspace views."""
+    badge_html = ""
+    for badge in badges or []:
+        badge_html += f"<span>{badge}</span>"
+
+    st.markdown(
+        f"""
+        <div class="section-hero">
+            <div>
+                <div class="section-kicker">{kicker}</div>
+                <h2>{title}</h2>
+                <p>{subtitle}</p>
+            </div>
+            <div class="section-hero-badges">{badge_html}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _get_analysis_map_center(analyses):
+    """Pick a sensible map center from saved analyses, or use the Leganes default."""
+    lats = [a.get('center_lat') for a in analyses if a.get('center_lat') is not None]
+    lons = [a.get('center_lon') for a in analyses if a.get('center_lon') is not None]
+    if lats and lons:
+        return [sum(lats) / len(lats), sum(lons) / len(lons)]
+    return [10.7800, 122.6253]
+
+
+def _add_operational_map_layers(map_obj, orthophoto_name: str = "Orthophoto Overlay"):
+    """Add the shared basemap stack so WebODM tiles sit above a satellite fallback."""
+    folium.TileLayer(
+        tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+        attr='Google Maps',
+        name='Satellite Base',
+        overlay=False,
+        control=True,
+        show=True,
+        max_zoom=21,
+    ).add_to(map_obj)
+
+    folium.TileLayer(
+        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
+        attr='MangroVision Orthophoto | QGIS',
+        name=orthophoto_name,
+        overlay=True,
+        control=True,
+        max_zoom=20,
+        min_zoom=10,
+        show=True,
+        opacity=1.0,
+    ).add_to(map_obj)
+
+
+def _style_layer_control(map_obj):
+    """Apply a dark MangroVision skin to Folium layer controls."""
+    map_obj.get_root().header.add_child(Element("""
+    <style>
+        .leaflet-control-layers-expanded {
+            min-width: 220px;
+            padding: 0.9rem 0.95rem 0.8rem 0.95rem !important;
+            border-radius: 18px !important;
+            border: 1px solid rgba(120, 202, 149, 0.16) !important;
+            background: linear-gradient(160deg, rgba(8, 16, 11, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%) !important;
+            box-shadow: 0 18px 34px rgba(8, 16, 11, 0.30) !important;
+            color: #eef7f1 !important;
+            backdrop-filter: blur(10px);
+        }
+
+        .leaflet-control-layers-base,
+        .leaflet-control-layers-overlays {
+            display: grid;
+            gap: 0.28rem;
+            margin-top: 0.15rem;
+        }
+
+        .leaflet-control-layers label {
+            display: flex !important;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.38rem 0.44rem;
+            border-radius: 12px;
+            color: #eef7f1 !important;
+            font-size: 0.95rem;
+            font-weight: 600;
+            transition: background 0.18s ease;
+        }
+
+        .leaflet-control-layers label:hover {
+            background: rgba(120, 202, 149, 0.08);
+        }
+
+        .leaflet-control-layers-separator {
+            border-top: 1px solid rgba(120, 202, 149, 0.16) !important;
+            margin: 0.45rem 0 !important;
+        }
+
+        .leaflet-control-layers-selector {
+            accent-color: #7fd29b;
+            transform: scale(1.05);
+        }
+    </style>
+    """))
+
+
+def _build_workspace_overview_map(stats):
+    """Build the overview map shown on the main planning workspace before upload."""
+    from folium.plugins import Fullscreen
+
+    analyses = stats.get('analyses', [])
+    all_points = stats.get('points', [])
+    center = _get_analysis_map_center(analyses)
+
+    workspace_map = folium.Map(
+        location=center,
+        zoom_start=19 if analyses else 18,
+        tiles=None,
+        control_scale=True,
+    )
+    _add_operational_map_layers(workspace_map)
+
+    if _forbidden_filter.forbidden_polygons:
+        forbidden_group = folium.FeatureGroup(name='Forbidden Zones', show=True)
+        for poly in _forbidden_filter.forbidden_polygons:
+            coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+            folium.Polygon(
+                locations=coords,
+                color='#C62828',
+                fill=True,
+                fillColor='#E53935',
+                fillOpacity=0.28,
+                weight=2,
+                tooltip='Forbidden Zone',
+            ).add_to(forbidden_group)
+        forbidden_group.add_to(workspace_map)
+
+    if _eroded_filter.forbidden_polygons:
+        eroded_group = folium.FeatureGroup(name='Eroded Zones', show=True)
+        for poly in _eroded_filter.forbidden_polygons:
+            coords = [(lat, lon) for lon, lat in poly.exterior.coords]
+            folium.Polygon(
+                locations=coords,
+                color='#EF6C00',
+                fill=True,
+                fillColor='#FB8C00',
+                fillOpacity=0.28,
+                weight=2,
+                tooltip='Eroded Zone',
+            ).add_to(eroded_group)
+        eroded_group.add_to(workspace_map)
+
+    sorted_analyses = sorted(
+        analyses,
+        key=lambda row: row.get('analyzed_at') or "",
+        reverse=True,
+    )
+    analysis_group = folium.FeatureGroup(name='Analysis Locations', show=True)
+    for analysis in sorted_analyses[:12]:
+        lat = analysis.get('center_lat')
+        lon = analysis.get('center_lon')
+        if lat is None or lon is None:
+            continue
+        folium.Marker(
+            location=[lat, lon],
+            popup=(
+                f"<b>{analysis['image_name']}</b><br>"
+                f"Captured: {analysis['analyzed_at']}<br>"
+                f"Planting points: {analysis['hexagon_count']}<br>"
+                f"Canopies: {analysis['canopy_count']}"
+            ),
+            tooltip=analysis['image_name'],
+            icon=folium.Icon(color='blue', icon='camera', prefix='fa'),
+        ).add_to(analysis_group)
+    analysis_group.add_to(workspace_map)
+
+    visible_points = list(all_points)
+    if len(visible_points) > 450:
+        step = max(1, int(np.ceil(len(visible_points) / 450)))
+        visible_points = visible_points[::step]
+
+    if visible_points:
+        points_group = folium.FeatureGroup(name='Planting Zones', show=True)
+        for point in visible_points:
+            folium.CircleMarker(
+                location=[point['latitude'], point['longitude']],
+                radius=3,
+                color='#0E5A2A',
+                fillColor='#4CAF50',
+                fillOpacity=0.82,
+                weight=1,
+                tooltip=point['image_name'],
+            ).add_to(points_group)
+        points_group.add_to(workspace_map)
+
+    Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(workspace_map)
+    folium.LayerControl(collapsed=False).add_to(workspace_map)
+    _style_layer_control(workspace_map)
+    return workspace_map
+
+
 def show_eroded_zone_editor():
     """
     Map-based editor for marking eroded zones.
     Users draw polygons on the orthophoto map to designate eroded areas
     that should be excluded from planting, even if space is available.
     """
-    from folium.plugins import Draw
+    from folium.plugins import Draw, Fullscreen
 
-    st.markdown("## 🗺️ Mark Eroded Zones")
+    _render_section_banner(
+        "Zone Editor",
+        "Eroded Area Mapping",
+        "Draw and save erosion exclusions directly on the orthophoto so unsafe planting sections are blocked before field deployment.",
+        [
+            f"{len(_eroded_filter.forbidden_polygons)} saved erosion polygons",
+            f"{_forbidden_filter.zone_count} structural exclusions",
+        ],
+    )
 
     st.markdown("""
     <div class="info-box">
@@ -726,38 +1334,7 @@ def show_eroded_zone_editor():
         tiles=None,
         control_scale=True,
     )
-
-    # Orthophoto tile layer
-    folium.TileLayer(
-        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
-        attr='MangroVision Orthophoto | QGIS',
-        name='Orthophoto',
-        overlay=False,
-        control=True,
-        max_zoom=20,
-        min_zoom=10,
-        show=True,
-    ).add_to(m)
-
-    # Satellite fallback
-    folium.TileLayer(
-        tiles='https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-        attr='Esri WorldImagery',
-        name='Satellite',
-        overlay=False,
-        control=True,
-        show=False,
-    ).add_to(m)
-
-    # OSM reference
-    folium.TileLayer(
-        tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        attr='© OpenStreetMap contributors',
-        name='OpenStreetMap',
-        overlay=False,
-        control=True,
-        show=False,
-    ).add_to(m)
+    _add_operational_map_layers(m, orthophoto_name="Orthophoto Overlay")
 
     # Show existing eroded zones (orange)
     if existing_zones:
@@ -816,13 +1393,16 @@ def show_eroded_zone_editor():
         edit_options={'edit': False},
     ).add_to(m)
 
-    folium.LayerControl().add_to(m)
+    Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(m)
+    folium.LayerControl(collapsed=False).add_to(m)
+    _style_layer_control(m)
 
     # Render map and capture drawn data
     map_output = st_folium.st_folium(
-        m, width=1400, height=600,
+        m, height=600,
         key="eroded_zone_map",
         returned_objects=["all_drawings"],
+        use_container_width=True,
     )
 
     # Process drawn polygons
@@ -965,7 +1545,18 @@ def show_map_analytics():
     Dashboard showing all saved planting data across the entire map.
     Aggregate stats + interactive map with every planting point ever saved.
     """
-    st.markdown("## 📊 Map Analytics — All Planting Data")
+    from folium.plugins import Fullscreen
+
+    _render_section_banner(
+        "System Analytics",
+        "Planting History And Coverage",
+        "Review saved analyses, inspect historical planting points, and export the accumulated field dataset from the full Leganes mapping system.",
+        [
+            "Orthophoto overview",
+            "Saved analyses",
+            "Field export ready",
+        ],
+    )
 
     stats = get_all_stats()
     analyses = stats.get('analyses', [])
@@ -973,7 +1564,7 @@ def show_map_analytics():
 
     if stats['total_analyses'] == 0:
         st.info(
-            "📭 **No analyses saved yet.** Go to **Analyze Drone Image**, "
+            "📭 **No analyses saved yet.** Go to **Map Workspace**, "
             "upload an image, run detection, then click **💾 Save to database**. "
             "Saved results will appear here."
         )
@@ -1013,22 +1604,7 @@ def show_map_analytics():
         tiles=None,
         control_scale=True,
     )
-
-    # Orthophoto tile layer
-    folium.TileLayer(
-        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
-        attr='MangroVision Orthophoto | QGIS',
-        name='Orthophoto',
-        overlay=False, control=True,
-        max_zoom=20, min_zoom=10, show=True,
-    ).add_to(analytics_map)
-
-    folium.TileLayer(
-        tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-        attr='© OpenStreetMap contributors',
-        name='OpenStreetMap',
-        overlay=False, control=True, show=False,
-    ).add_to(analytics_map)
+    _add_operational_map_layers(analytics_map)
 
     # Show forbidden zone polygons (red)
     if _forbidden_filter.forbidden_polygons:
@@ -1094,8 +1670,16 @@ def show_map_analytics():
         ).add_to(pts_grp)
     pts_grp.add_to(analytics_map)
 
-    folium.LayerControl().add_to(analytics_map)
-    st_folium.st_folium(analytics_map, width=1400, height=650, key="analytics_map", returned_objects=[])
+    Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(analytics_map)
+    folium.LayerControl(collapsed=False).add_to(analytics_map)
+    _style_layer_control(analytics_map)
+    st_folium.st_folium(
+        analytics_map,
+        height=650,
+        key="analytics_map",
+        returned_objects=[],
+        use_container_width=True,
+    )
 
     # ── Per-analysis breakdown table ──────────────────────────────
     st.markdown("---")
@@ -1189,173 +1773,200 @@ def main():
     if not _render_login_screen():
         return
 
-    # Header
-    st.markdown("""
-    <div class="main-header">
-        <h1>🌿 MangroVision</h1>
-        <p>AI-Powered Mangrove Planting Zone Analyzer for Leganes, Iloilo</p>
-        <p style="font-size: 0.9rem; margin-top: 0.5rem;">Intelligent tree crown detection & safe zone mapping</p>
-    </div>
-    """, unsafe_allow_html=True)
-    _render_header_datetime_live()
-    
-    # Mode selector
-    st.markdown("---")
-    mode = st.radio(
-        "📋 Select Analysis Mode",
-        options=["🖼️ Analyze Drone Image", "🗺️ Mark Eroded Zones", "📊 Map Analytics"],
-        index=0,
-        horizontal=True
-    )
-    st.markdown("---")
-    
-    # Route to eroded zone editor
-    if mode == "🗺️ Mark Eroded Zones":
-        show_eroded_zone_editor()
-        return
-    
-    # Route to map analytics
-    if mode == "📊 Map Analytics":
-        show_map_analytics()
-        return
-    
-    # Sidebar
-    with st.sidebar:
-        _render_user_panel()
+    try:
+        from canopy_detection.detectree2_proper import ProperDetectree2Detector  # noqa: F401
+        ai_available = True
+    except ImportError:
+        ai_available = False
 
-        # Logo header
+    detection_mode = "ai" if ai_available else "hsv"
+    workflow_label = "Standard canopy mapping" if ai_available else "Backup canopy mapping"
+    workspace_stats = get_all_stats()
+    eroded_zone_count = len(_eroded_filter.forbidden_polygons)
+    total_exclusions = _forbidden_filter.zone_count + eroded_zone_count
+    workspace_modes = ["Map Workspace", "Map Analytics", "Eroded Zone Editor"]
+    if st.session_state.get("workspace_mode") not in workspace_modes:
+        st.session_state.workspace_mode = "Map Workspace"
+
+    with st.sidebar:
         st.markdown("""
-        <div style="background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%); 
-                    padding: 1.5rem; border-radius: 10px; text-align: center; margin-bottom: 1.5rem;">
-            <h1 style="color: white; margin: 0; font-size: 2rem;">🌿 MangroVision</h1>
-            <p style="color: #C8E6C9; margin: 0.5rem 0 0 0; font-size: 0.9rem;">AI Planting Zone Analyzer</p>
+        <div class="sidebar-brand">
+            <span>Navigation</span>
+            <h2>MangroVision</h2>
+            <p>Move between the live map workspace, analytics dashboard, and erosion editor from one operational sidebar.</p>
         </div>
         """, unsafe_allow_html=True)
-        
-        st.markdown("### ⚙️ Detection Settings")
-        
-        # Check if detectree2 is available (prefer official integration path).
-        try:
-            from canopy_detection.detectree2_proper import ProperDetectree2Detector  # noqa: F401
-            detectree2_available = True
-            st.success("🌳 **AI-only detectree2** Ready (HSV merge disabled)")
-        except ImportError:
-            try:
-                from canopy_detection.detectree2_detector import Detectree2Detector  # noqa: F401
-                detectree2_available = True
-                st.success("🌳 **AI-only detectree2** Ready (HSV merge disabled)")
-            except ImportError:
-                detectree2_available = False
-                st.warning("🌳 Using **HSV detection** (detectree2 not installed)")
-        
-        # Hardcoded defaults - AI-only mode with HSV fallback if AI backend is unavailable.
-        detection_mode = "ai" if detectree2_available else "hsv"
-        model_name = "paracou"
-        
-        # Keep AI confidence fixed for consistent AI-only behavior.
-        ai_confidence = 0.75
-        st.caption("AI Confidence Threshold: fixed at 0.75 (AI-only mode)")
-        ai_runtime_tuning = {}
-        
+
+        st.markdown("### Workspace Views")
+        for option in workspace_modes:
+            if st.button(
+                option,
+                key=f"workspace_mode_{option.lower().replace(' ', '_')}",
+                use_container_width=True,
+                type="primary" if st.session_state.workspace_mode == option else "secondary",
+            ):
+                st.session_state.workspace_mode = option
+        mode = st.session_state.workspace_mode
+
         st.markdown("---")
-        
-        st.markdown("### 📏 Buffer Settings")
-        
-        canopy_buffer = st.slider(
-            "Danger Zone Buffer (meters)",
-            min_value=0.5,
-            max_value=2.0,
-            value=1.0,
-            step=0.1,
-            help="Buffer distance around detected canopies (red zones)"
-        )
-        
-        hexagon_size = st.slider(
-            "Planting Hexagon Size (meters)",
-            min_value=0.3,
-            max_value=2.0,
-            value=1.0,
-            step=0.1,
-            help="Size of hexagonal planting zones (green buffers)"
-        )
-        
-        # Hidden defaults (Flight Parameters panel removed from sidebar UI).
+        st.markdown("### System Snapshot")
+        st.metric("Saved analyses", workspace_stats['total_analyses'])
+        st.metric("Planting points", workspace_stats['total_planting_points'])
+        st.metric("Active exclusions", total_exclusions)
+
+        ai_confidence = 0.75
+        ai_runtime_tuning = {}
         altitude = 6.0
         drone_model = "GENERIC_4K"
-    
-    # Main content area
-    col1, col2 = st.columns([1, 1])
-    
-    with col1:
-        st.markdown("### 📤 Upload Drone Image")
-        
-        uploaded_file = st.file_uploader(
-            "Choose an image file",
-            type=["jpg", "jpeg", "png"],
-            help="Upload a drone image of the mangrove area"
-        )
-        
-        if uploaded_file is not None:
-            # Display uploaded image
-            image = Image.open(uploaded_file)
-            st.markdown('<div class="image-container">', unsafe_allow_html=True)
-            st.image(image, caption="📸 Original Drone Image", width='stretch')
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            # Show image info
-            st.info(f"📐 Image Size: {image.size[0]} × {image.size[1]} pixels")
-    
-    with col2:
-        if uploaded_file is not None:
-            st.markdown("### 🚀 Ready to Analyze")
-            
-            st.markdown("""
-            <div class="success-box">
-                <span style="color: #2E7D32; font-size: 1.05rem;">
-                <strong>✅ Image loaded successfully!</strong><br>
-                Click the button below to start detection.
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            # Analyze button
-            if st.button("🔍 Detect Canopies & Generate Planting Zones", type="primary"):
-                # Store that analysis was requested
-                st.session_state.run_analysis = True
-                st.session_state.current_file = uploaded_file
-                st.session_state.current_altitude = altitude
-                st.session_state.current_drone_model = drone_model
-                st.session_state.current_canopy_buffer = canopy_buffer
-                st.session_state.current_hexagon_size = hexagon_size
-                st.session_state.current_ai_confidence = ai_confidence
-                st.session_state.current_model_name = model_name
-                st.session_state.current_detection_mode = detection_mode
-                st.session_state.current_ai_runtime_tuning = ai_runtime_tuning
+
+        if mode == "Map Workspace":
+            st.markdown("---")
+            st.markdown("### Analysis Controls")
+            canopy_buffer = st.slider(
+                "Danger Zone Buffer (meters)",
+                min_value=0.5,
+                max_value=2.0,
+                value=1.0,
+                step=0.1,
+                help="Buffer distance around detected canopies (red zones)"
+            )
+
+            hexagon_size = st.slider(
+                "Planting Hexagon Size (meters)",
+                min_value=0.3,
+                max_value=2.0,
+                value=1.0,
+                step=0.1,
+                help="Size of hexagonal planting zones (green buffers)"
+            )
+            st.caption("These values are applied when you run a new image analysis.")
         else:
-            st.markdown("### 📋 Instructions")
-            st.markdown("""
-            <div class="info-box">
-                <strong>How to use MangroVision:</strong><br><br>
-                <span style="color: #1565C0; font-size: 1.05rem; line-height: 1.8;">
-                1️⃣ Upload a drone image (left panel)<br>
-                2️⃣ Adjust detection settings (sidebar)<br>
-                3️⃣ Click 'Detect & Analyze' button<br>
-                4️⃣ View results and download shapefiles<br>
-                5️⃣ Import into QGIS for final mapping
-                </span>
+            canopy_buffer = 1.0
+            hexagon_size = 1.0
+            st.markdown("---")
+            st.caption("Analysis controls appear here when you return to the map workspace.")
+
+        st.markdown("---")
+        _render_user_panel()
+
+    st.markdown(f"""
+    <div class="main-header">
+        <div class="main-header-grid">
+            <div>
+                <div class="main-kicker">MangroVision Planning System</div>
+                <h1>Leganes Mangrove Mapping Workspace</h1>
+                <p>Professional geospatial workspace for canopy detection, exclusion zoning, planting-point generation, and field export.</p>
+                <p style="font-size: 0.94rem; margin-top: 0.5rem;">The system now prioritizes the map as the operational surface, while image analysis remains available as a supporting workflow.</p>
             </div>
-            """, unsafe_allow_html=True)
-            
-            st.markdown("### 🎯 Features")
-            st.markdown("""
-            <div style="color: #white; font-size: 1.05rem; line-height: 2;">
-            • 🌳 <strong>AI Canopy Detection</strong> - Identifies mangrove trees<br>
-            • 🔴 <strong>Danger Zone Mapping</strong> - 1m safety buffers<br>
-            • 🟢 <strong>Planting Zone Generation</strong> - Hexagonal planting areas<br>
-            • 📊 <strong>Statistical Analysis</strong> - Area calculations & metrics<br>
-            • 🗺️ <strong>QGIS Export</strong> - Shapefile generation for GIS
+            <div class="header-meta">
+                <div class="header-badge">{workspace_stats['total_analyses']} saved analyses</div>
+                <div class="header-badge">{workspace_stats['total_planting_points']} planting points</div>
+                <div class="header-badge">{total_exclusions} active exclusion polygons</div>
             </div>
-            """, unsafe_allow_html=True)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if mode == "Eroded Zone Editor":
+        show_eroded_zone_editor()
+        return
+
+    if mode == "Map Analytics":
+        show_map_analytics()
+        return
+
+    _render_section_banner(
+        "Map Workspace",
+        "Operational Planting Map",
+        "Inspect the orthophoto first, confirm exclusion layers, and only then queue a target drone frame for analysis.",
+        [
+            "Map-first workflow",
+            f"{_forbidden_filter.zone_count} forbidden zones",
+            f"{eroded_zone_count} eroded zones",
+        ],
+    )
+
+    uploaded_file = None
+    image = None
+
+    workspace_map = _build_workspace_overview_map(workspace_stats)
+    st_folium.st_folium(
+        workspace_map,
+        height=860,
+        key="workspace_overview_map",
+        returned_objects=[],
+        use_container_width=True,
+    )
+    st.markdown("""
+    <div class="layer-legend">
+        <span class="layer-pill"><span class="layer-dot" style="background:#1B5E20;"></span>Planting zones</span>
+        <span class="layer-pill"><span class="layer-dot" style="background:#C62828;"></span>Forbidden structures</span>
+        <span class="layer-pill"><span class="layer-dot" style="background:#EF6C00;"></span>Eroded areas</span>
+        <span class="layer-pill"><span class="layer-dot" style="background:#1E88E5;"></span>Analysis locations</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="operations-strip">
+        <div>
+            <div class="panel-kicker">Operations Deck</div>
+            <h3 class="panel-title">Analysis Queue And Site Review</h3>
+            <p class="panel-copy">Keep the map as the operating surface, then stage one drone frame below it when the site boundary and exclusion layers are already confirmed.</p>
+        </div>
+        <div class="operations-meta">
+            <span>{workflow_label}</span>
+            <span>{canopy_buffer:.1f} m danger buffer</span>
+            <span>{hexagon_size:.1f} m planting spacing</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div class="control-card">
+        <div class="panel-kicker">Analysis Console</div>
+        <h3 class="panel-title">Queue A Drone Frame</h3>
+        <p class="panel-copy">Use this console only after you verify the planting site on the map. The upload stays secondary so the workspace still reads like a mapping system.</p>
+        <div class="operations-meta" style="margin-top:0.9rem;">
+            <span>{workflow_label}</span>
+            <span>{canopy_buffer:.1f} m danger buffer</span>
+            <span>{hexagon_size:.1f} m planting spacing</span>
+            <span>{altitude:.1f} m manual altitude</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _render_workspace_clock()
+
+    uploaded_file = st.file_uploader(
+        "Select a drone image",
+        type=["jpg", "jpeg", "png"],
+        help="Upload a drone image of the mangrove area"
+    )
+
+    if uploaded_file is not None:
+        image = Image.open(uploaded_file)
+        st.caption(f"Queued frame: {image.size[0]} x {image.size[1]} pixels")
+        if st.button("Run Analysis", type="primary"):
+            st.session_state.run_analysis = True
+            st.session_state.current_file = uploaded_file
+            st.session_state.current_altitude = altitude
+            st.session_state.current_drone_model = drone_model
+            st.session_state.current_canopy_buffer = canopy_buffer
+            st.session_state.current_hexagon_size = hexagon_size
+            st.session_state.current_ai_confidence = ai_confidence
+            st.session_state.current_detection_mode = detection_mode
+            st.session_state.current_ai_runtime_tuning = ai_runtime_tuning
+
+        st.markdown("""
+        <div class="preview-card">
+            <div class="panel-kicker">Image Preview</div>
+            <h3 class="panel-title">Queued Drone Frame</h3>
+            <p class="panel-copy">This frame is ready to process using the active planting geometry settings.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.image(image, caption="Queued image", width='stretch')
+    else:
+        st.caption("Load a drone frame only after the map layers and target site are visually confirmed.")
 
     # Run analysis if requested
     if uploaded_file is not None and st.session_state.get('run_analysis', False):
@@ -1366,7 +1977,6 @@ def main():
             st.session_state.current_canopy_buffer,
             st.session_state.current_hexagon_size,
             st.session_state.current_ai_confidence,
-            st.session_state.current_model_name,
             st.session_state.current_detection_mode,
             st.session_state.get('current_ai_runtime_tuning', {})
         )
@@ -1379,11 +1989,10 @@ def analyze_image(
     canopy_buffer,
     hexagon_size,
     ai_confidence,
-    model_name,
     detection_mode='ai',
     ai_runtime_tuning=None,
 ):
-    """Process the uploaded image using detectree2 AI detection"""
+    """Process the uploaded image using the canopy-analysis workflow."""
     
     # ── Progress bar for user feedback ─────────────────────────────
     progress_bar = st.progress(0, text="⏳ Preparing analysis...")
@@ -1487,7 +2096,7 @@ def analyze_image(
             st.markdown("---")
             st.markdown("### 🔍 Running Detection Analysis")
             
-            progress_bar.progress(15, text="🔍 Initializing AI detector...")
+            progress_bar.progress(15, text="🔍 Initializing analysis engine...")
             
             # Create a unique key for this analysis.
             # Include detector backend mtimes so code changes invalidate cached results.
@@ -1499,26 +2108,21 @@ def analyze_image(
                 proper_code_mtime = int((Path(__file__).parent / "canopy_detection" / "detectree2_proper.py").stat().st_mtime)
             except Exception:
                 proper_code_mtime = 0
-            try:
-                fallback_code_mtime = int((Path(__file__).parent / "canopy_detection" / "detectree2_detector.py").stat().st_mtime)
-            except Exception:
-                fallback_code_mtime = 0
             tuning_fingerprint = json.dumps(ai_runtime_tuning or {}, sort_keys=True)
             analysis_key = (
                 f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
-                f"{hexagon_size}_{ai_confidence}_{model_name}_{detection_mode}_"
-                f"{canopy_code_mtime}_{proper_code_mtime}_{fallback_code_mtime}_"
+                f"{hexagon_size}_{ai_confidence}_{detection_mode}_"
+                f"{canopy_code_mtime}_{proper_code_mtime}_"
                 f"{tuning_fingerprint}"
             )
             
             # Check if we've already run detection for this configuration
             if 'last_analysis_key' not in st.session_state or st.session_state.last_analysis_key != analysis_key:
-                # Initialize detector with AI-only mode
+                # Initialize the detector for the active canopy-analysis workflow.
                 detector = HexagonDetector(
                     altitude_m=altitude_to_use, 
                     drone_model=drone_to_use,
                     ai_confidence=ai_confidence,
-                    model_name=model_name,
                     detection_mode=detection_mode
                 )
                 if (
@@ -1536,9 +2140,9 @@ def analyze_image(
                         if tuned_kwargs:
                             set_tuning_fn(**tuned_kwargs)
                     except Exception as _tuning_err:
-                        st.warning(f"AI tuning values could not be fully applied: {_tuning_err}")
+                        st.warning(f"Runtime tuning values could not be fully applied: {_tuning_err}")
                 
-                progress_bar.progress(25, text="🌳 Detecting canopies (AI-only detectree2)... This may take a moment")
+                progress_bar.progress(25, text="🌳 Detecting canopy zones... This may take a moment")
                 detection_progress_state = {"total_tiles": None, "last_ui_tile": 0}
 
                 def _estimate_total_tiles(image_file):
@@ -1980,30 +2584,8 @@ def analyze_image(
                             gsd, camera_heading
                         )
                 
-                # ── Map Display Options ──────────────────────────────────
-                if 'show_forbidden_zones' not in st.session_state:
-                    st.session_state.show_forbidden_zones = False
-
-                _opt_col1, _opt_col2 = st.columns(2)
-                with _opt_col1:
-                    _fz_btn_label = "🚫 Hide Forbidden Zone" if st.session_state.show_forbidden_zones else "🚫 Show Forbidden Zone"
-                    if st.button(
-                        _fz_btn_label,
-                        key="toggle_forbidden_zone_button",
-                        use_container_width=True,
-                        help="Show or hide forbidden-zone polygons on the map. Filtering is always active."
-                    ):
-                        st.session_state.show_forbidden_zones = not st.session_state.show_forbidden_zones
-
-                    show_forbidden_zones = st.session_state.show_forbidden_zones
-                with _opt_col2:
-                    show_eroded_zones = st.checkbox(
-                        "🏜️ Show eroded zones (orange)",
-                        value=False,
-                        help="Toggle visibility of eroded zones on the map. Filtering is always active."
-                    )
-                
                 # Create orthophoto map centered on image location
+                from folium.plugins import Fullscreen
                 ortho_map = folium.Map(
                     location=[map_center_lat, map_center_lon],
                     zoom_start=20,
@@ -2011,30 +2593,7 @@ def analyze_image(
                     control_scale=True,
                     max_bounds=True
                 )
-                
-                # Add orthophoto tile layer (YOUR CUSTOM MAP)
-                folium.TileLayer(
-                    tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
-                    attr='MangroVision Orthophoto | QGIS',
-                    name='Orthophoto',  
-                    
-                    overlay=False,
-                    control=True,
-                    max_zoom=20,
-                    min_zoom=10,
-                    show=True
-                ).add_to(ortho_map)
-                
-                # Add OpenStreetMap reference layer (backup)
-                folium.TileLayer(
-                    tiles='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                    attr='© OpenStreetMap contributors',
-                    name='OpenStreetMap',
-                    overlay=False,
-                    control=True,
-                    opacity=1.0,
-                    show=False
-                ).add_to(ortho_map)
+                _add_operational_map_layers(ortho_map)
                 
                 st.info(f"📍 Map shows GPS markers for each planting location from Visual Results")
                 image_width_m = width * gsd
@@ -2066,8 +2625,8 @@ def analyze_image(
                     st.warning(f"Planting points filtered out: {'; '.join(_filter_msgs)}. {len(safe_hexagons)} safe points remain.")
 
                 # ── Draw forbidden zone polygons on the map (red) ─────────
-                if show_forbidden_zones and _forbidden_filter.forbidden_polygons:
-                    fz_group = folium.FeatureGroup(name='🚫 Forbidden Zones')
+                if _forbidden_filter.forbidden_polygons:
+                    fz_group = folium.FeatureGroup(name='Forbidden Zones', show=False)
                     for poly in _forbidden_filter.forbidden_polygons:
                         # Shapely polygon coords are (lon, lat); Folium needs (lat, lon)
                         coords = [(lat, lon) for lon, lat in poly.exterior.coords]
@@ -2083,8 +2642,8 @@ def analyze_image(
                     fz_group.add_to(ortho_map)
 
                 # ── Draw eroded zone polygons on the map (orange) ─────────
-                if show_eroded_zones and _eroded_filter.forbidden_polygons:
-                    ez_group = folium.FeatureGroup(name='🏜️ Eroded Zones')
+                if _eroded_filter.forbidden_polygons:
+                    ez_group = folium.FeatureGroup(name='Eroded Zones', show=False)
                     for poly in _eroded_filter.forbidden_polygons:
                         coords = [(lat, lon) for lon, lat in poly.exterior.coords]
                         folium.Polygon(
@@ -2117,8 +2676,8 @@ def analyze_image(
                     st.info(f"🗺️ {_clipped_out} planting points removed — outside orthophoto map coverage. {len(safe_hexagons)} remain.")
 
                 # Add RED X markers for forbidden-filtered hexagons
-                if show_forbidden_zones and forbidden_hexagons:
-                    fz_pts = folium.FeatureGroup(name='🚫 Filtered Points (Forbidden)')
+                if forbidden_hexagons:
+                    fz_pts = folium.FeatureGroup(name='Filtered Forbidden Points', show=False)
                     for fh in forbidden_hexagons:
                         lat = fh['_gps_lat']
                         lon = fh['_gps_lon']
@@ -2137,8 +2696,8 @@ def analyze_image(
                     fz_pts.add_to(ortho_map)
 
                 # Add ORANGE X markers for eroded-filtered hexagons
-                if show_eroded_zones and eroded_hexagons:
-                    ez_pts = folium.FeatureGroup(name='🏜️ Filtered Points (Eroded)')
+                if eroded_hexagons:
+                    ez_pts = folium.FeatureGroup(name='Filtered Eroded Points', show=False)
                     for eh in eroded_hexagons:
                         lat = eh['_gps_lat']
                         lon = eh['_gps_lon']
@@ -2157,6 +2716,7 @@ def analyze_image(
                     ez_pts.add_to(ortho_map)
 
                 # Add GREEN POINTS only for safe planting hexagons
+                planting_group = folium.FeatureGroup(name='Planting Zones', show=True)
                 for i, hexagon in enumerate(safe_hexagons):
                     lat = hexagon['_gps_lat']
                     lon = hexagon['_gps_lon']
@@ -2174,13 +2734,22 @@ def analyze_image(
                         fillColor='#4CAF50',
                         fillOpacity=0.8,
                         weight=2
-                    ).add_to(ortho_map)
+                    ).add_to(planting_group)
+                planting_group.add_to(ortho_map)
                 
                 # Add layer control
-                folium.LayerControl().add_to(ortho_map)
+                Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(ortho_map)
+                folium.LayerControl(collapsed=False).add_to(ortho_map)
+                _style_layer_control(ortho_map)
                 
                 # Display map
-                st_folium.st_folium(ortho_map, width=1400, height=600, key="geo_map", returned_objects=[])
+                st_folium.st_folium(
+                    ortho_map,
+                    height=600,
+                    key="geo_map",
+                    returned_objects=[],
+                    use_container_width=True,
+                )
                 
                 # Show planting coordinates table
                 st.markdown("---")

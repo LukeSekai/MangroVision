@@ -1,113 +1,82 @@
 """
 MangroVision - Hexagonal Planting Zone Detector
 Detects canopies, creates danger zones, and generates hexagonal planting buffers
-Supports both HSV color detection and AI-powered detectree2
+Supports HSV fallback and the official detectree2 integration
 """
 
 import cv2
 import numpy as np
 from shapely.geometry import Point, Polygon, MultiPolygon
 from shapely.ops import unary_union
-import geopandas as gpd
 from typing import Tuple, List, Dict, Optional, Callable, Any
-import json
 from pathlib import Path
 import math
-from collections import Counter
 
 from gsd_calculator import GSDCalculator
 
-# Optional: Try to import detectree2 detector
+# Optional: Try to import the official detectree2 backend
 try:
     from detectree2_proper import ProperDetectree2Detector
     DETECTREE2_AVAILABLE = True
-    print("âœ… Proper Detectree2 library available and loaded")
+    print("Proper Detectree2 library available and loaded")
 except ImportError as e:
-    try:
-        from detectree2_detector import Detectree2Detector
-        DETECTREE2_AVAILABLE = True
-        print("âœ… Detectree2 AI available and loaded (fallback)")
-    except ImportError as e:
-        DETECTREE2_AVAILABLE = False
-        print(f"âš ï¸ detectree2_detector not available: {e}")
-        print(f"   Using HSV color detection fallback")
+    DETECTREE2_AVAILABLE = False
+    print(f"Detectree2 proper not available: {e}")
+    print("   Using HSV color detection fallback")
+
+
 class HexagonDetector:
-    """Advanced canopy detector with hexagonal planting zones - Smart Hybrid System"""
+    """Advanced canopy detector with hexagonal planting zones."""
     
-    def __init__(self, 
-                 altitude_m: float = 6.0, 
+    def __init__(self,
+                 altitude_m: float = 6.0,
                  drone_model: str = 'GENERIC_4K',
                  ai_confidence: float = 0.75,
-                 model_name: str = 'benchmark',
                  detection_mode: str = 'ai'):
         """
-        Initialize detector with Smart Hybrid detection
-        
+        Initialize the detector.
+
         Args:
             altitude_m: Flight altitude in meters
             drone_model: Drone model for GSD calculation
             ai_confidence: Confidence threshold for AI detection (0-1)
-            model_name: 'paracou' (tropical) or 'benchmark' (general)
-            detection_mode: 'hybrid', 'ai', or 'hsv'
-                - 'hybrid': Merge HSV + AI results (RECOMMENDED - 90-95% accuracy)
-                - 'ai': AI only (75-85% accuracy, may miss trees)
-                - 'hsv': HSV only (85-90% accuracy, fast)
+            detection_mode: 'ai' or 'hsv'
         """
-        # Force AI-only evaluation path: disable HSV+AI merge mode.
-        if detection_mode == 'hybrid':
-            print("   Hybrid mode disabled for evaluation; forcing AI-only mode.")
+        if detection_mode not in {'ai', 'hsv'}:
             detection_mode = 'ai'
 
         self.altitude_m = altitude_m
         self.drone_model = drone_model
-        # Keep AI confidence fixed at 0.75 for AI-driven modes.
-        self.ai_confidence = 0.75 if detection_mode in ['ai', 'hybrid'] else ai_confidence
+        self.ai_confidence = 0.75 if detection_mode == 'ai' else ai_confidence
         self.detection_mode = detection_mode
         self.gsd = None
         self.image_shape = None
-        self.use_ai = DETECTREE2_AVAILABLE
-        self._last_ai_filter_stats = {}
-        self._last_hsv_merge_stats = {}
-        self._last_hexagon_placement_stats = {}
+        self.ai_detector = None
 
-        if detection_mode in ['ai', 'hybrid'] and abs(float(ai_confidence) - 0.75) > 1e-6:
+        if detection_mode == 'ai' and abs(float(ai_confidence) - 0.75) > 1e-6:
             print(f"   AI confidence fixed at 0.75 (requested: {ai_confidence:.2f})")
 
-        # Initialize detectree2 AI detector if needed (for 'ai' or 'hybrid' modes)
-        if detection_mode in ['ai', 'hybrid'] and DETECTREE2_AVAILABLE:
-            print(f"ðŸŒ³ Initializing MangroVision with AI detection system...")
+        if detection_mode == 'ai' and DETECTREE2_AVAILABLE:
+            print("Initializing MangroVision with AI detection system...")
             print(f"   Mode: {detection_mode.upper()}")
             try:
-                # Try proper detectree2 integration first
                 self.ai_detector = ProperDetectree2Detector(
                     confidence_threshold=self.ai_confidence,
-                    device='cpu'  # Change to 'cuda' if GPU available
+                    device='cpu'
                 )
                 self.ai_detector.setup_model()
-                print(f"âœ“ Detectree2 AI initialized successfully")
-            except Exception:
-                # Fallback to custom detector
-                try:
-                    detector_cls = Detectree2Detector
-                except NameError:
-                    from detectree2_detector import Detectree2Detector as detector_cls
-
-                self.ai_detector = detector_cls(
-                    confidence_threshold=self.ai_confidence,
-                    device='cpu',
-                    model_name=model_name
-                )
-                self.ai_detector.setup_model()
-                print(f"âœ“ Custom Detectree2 initialized successfully")
+                print("Detectree2 AI initialized successfully")
+            except Exception as exc:
+                print(f"AI detector initialization failed: {exc}")
+                print("   Falling back to HSV detection")
+                self.detection_mode = 'hsv'
+                self.ai_detector = None
         elif detection_mode == 'hsv':
-            print(f"ðŸŒ³ Initializing MangroVision with HSV detection (fast mode)")
-            self.ai_detector = None
+            print("Initializing MangroVision with HSV detection")
         else:
-            print(f"âš ï¸  Detectree2 not available - using HSV color detection fallback")
-            print(f"   For better accuracy, install detectron2 and detectree2")
-            self.ai_detector = None
-            self.detection_mode = 'hsv'  # Force HSV if AI not available
-        
+            print("Detectree2 not available - using HSV color detection fallback")
+            self.detection_mode = 'hsv'
+
     def calculate_gsd(self, image_width: int, image_height: int):
         """Calculate Ground Sample Distance for the image"""
         self.gsd, specs = GSDCalculator.calculate_gsd_from_drone(
@@ -150,7 +119,7 @@ class HexagonDetector:
         progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Tuple[List[Polygon], np.ndarray]:
         """
-        Smart Hybrid Detection: Merges HSV + AI for maximum accuracy
+        Detect canopy polygons using AI when available, otherwise HSV.
 
         Args:
             image: Input BGR image
@@ -158,75 +127,16 @@ class HexagonDetector:
         Returns:
             Tuple of (List of Shapely Polygon objects, binary canopy mask)
         """
-        # Reset AI metadata each run
         self._ai_metadata = {}
 
-        if self.detection_mode == 'hybrid' and self.ai_detector is not None:
-            # SMART HYBRID: Run both HSV and AI, then merge results
-            print(f"?? Running Smart Hybrid Detection (HSV + AI)...")
-
-            # Step 1: HSV Detection (catches everything green)
-            hsv_polygons, hsv_mask = self._detect_hsv(image)
-
-            # Step 2: AI Detection (high-confidence canopies)
-            try:
-                ai_result = self._run_ai_detection(
-                    image,
-                    progress_callback=progress_callback,
-                )
-                # Handle 2, 3, or 4-value returns from different detector versions
-                if isinstance(ai_result, (list, tuple)):
-                    if len(ai_result) >= 4:
-                        ai_polygons, ai_mask, metadata = ai_result[0], ai_result[1], ai_result[2]
-                    elif len(ai_result) == 3:
-                        ai_polygons, ai_mask, metadata = ai_result
-                    else:
-                        ai_polygons, ai_mask = ai_result[0], ai_result[1]
-                        metadata = {}
-                else:
-                    raise ValueError(f"Unexpected AI result type: {type(ai_result)}")
-                # Store AI metadata (contains per-class masks and class info)
-                self._ai_metadata = metadata
-            except Exception as e:
-                print(f"   ?? AI detection failed: {e}")
-                print(f"   Falling back to HSV-only detection")
-                return hsv_polygons, hsv_mask
-
-            # Step 3: Merge results (UNION - keep all unique detections)
-            combined_polygons = self._merge_detections(hsv_polygons, ai_polygons)
-
-            # Step 4: Create combined mask
-            combined_mask = cv2.bitwise_or(hsv_mask, ai_mask)
-
-            # Statistics
-            total_canopy_pixels = np.count_nonzero(combined_mask)
-            total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
-
-            class_counts = metadata.get('class_counts', {})
-            bungalon_count = class_counts.get(1, 0)
-            other_ai_count = class_counts.get(0, 0)
-
-            print(f"? Hybrid Detection Results:")
-            print(f"   - HSV found: {len(hsv_polygons)} crowns")
-            print(f"   - AI found: {len(ai_polygons)} crowns")
-            if bungalon_count > 0:
-                print(f"     ? Bungalon Canopy: {bungalon_count}")
-                print(f"     ? Mangrove-Canopy: {other_ai_count}")
-            print(f"   - Merged total: {len(combined_polygons)} crowns ({total_canopy_m2:.1f} m2)")
-            print(f"   - Method: UNION (best of both worlds)")
-
-            return combined_polygons, combined_mask
-
-        elif self.detection_mode == 'ai' and self.ai_detector is not None:
-            # AI ONLY MODE
-            print(f"?? Running AI-only detection...")
+        if self.detection_mode == 'ai' and self.ai_detector is not None:
+            print("Running AI-only detection...")
 
             try:
                 ai_result = self._run_ai_detection(
                     image,
                     progress_callback=progress_callback,
                 )
-                # Handle 2, 3, or 4-value returns from different detector versions
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
                         canopy_polygons, canopy_mask, metadata = ai_result[0], ai_result[1], ai_result[2]
@@ -239,30 +149,28 @@ class HexagonDetector:
                     raise ValueError(f"Unexpected AI result type: {type(ai_result)}")
                 self._ai_metadata = metadata
             except Exception as e:
-                print(f"   ?? AI detection failed: {e}")
-                print(f"   Falling back to HSV detection")
+                print(f"   AI detection failed: {e}")
+                print("   Falling back to HSV detection")
                 return self._detect_hsv(image)
 
             total_canopy_pixels = np.count_nonzero(canopy_mask)
             total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
 
-            print(f"? AI detected {len(canopy_polygons)} tree crowns (Total: {total_canopy_m2:.1f} m2)")
+            print(f"AI detected {len(canopy_polygons)} tree crowns (Total: {total_canopy_m2:.1f} m2)")
             print(f"   Using: {metadata.get('detection_method', 'detectree2')}")
 
             return canopy_polygons, canopy_mask
 
-        else:
-            # HSV ONLY MODE (fallback or explicit choice)
-            print(f"?? Running HSV-only detection...")
+        print("Running HSV-only detection...")
 
-            canopy_polygons, canopy_mask = self._detect_hsv(image)
+        canopy_polygons, canopy_mask = self._detect_hsv(image)
 
-            total_canopy_pixels = np.count_nonzero(canopy_mask)
-            total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
+        total_canopy_pixels = np.count_nonzero(canopy_mask)
+        total_canopy_m2 = total_canopy_pixels * (self.gsd ** 2)
 
-            print(f"? HSV detected {len(canopy_polygons)} tree crowns (Total: {total_canopy_m2:.1f} m2)")
+        print(f"HSV detected {len(canopy_polygons)} tree crowns (Total: {total_canopy_m2:.1f} m2)")
 
-            return canopy_polygons, canopy_mask
+        return canopy_polygons, canopy_mask
 
     def _detect_hsv(self, image: np.ndarray) -> Tuple[List[Polygon], np.ndarray]:
         """
@@ -359,512 +267,6 @@ class HexagonDetector:
 
         return canopy_polygons, cleaned_mask
 
-    def _polygon_compactness(self, poly: Polygon) -> float:
-        """Compactness in [0..1], where 1 is a perfect circle."""
-        if poly is None or poly.is_empty:
-            return 0.0
-        perimeter = float(poly.length)
-        if perimeter <= 0:
-            return 0.0
-        return float((4.0 * np.pi * float(poly.area)) / (perimeter * perimeter))
-
-    def _polygons_to_mask(self, polygons: List[Polygon], image_shape: Tuple[int, int, int]) -> np.ndarray:
-        """Rasterize polygon list into a binary mask."""
-        mask = np.zeros(image_shape[:2], dtype=np.uint8)
-        if not polygons:
-            return mask
-        for poly in polygons:
-            if poly is None or poly.is_empty:
-                continue
-            parts = [poly] if isinstance(poly, Polygon) else list(poly.geoms)
-            for part in parts:
-                if part.is_empty or part.exterior is None:
-                    continue
-                pts = np.array(part.exterior.coords, dtype=np.int32)
-                if len(pts) >= 3:
-                    cv2.fillPoly(mask, [pts], 255)
-        return mask
-
-    def _clip_ai_metadata_masks(self, metadata: Dict, final_mask: np.ndarray) -> Dict:
-        """Clip optional AI class masks so visualization matches final accepted canopy mask."""
-        if not isinstance(metadata, dict):
-            return {}
-        clipped = dict(metadata)
-        for key in ("bungalon_mask", "other_canopy_mask"):
-            class_mask = clipped.get(key, None)
-            if isinstance(class_mask, np.ndarray) and class_mask.shape[:2] == final_mask.shape[:2]:
-                clipped[key] = cv2.bitwise_and(class_mask, final_mask)
-        return clipped
-
-    def _filter_ai_primary_polygons(self, ai_polygons: List[Polygon], image: np.ndarray) -> List[Polygon]:
-        """
-        AI-primary post-filter.
-        Keeps valid AI detections and removes only obvious false blobs.
-        Adds reject-reason diagnostics to inspect scale/GSD effects.
-        """
-        self._last_ai_filter_stats = {}
-        if not ai_polygons:
-            self._last_ai_filter_stats = {
-                'input': 0,
-                'kept': 0,
-                'rejected': 0,
-                'reasons': {}
-            }
-            return []
-
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        hue = hsv[:, :, 0]
-        sat = hsv[:, :, 1]
-        val = hsv[:, :, 2]
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        bgr_f = image.astype(np.float32)
-        b = bgr_f[:, :, 0]
-        g = bgr_f[:, :, 1]
-        r = bgr_f[:, :, 2]
-        excess_green = (2.0 * g) - r - b
-        green_hue_like = (hue >= 30) & (hue <= 100) & (sat >= 20) & (val >= 20)
-        vegetation_like = ((excess_green > 10.0) & (g > (r + 2.0))) | green_hue_like
-
-        if self.gsd:
-            min_area_m2 = 0.06
-            soft_large_m2 = 4.0
-            max_area_m2 = 18.0
-            min_area_px = max(1.0, min_area_m2 / (self.gsd ** 2))
-            soft_large_px = max(1.0, soft_large_m2 / (self.gsd ** 2))
-            max_area_px = max(1.0, max_area_m2 / (self.gsd ** 2))
-        else:
-            min_area_m2 = None
-            soft_large_m2 = None
-            max_area_m2 = None
-            min_area_px = 120.0
-            soft_large_px = 5200.0
-            max_area_px = 18000.0
-
-        reasons = Counter()
-        reject_logs: List[str] = []
-        near_min_rejects = 0
-        near_max_rejects = 0
-
-        def _reject(reason: str, details: str):
-            reasons[reason] += 1
-            reject_logs.append(f"{reason}: {details}")
-
-        keep: List[Polygon] = []
-        for idx, poly in enumerate(ai_polygons):
-            if poly is None or poly.is_empty or not poly.is_valid:
-                _reject('invalid_geometry', f"idx={idx}")
-                continue
-            if poly.area <= 0:
-                _reject('invalid_geometry', f"idx={idx}, area<=0")
-                continue
-
-            area_px = float(poly.area)
-            area_m2 = (area_px * (self.gsd ** 2)) if self.gsd else None
-
-            is_large = area_px >= soft_large_px
-
-            if area_px < min_area_px:
-                if area_px >= (0.7 * min_area_px):
-                    near_min_rejects += 1
-                area_txt = f"{area_m2:.3f}m2" if area_m2 is not None else f"{area_px:.0f}px2"
-                thr_txt = f"{min_area_m2:.2f}m2" if min_area_m2 is not None else f"{min_area_px:.0f}px2"
-                _reject('too_small', f"idx={idx}, area={area_txt}, min={thr_txt}")
-                continue
-            if area_px > max_area_px:
-                if area_px <= (1.3 * max_area_px):
-                    near_max_rejects += 1
-                area_txt = f"{area_m2:.3f}m2" if area_m2 is not None else f"{area_px:.0f}px2"
-                thr_txt = f"{max_area_m2:.2f}m2" if max_area_m2 is not None else f"{max_area_px:.0f}px2"
-                _reject('too_large', f"idx={idx}, area={area_txt}, max={thr_txt}")
-                continue
-
-            compactness = self._polygon_compactness(poly)
-            if is_large:
-                compactness_floor = 0.010
-            elif area_px >= (0.35 * soft_large_px):
-                compactness_floor = 0.004
-            else:
-                compactness_floor = 0.0015
-
-            if compactness < compactness_floor:
-                _reject(
-                    'low_compactness',
-                    f"idx={idx}, compactness={compactness:.4f}, min={compactness_floor:.4f}"
-                )
-                continue
-
-            poly_mask = self._polygons_to_mask([poly], image.shape)
-            pix = poly_mask > 0
-            pix_count = int(np.count_nonzero(pix))
-            if pix_count == 0:
-                _reject('invalid_geometry', f"idx={idx}, empty_raster")
-                continue
-
-            veg_ratio = float(np.count_nonzero(vegetation_like & pix)) / pix_count
-            green_hue_ratio = float(np.count_nonzero(green_hue_like & pix)) / pix_count
-            mean_sat = float(np.mean(sat[pix]))
-            sat_p75 = float(np.percentile(sat[pix], 75))
-            sat_std = float(np.std(sat[pix]))
-            gray_std = float(np.std(gray[pix]))
-
-            if is_large:
-                min_veg_ratio = 0.09
-                min_green_hue_ratio = 0.10
-                sat_floor = 18.0
-            elif area_px >= (0.35 * soft_large_px):
-                min_veg_ratio = 0.06
-                min_green_hue_ratio = 0.07
-                sat_floor = 15.0
-            else:
-                min_veg_ratio = 0.03
-                min_green_hue_ratio = 0.04
-                sat_floor = 11.0
-
-            if veg_ratio < min_veg_ratio or green_hue_ratio < min_green_hue_ratio:
-                _reject(
-                    'low_vegetation_ratio',
-                    f"idx={idx}, veg={veg_ratio:.3f}<{min_veg_ratio:.3f}, green={green_hue_ratio:.3f}<{min_green_hue_ratio:.3f}"
-                )
-                continue
-
-            if (mean_sat < sat_floor) and (sat_p75 < (sat_floor + 5.0)) and (veg_ratio < (min_veg_ratio + 0.12)):
-                _reject(
-                    'low_saturation',
-                    f"idx={idx}, mean_sat={mean_sat:.1f}, p75_sat={sat_p75:.1f}, floor={sat_floor:.1f}"
-                )
-                continue
-
-            # Large smooth blobs (water/mud-like) tend to be low texture.
-            if is_large and sat_std < 10.0 and gray_std < 12.0 and green_hue_ratio < 0.16:
-                _reject(
-                    'low_saturation',
-                    f"idx={idx}, smooth_blob sat_std={sat_std:.1f}, gray_std={gray_std:.1f}, green={green_hue_ratio:.3f}"
-                )
-                continue
-
-            keep.append(poly)
-
-        thresholds = {
-            'min_area_m2': min_area_m2,
-            'soft_large_m2': soft_large_m2,
-            'max_area_m2': max_area_m2,
-            'min_area_px': int(round(min_area_px)),
-            'soft_large_px': int(round(soft_large_px)),
-            'max_area_px': int(round(max_area_px)),
-        }
-        self._last_ai_filter_stats = {
-            'input': len(ai_polygons),
-            'kept': len(keep),
-            'rejected': max(0, len(ai_polygons) - len(keep)),
-            'gsd': self.gsd,
-            'thresholds': thresholds,
-            'near_min_rejects': near_min_rejects,
-            'near_max_rejects': near_max_rejects,
-            'reasons': dict(reasons),
-            'rejection_log': reject_logs
-        }
-
-        print("   AI post-filter diagnostics:")
-        if self.gsd:
-            print(
-                f"     GSD={self.gsd:.5f} m/px | size gate={min_area_m2:.2f}-{max_area_m2:.1f} m2 "
-                f"({int(round(min_area_px))}-{int(round(max_area_px))} px2)"
-            )
-        else:
-            print(f"     GSD unavailable | size gate={int(round(min_area_px))}-{int(round(max_area_px))} px2")
-        if near_min_rejects > 0 or near_max_rejects > 0:
-            print(
-                f"     Near-threshold rejects: min={near_min_rejects}, max={near_max_rejects} "
-                f"(altitude/GSD sanity-check)"
-            )
-        for reason in ('too_small', 'too_large', 'low_compactness', 'low_vegetation_ratio', 'low_saturation'):
-            if reasons.get(reason, 0) > 0:
-                print(f"     {reason}: {reasons[reason]}")
-
-        max_log_lines = 30
-        if reject_logs:
-            print("     Sample reject details:")
-            for line in reject_logs[:max_log_lines]:
-                print(f"       - {line}")
-            if len(reject_logs) > max_log_lines:
-                print(f"       - ... {len(reject_logs) - max_log_lines} more")
-
-        return keep
-
-    def _merge_detections(
-        self,
-        hsv_polygons: List[Polygon],
-        ai_polygons: List[Polygon],
-        ai_mask: np.ndarray = None,
-        weak_ai_mask: Optional[np.ndarray] = None,
-        image: np.ndarray = None
-    ) -> List[Polygon]:
-        """
-        Merge HSV and AI detections using intelligent UNION
-
-        Removes duplicates while keeping unique detections from both methods
-        """
-        if not hsv_polygons:
-            return ai_polygons
-        if not ai_polygons:
-            return hsv_polygons
-
-        # Start with all AI polygons (higher confidence)
-        merged = list(ai_polygons)
-
-        # Add HSV polygons that don't significantly overlap with AI
-        overlap_threshold = 0.5  # 50% IoU threshold
-
-        for hsv_poly in hsv_polygons:
-            is_duplicate = False
-
-            for ai_poly in ai_polygons:
-                try:
-                    # Calculate Intersection over Union (IoU)
-                    if hsv_poly.intersects(ai_poly):
-                        intersection = hsv_poly.intersection(ai_poly).area
-                        union = hsv_poly.union(ai_poly).area
-                        iou = intersection / union if union > 0 else 0
-
-                        if iou > overlap_threshold:
-                            is_duplicate = True
-                            break
-                except Exception:
-                    continue
-
-            # Add HSV detection if it's unique (not a duplicate)
-            if not is_duplicate:
-                merged.append(hsv_poly)
-
-        return merged
-    
-    def detect_structures(self, image: np.ndarray, canopy_mask: np.ndarray = None) -> Tuple[List[Polygon], np.ndarray]:
-        """
-        Detect man-made structures (bridges, towers, buildings) using color analysis.
-        Uses canopy mask to EXCLUDE all vegetation first - structures are what's left
-        that is NOT green vegetation and NOT water/mud/bare soil.
-        NO BUFFER ZONES - just exact footprint of structures
-        
-        Args:
-            image: Input BGR image
-            canopy_mask: Binary mask of detected canopy/vegetation (to exclude from search)
-            
-        Returns:
-            Tuple of (List of structure polygons, binary structure mask)
-        """
-        h, w = image.shape[:2]
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # â”€â”€ Step 1: Build a vegetation exclusion mask â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Exclude all GREEN pixels first (mangroves, grass, any vegetation)
-        lower_green1 = np.array([35, 30, 30])
-        upper_green1 = np.array([90, 255, 255])
-        green_mask = cv2.inRange(hsv, lower_green1, upper_green1)
-        
-        # Also exclude DARK pixels (shadows, water, dark mud)
-        # EXPANDED range to catch darker mud areas
-        lower_dark = np.array([0, 0, 0])
-        upper_dark = np.array([180, 255, 100])  # Increased from 50 to 100 to catch more mud
-        dark_mask = cv2.inRange(hsv, lower_dark, upper_dark)
-        
-        # Also exclude BROWN/TAN bare soil - EXPANDED ranges
-        # Range 1: Brown/tan soil (original)
-        lower_soil1 = np.array([8, 20, 60])
-        upper_soil1 = np.array([30, 200, 180])
-        soil_mask1 = cv2.inRange(hsv, lower_soil1, upper_soil1)
-        
-        # Range 2: Gray/light mud (catches desaturated tan/gray mud)
-        # REFINED to avoid tower colors - lower saturation only
-        lower_soil2 = np.array([0, 0, 50])      # Low saturation, mid-low brightness
-        upper_soil2 = np.array([35, 35, 150])   # Reduced saturation from 60 to 35 (avoid tower)
-        soil_mask2 = cv2.inRange(hsv, lower_soil2, upper_soil2)
-        
-        # Range 3: Very light mud/sand
-        # REFINED to avoid tower - lower saturation and specific brightness
-        lower_soil3 = np.array([15, 10, 120])   # Light tan/beige areas
-        upper_soil3 = np.array([35, 50, 200])   # Reduced saturation from 80 to 50
-        soil_mask3 = cv2.inRange(hsv, lower_soil3, upper_soil3)
-        
-        # Combine all soil/mud masks
-        soil_mask = cv2.bitwise_or(soil_mask1, soil_mask2)
-        soil_mask = cv2.bitwise_or(soil_mask, soil_mask3)
-        
-        # Build combined exclusion zone
-        exclusion_mask = cv2.bitwise_or(green_mask, dark_mask)
-        exclusion_mask = cv2.bitwise_or(exclusion_mask, soil_mask)
-        
-        # Also exclude provided canopy mask (AI-detected trees)
-        if canopy_mask is not None:
-            exclusion_mask = cv2.bitwise_or(exclusion_mask, canopy_mask)
-        
-        # â”€â”€ Step 2: What remains = candidate structures â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Invert exclusion to get non-vegetation, non-soil, non-dark pixels
-        candidate_mask = cv2.bitwise_not(exclusion_mask)
-        
-        # â”€â”€ Step 3: Detect GRAY/CONCRETE/METAL colors â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Low saturation = man-made materials (concrete, metal, painted wood)
-        # MADE MORE RESTRICTIVE to avoid false positives with mud
-        # Requires higher brightness to distinguish from mud
-        lower_manmade = np.array([0, 0, 100])   # Increased from 70 to 100 (brighter)
-        upper_manmade = np.array([180, 40, 230]) # Reduced saturation threshold from 45 to 40
-        manmade_color = cv2.inRange(hsv, lower_manmade, upper_manmade)
-        
-        # â”€â”€ Step 4: Detect RED/RUST/ORANGE METAL (towers, bridges) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Expanded to catch entire tower including shadowed/lighter parts
-        
-        # Red range 1: Bright red/rust (upper part of tower)
-        lower_red1 = np.array([0, 60, 80])      # Reduced saturation from 80 to 60, increased value
-        upper_red1 = np.array([10, 255, 255])   # Full value range
-        red_mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
-        
-        # Red range 2: Wraparound hue (170-180)
-        lower_red2 = np.array([165, 60, 80])
-        upper_red2 = np.array([180, 255, 255])
-        red_mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
-        
-        # Orange/brown range: Rusty metal, painted towers
-        lower_orange = np.array([8, 50, 70])    # Orange-brown hue
-        upper_orange = np.array([25, 255, 220])
-        orange_mask = cv2.inRange(hsv, lower_orange, upper_orange)
-        
-        # Dark red/brown: Shadowed parts of tower
-        lower_dark_red = np.array([0, 40, 40])   # Lower thresholds to catch shadows
-        upper_dark_red = np.array([15, 255, 120])
-        dark_red_mask = cv2.inRange(hsv, lower_dark_red, upper_dark_red)
-        
-        # Combine all metal/tower colors
-        red_mask = cv2.bitwise_or(red_mask1, red_mask2)
-        red_mask = cv2.bitwise_or(red_mask, orange_mask)
-        red_mask = cv2.bitwise_or(red_mask, dark_red_mask)
-        
-        # Fill holes in tower mask BEFORE combining with other structures
-        kernel_fill_tower = np.ones((15, 15), np.uint8)
-        red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_fill_tower, iterations=2)
-        
-        # â”€â”€ Step 5: Combine - must be man-made color AND NOT excluded â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        structure_mask = cv2.bitwise_or(manmade_color, red_mask)
-        structure_mask = cv2.bitwise_and(structure_mask, candidate_mask)
-        
-        # â”€â”€ Step 6: Morphological cleanup â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        # Additional cleanup to connect nearby structure parts
-        kernel_close = np.ones((9, 9), np.uint8)  # Increased from 7x7 to 9x9
-        structure_mask = cv2.morphologyEx(structure_mask, cv2.MORPH_CLOSE, kernel_close, iterations=4)
-        kernel_open = np.ones((5, 5), np.uint8)
-        structure_mask = cv2.morphologyEx(structure_mask, cv2.MORPH_OPEN, kernel_open, iterations=1)
-        
-        # Find contours of structures
-        contours, _ = cv2.findContours(structure_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        structure_polygons = []
-        # Minimum area for structures (5 mÂ2 - filters out tiny noise)
-        min_area_m2 = 5.0
-        min_area_pixels = int(min_area_m2 / (self.gsd ** 2)) if self.gsd else 500
-        
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area > min_area_pixels:
-                # Simplify contour
-                epsilon = 0.01 * cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, epsilon, True)
-                points = approx.reshape(-1, 2)
-                
-                if len(points) >= 3:
-                    poly = Polygon(points)
-                    if poly.is_valid:
-                        structure_polygons.append(poly)
-                    elif not poly.is_valid:
-                        poly = poly.buffer(0)
-                        if poly.is_valid and not poly.is_empty:
-                            if isinstance(poly, Polygon):
-                                structure_polygons.append(poly)
-                            elif isinstance(poly, MultiPolygon):
-                                structure_polygons.extend(list(poly.geoms))
-        
-        # Calculate statistics
-        structure_pixels = np.count_nonzero(structure_mask)
-        structure_m2 = structure_pixels * (self.gsd ** 2)
-        
-        # Calculate what was excluded (for debugging)
-        excluded_pixels = np.count_nonzero(exclusion_mask)
-        excluded_m2 = excluded_pixels * (self.gsd ** 2)
-        total_pixels = h * w
-        total_m2 = total_pixels * (self.gsd ** 2)
-        
-        print(f"âœ“ Structure detection breakdown:")
-        print(f"   Total area: {total_m2:.1f} mÂ2")
-        print(f"   Excluded (vegetation/mud/water): {excluded_m2:.1f} mÂ2 ({excluded_pixels/total_pixels*100:.1f}%)")
-        print(f"   Structures detected: {len(structure_polygons)} ({structure_m2:.1f} mÂ2)")
-        print(f"   No buffer applied - exact footprint only")
-        
-        return structure_polygons, structure_mask
-    
-    def detect_non_vegetation_areas(self, image: np.ndarray) -> np.ndarray:
-        """
-        Detect non-vegetation areas in the image (bridges, roads, water, buildings)
-        These areas should NOT have planting zones
-        
-        Args:
-            image: Input BGR image
-            
-        Returns:
-            Binary mask where 255 = non-vegetation (forbidden), 0 = potential planting area
-        """
-        h, w = image.shape[:2]
-        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        
-        # Initialize combined mask
-        forbidden_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        # 1. DETECT GRAY AREAS (concrete bridges, roads, buildings)
-        # Gray has low saturation and mid-range value
-        lower_gray = np.array([0, 0, 60])      # Low saturation, moderate brightness
-        upper_gray = np.array([180, 50, 220])  # Any hue, low saturation
-        gray_mask = cv2.inRange(hsv, lower_gray, upper_gray)
-        
-        # 2. DETECT WATER (blue/dark areas)
-        # Water appears blue or very dark
-        lower_water1 = np.array([90, 40, 20])   # Blue water
-        upper_water1 = np.array([130, 255, 180])
-        water_mask1 = cv2.inRange(hsv, lower_water1, upper_water1)
-        
-        lower_water2 = np.array([0, 0, 0])      # Dark water/shadows
-        upper_water2 = np.array([180, 255, 40])
-        water_mask2 = cv2.inRange(hsv, lower_water2, upper_water2)
-        
-        water_mask = cv2.bitwise_or(water_mask1, water_mask2)
-        
-        # 3. DETECT BRIGHT/WHITE AREAS (concrete, white buildings)
-        lower_white = np.array([0, 0, 220])
-        upper_white = np.array([180, 30, 255])
-        white_mask = cv2.inRange(hsv, lower_white, upper_white)
-        
-        # NOTE: Do NOT exclude brown mud/bare soil â€” that's where mangroves
-        # should be planted!  Only exclude water, concrete, and buildings.
-        
-        # Combine all non-vegetation masks
-        forbidden_mask = cv2.bitwise_or(forbidden_mask, gray_mask)
-        forbidden_mask = cv2.bitwise_or(forbidden_mask, water_mask)
-        forbidden_mask = cv2.bitwise_or(forbidden_mask, white_mask)
-        
-        # Clean up the mask - remove small noise
-        kernel_clean = np.ones((5, 5), np.uint8)
-        forbidden_mask = cv2.morphologyEx(forbidden_mask, cv2.MORPH_OPEN, kernel_clean)
-        
-        # Expand forbidden areas slightly to be safe
-        kernel_expand = np.ones((10, 10), np.uint8)
-        forbidden_mask = cv2.dilate(forbidden_mask, kernel_expand, iterations=1)
-        
-        # Calculate statistics
-        forbidden_pixels = np.count_nonzero(forbidden_mask)
-        forbidden_m2 = forbidden_pixels * (self.gsd ** 2)
-        forbidden_pct = (forbidden_pixels / (h * w)) * 100
-        
-        print(f"âœ“ Detected non-vegetation areas: {forbidden_m2:.1f} mÂ2 ({forbidden_pct:.1f}% of image)")
-        print(f"   (bridges, roads, water, buildings automatically excluded)")
-        
-        return forbidden_mask
-    
     def create_danger_zones(self, canopy_polygons: List[Polygon], canopy_mask: np.ndarray, buffer_m: float = 1.0) -> Tuple[Polygon, np.ndarray]:
         """
         Create danger zones (canopies + 1m buffer) with proper masking
@@ -1065,7 +467,6 @@ class HexagonDetector:
             'buffer_ratio_fail': 0,
             'accepted': 0
         }
-        self._last_hexagon_placement_stats = {}
         
         # PROPER HEXAGONAL TESSELLATION GRID
         # For flat-top hexagons with circumradius R:
@@ -1146,7 +547,6 @@ class HexagonDetector:
         if extra_hexagons:
             print(f"    Phase 2 (gap filling): +{len(extra_hexagons)} extra hexagons")
 
-        self._last_hexagon_placement_stats = placement_stats
         print(
             "    Placement diagnostics: "
             f"accepted={placement_stats.get('accepted', 0)}, "
@@ -1257,15 +657,6 @@ class HexagonDetector:
         
         return hexagons
     
-    def _fill_gaps(self, plantable_zone: Polygon, existing_hexagons: List[Dict],
-                   buffer_radius_pixels: float, core_radius_pixels: float) -> List[Dict]:
-        """
-        Legacy gap-filling method (now replaced by adaptive sizing)
-        Kept for backward compatibility
-        """
-        # No longer used - adaptive sizing handles gap filling better
-        return []
-    
     def process_image(
         self, 
         image_path: str,
@@ -1310,7 +701,7 @@ class HexagonDetector:
         
         # Step 3: Identify plantable zones (avoid canopy buffers)
         # Note: Man-made structures (towers, bridges, houses) are filtered
-        # via forbidden_zones.geojson in the Streamlit app.
+        # via the forbidden-zone GeoJSON in the Streamlit app.
         # Note: Points outside orthophoto coverage are filtered in the
         # map section of app.py via is_inside_any_orthophoto().
         plantable_zone = self.identify_plantable_zones(danger_zone)
@@ -1372,7 +763,7 @@ class HexagonDetector:
         - Dark green: Hexagon cores (exact planting points)
         
         Note: Man-made structures (towers, bridges, houses) are filtered
-        via forbidden_zones.geojson in the Streamlit app instead.
+        via the forbidden-zone GeoJSON in the Streamlit app instead.
         
         Args:
             results: Results dictionary from process_image()
@@ -1501,32 +892,5 @@ class HexagonDetector:
             print(f"âœ“ Saved visualization to: {output_path}")
         
         return result_img
-
-
-if __name__ == "__main__":
-    # Test the detector with core-safe overlap placement
-    detector = HexagonDetector(altitude_m=6.0, drone_model='GENERIC_4K')
-    
-    # Process flight_2_frame_0042 which has some plantable area
-    image_path = "../drone_images/flight_2_frame_0042.jpg"
-    
-    results = detector.process_image(
-        image_path=image_path,
-        canopy_buffer_m=1.0,
-        hexagon_size_m=1.0
-    )
-    
-    # Visualize
-    vis = detector.visualize_results(results, "../output/hexagon_maximized_test.png")
-    
-    print(f"\n{'='*60}")
-    print(f"FINAL RESULTS - Core-Safe Overlap Placement")
-    print(f"{'='*60}")
-    print(f"Canopies detected: {results['canopy_count']}")
-    print(f"Danger zones: {results['danger_area_m2']:.2f} mÂ2")
-    print(f"Plantable area: {results['plantable_area_m2']:.2f} mÂ2")
-    print(f"Total planting zones: {results['hexagon_count']}")
-    print(f"{'='*60}")
-
 
 
