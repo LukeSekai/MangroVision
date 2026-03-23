@@ -314,59 +314,158 @@ st.markdown("""
     }
 
     /* Auth panel */
+    .login-hero {
+        padding: 2.1rem 2.15rem;
+        border-radius: 30px;
+        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
+        border: 1px solid rgba(143, 211, 167, 0.12);
+        box-shadow: 0 28px 50px rgba(8, 16, 11, 0.32);
+        min-height: 100%;
+    }
+
+    .login-kicker {
+        color: #98cfac;
+        text-transform: uppercase;
+        letter-spacing: 0.18rem;
+        font-size: 0.78rem;
+        font-weight: 800;
+        margin-bottom: 0.6rem;
+    }
+
+    .login-hero h1 {
+        color: #f3faf5;
+        font-size: 3rem;
+        line-height: 1.02;
+        margin: 0;
+    }
+
+    .login-hero p {
+        color: #cadbcc;
+        font-size: 1rem;
+        line-height: 1.7;
+        margin: 0.9rem 0 0 0;
+        max-width: 640px;
+    }
+
+    .login-badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.55rem;
+        margin-top: 1.1rem;
+    }
+
+    .login-badge-row span {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(143, 211, 167, 0.12);
+        color: #eef7f1;
+        border-radius: 999px;
+        padding: 0.48rem 0.8rem;
+        font-size: 0.82rem;
+        font-weight: 700;
+    }
+
+    .login-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.95rem;
+        margin-top: 1.25rem;
+    }
+
+    .login-grid-item {
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(143, 211, 167, 0.10);
+        border-radius: 18px;
+        padding: 1rem;
+    }
+
+    .login-grid-item strong {
+        display: block;
+        color: #f1f8f3;
+        font-size: 0.98rem;
+        font-weight: 800;
+        margin-bottom: 0.28rem;
+    }
+
+    .login-grid-item span {
+        color: #c6dbcd;
+        font-size: 0.92rem;
+        line-height: 1.55;
+    }
+
     .auth-shell {
-        padding: 1.1rem 1.1rem 0.35rem 1.1rem;
-        border-radius: 12px;
-        background: linear-gradient(160deg, #060d1e 0%, #0a162d 100%);
-        border: 1px solid #2a446a;
+        padding: 1.35rem;
+        border-radius: 28px;
+        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
+        border: 1px solid rgba(143, 211, 167, 0.12);
         margin-bottom: 0.9rem;
+        box-shadow: 0 24px 44px rgba(8, 16, 11, 0.30);
+    }
+
+    .auth-caption {
+        color: #98cfac;
+        text-transform: uppercase;
+        letter-spacing: 0.16rem;
+        font-size: 0.74rem;
+        font-weight: 800;
+        margin-bottom: 0.35rem;
     }
 
     .auth-title {
-        color: #dff5e6;
-        font-size: 1.9rem;
+        color: #f3faf5;
+        font-size: 2rem;
         font-weight: 800;
         margin: 0;
     }
 
     .auth-subtitle {
-        color: #b8d4ff;
-        font-size: 0.95rem;
-        margin-top: 0.1rem;
-        margin-bottom: 0.65rem;
+        color: #cadbcc;
+        font-size: 0.97rem;
+        margin-top: 0.28rem;
+        margin-bottom: 0.9rem;
+        line-height: 1.6;
     }
 
     .auth-time {
-        color: #e7f1ff;
-        font-weight: 600;
-        background: rgba(48, 85, 135, 0.26);
-        border: 1px solid rgba(92, 136, 199, 0.42);
-        border-radius: 10px;
-        padding: 0.52rem 0.7rem;
-        margin-bottom: 0.45rem;
+        color: #eef7f1;
+        font-weight: 700;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(143, 211, 167, 0.12);
+        border-radius: 14px;
+        padding: 0.62rem 0.78rem;
+        margin-bottom: 0.75rem;
     }
 
     /* Opaque login form card */
     div[data-testid="stForm"] {
-        background: linear-gradient(160deg, #050b18 0%, #0a152b 100%) !important;
-        border: 1px solid rgba(92, 136, 199, 0.36) !important;
-        border-radius: 12px !important;
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(143, 211, 167, 0.10) !important;
+        border-radius: 18px !important;
         padding: 1rem !important;
     }
 
     div[data-testid="stForm"] label,
     div[data-testid="stForm"] p,
     div[data-testid="stForm"] span {
-        color: #e6f0ff !important;
+        color: #eef7f1 !important;
+    }
+
+    div[data-testid="stForm"] [data-baseweb="input"] {
+        background: rgba(255, 255, 255, 0.06) !important;
+        border-color: rgba(143, 211, 167, 0.14) !important;
+    }
+
+    div[data-testid="stForm"] input {
+        color: #eef7f1 !important;
     }
 
     .auth-stage {
         text-align: center;
-        color: #dff5e6;
-        padding: 1.2rem 0.4rem;
-        border-radius: 12px;
-        background: linear-gradient(160deg, #0f1f19 0%, #142920 100%);
-        border: 1px solid #2d5f3f;
+        color: #eef7f1;
+        padding: 1.35rem 1rem;
+        border-radius: 20px;
+        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
+        border: 1px solid rgba(143, 211, 167, 0.12);
+        box-shadow: 0 24px 44px rgba(8, 16, 11, 0.30);
     }
 
     .account-card {
@@ -958,41 +1057,74 @@ def _render_login_screen() -> bool:
         st.rerun()
         return False
 
-    left, mid, right = st.columns([1, 1.12, 1])
-    with mid:
-        with st.container():
-            st.markdown(f"""
-            <div class="auth-shell">
-                <div class="auth-title">MangroVision</div>
-                <div class="auth-subtitle">Planner Login</div>
-                <div class="auth-time">Date & Time: {now_str}</div>
+    hero_col, form_col = st.columns([1.12, 0.88], gap="large")
+
+    with hero_col:
+        st.markdown("""
+        <div class="login-hero">
+            <div class="login-kicker">MangroVision Planning System</div>
+            <h1>Map-First Mangrove Planning Workspace</h1>
+            <p>Authenticate to access the live orthophoto workspace for canopy analysis, exclusion zoning, planting layout generation, and field export.</p>
+            <div class="login-badge-row">
+                <span>Orthophoto overlays</span>
+                <span>Exclusion zoning</span>
+                <span>Field export ready</span>
             </div>
-            """, unsafe_allow_html=True)
+            <div class="login-grid">
+                <div class="login-grid-item">
+                    <strong>Operational mapping</strong>
+                    <span>Review the planting site on the live map before you queue any drone frame for analysis.</span>
+                </div>
+                <div class="login-grid-item">
+                    <strong>Layer-based review</strong>
+                    <span>Check forbidden zones, eroded areas, analysis locations, and planting points directly from the workspace.</span>
+                </div>
+                <div class="login-grid-item">
+                    <strong>Analysis workflow</strong>
+                    <span>Run canopy processing only after the site is visually confirmed and the target image is staged.</span>
+                </div>
+                <div class="login-grid-item">
+                    <strong>Deployment output</strong>
+                    <span>Export planting coordinates for field navigation once the planting layout has been validated.</span>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-            if st.session_state.get('clear_login_fields'):
-                st.session_state.pop('login_username', None)
-                st.session_state.pop('login_password', None)
-                st.session_state.clear_login_fields = False
+    with form_col:
+        st.markdown(f"""
+        <div class="auth-shell">
+            <div class="auth-caption">Secure Access</div>
+            <div class="auth-title">Workspace Login</div>
+            <div class="auth-subtitle">Sign in to continue to the MangroVision operations dashboard.</div>
+            <div class="auth-time">System time: {now_str}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-            with st.form("login_form", clear_on_submit=False):
-                username = st.text_input("Username", placeholder="Enter username", key="login_username")
-                password = st.text_input("Password", type="password", placeholder="Enter password", key="login_password")
-                login_clicked = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+        if st.session_state.get('clear_login_fields'):
+            st.session_state.pop('login_username', None)
+            st.session_state.pop('login_password', None)
+            st.session_state.clear_login_fields = False
 
-            if login_clicked:
-                user = authenticate_user(username.strip(), password)
-                if user:
-                    update_last_login(user['id'])
-                    st.session_state.logged_in = True
-                    st.session_state.user_id = user['id']
-                    st.session_state.username = user['full_name']
-                    st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
-                    st.session_state.clear_login_fields = True
-                    st.session_state.show_login_success = True
-                    _set_auth_query(True, user['full_name'])
-                    st.rerun()
-                else:
-                    st.error("Invalid username or password.")
+        with st.form("login_form", clear_on_submit=False):
+            username = st.text_input("Username", placeholder="Enter username", key="login_username")
+            password = st.text_input("Password", type="password", placeholder="Enter password", key="login_password")
+            login_clicked = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+
+        if login_clicked:
+            user = authenticate_user(username.strip(), password)
+            if user:
+                update_last_login(user['id'])
+                st.session_state.logged_in = True
+                st.session_state.user_id = user['id']
+                st.session_state.username = user['full_name']
+                st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
+                st.session_state.clear_login_fields = True
+                st.session_state.show_login_success = True
+                _set_auth_query(True, user['full_name'])
+                st.rerun()
+            else:
+                st.error("Invalid username or password.")
 
     return False
 
