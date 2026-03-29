@@ -19,7 +19,7 @@ ENV/
 *.swp
 *.swo
 *~
-.streamlit/secrets.toml
+
 
 # Distribution / packaging
 *.egg-info/
