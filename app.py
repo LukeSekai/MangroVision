@@ -4,6 +4,9 @@ Beautiful Streamlit UI for the thesis project
 """
 
 import sys
+import math
+import re
+import copy
 # Force UTF-8 output so emoji in print() don't crash on Windows (cp1252 terminals)
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -20,6 +23,7 @@ import json
 import base64
 from datetime import datetime
 import time
+from urllib.parse import urlencode
 import streamlit_folium as st_folium
 import folium
 from branca.element import Element
@@ -41,7 +45,13 @@ from canopy_detection.forbidden_zone_filter import ForbiddenZoneFilter
 from planting_database import (
     save_analysis, find_overlapping_analyses, count_nearby_points,
     get_all_stats, delete_analysis,
-    authenticate_user, ensure_admin_user, update_last_login, get_user_by_name,
+    authenticate_user, ensure_admin_user, update_last_login,
+    create_user_session, get_user_by_session_token, revoke_user_session,
+    list_planters, get_planter_dashboard_stats,
+    list_planter_assignment_map_points, assign_planting_point_to_planter,
+    list_planter_assignments,
+    get_planter_field_points, update_assignment_point_status,
+    get_assignment_points, archive_planter_assignment, delete_planter_assignment,
 )
 from waypoint_export import (
     generate_gpx, generate_kml, generate_geojson, hexagons_to_waypoints,
@@ -538,7 +548,7 @@ st.markdown("""
 
     .main-header {
         background: linear-gradient(135deg, #08100b 0%, #102018 46%, #173728 100%);
-        padding: 1.8rem 2rem;
+        padding: 1.55rem 1.85rem;
         border-radius: 28px;
         margin-bottom: 1rem;
         box-shadow: 0 28px 50px rgba(8, 16, 11, 0.34);
@@ -546,11 +556,10 @@ st.markdown("""
     }
 
     .main-header-grid {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: start;
         gap: 1.2rem;
-        flex-wrap: wrap;
     }
 
     .main-kicker {
@@ -563,25 +572,28 @@ st.markdown("""
     }
 
     .main-header h1 {
-        font-size: 3rem;
-        line-height: 1.05;
-        margin-bottom: 0.4rem;
+        font-size: 2.55rem;
+        line-height: 1.08;
+        margin-bottom: 0.35rem;
         text-shadow: none;
     }
 
     .main-header p {
         color: rgba(226, 239, 230, 0.92);
-        font-size: 1.02rem;
-        max-width: 760px;
+        font-size: 0.96rem;
+        line-height: 1.62;
+        max-width: 690px;
+        margin: 0;
     }
 
     .header-meta {
         display: flex;
-        flex-wrap: wrap;
+        flex-direction: column;
         gap: 0.55rem;
-        justify-content: flex-end;
-        align-content: flex-start;
-        max-width: 420px;
+        align-items: flex-end;
+        justify-content: flex-start;
+        justify-self: end;
+        max-width: none;
     }
 
     .header-badge {
@@ -593,6 +605,26 @@ st.markdown("""
         font-size: 0.84rem;
         font-weight: 600;
         backdrop-filter: blur(8px);
+        width: max-content;
+        max-width: 100%;
+    }
+
+    .main-header-notes {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin-top: 0.95rem;
+    }
+
+    .main-header-notes span {
+        background: rgba(255, 255, 255, 0.08);
+        color: #e4f3e8;
+        border: 1px solid rgba(143, 211, 167, 0.14);
+        border-radius: 999px;
+        padding: 0.46rem 0.72rem;
+        font-size: 0.79rem;
+        font-weight: 700;
+        line-height: 1.2;
     }
 
     .section-hero {
@@ -905,18 +937,173 @@ st.markdown("""
         font-size: 0.98rem;
     }
 
+    .manager-card,
+    .field-card {
+        background: linear-gradient(160deg, rgba(11, 18, 13, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%);
+        border: 1px solid rgba(120, 202, 149, 0.10);
+        border-radius: 24px;
+        padding: 1.1rem 1.2rem;
+        box-shadow: 0 18px 36px rgba(8, 16, 11, 0.20);
+        margin-bottom: 1rem;
+    }
+
+    .manager-card h3,
+    .field-card h3 {
+        color: #f1f8f3;
+        font-size: 1.35rem;
+        font-weight: 800;
+        margin: 0;
+    }
+
+    .manager-card p,
+    .field-card p {
+        color: #cadbcc;
+        line-height: 1.6;
+        margin: 0.45rem 0 0 0;
+    }
+
+    .manager-meta,
+    .field-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.85rem;
+    }
+
+    .manager-meta span,
+    .field-meta span {
+        background: rgba(255, 255, 255, 0.06);
+        color: #eef7f1;
+        border: 1px solid rgba(143, 211, 167, 0.10);
+        border-radius: 999px;
+        padding: 0.38rem 0.7rem;
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+
+    .field-card.is-pending {
+        border-color: rgba(143, 211, 167, 0.16);
+    }
+
+    .field-card.is-completed {
+        border-color: rgba(126, 200, 141, 0.30);
+        background: linear-gradient(160deg, rgba(13, 31, 21, 0.96) 0%, rgba(27, 55, 38, 0.94) 100%);
+    }
+
+    .field-card.is-skipped {
+        border-color: rgba(239, 108, 0, 0.28);
+        background: linear-gradient(160deg, rgba(32, 22, 12, 0.96) 0%, rgba(52, 33, 12, 0.94) 100%);
+    }
+
+    .field-title-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 0.85rem;
+        flex-wrap: wrap;
+    }
+
+    .field-status {
+        border-radius: 999px;
+        padding: 0.38rem 0.72rem;
+        font-size: 0.78rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08rem;
+    }
+
+    .field-status.pending {
+        background: rgba(120, 202, 149, 0.14);
+        color: #b7e4c5;
+    }
+
+    .field-status.completed {
+        background: rgba(126, 200, 141, 0.18);
+        color: #d6f3de;
+    }
+
+    .field-status.skipped {
+        background: rgba(239, 108, 0, 0.18);
+        color: #ffd2ac;
+    }
+
+    .field-coords {
+        color: #eef7f1;
+        font-size: 1rem;
+        font-weight: 700;
+        margin-top: 0.75rem;
+    }
+
+    .field-caption {
+        color: #bcd0c1;
+        font-size: 0.9rem;
+        line-height: 1.55;
+        margin-top: 0.4rem;
+    }
+
+    .field-divider {
+        height: 1px;
+        background: linear-gradient(90deg, rgba(143, 211, 167, 0), rgba(143, 211, 167, 0.22), rgba(143, 211, 167, 0));
+        margin: 0.85rem 0 0.9rem 0;
+    }
+
+    @media (max-width: 900px) {
+        .main-header h1,
+        .login-hero h1 {
+            font-size: 2.05rem;
+        }
+
+        .login-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .main-header,
+        .section-hero,
+        .auth-shell,
+        .login-hero,
+        .manager-card,
+        .field-card,
+        .control-card,
+        .preview-card,
+        .operations-strip {
+            padding: 1rem 1rem;
+            border-radius: 22px;
+        }
+
+        .header-meta,
+        .section-hero-badges,
+        .operations-meta,
+        .manager-meta,
+        .field-meta {
+            justify-content: flex-start;
+        }
+
+        .main-header-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .header-meta {
+            align-items: flex-start;
+            justify-self: start;
+        }
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
 
-def _set_auth_query(is_logged_in: bool, username: str = ""):
-    """Persist simple auth marker in URL so browser refresh can restore login."""
+_PLANNER_SESSION_QUERY_KEY = "planner_session"
+
+
+def _set_auth_query(session_token: str | None):
+    """Persist planner session token in the URL so browser refresh restores login."""
     try:
-        if is_logged_in:
-            st.query_params["auth"] = "1"
-            st.query_params["user"] = username
+        if session_token:
+            st.query_params[_PLANNER_SESSION_QUERY_KEY] = session_token
         else:
-            st.query_params.clear()
+            st.query_params.pop(_PLANNER_SESSION_QUERY_KEY, None)
+            st.query_params.pop("auth", None)
+            st.query_params.pop("user", None)
     except Exception:
         pass
 
@@ -945,22 +1132,48 @@ def _get_login_bg_data_uri() -> str:
 
 
 def _restore_auth_from_query():
-    """Restore login state from query params and database user row."""
+    """Restore planner login state from a persisted session token."""
     if st.session_state.get('logged_in'):
         return
     try:
-        auth_flag = st.query_params.get("auth", "")
-        auth_user = st.query_params.get("user", "")
+        session_token = st.query_params.get(_PLANNER_SESSION_QUERY_KEY, "")
     except Exception:
         return
+    session_token = str(session_token or "").strip()
+    if not session_token:
+        return
 
-    if str(auth_flag) == "1" and str(auth_user).strip():
-        user = get_user_by_name(str(auth_user).strip())
-        if user:
-            st.session_state.logged_in = True
-            st.session_state.user_id = user.get('id')
-            st.session_state.username = user.get('full_name')
-            st.session_state.last_login = user.get('last_login')
+    user = get_user_by_session_token(session_token)
+    if user:
+        st.session_state.logged_in = True
+        st.session_state.user_id = user.get('id')
+        st.session_state.username = user.get('full_name')
+        st.session_state.last_login = user.get('last_login')
+        st.session_state.auth_session_token = session_token
+        return
+
+    _set_auth_query(None)
+
+
+def _clear_auth_state(revoke_session: bool = True):
+    """Clear planner auth state and optionally revoke the persisted session."""
+    session_token = st.session_state.get("auth_session_token")
+    if not session_token:
+        try:
+            session_token = str(st.query_params.get(_PLANNER_SESSION_QUERY_KEY, "") or "").strip()
+        except Exception:
+            session_token = ""
+    if revoke_session and session_token:
+        revoke_user_session(session_token)
+
+    st.session_state.logged_in = False
+    st.session_state.user_id = None
+    st.session_state.username = None
+    st.session_state.last_login = None
+    st.session_state.auth_session_token = None
+    st.session_state.clear_login_fields = True
+    st.session_state.show_login_success = False
+    _set_auth_query(None)
 
 
 def _init_auth_state():
@@ -977,6 +1190,8 @@ def _init_auth_state():
         st.session_state.clear_login_fields = False
     if 'show_login_success' not in st.session_state:
         st.session_state.show_login_success = False
+    if 'auth_session_token' not in st.session_state:
+        st.session_state.auth_session_token = None
     _restore_auth_from_query()
 
 
@@ -1115,13 +1330,15 @@ def _render_login_screen() -> bool:
             user = authenticate_user(username.strip(), password)
             if user:
                 update_last_login(user['id'])
+                session_token = create_user_session(user['id'])
                 st.session_state.logged_in = True
                 st.session_state.user_id = user['id']
                 st.session_state.username = user['full_name']
                 st.session_state.last_login = datetime.now().isoformat(timespec='seconds')
+                st.session_state.auth_session_token = session_token
                 st.session_state.clear_login_fields = True
                 st.session_state.show_login_success = True
-                _set_auth_query(True, user['full_name'])
+                _set_auth_query(session_token)
                 st.rerun()
             else:
                 st.error("Invalid username or password.")
@@ -1142,13 +1359,7 @@ def _render_user_panel():
         unsafe_allow_html=True,
     )
     if st.button("Log Out", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.user_id = None
-        st.session_state.username = None
-        st.session_state.last_login = None
-        st.session_state.clear_login_fields = True
-        st.session_state.show_login_success = False
-        _set_auth_query(False)
+        _clear_auth_state(revoke_session=True)
         st.rerun()
 
 
@@ -1306,6 +1517,28 @@ def _style_layer_control(map_obj):
     """))
 
 
+def _saved_point_marker_style(point_status: str | None) -> dict:
+    """Return consistent map styling for saved planting-point states."""
+    status = (point_status or "planned").strip().lower()
+    if status == "planted":
+        return {
+            "border_color": "#F9A825",
+            "fill_color": "#FFEE58",
+            "label": "Planted",
+        }
+    if status == "skipped":
+        return {
+            "border_color": "#EF6C00",
+            "fill_color": "#FFB74D",
+            "label": "Skipped",
+        }
+    return {
+        "border_color": "#1B5E20",
+        "fill_color": "#4CAF50",
+        "label": "Planned",
+    }
+
+
 def _build_workspace_overview_map(stats):
     """Build the overview map shown on the main planning workspace before upload."""
     from folium.plugins import Fullscreen
@@ -1384,14 +1617,15 @@ def _build_workspace_overview_map(stats):
     if visible_points:
         points_group = folium.FeatureGroup(name='Planting Zones', show=True)
         for point in visible_points:
+            point_style = _saved_point_marker_style(point.get("status"))
             folium.CircleMarker(
                 location=[point['latitude'], point['longitude']],
                 radius=3,
-                color='#0E5A2A',
-                fillColor='#4CAF50',
+                color=point_style["border_color"],
+                fillColor=point_style["fill_color"],
                 fillOpacity=0.82,
                 weight=1,
-                tooltip=point['image_name'],
+                tooltip=f"{point['image_name']} · {point_style['label']}",
             ).add_to(points_group)
         points_group.add_to(workspace_map)
 
@@ -1400,6 +1634,1015 @@ def _build_workspace_overview_map(stats):
     _style_layer_control(workspace_map)
     return workspace_map
 
+
+def _build_google_maps_navigation_url(dest_lat, dest_lon, travel_mode="walking", origin_lat=None, origin_lon=None):
+    """Build a Google Maps directions URL for one destination."""
+    params = {
+        "api": 1,
+        "destination": f"{dest_lat:.7f},{dest_lon:.7f}",
+        "travelmode": travel_mode or "walking",
+    }
+    if origin_lat is not None and origin_lon is not None:
+        params["origin"] = f"{origin_lat:.7f},{origin_lon:.7f}"
+    return "https://www.google.com/maps/dir/?" + urlencode(params)
+
+
+def _render_navigation_button(label: str, url: str):
+    """Render an external navigation button with a Streamlit fallback."""
+    if hasattr(st, "link_button"):
+        st.link_button(label, url, use_container_width=True, type="primary")
+    else:
+        st.markdown(f"[{label}]({url})")
+
+
+def _assignment_points_to_waypoints(points, prefix: str):
+    """Convert assignment point rows into export-ready waypoint dicts."""
+    export_rows = []
+    for point in points:
+        export_rows.append({
+            "point_num": point.get("sequence_num") or point.get("point_num"),
+            "latitude": point["latitude"],
+            "longitude": point["longitude"],
+            "buffer_m": point.get("buffer_m"),
+            "area_m2": point.get("area_m2"),
+            "status": point.get("assignment_status") or point.get("status") or "pending",
+        })
+    return hexagons_to_waypoints(export_rows, image_name=prefix)
+
+
+def _init_planter_management_state():
+    """Initialize session state used by the interactive admin assignment map."""
+    if "planter_management_selected_point_id" not in st.session_state:
+        st.session_state.planter_management_selected_point_id = None
+    if "planter_management_selected_planter_id" not in st.session_state:
+        st.session_state.planter_management_selected_planter_id = None
+    if "planter_management_last_map_event" not in st.session_state:
+        st.session_state.planter_management_last_map_event = None
+    if "planter_management_flash" not in st.session_state:
+        st.session_state.planter_management_flash = None
+    if "planter_management_planters" not in st.session_state:
+        st.session_state.planter_management_planters = None
+    if "planter_management_points" not in st.session_state:
+        st.session_state.planter_management_points = None
+    if "planter_management_points_by_id" not in st.session_state:
+        st.session_state.planter_management_points_by_id = {}
+    if "planter_management_assignments" not in st.session_state:
+        st.session_state.planter_management_assignments = None
+    if "planter_management_dashboard_stats" not in st.session_state:
+        st.session_state.planter_management_dashboard_stats = None
+    if "planter_management_points_version" not in st.session_state:
+        st.session_state.planter_management_points_version = 0
+    if "planter_management_base_map" not in st.session_state:
+        st.session_state.planter_management_base_map = None
+    if "planter_management_base_map_version" not in st.session_state:
+        st.session_state.planter_management_base_map_version = None
+    if "planter_management_pending_assignment" not in st.session_state:
+        st.session_state.planter_management_pending_assignment = None
+    if "planter_management_map_center" not in st.session_state:
+        st.session_state.planter_management_map_center = None
+    if "planter_management_map_zoom" not in st.session_state:
+        st.session_state.planter_management_map_zoom = None
+
+
+def _compute_planter_management_dashboard_stats(planters: list[dict], assignments: list[dict]) -> dict:
+    """Compute dashboard counters from cached planter-management data."""
+    active_planters = sum(1 for planter in planters if planter.get("status") == "active")
+    active_assignments = sum(1 for assignment in assignments if assignment.get("status") == "active")
+    pending_assigned_points = sum(
+        int(assignment.get("pending_points") or 0)
+        for assignment in assignments
+        if assignment.get("status") == "active"
+    )
+    completed_assigned_points = sum(
+        int(assignment.get("completed_points") or 0)
+        for assignment in assignments
+        if assignment.get("status") == "active"
+    )
+    return {
+        "active_planters": active_planters,
+        "active_assignments": active_assignments,
+        "pending_assigned_points": pending_assigned_points,
+        "completed_assigned_points": completed_assigned_points,
+    }
+
+
+def _refresh_planter_management_cache(
+    *,
+    reload_planters: bool = False,
+    reload_points: bool = False,
+    reload_assignments: bool = False,
+    force: bool = False,
+):
+    """Load planter-management data into session state only when needed."""
+    if force or reload_planters or st.session_state.planter_management_planters is None:
+        st.session_state.planter_management_planters = list_planters()
+
+    if force or reload_points or st.session_state.planter_management_points is None:
+        points = list_planter_assignment_map_points()
+        st.session_state.planter_management_points = points
+        st.session_state.planter_management_points_by_id = {
+            int(point["id"]): point for point in points
+        }
+        st.session_state.planter_management_points_version += 1
+
+    if force or reload_assignments or st.session_state.planter_management_assignments is None:
+        st.session_state.planter_management_assignments = list_planter_assignments()
+
+    st.session_state.planter_management_dashboard_stats = _compute_planter_management_dashboard_stats(
+        st.session_state.planter_management_planters or [],
+        st.session_state.planter_management_assignments or [],
+    )
+
+
+def _invalidate_planter_management_base_map():
+    """Force the cached admin assignment base map to rebuild on the next render."""
+    st.session_state.planter_management_base_map = None
+    st.session_state.planter_management_base_map_version = None
+
+
+def _get_cached_planter_management_base_map(points: list[dict]):
+    """Return a cached base map that only rebuilds when point data changes."""
+    version = st.session_state.get("planter_management_points_version", 0)
+    if (
+        st.session_state.get("planter_management_base_map") is None
+        or st.session_state.get("planter_management_base_map_version") != version
+    ):
+        st.session_state.planter_management_base_map = _build_planter_assignment_map(points)
+        st.session_state.planter_management_base_map_version = version
+    return st.session_state.planter_management_base_map
+
+
+def _default_planter_management_map_view(points: list[dict]):
+    """Return the default center and zoom for the admin assignment map."""
+    if points:
+        center_lats = [point.get("center_lat") for point in points if point.get("center_lat") is not None]
+        center_lons = [point.get("center_lon") for point in points if point.get("center_lon") is not None]
+        if center_lats and center_lons:
+            return [sum(center_lats) / len(center_lats), sum(center_lons) / len(center_lons)], 19
+        return [
+            sum(float(point["latitude"]) for point in points) / len(points),
+            sum(float(point["longitude"]) for point in points) / len(points),
+        ], 19
+    return [10.7800, 122.6253], 18
+
+
+def _build_planter_assignment_selected_layers(selected_point: dict | None):
+    """Return a lightweight highlight layer for the currently selected point."""
+    if not selected_point:
+        return []
+
+    selected_group = folium.FeatureGroup(name="Selected Point", show=True)
+    planting_status = (selected_point.get("planting_status") or "planned").strip().lower()
+    status_label = "Planted" if planting_status == "planted" else "Selected"
+    folium.CircleMarker(
+        location=[float(selected_point["latitude"]), float(selected_point["longitude"])],
+        radius=9,
+        color="#F9A825",
+        fill=True,
+        fillColor="#FFEE58",
+        fillOpacity=0.95,
+        weight=3,
+        tooltip=f"Point {int(selected_point['point_num']):03d} · {status_label}",
+        popup=folium.Popup(
+            f"<b>Point {int(selected_point['point_num']):03d}</b><br>{selected_point['image_name']}<br>{status_label}",
+            max_width=320,
+        ),
+    ).add_to(selected_group)
+    return [selected_group]
+
+
+def _render_planter_assignment_map(
+    base_map,
+    *,
+    selected_layers=None,
+    center: list[float] | None = None,
+    zoom: int | None = None,
+):
+    """Render the admin assignment map while preserving state when the installed component supports it."""
+    returned_objects = [
+        "last_clicked",
+        "last_object_clicked",
+        "last_object_clicked_popup",
+        "center",
+        "zoom",
+    ]
+    signature = inspect.signature(st_folium.st_folium)
+    params = signature.parameters
+    supports_advanced_overlay = all(
+        name in params for name in ("feature_group_to_add", "center", "zoom", "layer_control")
+    )
+
+    render_kwargs = {
+        "height": 620,
+        "key": "planter_assignment_map",
+        "returned_objects": returned_objects,
+        "use_container_width": True,
+    }
+
+    if supports_advanced_overlay:
+        if center is not None:
+            render_kwargs["center"] = center
+        if zoom is not None:
+            render_kwargs["zoom"] = zoom
+        if selected_layers:
+            render_kwargs["feature_group_to_add"] = selected_layers
+        render_kwargs["layer_control"] = folium.LayerControl(collapsed=False)
+        return st_folium.st_folium(base_map, **render_kwargs)
+
+    render_map = copy.deepcopy(base_map)
+    for selected_layer in selected_layers or []:
+        selected_layer.add_to(render_map)
+    if center is not None:
+        render_map.location = center
+    if zoom is not None:
+        render_map.options["zoom"] = zoom
+        render_map.options["zoomStart"] = zoom
+    folium.LayerControl(collapsed=False).add_to(render_map)
+    _style_layer_control(render_map)
+    return st_folium.st_folium(render_map, **render_kwargs)
+
+
+def _queue_planter_management_assignment(point_id: int, planter_id: int, allow_reassign: bool):
+    """Queue one assignment request so it can be processed before the next render."""
+    st.session_state.planter_management_pending_assignment = {
+        "point_id": int(point_id),
+        "planter_id": int(planter_id),
+        "allow_reassign": bool(allow_reassign),
+    }
+
+
+def _apply_planter_management_assignment_result(result: dict):
+    """Update cached planter-management state after one successful assignment."""
+    points_by_id = st.session_state.get("planter_management_points_by_id") or {}
+    point = points_by_id.get(int(result["planting_point_id"]))
+    if point:
+        point["assigned_planter_id"] = result["planter_id"]
+        point["assigned_planter_name"] = result["planter_name"]
+        point["assignment_id"] = result["assignment_id"]
+        point["assignment_title"] = result["assignment_title"]
+        point["assignment_date"] = result["assignment_date"]
+        point["assignment_status"] = result["assignment_status"]
+        point["sequence_num"] = result["sequence_num"]
+
+    planters = st.session_state.get("planter_management_planters") or []
+    target_planter = next((planter for planter in planters if planter["id"] == result["planter_id"]), None)
+    if target_planter:
+        target_planter["pending_points"] = int(target_planter.get("pending_points") or 0) + 1
+        if result.get("created_new_assignment"):
+            target_planter["active_assignments"] = int(target_planter.get("active_assignments") or 0) + 1
+
+    source_planter_id = result.get("source_planter_id")
+    if source_planter_id is not None:
+        source_planter = next((planter for planter in planters if planter["id"] == source_planter_id), None)
+        if source_planter:
+            source_status = (result.get("source_assignment_status") or "").strip().lower()
+            if source_status == "pending":
+                source_planter["pending_points"] = max(0, int(source_planter.get("pending_points") or 0) - 1)
+            elif source_status == "completed":
+                source_planter["completed_points"] = max(0, int(source_planter.get("completed_points") or 0) - 1)
+            if result.get("source_assignment_deleted"):
+                source_planter["active_assignments"] = max(0, int(source_planter.get("active_assignments") or 0) - 1)
+
+    st.session_state.planter_management_points_version += 1
+    _invalidate_planter_management_base_map()
+    _refresh_planter_management_cache(reload_assignments=True)
+
+
+def _process_pending_planter_management_assignment():
+    """Process a queued assignment before rendering the admin assignment UI."""
+    pending = st.session_state.get("planter_management_pending_assignment")
+    if not pending:
+        return
+
+    try:
+        result = assign_planting_point_to_planter(
+            planter_id=int(pending["planter_id"]),
+            planting_point_id=int(pending["point_id"]),
+            assigned_by_user_id=st.session_state.get("user_id"),
+            allow_reassign=bool(pending.get("allow_reassign")),
+        )
+        _apply_planter_management_assignment_result(result)
+        if result["was_reassigned"]:
+            message = (
+                f"Point {result['point_num']:03d} was reassigned from "
+                f"{result['reassigned_from_planter_name']} to {result['planter_name']}."
+            )
+        else:
+            message = (
+                f"Point {result['point_num']:03d} was assigned to "
+                f"{result['planter_name']} in batch #{result['assignment_id']}."
+            )
+        st.session_state.planter_management_flash = ("success", message)
+    except ValueError as err:
+        st.session_state.planter_management_flash = ("warning", str(err))
+    finally:
+        st.session_state.planter_management_pending_assignment = None
+
+
+def _point_click_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Approximate distance in meters between two close GPS points."""
+    avg_lat = math.radians((lat1 + lat2) / 2.0)
+    lat_m = (lat1 - lat2) * 111_320.0
+    lon_m = (lon1 - lon2) * 111_320.0 * max(0.2, abs(math.cos(avg_lat)))
+    return (lat_m * lat_m + lon_m * lon_m) ** 0.5
+
+
+def _resolve_clicked_assignment_point(map_response: dict, points: list[dict]) -> tuple[int | None, str | None]:
+    """Resolve the last clicked map marker to a planting point id."""
+    if not isinstance(map_response, dict):
+        return None, None
+
+    object_clicked = map_response.get("last_object_clicked") or {}
+    if object_clicked.get("lat") is not None and object_clicked.get("lng") is not None:
+        clicked = object_clicked
+    else:
+        popup_html = map_response.get("last_object_clicked_popup")
+        if popup_html:
+            match = re.search(r'data-point-id="(\d+)"', str(popup_html))
+            if match:
+                point_id = int(match.group(1))
+                return point_id, f"popup:{point_id}"
+        clicked = map_response.get("last_clicked") or {}
+
+    if clicked.get("lat") is None or clicked.get("lng") is None:
+        return None, None
+
+    clicked_lat = float(clicked["lat"])
+    clicked_lon = float(clicked["lng"])
+    nearest_point = None
+    nearest_distance = None
+    for point in points:
+        distance_m = _point_click_distance_m(
+            clicked_lat,
+            clicked_lon,
+            float(point["latitude"]),
+            float(point["longitude"]),
+        )
+        if nearest_distance is None or distance_m < nearest_distance:
+            nearest_distance = distance_m
+            nearest_point = point
+
+    if nearest_point and nearest_distance is not None and nearest_distance <= 6.0:
+        point_id = int(nearest_point["id"])
+        return point_id, f"coord:{point_id}:{round(clicked_lat, 7)}:{round(clicked_lon, 7)}"
+    return None, None
+
+
+def _build_planter_assignment_map(points: list[dict]):
+    """Build the cached admin map used for assigning planting points."""
+    from folium.plugins import Fullscreen
+
+    if points:
+        center_lats = [p.get("center_lat") for p in points if p.get("center_lat") is not None]
+        center_lons = [p.get("center_lon") for p in points if p.get("center_lon") is not None]
+        if center_lats and center_lons:
+            map_center = [sum(center_lats) / len(center_lats), sum(center_lons) / len(center_lons)]
+        else:
+            map_center = [
+                sum(float(p["latitude"]) for p in points) / len(points),
+                sum(float(p["longitude"]) for p in points) / len(points),
+            ]
+    else:
+        map_center = [10.7800, 122.6253]
+
+    assignment_map = folium.Map(
+        location=map_center,
+        zoom_start=19 if points else 18,
+        tiles=None,
+        control_scale=True,
+    )
+    _add_operational_map_layers(assignment_map)
+
+    unassigned_group = folium.FeatureGroup(name="Unassigned Points", show=True)
+    assigned_group = folium.FeatureGroup(name="Assigned Points", show=True)
+    planted_group = folium.FeatureGroup(name="Planted Points", show=True)
+
+    for point in points:
+        point_id = int(point["id"])
+        assigned_planter = point.get("assigned_planter_name")
+        planting_status = (point.get("planting_status") or "planned").strip().lower()
+
+        radius = 5
+        border_color = "#2E7D32"
+        fill_color = "#4CAF50"
+        marker_group = unassigned_group
+        status_label = "Unassigned"
+
+        if planting_status == "planted":
+            radius = 6
+            border_color = "#F9A825"
+            fill_color = "#FFEE58"
+            marker_group = planted_group
+            status_label = "Planted"
+        elif assigned_planter:
+            radius = 6
+            border_color = "#1565C0"
+            fill_color = "#42A5F5"
+            marker_group = assigned_group
+            status_label = f"Assigned to {assigned_planter}"
+
+        popup_html = f"""
+        <div data-point-id="{point_id}">
+            <b>Point {int(point['point_num']):03d}</b><br>
+            {point['image_name']}<br>
+            {float(point['latitude']):.7f}, {float(point['longitude']):.7f}<br>
+            {status_label}
+        </div>
+        """
+
+        folium.CircleMarker(
+            location=[float(point["latitude"]), float(point["longitude"])],
+            radius=radius,
+            color=border_color,
+            fill=True,
+            fillColor=fill_color,
+            fillOpacity=0.92,
+            weight=2,
+            tooltip=f"Point {int(point['point_num']):03d} · {status_label}",
+            popup=folium.Popup(popup_html, max_width=320),
+        ).add_to(marker_group)
+
+    if points:
+        unassigned_group.add_to(assignment_map)
+        assigned_group.add_to(assignment_map)
+        planted_group.add_to(assignment_map)
+
+    Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(assignment_map)
+    _style_layer_control(assignment_map)
+    return assignment_map
+
+
+def show_planter_management():
+    """Planner-facing module for planter records and assignment creation."""
+    _init_planter_management_state()
+    _process_pending_planter_management_assignment()
+    _refresh_planter_management_cache()
+
+    dashboard_stats = st.session_state.get("planter_management_dashboard_stats") or {}
+    planters = st.session_state.get("planter_management_planters") or []
+    assignment_map_points = st.session_state.get("planter_management_points") or []
+    assignment_points_by_id = st.session_state.get("planter_management_points_by_id") or {}
+    assignments = st.session_state.get("planter_management_assignments") or []
+
+    _render_section_banner(
+        "Field Operations",
+        "Planter Management",
+        "Assign saved planting points from an interactive map, monitor planter workload, and keep field batches organized from the same operational console.",
+        [
+            f"{dashboard_stats['active_planters']} active planters",
+            f"{dashboard_stats['active_assignments']} active assignments",
+            f"{dashboard_stats['pending_assigned_points']} pending assigned points",
+        ],
+    )
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Active planters", dashboard_stats["active_planters"])
+    m2.metric("Active assignments", dashboard_stats["active_assignments"])
+    m3.metric("Pending assigned points", dashboard_stats["pending_assigned_points"])
+    m4.metric("Completed assigned points", dashboard_stats["completed_assigned_points"])
+
+    st.markdown("""
+    <div class="manager-card">
+        <div class="panel-kicker">Interactive Assignment Map</div>
+        <h3>Assign Saved Planting Points</h3>
+        <p>Select a planter first, then click a planting point on the map to review its details and assign or reassign it.</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.info("Planter accounts are created in `field_app.py`. This admin panel now assigns saved points directly from the map.")
+
+    flash_message = st.session_state.get("planter_management_flash")
+    if flash_message:
+        flash_kind, flash_text = flash_message
+        if flash_kind == "success":
+            st.success(flash_text)
+        elif flash_kind == "warning":
+            st.warning(flash_text)
+        else:
+            st.info(flash_text)
+        st.session_state.planter_management_flash = None
+
+    active_planters = [planter for planter in planters if planter["status"] == "active"]
+    active_planter_ids = {planter["id"] for planter in active_planters}
+    if (
+        st.session_state.get("planter_management_selected_planter_id") is not None
+        and st.session_state.get("planter_management_selected_planter_id") not in active_planter_ids
+    ):
+        st.session_state.planter_management_selected_planter_id = None
+
+    selected_point_id = st.session_state.get("planter_management_selected_point_id")
+    if selected_point_id is not None and selected_point_id not in assignment_points_by_id:
+        st.session_state.planter_management_selected_point_id = None
+        selected_point_id = None
+    selected_point = assignment_points_by_id.get(selected_point_id)
+
+    selector_col, helper_col = st.columns([0.7, 0.3], gap="large")
+    with selector_col:
+        selected_planter_id = st.selectbox(
+            "Planter",
+            options=[None] + [planter["id"] for planter in active_planters],
+            format_func=lambda planter_id: (
+                "Select a planter..."
+                if planter_id is None
+                else next(
+                    (
+                        f"{planter['full_name']} · {planter['pending_points']} pending · {planter['active_assignments']} active batches"
+                        for planter in active_planters
+                        if planter["id"] == planter_id
+                    ),
+                    "Unknown planter",
+                )
+            ),
+            key="planter_management_selected_planter_id",
+        )
+    selected_planter = next((planter for planter in active_planters if planter["id"] == selected_planter_id), None)
+    with helper_col:
+        if selected_planter:
+            base_text = "Base not set"
+            if selected_planter.get("base_lat") is not None and selected_planter.get("base_lon") is not None:
+                base_text = (
+                    f"{selected_planter.get('base_label') or 'Base'} · "
+                    f"{selected_planter['base_lat']:.6f}, {selected_planter['base_lon']:.6f}"
+                )
+            st.markdown(f"""
+            <div class="manager-card">
+                <div class="panel-kicker">Selected Planter</div>
+                <h3>{selected_planter['full_name']}</h3>
+                <div class="manager-meta">
+                    <span>{selected_planter['pending_points']} pending points</span>
+                    <span>{selected_planter['active_assignments']} active batches</span>
+                </div>
+                <p>{base_text}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div class="manager-card">
+                <div class="panel-kicker">Selection</div>
+                <h3>No planter selected</h3>
+                <p>Choose an active planter from the dropdown before assigning a planting point from the map.</p>
+            </div>
+            """, unsafe_allow_html=True)
+
+    if not active_planters:
+        st.info("No active planters are available for assignment.")
+    elif not assignment_map_points:
+        st.info("Save at least one analysis to the database before assigning field points.")
+    else:
+        if (
+            st.session_state.get("planter_management_map_center") is None
+            or st.session_state.get("planter_management_map_zoom") is None
+        ):
+            default_center, default_zoom = _default_planter_management_map_view(assignment_map_points)
+            if st.session_state.get("planter_management_map_center") is None:
+                st.session_state.planter_management_map_center = default_center
+            if st.session_state.get("planter_management_map_zoom") is None:
+                st.session_state.planter_management_map_zoom = default_zoom
+
+        effective_selected_point_id = selected_point_id
+        effective_selected_point = selected_point
+        inline_click_warning = None
+        pre_render_map_state = st.session_state.get("planter_assignment_map")
+        if isinstance(pre_render_map_state, dict):
+            pre_render_center = pre_render_map_state.get("center")
+            if isinstance(pre_render_center, dict):
+                if pre_render_center.get("lat") is not None and pre_render_center.get("lng") is not None:
+                    st.session_state.planter_management_map_center = [
+                        float(pre_render_center["lat"]),
+                        float(pre_render_center["lng"]),
+                    ]
+            elif isinstance(pre_render_center, (list, tuple)) and len(pre_render_center) == 2:
+                st.session_state.planter_management_map_center = [
+                    float(pre_render_center[0]),
+                    float(pre_render_center[1]),
+                ]
+
+            pre_render_zoom = pre_render_map_state.get("zoom")
+            if isinstance(pre_render_zoom, (int, float)):
+                st.session_state.planter_management_map_zoom = int(pre_render_zoom)
+
+            pre_clicked_point_id, pre_click_event_key = _resolve_clicked_assignment_point(
+                pre_render_map_state,
+                assignment_map_points,
+            )
+            if (
+                pre_clicked_point_id is not None
+                and pre_click_event_key
+                and pre_click_event_key != st.session_state.get("planter_management_last_map_event")
+            ):
+                st.session_state.planter_management_last_map_event = pre_click_event_key
+                st.session_state.planter_management_selected_point_id = pre_clicked_point_id
+                effective_selected_point_id = pre_clicked_point_id
+                effective_selected_point = assignment_points_by_id.get(pre_clicked_point_id)
+                if selected_planter is None:
+                    inline_click_warning = "Please select a planter first."
+
+        map_col, detail_col = st.columns([1.35, 0.65], gap="large")
+        with map_col:
+            assignment_map = _get_cached_planter_management_base_map(assignment_map_points)
+            selected_layers = _build_planter_assignment_selected_layers(effective_selected_point)
+            st.caption("Marker colors: green = planned, blue = assigned, yellow = planted or selected.")
+            map_response = _render_planter_assignment_map(
+                assignment_map,
+                selected_layers=selected_layers,
+                center=st.session_state.get("planter_management_map_center"),
+                zoom=st.session_state.get("planter_management_map_zoom"),
+            )
+
+            response_center = map_response.get("center") if isinstance(map_response, dict) else None
+            if isinstance(response_center, dict):
+                if response_center.get("lat") is not None and response_center.get("lng") is not None:
+                    st.session_state.planter_management_map_center = [
+                        float(response_center["lat"]),
+                        float(response_center["lng"]),
+                    ]
+            elif isinstance(response_center, (list, tuple)) and len(response_center) == 2:
+                st.session_state.planter_management_map_center = [
+                    float(response_center[0]),
+                    float(response_center[1]),
+                ]
+
+            response_zoom = map_response.get("zoom") if isinstance(map_response, dict) else None
+            if isinstance(response_zoom, (int, float)):
+                st.session_state.planter_management_map_zoom = int(response_zoom)
+
+            clicked_point_id, click_event_key = _resolve_clicked_assignment_point(
+                map_response,
+                assignment_map_points,
+            )
+            if (
+                clicked_point_id is not None
+                and click_event_key
+                and click_event_key != st.session_state.get("planter_management_last_map_event")
+            ):
+                st.session_state.planter_management_last_map_event = click_event_key
+                st.session_state.planter_management_selected_point_id = clicked_point_id
+                effective_selected_point_id = clicked_point_id
+                effective_selected_point = assignment_points_by_id.get(clicked_point_id)
+                if selected_planter is None:
+                    inline_click_warning = "Please select a planter first."
+
+        with detail_col:
+            selected_point = effective_selected_point or assignment_points_by_id.get(
+                st.session_state.get("planter_management_selected_point_id")
+            )
+
+            if inline_click_warning:
+                st.warning(inline_click_warning)
+
+            if not selected_point:
+                st.markdown("""
+                <div class="manager-card">
+                    <div class="panel-kicker">Point Details</div>
+                    <h3>No point selected</h3>
+                    <p>Click a planting point on the map to inspect its details and assign it to the selected planter.</p>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                planting_status = (selected_point.get("planting_status") or "planned").strip().lower()
+                assignment_state = (
+                    "Planted"
+                    if planting_status == "planted"
+                    else (
+                        f"Assigned to {selected_point['assigned_planter_name']}"
+                        if selected_point.get("assigned_planter_name")
+                        else "Unassigned"
+                    )
+                )
+                st.markdown(f"""
+                <div class="manager-card">
+                    <div class="field-title-row">
+                        <div>
+                            <div class="panel-kicker">Selected Point</div>
+                            <h3>Point {int(selected_point['point_num']):03d}</h3>
+                        </div>
+                        <div class="field-status {'completed' if planting_status == 'planted' or selected_point.get('assigned_planter_id') else 'pending'}">
+                            {assignment_state}
+                        </div>
+                    </div>
+                    <div class="manager-meta">
+                        <span>{selected_point['image_name']}</span>
+                        <span>{selected_point['analyzed_at'][:10]}</span>
+                        <span>{float(selected_point['buffer_m'] or 0):.1f} m buffer</span>
+                    </div>
+                    <div class="field-coords">{float(selected_point['latitude']):.7f}, {float(selected_point['longitude']):.7f}</div>
+                    <p>Area {float(selected_point['area_m2'] or 0):.2f} m²</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if selected_point.get("assigned_planter_name"):
+                    st.caption(
+                        f"Current assignment: {selected_point['assigned_planter_name']}"
+                        + (
+                            f" · Batch {selected_point['assignment_title']}"
+                            if selected_point.get("assignment_title")
+                            else ""
+                        )
+                    )
+                else:
+                    st.caption(
+                        "This planting point is currently marked as planted."
+                        if planting_status == "planted"
+                        else "This planting point is currently available for assignment."
+                    )
+
+                assign_disabled = selected_planter is None or (
+                    selected_point.get("assigned_planter_id") == selected_planter_id
+                )
+                reassign_mode = (
+                    selected_planter is not None
+                    and selected_point.get("assigned_planter_id") is not None
+                    and selected_point.get("assigned_planter_id") != selected_planter_id
+                )
+
+                if planting_status == "planted":
+                    st.success("This point is already marked as planted and now appears as a yellow point on analytics maps.")
+                elif selected_planter is None:
+                    st.warning("Please select a planter first.")
+                elif selected_point.get("assigned_planter_id") == selected_planter_id:
+                    st.info(f"This point is already assigned to {selected_planter['full_name']}.")
+
+                if (
+                    planting_status != "planted"
+                    and selected_planter is not None
+                    and selected_point.get("assigned_planter_id") != selected_planter_id
+                ):
+                    button_label = (
+                        f"Reassign To {selected_planter['full_name']}"
+                        if reassign_mode
+                        else f"Assign To {selected_planter['full_name']}"
+                    )
+                    st.button(
+                        button_label,
+                        key=f"assign_map_point_{selected_point['id']}_{selected_planter_id}",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=assign_disabled,
+                        on_click=_queue_planter_management_assignment,
+                        args=(selected_point["id"], selected_planter_id, reassign_mode),
+                    )
+
+    st.markdown("---")
+    roster_col, assignment_list_col = st.columns([0.94, 1.06], gap="large")
+
+    with roster_col:
+        st.markdown("""
+        <div class="manager-card">
+            <div class="panel-kicker">Planter Roster</div>
+            <h3>Registered Field Staff</h3>
+            <p>Track field workload, account access, and base location readiness for every planter.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if not planters:
+            st.info("No planter profiles yet.")
+        else:
+            for planter in planters:
+                base_text = "Base not set"
+                if planter.get("base_lat") is not None and planter.get("base_lon") is not None:
+                    base_text = f"{planter.get('base_label') or 'Base'} - {planter['base_lat']:.6f}, {planter['base_lon']:.6f}"
+                st.markdown(f"""
+                <div class="manager-card">
+                    <div class="field-title-row">
+                        <div>
+                            <div class="panel-kicker">Planter</div>
+                            <h3>{planter['full_name']}</h3>
+                        </div>
+                        <div class="field-status {'pending' if planter['status'] == 'active' else 'skipped'}">{planter['status']}</div>
+                    </div>
+                    <div class="manager-meta">
+                        <span>{planter['active_assignments']} active assignments</span>
+                        <span>{planter['pending_points']} pending points</span>
+                        <span>{planter['completed_points']} completed points</span>
+                    </div>
+                    <p>Username: {planter.get('username') or 'No field login yet'}<br>{planter.get('phone') or 'No contact number saved'}<br>{base_text}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+    with assignment_list_col:
+        st.markdown("""
+        <div class="manager-card">
+            <div class="panel-kicker">Assignment Monitor</div>
+            <h3>Active And Recent Batches</h3>
+            <p>Export per-planter point lists, archive finished work, and clean up old batches once the field run is done.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if not assignments:
+            st.info("No planter assignments yet.")
+        else:
+            for assignment in assignments:
+                assignment_points = get_assignment_points(assignment["id"])
+                waypoint_rows = _assignment_points_to_waypoints(assignment_points, prefix=assignment["title"])
+                export_meta = {
+                    "image_name": assignment["title"],
+                    "analyzed_at": assignment["created_at"],
+                    "detection_mode": "field-assignment",
+                    "total_points": len(waypoint_rows),
+                }
+                export_df = pd.DataFrame([
+                    {
+                        "Sequence": point["sequence_num"],
+                        "Point #": point["point_num"],
+                        "Latitude": f"{point['latitude']:.7f}",
+                        "Longitude": f"{point['longitude']:.7f}",
+                        "Status": point["assignment_status"],
+                        "Source Image": point["image_name"],
+                    }
+                    for point in assignment_points
+                ])
+
+                st.markdown(f"""
+                <div class="manager-card">
+                    <div class="field-title-row">
+                        <div>
+                            <div class="panel-kicker">Assignment</div>
+                            <h3>{assignment['title']}</h3>
+                        </div>
+                        <div class="field-status {'pending' if assignment['status'] == 'active' else 'completed'}">{assignment['status']}</div>
+                    </div>
+                    <div class="manager-meta">
+                        <span>{assignment['planter_name']}</span>
+                        <span>{assignment['assignment_date']}</span>
+                        <span>{assignment['travel_mode']}</span>
+                        <span>{assignment['total_points']} total points</span>
+                        <span>{assignment['pending_points']} pending</span>
+                        <span>{assignment['completed_points']} completed</span>
+                    </div>
+                    <p>{assignment.get('notes') or 'No batch notes.'}</p>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if assignment_points:
+                    export_col1, export_col2, export_col3, export_col4 = st.columns(4)
+                    with export_col1:
+                        st.download_button(
+                            "CSV",
+                            data=export_df.to_csv(index=False),
+                            file_name=f"assignment_{assignment['id']}.csv",
+                            mime="text/csv",
+                            use_container_width=True,
+                            key=f"assignment_csv_{assignment['id']}",
+                        )
+                    with export_col2:
+                        st.download_button(
+                            "GPX",
+                            data=generate_gpx(waypoint_rows, export_meta),
+                            file_name=f"assignment_{assignment['id']}.gpx",
+                            mime="application/gpx+xml",
+                            use_container_width=True,
+                            key=f"assignment_gpx_{assignment['id']}",
+                        )
+                    with export_col3:
+                        st.download_button(
+                            "KML",
+                            data=generate_kml(waypoint_rows, export_meta),
+                            file_name=f"assignment_{assignment['id']}.kml",
+                            mime="application/vnd.google-earth.kml+xml",
+                            use_container_width=True,
+                            key=f"assignment_kml_{assignment['id']}",
+                        )
+                    with export_col4:
+                        st.download_button(
+                            "GeoJSON",
+                            data=generate_geojson(waypoint_rows, export_meta),
+                            file_name=f"assignment_{assignment['id']}.geojson",
+                            mime="application/geo+json",
+                            use_container_width=True,
+                            key=f"assignment_geojson_{assignment['id']}",
+                        )
+
+                action_col1, action_col2 = st.columns(2)
+                with action_col1:
+                    archive_disabled = assignment["status"] == "archived"
+                    if st.button(
+                        "Archive Assignment" if not archive_disabled else "Already Archived",
+                        key=f"archive_assignment_{assignment['id']}",
+                        use_container_width=True,
+                        disabled=archive_disabled,
+                    ):
+                        archive_planter_assignment(assignment["id"])
+                        _refresh_planter_management_cache(
+                            reload_planters=True,
+                            reload_points=True,
+                            reload_assignments=True,
+                        )
+                        _invalidate_planter_management_base_map()
+                        st.rerun()
+                with action_col2:
+                    delete_disabled = assignment["status"] != "archived"
+                    if st.button(
+                        "Delete Archived",
+                        key=f"delete_assignment_{assignment['id']}",
+                        use_container_width=True,
+                        disabled=delete_disabled,
+                    ):
+                        delete_planter_assignment(assignment["id"])
+                        _refresh_planter_management_cache(
+                            reload_planters=True,
+                            reload_points=True,
+                            reload_assignments=True,
+                        )
+                        _invalidate_planter_management_base_map()
+                        st.rerun()
+
+
+def show_planter_field_view():
+    """Mobile-friendly field module for planters and route launching."""
+    planters = [p for p in list_planters(include_inactive=False) if p["status"] == "active"]
+    dashboard_stats = get_planter_dashboard_stats()
+
+    _render_section_banner(
+        "Field Navigation",
+        "Planter Mobile View",
+        "Use this responsive field view on a phone to open navigation for the next planting point, then mark it completed or skipped after deployment.",
+        [
+            f"{dashboard_stats['active_planters']} active planters",
+            f"{dashboard_stats['active_assignments']} live batches",
+            "Google Maps handoff",
+        ],
+    )
+
+    if not planters:
+        st.info("No active planters are available yet. Register a planter in Planter Management first.")
+        return
+
+    planter_options = {f"{p['full_name']} · {p['pending_points']} pending": p["id"] for p in planters}
+    selected_planter_label = st.selectbox("Select planter", list(planter_options.keys()))
+    selected_planter_id = planter_options[selected_planter_label]
+    selected_planter = next((p for p in planters if p["id"] == selected_planter_id), None)
+    field_points = get_planter_field_points(selected_planter_id)
+    active_assignments = list_planter_assignments(planter_id=selected_planter_id, active_only=True)
+
+    pending_count = sum(1 for point in field_points if point["assignment_status"] == "pending")
+    completed_count = sum(1 for point in field_points if point["assignment_status"] == "completed")
+    skipped_count = sum(1 for point in field_points if point["assignment_status"] == "skipped")
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Active batches", len(active_assignments))
+    c2.metric("Pending points", pending_count)
+    c3.metric("Completed", completed_count)
+    c4.metric("Skipped", skipped_count)
+
+    if selected_planter and selected_planter.get("base_label"):
+        st.caption(f"Field base: {selected_planter['base_label']}")
+
+    if not field_points:
+        st.info("This planter does not have any active field points yet.")
+        return
+
+    status_order = {"pending": 0, "completed": 1, "skipped": 2}
+    field_points = sorted(
+        field_points,
+        key=lambda row: (
+            status_order.get(row["assignment_status"], 9),
+            row["assignment_date"],
+            row["sequence_num"],
+        ),
+    )
+
+    for point in field_points:
+        status_class = point["assignment_status"]
+        st.markdown(f"""
+        <div class="field-card is-{status_class}">
+            <div class="field-title-row">
+                <div>
+                    <div class="panel-kicker">Assignment Point</div>
+                    <h3>Point {point['sequence_num']:02d} · {point['title']}</h3>
+                </div>
+                <div class="field-status {status_class}">{point['assignment_status']}</div>
+            </div>
+            <div class="field-meta">
+                <span>{point['image_name']}</span>
+                <span>{point['travel_mode']}</span>
+                <span>Point #{point['point_num']}</span>
+                <span>{point['assignment_date']}</span>
+            </div>
+            <div class="field-coords">{point['latitude']:.7f}, {point['longitude']:.7f}</div>
+            <div class="field-caption">Buffer {point.get('buffer_m') or 0:.1f} m · Area {point.get('area_m2') or 0:.2f} m²</div>
+            <div class="field-divider"></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        nav_url = _build_google_maps_navigation_url(
+            point["latitude"],
+            point["longitude"],
+            travel_mode=point.get("travel_mode") or "walking",
+        )
+        _render_navigation_button("Open Navigation", nav_url)
+
+        action_col1, action_col2, action_col3 = st.columns(3)
+        with action_col1:
+            if st.button("Mark Complete", key=f"complete_{point['assignment_point_id']}", use_container_width=True):
+                update_assignment_point_status(point["assignment_point_id"], "completed")
+                st.rerun()
+        with action_col2:
+            if st.button("Skip Point", key=f"skip_{point['assignment_point_id']}", use_container_width=True):
+                update_assignment_point_status(point["assignment_point_id"], "skipped")
+                st.rerun()
+        with action_col3:
+            if st.button("Reset", key=f"reset_{point['assignment_point_id']}", use_container_width=True):
+                update_assignment_point_status(point["assignment_point_id"], "pending")
+                st.rerun()
 
 def show_eroded_zone_editor():
     """
@@ -1706,21 +2949,28 @@ def show_map_analytics():
     st.markdown("### 🧮 Aggregate Statistics")
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("📸 Total Analyses", stats['total_analyses'])
-    m2.metric("🌱 Total Planting Points", stats['total_planting_points'])
+    m2.metric("🌱 Remaining Planting Points", stats['total_planting_points'])
     m3.metric("🟢 Total Plantable Area", f"{stats['total_plantable_m2']:.1f} m²")
     m4.metric("🌳 Total Canopies Detected", stats['total_canopies'])
 
     m5, m6, m7, m8 = st.columns(4)
-    m5.metric("🔴 Total Danger Area", f"{stats['total_danger_m2']:.1f} m²")
-    m6.metric("📏 Total Coverage", f"{stats['total_coverage_m2']:.1f} m²")
-    m7.metric("🚫 Forbidden-Filtered", stats['total_forbidden_filtered'])
-    m8.metric("🏜️ Erosion-Filtered", stats['total_eroded_filtered'])
+    m5.metric("🟡 Planted Points", stats.get('total_planted_points', 0))
+    m6.metric("🔴 Total Danger Area", f"{stats['total_danger_m2']:.1f} m²")
+    m7.metric("📏 Total Coverage", f"{stats['total_coverage_m2']:.1f} m²")
+    m8.metric("🚫 Forbidden-Filtered", stats['total_forbidden_filtered'])
+    m9, m10 = st.columns(2)
+    m9.metric("🏜️ Erosion-Filtered", stats['total_eroded_filtered'])
+    m10.metric("🧭 All Mapped Points", stats.get('total_mapped_points', len(all_points)))
 
     st.markdown("---")
 
     # ── Full Map ──────────────────────────────────────────────────
     st.markdown("### 🗺️ All Planting Locations")
-    st.info(f"Showing **{len(all_points)}** planting points from **{stats['total_analyses']}** analyses")
+    st.info(
+        f"Showing **{stats.get('total_mapped_points', len(all_points))}** mapped points from **{stats['total_analyses']}** analyses. "
+        f"**{stats['total_planting_points']}** remain to plant and **{stats.get('total_planted_points', 0)}** are already planted. "
+        f"Green = planned, yellow = planted."
+    )
 
     # Determine map centre from the average of all analysis centres
     _lats = [a['center_lat'] for a in analyses if a['center_lat']]
@@ -1788,16 +3038,18 @@ def show_map_analytics():
     # All planting points as a single layer
     pts_grp = folium.FeatureGroup(name='🌱 All Planting Points')
     for pt in all_points:
+        point_style = _saved_point_marker_style(pt.get("status"))
         folium.CircleMarker(
             location=[pt['latitude'], pt['longitude']],
             radius=3,
-            color='#1B5E20',
-            fillColor='#4CAF50',
+            color=point_style["border_color"],
+            fillColor=point_style["fill_color"],
             fillOpacity=0.8,
             weight=1,
-            tooltip=f"🌱 {pt['image_name']} ({pt['analyzed_at'][:10]})",
+            tooltip=f"{point_style['label']} · {pt['image_name']} ({pt['analyzed_at'][:10]})",
             popup=f"🌱 GPS: {pt['latitude']:.7f}°, {pt['longitude']:.7f}°<br>"
                   f"Image: {pt['image_name']}<br>"
+                  f"Status: {point_style['label']}<br>"
                   f"Buffer: {pt['buffer_m']}m | Area: {pt['area_m2']:.2f} m²",
         ).add_to(pts_grp)
     pts_grp.add_to(analytics_map)
@@ -1916,7 +3168,13 @@ def main():
     workspace_stats = get_all_stats()
     eroded_zone_count = len(_eroded_filter.forbidden_polygons)
     total_exclusions = _forbidden_filter.zone_count + eroded_zone_count
-    workspace_modes = ["Map Workspace", "Map Analytics", "Eroded Zone Editor"]
+    workspace_modes = [
+        "Map Workspace",
+        "Map Analytics",
+        "Eroded Zone Editor",
+        "Planter Management",
+        "Field Navigation",
+    ]
     if st.session_state.get("workspace_mode") not in workspace_modes:
         st.session_state.workspace_mode = "Map Workspace"
 
@@ -1925,7 +3183,7 @@ def main():
         <div class="sidebar-brand">
             <span>Navigation</span>
             <h2>MangroVision</h2>
-            <p>Move between the live map workspace, analytics dashboard, and erosion editor from one operational sidebar.</p>
+            <p>Move between mapping, analytics, erosion editing, planter management, and the mobile field navigation view from one operational sidebar.</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1943,7 +3201,7 @@ def main():
         st.markdown("---")
         st.markdown("### System Snapshot")
         st.metric("Saved analyses", workspace_stats['total_analyses'])
-        st.metric("Planting points", workspace_stats['total_planting_points'])
+        st.metric("Remaining points", workspace_stats['total_planting_points'])
         st.metric("Active exclusions", total_exclusions)
 
         ai_confidence = 0.75
@@ -1988,11 +3246,15 @@ def main():
                 <div class="main-kicker">MangroVision Planning System</div>
                 <h1>Leganes Mangrove Mapping Workspace</h1>
                 <p>Professional geospatial workspace for canopy detection, exclusion zoning, planting-point generation, and field export.</p>
-                <p style="font-size: 0.94rem; margin-top: 0.5rem;">The system now prioritizes the map as the operational surface, while image analysis remains available as a supporting workflow.</p>
+                <div class="main-header-notes">
+                    <span>Map-first workflow</span>
+                    <span>{_forbidden_filter.zone_count} forbidden zones</span>
+                    <span>{eroded_zone_count} eroded zones</span>
+                </div>
             </div>
             <div class="header-meta">
                 <div class="header-badge">{workspace_stats['total_analyses']} saved analyses</div>
-                <div class="header-badge">{workspace_stats['total_planting_points']} planting points</div>
+                <div class="header-badge">{workspace_stats['total_planting_points']} remaining planting points</div>
                 <div class="header-badge">{total_exclusions} active exclusion polygons</div>
             </div>
         </div>
@@ -2007,16 +3269,13 @@ def main():
         show_map_analytics()
         return
 
-    _render_section_banner(
-        "Map Workspace",
-        "Operational Planting Map",
-        "Inspect the orthophoto first, confirm exclusion layers, and only then queue a target drone frame for analysis.",
-        [
-            "Map-first workflow",
-            f"{_forbidden_filter.zone_count} forbidden zones",
-            f"{eroded_zone_count} eroded zones",
-        ],
-    )
+    if mode == "Planter Management":
+        show_planter_management()
+        return
+
+    if mode == "Field Navigation":
+        show_planter_field_view()
+        return
 
     uploaded_file = None
     image = None

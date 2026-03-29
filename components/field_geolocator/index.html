@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Field Geolocator</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      overflow: hidden;
+      font-family: Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <script>
+    let lastRefreshNonce = null;
+    let watchId = null;
+    let lastSent = null;
+
+    function sendMessage(type, data) {
+      window.parent.postMessage(
+        Object.assign({ isStreamlitMessage: true, type: type }, data || {}),
+        "*"
+      );
+    }
+
+    function setFrameHeight(height) {
+      sendMessage("streamlit:setFrameHeight", { height: height });
+    }
+
+    function setComponentValue(value) {
+      sendMessage("streamlit:setComponentValue", { value: value });
+    }
+
+    function roughlyMovedEnough(previous, next) {
+      if (!previous) {
+        return true;
+      }
+      const latDiff = (previous.latitude - next.latitude) * 111320;
+      const lonDiff = (previous.longitude - next.longitude) * 111320;
+      const distance = Math.sqrt((latDiff * latDiff) + (lonDiff * lonDiff));
+      return distance >= 2;
+    }
+
+    function emitSuccess(position, forceSend = false) {
+      const payload = {
+        status: "success",
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy || null,
+        captured_at: new Date().toISOString()
+      };
+      const now = Date.now();
+      const timeDelta = lastSent ? now - lastSent.sentAt : Number.POSITIVE_INFINITY;
+      if (!forceSend && lastSent && timeDelta < 4000 && !roughlyMovedEnough(lastSent, payload)) {
+        return;
+      }
+      lastSent = Object.assign({ sentAt: now }, payload);
+      setComponentValue(payload);
+    }
+
+    function emitError(error) {
+      let message = "Location permission was denied.";
+      if (error && error.code === 2) {
+        message = "Current location could not be resolved.";
+      } else if (error && error.code === 3) {
+        message = "Current location request timed out.";
+      }
+      setComponentValue({
+        status: "error",
+        message: message,
+        captured_at: new Date().toISOString()
+      });
+    }
+
+    function startWatching(refreshNonce) {
+      if (!navigator.geolocation) {
+        setComponentValue({
+          status: "error",
+          message: "Browser geolocation is unavailable.",
+          captured_at: new Date().toISOString()
+        });
+        return;
+      }
+
+      if (refreshNonce !== lastRefreshNonce) {
+        lastRefreshNonce = refreshNonce;
+        if (watchId !== null) {
+          navigator.geolocation.clearWatch(watchId);
+          watchId = null;
+        }
+        lastSent = null;
+      }
+
+      navigator.geolocation.getCurrentPosition(
+        (position) => emitSuccess(position, true),
+        emitError,
+        {
+          enableHighAccuracy: true,
+          timeout: 12000,
+          maximumAge: 0
+        }
+      );
+
+      if (watchId === null) {
+        watchId = navigator.geolocation.watchPosition(
+          (position) => emitSuccess(position, false),
+          emitError,
+          {
+            enableHighAccuracy: true,
+            timeout: 15000,
+            maximumAge: 0
+          }
+        );
+      }
+    }
+
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "streamlit:render") {
+        return;
+      }
+      const args = event.data.args || {};
+      startWatching(args.refresh_nonce || 0);
+      setFrameHeight(1);
+    });
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    setFrameHeight(1);
+  </script>
+</body>
+</html>
