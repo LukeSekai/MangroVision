@@ -64,8 +64,7 @@ output_geojson/
 
 # MAP tiles (large orthophoto tiles)
 MAP/*/
-!MAP/odm_georeferencing/
-!MAP/odm_orthophoto/odm_orthophoto.tif
+
 
 # Temporary and debug files
 temp_*.jpg

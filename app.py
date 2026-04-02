@@ -1686,8 +1686,16 @@ def _init_planter_management_state():
         st.session_state.planter_management_points = None
     if "planter_management_points_by_id" not in st.session_state:
         st.session_state.planter_management_points_by_id = {}
+    if "planter_management_point_coord_index" not in st.session_state:
+        st.session_state.planter_management_point_coord_index = {}
+    if "planter_management_point_bucket_index" not in st.session_state:
+        st.session_state.planter_management_point_bucket_index = {}
     if "planter_management_assignments" not in st.session_state:
         st.session_state.planter_management_assignments = None
+    if "planter_management_assignment_points_cache" not in st.session_state:
+        st.session_state.planter_management_assignment_points_cache = {}
+    if "planter_management_assignment_export_cache" not in st.session_state:
+        st.session_state.planter_management_assignment_export_cache = {}
     if "planter_management_dashboard_stats" not in st.session_state:
         st.session_state.planter_management_dashboard_stats = None
     if "planter_management_points_version" not in st.session_state:
@@ -1702,6 +1710,58 @@ def _init_planter_management_state():
         st.session_state.planter_management_map_center = None
     if "planter_management_map_zoom" not in st.session_state:
         st.session_state.planter_management_map_zoom = None
+
+
+def _build_planter_management_point_indexes(points: list[dict]) -> tuple[dict, dict]:
+    """Build fast point-id lookup indexes for map click resolution."""
+    coord_index: dict[tuple[float, float], list[int]] = {}
+    bucket_index: dict[tuple[float, float], list[int]] = {}
+
+    for point in points:
+        point_id = int(point["id"])
+        lat = float(point["latitude"])
+        lon = float(point["longitude"])
+
+        coord_key = (round(lat, 7), round(lon, 7))
+        coord_index.setdefault(coord_key, []).append(point_id)
+
+        bucket_key = (round(lat, 4), round(lon, 4))
+        bucket_index.setdefault(bucket_key, []).append(point_id)
+
+    return coord_index, bucket_index
+
+
+def _invalidate_planter_management_assignment_render_cache(*assignment_ids: int):
+    """Drop cached assignment points/export blobs for changed assignment ids."""
+    points_cache = st.session_state.get("planter_management_assignment_points_cache")
+    if points_cache is None:
+        points_cache = {}
+        st.session_state.planter_management_assignment_points_cache = points_cache
+
+    export_cache = st.session_state.get("planter_management_assignment_export_cache")
+    if export_cache is None:
+        export_cache = {}
+        st.session_state.planter_management_assignment_export_cache = export_cache
+
+    if assignment_ids:
+        for assignment_id in assignment_ids:
+            try:
+                key = int(assignment_id)
+            except (TypeError, ValueError):
+                continue
+            points_cache.pop(key, None)
+            export_cache.pop(key, None)
+    else:
+        points_cache.clear()
+        export_cache.clear()
+
+
+def _recompute_planter_management_dashboard_stats():
+    """Recompute dashboard counters from in-memory planter/assignment state."""
+    st.session_state.planter_management_dashboard_stats = _compute_planter_management_dashboard_stats(
+        st.session_state.get("planter_management_planters") or [],
+        st.session_state.get("planter_management_assignments") or [],
+    )
 
 
 def _compute_planter_management_dashboard_stats(planters: list[dict], assignments: list[dict]) -> dict:
@@ -1743,15 +1803,16 @@ def _refresh_planter_management_cache(
         st.session_state.planter_management_points_by_id = {
             int(point["id"]): point for point in points
         }
+        coord_index, bucket_index = _build_planter_management_point_indexes(points)
+        st.session_state.planter_management_point_coord_index = coord_index
+        st.session_state.planter_management_point_bucket_index = bucket_index
         st.session_state.planter_management_points_version += 1
 
     if force or reload_assignments or st.session_state.planter_management_assignments is None:
         st.session_state.planter_management_assignments = list_planter_assignments()
+        _invalidate_planter_management_assignment_render_cache()
 
-    st.session_state.planter_management_dashboard_stats = _compute_planter_management_dashboard_stats(
-        st.session_state.planter_management_planters or [],
-        st.session_state.planter_management_assignments or [],
-    )
+    _recompute_planter_management_dashboard_stats()
 
 
 def _invalidate_planter_management_base_map():
@@ -1761,7 +1822,7 @@ def _invalidate_planter_management_base_map():
 
 
 def _get_cached_planter_management_base_map(points: list[dict]):
-    """Return a cached base map that only rebuilds when point data changes."""
+    """Return a cached base map and rebuild only when point data changes."""
     version = st.session_state.get("planter_management_points_version", 0)
     if (
         st.session_state.get("planter_management_base_map") is None
@@ -1839,6 +1900,7 @@ def _render_planter_assignment_map(
         "use_container_width": True,
     }
 
+    render_map = copy.deepcopy(base_map)
     if supports_advanced_overlay:
         if center is not None:
             render_kwargs["center"] = center
@@ -1847,9 +1909,8 @@ def _render_planter_assignment_map(
         if selected_layers:
             render_kwargs["feature_group_to_add"] = selected_layers
         render_kwargs["layer_control"] = folium.LayerControl(collapsed=False)
-        return st_folium.st_folium(base_map, **render_kwargs)
+        return st_folium.st_folium(render_map, **render_kwargs)
 
-    render_map = copy.deepcopy(base_map)
     for selected_layer in selected_layers or []:
         selected_layer.add_to(render_map)
     if center is not None:
@@ -1869,6 +1930,79 @@ def _queue_planter_management_assignment(point_id: int, planter_id: int, allow_r
         "planter_id": int(planter_id),
         "allow_reassign": bool(allow_reassign),
     }
+
+
+def _upsert_planter_management_assignment_cache(result: dict):
+    """Apply assignment-result deltas to cached assignment rows."""
+    assignments = st.session_state.get("planter_management_assignments")
+    if assignments is None:
+        return
+
+    target_assignment_id = int(result["assignment_id"])
+    target = next(
+        (assignment for assignment in assignments if int(assignment["id"]) == target_assignment_id),
+        None,
+    )
+
+    if target is None:
+        target = {
+            "id": target_assignment_id,
+            "planter_id": int(result["planter_id"]),
+            "title": result["assignment_title"],
+            "assignment_date": result["assignment_date"],
+            "travel_mode": "walking",
+            "status": "active",
+            "notes": "Created from the interactive planter management map.",
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "planter_name": result["planter_name"],
+            "base_label": None,
+            "base_lat": None,
+            "base_lon": None,
+            "assigned_by_name": None,
+            "total_points": 0,
+            "pending_points": 0,
+            "completed_points": 0,
+            "skipped_points": 0,
+        }
+        assignments.insert(0, target)
+
+    target["planter_id"] = int(result["planter_id"])
+    target["planter_name"] = result["planter_name"]
+    target["title"] = result["assignment_title"]
+    target["assignment_date"] = result["assignment_date"]
+    target["status"] = "active"
+    target["total_points"] = int(target.get("total_points") or 0) + 1
+    target["pending_points"] = int(target.get("pending_points") or 0) + 1
+
+    source_assignment_id = result.get("source_assignment_id")
+    if source_assignment_id is None:
+        return
+
+    source_assignment_id = int(source_assignment_id)
+    if source_assignment_id == target_assignment_id:
+        return
+    source = next(
+        (assignment for assignment in assignments if int(assignment["id"]) == source_assignment_id),
+        None,
+    )
+    if source is None:
+        return
+
+    source["total_points"] = max(0, int(source.get("total_points") or 0) - 1)
+    source_point_status = (result.get("source_assignment_status") or "").strip().lower()
+    if source_point_status == "pending":
+        source["pending_points"] = max(0, int(source.get("pending_points") or 0) - 1)
+    elif source_point_status == "completed":
+        source["completed_points"] = max(0, int(source.get("completed_points") or 0) - 1)
+    elif source_point_status == "skipped":
+        source["skipped_points"] = max(0, int(source.get("skipped_points") or 0) - 1)
+
+    if result.get("source_assignment_deleted"):
+        assignments[:] = [
+            assignment
+            for assignment in assignments
+            if int(assignment["id"]) != source_assignment_id
+        ]
 
 
 def _apply_planter_management_assignment_result(result: dict):
@@ -1903,9 +2037,14 @@ def _apply_planter_management_assignment_result(result: dict):
             if result.get("source_assignment_deleted"):
                 source_planter["active_assignments"] = max(0, int(source_planter.get("active_assignments") or 0) - 1)
 
+    _upsert_planter_management_assignment_cache(result)
+    _invalidate_planter_management_assignment_render_cache(
+        result.get("assignment_id"),
+        result.get("source_assignment_id"),
+    )
     st.session_state.planter_management_points_version += 1
     _invalidate_planter_management_base_map()
-    _refresh_planter_management_cache(reload_assignments=True)
+    _recompute_planter_management_dashboard_stats()
 
 
 def _process_pending_planter_management_assignment():
@@ -1921,6 +2060,7 @@ def _process_pending_planter_management_assignment():
             assigned_by_user_id=st.session_state.get("user_id"),
             allow_reassign=bool(pending.get("allow_reassign")),
         )
+        st.session_state.planter_management_selected_planter_id = int(result["planter_id"])
         _apply_planter_management_assignment_result(result)
         if result["was_reassigned"]:
             message = (
@@ -1947,7 +2087,37 @@ def _point_click_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) 
     return (lat_m * lat_m + lon_m * lon_m) ** 0.5
 
 
-def _resolve_clicked_assignment_point(map_response: dict, points: list[dict]) -> tuple[int | None, str | None]:
+def _nearest_point_from_ids(
+    clicked_lat: float,
+    clicked_lon: float,
+    candidate_ids: list[int],
+    points_by_id: dict[int, dict],
+) -> tuple[int | None, float | None]:
+    """Return nearest point id from a candidate set."""
+    nearest_point_id = None
+    nearest_distance_m = None
+    for point_id in candidate_ids:
+        point = points_by_id.get(int(point_id))
+        if not point:
+            continue
+        distance_m = _point_click_distance_m(
+            clicked_lat,
+            clicked_lon,
+            float(point["latitude"]),
+            float(point["longitude"]),
+        )
+        if nearest_distance_m is None or distance_m < nearest_distance_m:
+            nearest_distance_m = distance_m
+            nearest_point_id = int(point_id)
+    return nearest_point_id, nearest_distance_m
+
+
+def _resolve_clicked_assignment_point(
+    map_response: dict,
+    points_by_id: dict[int, dict],
+    point_coord_index: dict[tuple[float, float], list[int]] | None = None,
+    point_bucket_index: dict[tuple[float, float], list[int]] | None = None,
+) -> tuple[int | None, str | None]:
     """Resolve the last clicked map marker to a planting point id."""
     if not isinstance(map_response, dict):
         return None, None
@@ -1969,22 +2139,49 @@ def _resolve_clicked_assignment_point(map_response: dict, points: list[dict]) ->
 
     clicked_lat = float(clicked["lat"])
     clicked_lon = float(clicked["lng"])
-    nearest_point = None
-    nearest_distance = None
-    for point in points:
-        distance_m = _point_click_distance_m(
+    coord_index = point_coord_index or {}
+    bucket_index = point_bucket_index or {}
+    max_match_distance_m = 6.0
+
+    exact_key = (round(clicked_lat, 7), round(clicked_lon, 7))
+    exact_candidates = coord_index.get(exact_key) or []
+    if exact_candidates:
+        nearest_id, nearest_distance = _nearest_point_from_ids(
             clicked_lat,
             clicked_lon,
-            float(point["latitude"]),
-            float(point["longitude"]),
+            exact_candidates,
+            points_by_id,
         )
-        if nearest_distance is None or distance_m < nearest_distance:
-            nearest_distance = distance_m
-            nearest_point = point
+        if nearest_id is not None and nearest_distance is not None and nearest_distance <= max_match_distance_m:
+            return nearest_id, f"coord:{nearest_id}:{round(clicked_lat, 7)}:{round(clicked_lon, 7)}"
 
-    if nearest_point and nearest_distance is not None and nearest_distance <= 6.0:
-        point_id = int(nearest_point["id"])
-        return point_id, f"coord:{point_id}:{round(clicked_lat, 7)}:{round(clicked_lon, 7)}"
+    if bucket_index:
+        bucket_candidates: set[int] = set()
+        base_lat = round(clicked_lat, 4)
+        base_lon = round(clicked_lon, 4)
+        for lat_offset in (-0.0001, 0.0, 0.0001):
+            for lon_offset in (-0.0001, 0.0, 0.0001):
+                bucket_key = (round(base_lat + lat_offset, 4), round(base_lon + lon_offset, 4))
+                for candidate_id in bucket_index.get(bucket_key, []):
+                    bucket_candidates.add(int(candidate_id))
+        if bucket_candidates:
+            nearest_id, nearest_distance = _nearest_point_from_ids(
+                clicked_lat,
+                clicked_lon,
+                list(bucket_candidates),
+                points_by_id,
+            )
+            if nearest_id is not None and nearest_distance is not None and nearest_distance <= max_match_distance_m:
+                return nearest_id, f"coord:{nearest_id}:{round(clicked_lat, 7)}:{round(clicked_lon, 7)}"
+
+    nearest_id, nearest_distance = _nearest_point_from_ids(
+        clicked_lat,
+        clicked_lon,
+        list(points_by_id.keys()),
+        points_by_id,
+    )
+    if nearest_id is not None and nearest_distance is not None and nearest_distance <= max_match_distance_m:
+        return nearest_id, f"coord:{nearest_id}:{round(clicked_lat, 7)}:{round(clicked_lon, 7)}"
     return None, None
 
 
@@ -2072,6 +2269,82 @@ def _build_planter_assignment_map(points: list[dict]):
     return assignment_map
 
 
+def _normalize_selected_planter_id(active_planter_ids: set[int]) -> int | None:
+    """Keep selected planter stable across reruns and type coercions."""
+    selected_planter_id = st.session_state.get("planter_management_selected_planter_id")
+    if selected_planter_id is None:
+        return None
+    try:
+        normalized_id = int(selected_planter_id)
+    except (TypeError, ValueError):
+        st.session_state.planter_management_selected_planter_id = None
+        return None
+    if normalized_id not in active_planter_ids:
+        st.session_state.planter_management_selected_planter_id = None
+        return None
+    if normalized_id != selected_planter_id:
+        st.session_state.planter_management_selected_planter_id = normalized_id
+    return normalized_id
+
+
+def _get_cached_planter_management_assignment_points(assignment_id: int) -> list[dict]:
+    """Return assignment points from in-session cache to avoid repeated queries."""
+    cache = st.session_state.get("planter_management_assignment_points_cache")
+    if cache is None:
+        cache = {}
+        st.session_state.planter_management_assignment_points_cache = cache
+
+    assignment_key = int(assignment_id)
+    if assignment_key not in cache:
+        cache[assignment_key] = get_assignment_points(assignment_key)
+    return cache[assignment_key]
+
+
+def _get_cached_planter_management_assignment_exports(assignment: dict, assignment_points: list[dict]) -> dict:
+    """Cache expensive export payload generation per assignment."""
+    cache = st.session_state.get("planter_management_assignment_export_cache")
+    if cache is None:
+        cache = {}
+        st.session_state.planter_management_assignment_export_cache = cache
+
+    assignment_id = int(assignment["id"])
+    fingerprint = tuple(
+        (int(point["assignment_point_id"]), point.get("assignment_status"))
+        for point in assignment_points
+    )
+    cached = cache.get(assignment_id)
+    if cached and cached.get("fingerprint") == fingerprint:
+        return cached
+
+    waypoint_rows = _assignment_points_to_waypoints(assignment_points, prefix=assignment["title"])
+    export_meta = {
+        "image_name": assignment["title"],
+        "analyzed_at": assignment["created_at"],
+        "detection_mode": "field-assignment",
+        "total_points": len(waypoint_rows),
+    }
+    export_df = pd.DataFrame([
+        {
+            "Sequence": point["sequence_num"],
+            "Point #": point["point_num"],
+            "Latitude": f"{point['latitude']:.7f}",
+            "Longitude": f"{point['longitude']:.7f}",
+            "Status": point["assignment_status"],
+            "Source Image": point["image_name"],
+        }
+        for point in assignment_points
+    ])
+    payload = {
+        "fingerprint": fingerprint,
+        "csv": export_df.to_csv(index=False),
+        "gpx": generate_gpx(waypoint_rows, export_meta),
+        "kml": generate_kml(waypoint_rows, export_meta),
+        "geojson": generate_geojson(waypoint_rows, export_meta),
+    }
+    cache[assignment_id] = payload
+    return payload
+
+
 def show_planter_management():
     """Planner-facing module for planter records and assignment creation."""
     _init_planter_management_state()
@@ -2082,6 +2355,8 @@ def show_planter_management():
     planters = st.session_state.get("planter_management_planters") or []
     assignment_map_points = st.session_state.get("planter_management_points") or []
     assignment_points_by_id = st.session_state.get("planter_management_points_by_id") or {}
+    point_coord_index = st.session_state.get("planter_management_point_coord_index") or {}
+    point_bucket_index = st.session_state.get("planter_management_point_bucket_index") or {}
     assignments = st.session_state.get("planter_management_assignments") or []
 
     _render_section_banner(
@@ -2123,11 +2398,7 @@ def show_planter_management():
 
     active_planters = [planter for planter in planters if planter["status"] == "active"]
     active_planter_ids = {planter["id"] for planter in active_planters}
-    if (
-        st.session_state.get("planter_management_selected_planter_id") is not None
-        and st.session_state.get("planter_management_selected_planter_id") not in active_planter_ids
-    ):
-        st.session_state.planter_management_selected_planter_id = None
+    _normalize_selected_planter_id(active_planter_ids)
 
     selected_point_id = st.session_state.get("planter_management_selected_point_id")
     if selected_point_id is not None and selected_point_id not in assignment_points_by_id:
@@ -2137,21 +2408,17 @@ def show_planter_management():
 
     selector_col, helper_col = st.columns([0.7, 0.3], gap="large")
     with selector_col:
+        planter_labels = {None: "Select a planter..."}
+        for planter in active_planters:
+            planter_labels[planter["id"]] = (
+                f"{planter['full_name']} · "
+                f"{planter['pending_points']} pending · "
+                f"{planter['active_assignments']} active batches"
+            )
         selected_planter_id = st.selectbox(
             "Planter",
             options=[None] + [planter["id"] for planter in active_planters],
-            format_func=lambda planter_id: (
-                "Select a planter..."
-                if planter_id is None
-                else next(
-                    (
-                        f"{planter['full_name']} · {planter['pending_points']} pending · {planter['active_assignments']} active batches"
-                        for planter in active_planters
-                        if planter["id"] == planter_id
-                    ),
-                    "Unknown planter",
-                )
-            ),
+            format_func=lambda planter_id: planter_labels.get(planter_id, "Unknown planter"),
             key="planter_management_selected_planter_id",
         )
     selected_planter = next((planter for planter in active_planters if planter["id"] == selected_planter_id), None)
@@ -2222,7 +2489,9 @@ def show_planter_management():
 
             pre_clicked_point_id, pre_click_event_key = _resolve_clicked_assignment_point(
                 pre_render_map_state,
-                assignment_map_points,
+                assignment_points_by_id,
+                point_coord_index,
+                point_bucket_index,
             )
             if (
                 pre_clicked_point_id is not None
@@ -2267,7 +2536,9 @@ def show_planter_management():
 
             clicked_point_id, click_event_key = _resolve_clicked_assignment_point(
                 map_response,
-                assignment_map_points,
+                assignment_points_by_id,
+                point_coord_index,
+                point_bucket_index,
             )
             if (
                 clicked_point_id is not None
@@ -2431,25 +2702,11 @@ def show_planter_management():
             st.info("No planter assignments yet.")
         else:
             for assignment in assignments:
-                assignment_points = get_assignment_points(assignment["id"])
-                waypoint_rows = _assignment_points_to_waypoints(assignment_points, prefix=assignment["title"])
-                export_meta = {
-                    "image_name": assignment["title"],
-                    "analyzed_at": assignment["created_at"],
-                    "detection_mode": "field-assignment",
-                    "total_points": len(waypoint_rows),
-                }
-                export_df = pd.DataFrame([
-                    {
-                        "Sequence": point["sequence_num"],
-                        "Point #": point["point_num"],
-                        "Latitude": f"{point['latitude']:.7f}",
-                        "Longitude": f"{point['longitude']:.7f}",
-                        "Status": point["assignment_status"],
-                        "Source Image": point["image_name"],
-                    }
-                    for point in assignment_points
-                ])
+                assignment_points = _get_cached_planter_management_assignment_points(assignment["id"])
+                export_payload = _get_cached_planter_management_assignment_exports(
+                    assignment,
+                    assignment_points,
+                )
 
                 st.markdown(f"""
                 <div class="manager-card">
@@ -2477,7 +2734,7 @@ def show_planter_management():
                     with export_col1:
                         st.download_button(
                             "CSV",
-                            data=export_df.to_csv(index=False),
+                            data=export_payload["csv"],
                             file_name=f"assignment_{assignment['id']}.csv",
                             mime="text/csv",
                             use_container_width=True,
@@ -2486,7 +2743,7 @@ def show_planter_management():
                     with export_col2:
                         st.download_button(
                             "GPX",
-                            data=generate_gpx(waypoint_rows, export_meta),
+                            data=export_payload["gpx"],
                             file_name=f"assignment_{assignment['id']}.gpx",
                             mime="application/gpx+xml",
                             use_container_width=True,
@@ -2495,7 +2752,7 @@ def show_planter_management():
                     with export_col3:
                         st.download_button(
                             "KML",
-                            data=generate_kml(waypoint_rows, export_meta),
+                            data=export_payload["kml"],
                             file_name=f"assignment_{assignment['id']}.kml",
                             mime="application/vnd.google-earth.kml+xml",
                             use_container_width=True,
@@ -2504,7 +2761,7 @@ def show_planter_management():
                     with export_col4:
                         st.download_button(
                             "GeoJSON",
-                            data=generate_geojson(waypoint_rows, export_meta),
+                            data=export_payload["geojson"],
                             file_name=f"assignment_{assignment['id']}.geojson",
                             mime="application/geo+json",
                             use_container_width=True,
