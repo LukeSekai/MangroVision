@@ -11,6 +11,14 @@ echo.
 
 cd /d "%~dp0"
 
+if not exist "venv\Scripts\python.exe" (
+echo [ERROR] Virtual environment not found.
+echo Run SETUP_ENV.bat once before starting MangroVision.
+echo.
+pause
+exit /b 1
+)
+
 REM Start Tile Server in background
 echo [1/2] Starting Tile Server on port 8080...
 start "MangroVision Tile Server" cmd /c "venv\Scripts\python.exe start_tile_server.py"

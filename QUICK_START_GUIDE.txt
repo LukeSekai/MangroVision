@@ -2,6 +2,10 @@
 MANGROVISION QUICK START
 ===============================================================
 
+FIRST-TIME SETUP
+1. Double-click `SETUP_ENV.bat`
+2. Wait for the virtual environment and dependencies to finish installing
+
 START
 1. Double-click `START_MANGROVISION.bat`
 2. Wait for the tile server and Streamlit app to start
@@ -32,3 +36,7 @@ FILES THAT MATTER
 - `planting_zones.db`
 - `MAP/FINAL MAP`
 - `models/`
+
+SHARING NOTES
+- `MAP/FINAL MAP` is included in the repository for the shared map view
+- `venv/` is not included; each teammate should run `SETUP_ENV.bat` after cloning

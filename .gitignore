@@ -64,6 +64,8 @@ output_geojson/
 
 # MAP tiles (large orthophoto tiles)
 MAP/*/
+!MAP/FINAL MAP/
+!MAP/FINAL MAP/**
 
 
 # Temporary and debug files

@@ -28,6 +28,16 @@ The repository has been trimmed to the files used by the active application flow
 
 ## Run The App
 
+### First-time setup
+
+Run:
+
+```powershell
+SETUP_ENV.bat
+```
+
+This creates the local `venv` and installs the Python packages from `requirements.txt`.
+
 ### One-click startup
 
 Run:
@@ -65,5 +75,7 @@ venv\Scripts\python.exe -m streamlit run app.py --server.port 8502
 ## Notes
 
 - The current app map points to `MAP/FINAL MAP`.
+- `MAP/FINAL MAP` is tracked in the repository so teammates can clone the repo and view the orthophoto map.
+- `venv/` is intentionally not tracked. The current local environment is about 1.3 GB and includes Windows-specific binaries, including `torch_cpu.dll` at about 253 MB, which will not fit in a normal GitHub push. Use `SETUP_ENV.bat` after cloning instead.
 - Auto-alignment in `ortho_matcher.py` still expects the configured WebODM orthophoto sources to exist on the local machine.
 - If the optional login background asset is missing, the app already falls back to an embedded gradient background.
