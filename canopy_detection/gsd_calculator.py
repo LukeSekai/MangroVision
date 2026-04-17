@@ -17,21 +17,24 @@ class GSDCalculator:
         'DJI_MAVIC_3': {
             'sensor_width_mm': 17.3,
             'sensor_height_mm': 13.0,
-            'focal_length_mm': 24,
+            # Physical focal length for the wide Hasselblad camera (24 mm format equivalent).
+            'focal_length_mm': 12.29,
             'image_width_px': 5280,
             'image_height_px': 3956,
         },
         'DJI_AIR_2S': {
             'sensor_width_mm': 13.2,
             'sensor_height_mm': 8.8,
-            'focal_length_mm': 22,
+            # Physical focal length for the fixed wide camera (22 mm format equivalent).
+            'focal_length_mm': 8.4,
             'image_width_px': 5472,
             'image_height_px': 3648,
         },
         'DJI_PHANTOM_4': {
             'sensor_width_mm': 13.2,
             'sensor_height_mm': 8.8,
-            'focal_length_mm': 24,
+            # Physical focal length for the 1-inch camera (24 mm format equivalent).
+            'focal_length_mm': 8.8,
             'image_width_px': 5472,
             'image_height_px': 3648,
         },

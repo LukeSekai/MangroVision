@@ -3,6 +3,7 @@ MangroVision - AI-Powered Mangrove Planting Zone Analyzer
 Beautiful Streamlit UI for the thesis project
 """
 
+import os
 import sys
 import math
 import re
@@ -1088,6 +1089,320 @@ st.markdown("""
         }
     }
 
+
+    /* ==================================================================
+       SIDEBAR COMPLETE VISUAL OVERHAUL
+       ================================================================== */
+
+    /* ── Overall sidebar background & padding ────────────────────── */
+    section[data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0a1a10 0%, #0d2218 40%, #0a1a10 100%) !important;
+    }
+
+    section[data-testid="stSidebar"] > div:first-child {
+        padding: 1rem 0.75rem !important;
+    }
+
+    /* ── Navigation brand card ───────────────────────────────────── */
+    section[data-testid="stSidebar"] .sidebar-brand {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(143, 211, 167, 0.10) !important;
+        border-top: 2px solid #4ade80 !important;
+        border-radius: 12px !important;
+        padding: 0.85rem 0.9rem !important;
+        margin-bottom: 0.5rem !important;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand span:first-child {
+        color: #8fd3a7 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.14rem !important;
+        font-size: 0.62rem !important;
+        font-weight: 800 !important;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand h2 {
+        color: #f1faf4 !important;
+        font-size: 1.5rem !important;
+        font-weight: 800 !important;
+        margin: 0.15rem 0 0.3rem 0 !important;
+        line-height: 1.15 !important;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand p {
+        color: #7aad82 !important;
+        font-size: 0.74rem !important;
+        line-height: 1.45 !important;
+        margin: 0 !important;
+    }
+
+    /* ── Nav buttons: dark card treatment ─────────────────────────── */
+    section[data-testid="stSidebar"] .stButton > button {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(143, 211, 167, 0.08) !important;
+        border-radius: 10px !important;
+        padding: 0.7rem 0.85rem !important;
+        color: #c8e0cd !important;
+        font-size: 0.84rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.02rem !important;
+        transition: all 0.25s ease !important;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+        text-align: left !important;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button:hover {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border-color: rgba(143, 211, 167, 0.18) !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25), inset 0 0 12px rgba(74, 222, 128, 0.06) !important;
+        color: #e8f5eb !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* Active/primary button — green accent card */
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"] {
+        background: rgba(74, 222, 128, 0.08) !important;
+        border: 1px solid rgba(74, 222, 128, 0.22) !important;
+        border-left: 3px solid #4ade80 !important;
+        color: #e8f5eb !important;
+        font-weight: 700 !important;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 0 20px rgba(74, 222, 128, 0.04) !important;
+    }
+
+    section[data-testid="stSidebar"] .stButton > button[kind="primary"]:hover {
+        background: rgba(74, 222, 128, 0.12) !important;
+        border-color: rgba(74, 222, 128, 0.32) !important;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3), inset 0 0 24px rgba(74, 222, 128, 0.08) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* ── Section heading labels (replaces h3 styling) ────────────── */
+    section[data-testid="stSidebar"] h3 {
+        color: #8fd3a7 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.14rem !important;
+        font-size: 0.68rem !important;
+        font-weight: 800 !important;
+        margin: 0.7rem 0 0.35rem 0.1rem !important;
+        padding: 0 !important;
+    }
+
+    /* ── Separators ──────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] hr {
+        border: none !important;
+        height: 1px !important;
+        background: linear-gradient(90deg, transparent, rgba(120, 202, 149, 0.15), transparent) !important;
+        margin: 0.6rem 0 !important;
+    }
+
+    /* ── Captions ────────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] .stCaption p {
+        color: #6a9a78 !important;
+        font-size: 0.68rem !important;
+    }
+
+    /* ── Sliders ─────────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] [data-testid="stSlider"] label {
+        color: #a4c4ac !important;
+        font-size: 0.76rem !important;
+        font-weight: 600 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.05rem !important;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stSlider"] [data-testid="stThumbValue"] {
+        color: #f1faf4 !important;
+        font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace !important;
+        font-weight: 700 !important;
+    }
+
+    /* ── Account card ────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] .account-card {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(143, 211, 167, 0.10) !important;
+        border-left: 2px solid #78ca95 !important;
+        border-radius: 10px !important;
+        padding: 0.6rem 0.75rem !important;
+        margin-bottom: 0.4rem !important;
+    }
+
+    section[data-testid="stSidebar"] .account-kicker {
+        color: #8fd3a7 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.12rem !important;
+        font-size: 0.58rem !important;
+        font-weight: 800 !important;
+        margin-bottom: 0.1rem !important;
+    }
+
+    section[data-testid="stSidebar"] .account-name {
+        color: #f1faf4 !important;
+        font-size: 1.05rem !important;
+        font-weight: 800 !important;
+        margin: 0 !important;
+    }
+
+    section[data-testid="stSidebar"] .account-caption {
+        color: #7aad82 !important;
+        font-size: 0.65rem !important;
+        margin-top: 0.1rem !important;
+        line-height: 1.4 !important;
+    }
+
+    /* ── Log Out button override ──────────────────────────────────── */
+    section[data-testid="stSidebar"] .stButton > button[kind="secondary"]:last-of-type {
+        border-color: rgba(220, 80, 80, 0.15) !important;
+    }
+
+    /* ── Scrollbar ───────────────────────────────────────────────── */
+    section[data-testid="stSidebar"] ::-webkit-scrollbar { width: 5px; }
+    section[data-testid="stSidebar"] ::-webkit-scrollbar-thumb {
+        background: rgba(120, 202, 149, 0.2);
+        border-radius: 4px;
+    }
+    section[data-testid="stSidebar"] ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    /* ── Sidebar collapse button ─────────────────────────────────── */
+    button[data-testid="stSidebarCollapseButton"] {
+        color: #78ca95 !important;
+    }
+
+    /* ==================================================================
+       ENHANCEMENT 4 - System Snapshot: dark stat cards with green top-border
+       ================================================================== */
+    .snapshot-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 0.55rem;
+        margin-top: 0.4rem;
+    }
+
+    .snapshot-card {
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(143, 211, 167, 0.10);
+        border-top: 2px solid #4ade80;
+        border-radius: 12px;
+        padding: 0.65rem 0.8rem;
+    }
+
+    .snapshot-label {
+        color: #a4c4ac;
+        text-transform: uppercase;
+        letter-spacing: 0.1rem;
+        font-size: 0.68rem;
+        font-weight: 700;
+        margin-bottom: 0.18rem;
+    }
+
+    .snapshot-value {
+        color: #f1faf4;
+        font-family: "JetBrains Mono", "Fira Code", "SF Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 1.35rem;
+        font-weight: 800;
+        line-height: 1.2;
+    }
+
+    .snapshot-sub {
+        color: #8aac92;
+        font-size: 0.72rem;
+        margin-top: 0.12rem;
+    }
+
+    /* ==================================================================
+       ENHANCEMENT 5 - Global Polish: marker pulse animation (main CSS)
+       ================================================================== */
+    @keyframes mv-marker-pulse {
+        0%   { transform: translate(-50%, -100%) scale(1);   filter: drop-shadow(0 0 0 rgba(30, 136, 229, 0)); }
+        50%  { transform: translate(-50%, -100%) scale(1.12); filter: drop-shadow(0 0 8px rgba(30, 136, 229, 0.45)); }
+        100% { transform: translate(-50%, -100%) scale(1);   filter: drop-shadow(0 0 0 rgba(30, 136, 229, 0)); }
+    }
+
+
+
+    /* Slider track + thumb styling */
+    section[data-testid="stSidebar"] [data-testid="stSlider"] {
+        padding: 0.4rem 0 !important;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stSlider"] label {
+        color: #c8e0cd !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+    }
+
+    section[data-testid="stSidebar"] [data-testid="stSlider"] [data-testid="stThumbValue"] {
+        color: #f1faf4 !important;
+        font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace !important;
+        font-weight: 700 !important;
+    }
+
+    /* Account card styling */
+    section[data-testid="stSidebar"] .account-card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(143, 211, 167, 0.10);
+        border-left: 2px solid #78ca95;
+        border-radius: 10px;
+        padding: 0.6rem 0.75rem;
+        margin-bottom: 0.4rem;
+    }
+
+    section[data-testid="stSidebar"] .account-kicker {
+        color: #8fd3a7;
+        text-transform: uppercase;
+        letter-spacing: 0.12rem;
+        font-size: 0.62rem;
+        font-weight: 800;
+        margin-bottom: 0.15rem;
+    }
+
+    section[data-testid="stSidebar"] .account-name {
+        color: #f1faf4 !important;
+        font-size: 1.05rem;
+        font-weight: 800;
+        margin: 0;
+        line-height: 1.3;
+    }
+
+    section[data-testid="stSidebar"] .account-caption {
+        color: #7aad82;
+        font-size: 0.68rem;
+        margin-top: 0.15rem;
+        line-height: 1.4;
+    }
+
+    /* Sidebar brand card polish */
+    section[data-testid="stSidebar"] .sidebar-brand {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(143, 211, 167, 0.08);
+        border-radius: 12px;
+        padding: 0.85rem 0.9rem;
+        margin-bottom: 0.6rem;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand span:first-child {
+        color: #8fd3a7;
+        text-transform: uppercase;
+        letter-spacing: 0.14rem;
+        font-size: 0.65rem;
+        font-weight: 800;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand h2 {
+        color: #f1faf4 !important;
+        font-size: 1.55rem !important;
+        font-weight: 800 !important;
+        margin: 0.15rem 0 0.35rem 0 !important;
+    }
+
+    section[data-testid="stSidebar"] .sidebar-brand p {
+        color: #8aac92 !important;
+        font-size: 0.78rem !important;
+        line-height: 1.5 !important;
+        margin: 0 !important;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -1432,6 +1747,18 @@ def _render_section_banner(kicker: str, title: str, subtitle: str, badges=None):
     )
 
 
+def _get_tile_server_base_url() -> str:
+    """Return the tile server base URL for orthophoto tiles."""
+    base_url = ""
+    try:
+        base_url = st.secrets.get("tile_server_base_url", "")
+    except Exception:
+        base_url = ""
+    if not base_url:
+        base_url = os.getenv("MANGROVISION_TILE_SERVER_BASE_URL", "http://localhost:8080")
+    return (base_url or "http://localhost:8080").rstrip("/")
+
+
 def _get_analysis_map_center(analyses):
     """Pick a sensible map center from saved analyses, or use the Leganes default."""
     lats = [a.get('center_lat') for a in analyses if a.get('center_lat') is not None]
@@ -1443,6 +1770,8 @@ def _get_analysis_map_center(analyses):
 
 def _add_operational_map_layers(map_obj, orthophoto_name: str = "Orthophoto Overlay"):
     """Add the shared basemap stack so WebODM tiles sit above a satellite fallback."""
+    tile_server_base_url = _get_tile_server_base_url()
+
     folium.TileLayer(
         tiles='https://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
         attr='Google Maps',
@@ -1454,7 +1783,7 @@ def _add_operational_map_layers(map_obj, orthophoto_name: str = "Orthophoto Over
     ).add_to(map_obj)
 
     folium.TileLayer(
-        tiles="http://localhost:8080/FINAL%20MAP/{z}/{x}/{y}.jpg",
+        tiles=f"{tile_server_base_url}/FINAL%20MAP/{{z}}/{{x}}/{{y}}.jpg",
         attr='MangroVision Orthophoto | QGIS',
         name=orthophoto_name,
         overlay=True,
@@ -1467,24 +1796,27 @@ def _add_operational_map_layers(map_obj, orthophoto_name: str = "Orthophoto Over
 
 
 def _style_layer_control(map_obj):
-    """Apply a dark MangroVision skin to Folium layer controls."""
+    """Apply a dark MangroVision skin to Folium layer controls with glassmorphism,
+    colored layer dots, live coordinate overlay, dark scale bar, and marker pulse."""
     map_obj.get_root().header.add_child(Element("""
     <style>
+        /* ── Enhancement 1: Glassmorphism layer toggle panel ──────────── */
         .leaflet-control-layers-expanded {
-            min-width: 220px;
-            padding: 0.9rem 0.95rem 0.8rem 0.95rem !important;
-            border-radius: 18px !important;
-            border: 1px solid rgba(120, 202, 149, 0.16) !important;
-            background: linear-gradient(160deg, rgba(8, 16, 11, 0.96) 0%, rgba(19, 33, 25, 0.95) 100%) !important;
-            box-shadow: 0 18px 34px rgba(8, 16, 11, 0.30) !important;
+            min-width: 230px;
+            padding: 0.85rem 0.95rem 0.75rem 0.95rem !important;
+            border-radius: 8px !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
+            background: rgba(15, 30, 20, 0.75) !important;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
             color: #eef7f1 !important;
-            backdrop-filter: blur(10px);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
         }
 
         .leaflet-control-layers-base,
         .leaflet-control-layers-overlays {
             display: grid;
-            gap: 0.28rem;
+            gap: 0.22rem;
             margin-top: 0.15rem;
         }
 
@@ -1492,28 +1824,244 @@ def _style_layer_control(map_obj):
             display: flex !important;
             align-items: center;
             gap: 0.45rem;
-            padding: 0.38rem 0.44rem;
-            border-radius: 12px;
+            padding: 0.38rem 0.5rem;
+            border-radius: 6px;
             color: #eef7f1 !important;
-            font-size: 0.95rem;
+            font-size: 0.88rem;
             font-weight: 600;
-            transition: background 0.18s ease;
+            transition: background 0.18s ease, opacity 0.3s ease;
         }
 
         .leaflet-control-layers label:hover {
-            background: rgba(120, 202, 149, 0.08);
+            background: rgba(120, 202, 149, 0.10);
+        }
+
+        /* Unchecked overlay layers fade slightly */
+        .leaflet-control-layers-overlays label:has(input:not(:checked)) {
+            opacity: 0.55;
         }
 
         .leaflet-control-layers-separator {
-            border-top: 1px solid rgba(120, 202, 149, 0.16) !important;
-            margin: 0.45rem 0 !important;
+            border-top: 1px solid rgba(120, 202, 149, 0.14) !important;
+            margin: 0.4rem 0 !important;
         }
 
         .leaflet-control-layers-selector {
             accent-color: #7fd29b;
             transform: scale(1.05);
         }
+
+        /* Colored indicator dot injected before each layer label */
+        .mv-layer-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+            box-shadow: 0 0 4px currentColor;
+        }
+
+        /* ── Enhancement 3: Dark-themed scale bar ─────────────────────── */
+        .leaflet-control-scale-line {
+            background: rgba(15, 30, 20, 0.78) !important;
+            border-color: rgba(255, 255, 255, 0.25) !important;
+            color: #eef7f1 !important;
+            font-size: 0.72rem;
+            font-weight: 600;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+            padding: 2px 6px;
+            border-radius: 4px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(6px);
+        }
+
+        /* ── Enhancement 3: Live coordinate display ───────────────────── */
+        .mv-coord-display {
+            position: absolute;
+            bottom: 28px;
+            right: 10px;
+            z-index: 1000;
+            background: rgba(15, 30, 20, 0.82);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 6px;
+            padding: 4px 10px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+            color: #c8e6ca;
+            font-family: "JetBrains Mono", "Fira Code", "Consolas", monospace;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.02rem;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        .mv-coord-display .mv-coord-label {
+            color: #7aad82;
+            font-size: 0.62rem;
+            text-transform: uppercase;
+            letter-spacing: 0.08rem;
+            margin-right: 6px;
+        }
+
+        /* ── Enhancement 5: Marker pulse animation ────────────────────── */
+        .leaflet-marker-icon.leaflet-interactive {
+            animation: mv-map-pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes mv-map-pulse {
+            0%   { filter: drop-shadow(0 0 0 rgba(30, 136, 229, 0)); }
+            50%  { filter: drop-shadow(0 0 6px rgba(30, 136, 229, 0.5)); }
+            100% { filter: drop-shadow(0 0 0 rgba(30, 136, 229, 0)); }
+        }
+
+        /* ── Enhancement 5: Consistent floating panel shadows ─────────── */
+        .leaflet-control-zoom,
+        .leaflet-control-fullscreen {
+            border-radius: 8px !important;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4) !important;
+            overflow: hidden;
+        }
+
+        .leaflet-control-zoom a {
+            background: rgba(15, 30, 20, 0.82) !important;
+            color: #eef7f1 !important;
+            border-color: rgba(255, 255, 255, 0.08) !important;
+            backdrop-filter: blur(10px);
+        }
+
+        .leaflet-control-zoom a:hover {
+            background: rgba(25, 50, 35, 0.92) !important;
+        }
+
+        .leaflet-control-fullscreen a {
+            background: rgba(15, 30, 20, 0.82) !important;
+            backdrop-filter: blur(10px);
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(15, 30, 20, 0.65) !important;
+            color: rgba(200, 230, 210, 0.6) !important;
+            font-size: 0.62rem;
+            backdrop-filter: blur(4px);
+        }
+
+        .leaflet-control-attribution a {
+            color: rgba(200, 230, 210, 0.7) !important;
+        }
     </style>
+    """))
+
+    # ── JS: inject colored dots + live coordinate overlay ─────────────
+    map_obj.get_root().script.add_child(Element("""
+    (function() {
+        /* Layer-name to dot-color mapping */
+        var dotColors = {
+            'forbidden':  '#E53935',
+            'eroded':     '#FB8C00',
+            'planting':   '#4CAF50',
+            'analysis':   '#1E88E5',
+            'satellite':  '#90A4AE',
+            'orthophoto': '#78ca95',
+            'unassigned': '#4CAF50',
+            'assigned':   '#42A5F5',
+            'planted':    '#FFEE58',
+            'filtered':   '#F44336',
+            'assignment':  '#8fd3a7',
+            'live route':  '#00E5FF',
+            'current':     '#42A5F5',
+            'all planting':'#4CAF50'
+        };
+
+        function getDotColor(text) {
+            var t = text.toLowerCase();
+            for (var key in dotColors) {
+                if (t.indexOf(key) !== -1) return dotColors[key];
+            }
+            return '#78ca95';
+        }
+
+        function injectDots() {
+            var labels = document.querySelectorAll('.leaflet-control-layers label span');
+            labels.forEach(function(span) {
+                if (span.parentElement && !span.parentElement.querySelector('.mv-layer-dot')) {
+                    var color = getDotColor(span.textContent || '');
+                    var dot = document.createElement('span');
+                    dot.className = 'mv-layer-dot';
+                    dot.style.color = color;
+                    dot.style.background = color;
+                    span.parentElement.insertBefore(dot, span);
+                }
+            });
+        }
+
+        /* Live coordinate display */
+        function setupCoords() {
+            var containers = document.querySelectorAll('.folium-map');
+            containers.forEach(function(container) {
+                if (container._mvCoordsSetup) return;
+                container._mvCoordsSetup = true;
+
+                var coordDiv = document.createElement('div');
+                coordDiv.className = 'mv-coord-display';
+                coordDiv.innerHTML = '<span class="mv-coord-label">Cursor</span>--.--, --.--';
+                container.style.position = 'relative';
+                container.appendChild(coordDiv);
+
+                /* Access leaflet map instance */
+                var mapEl = container.querySelector('.leaflet-container');
+                if (!mapEl || !mapEl._leaflet_id) return;
+                var mapId = mapEl._leaflet_id;
+                /* L.Map instances are stored on the element */
+                var leafletMap = null;
+                if (mapEl._leaflet_map) {
+                    leafletMap = mapEl._leaflet_map;
+                } else {
+                    /* Fallback: walk window keys */
+                    for (var k in window) {
+                        try {
+                            if (window[k] && window[k]._leaflet_id === mapId && window[k].getCenter) {
+                                leafletMap = window[k];
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                }
+                if (!leafletMap) {
+                    /* Try the global map variable Folium exposes */
+                    if (typeof map_div !== 'undefined' && map_div && map_div.getCenter) {
+                        leafletMap = map_div;
+                    }
+                }
+                if (leafletMap) {
+                    leafletMap.on('mousemove', function(e) {
+                        coordDiv.innerHTML = '<span class="mv-coord-label">Cursor</span>' +
+                            e.latlng.lat.toFixed(7) + ', ' + e.latlng.lng.toFixed(7);
+                    });
+                    leafletMap.on('mouseout', function() {
+                        coordDiv.innerHTML = '<span class="mv-coord-label">Cursor</span>--.--, --.--';
+                    });
+                }
+            });
+        }
+
+        /* Run after DOM is ready + short delays for Streamlit dynamic rendering */
+        setTimeout(function() { injectDots(); setupCoords(); }, 800);
+        setTimeout(function() { injectDots(); setupCoords(); }, 2200);
+        window.addEventListener('load', function() {
+            setTimeout(function() { injectDots(); setupCoords(); }, 400);
+            setTimeout(function() { injectDots(); setupCoords(); }, 1500);
+        });
+
+        /* Re-run when Streamlit re-renders (MutationObserver) */
+        if (window.MutationObserver) {
+            var mvObserver = new MutationObserver(function() {
+                setTimeout(injectDots, 200);
+            });
+            mvObserver.observe(document.body, { childList: true, subtree: true });
+        }
+    })();
     """))
 
 
@@ -3174,239 +3722,421 @@ def show_eroded_zone_editor():
 
 def show_map_analytics():
     """
-    Dashboard showing all saved planting data across the entire map.
-    Aggregate stats + interactive map with every planting point ever saved.
+    Full-viewport GIS analytics. Map fills entire screen.
+    A bottom pull-up drawer reveals Analysis History on click.
     """
     from folium.plugins import Fullscreen
-
-    _render_section_banner(
-        "System Analytics",
-        "Planting History And Coverage",
-        "Review saved analyses, inspect historical planting points, and export the accumulated field dataset from the full Leganes mapping system.",
-        [
-            "Orthophoto overview",
-            "Saved analyses",
-            "Field export ready",
-        ],
-    )
+    import streamlit.components.v1 as stc
 
     stats = get_all_stats()
-    analyses = stats.get('analyses', [])
-    all_points = stats.get('points', [])
+    analyses = stats.get("analyses", [])
+    all_points = stats.get("points", [])
 
-    if stats['total_analyses'] == 0:
+    if stats["total_analyses"] == 0:
         st.info(
-            "📭 **No analyses saved yet.** Go to **Map Workspace**, "
-            "upload an image, run detection, then click **💾 Save to database**. "
-            "Saved results will appear here."
+            "No analyses are saved yet. Go to Map Workspace, run an analysis, "
+            "then save it to the database to populate Map Analytics."
         )
         return
 
-    # ── Aggregate Metrics ─────────────────────────────────────────
-    st.markdown("### 🧮 Aggregate Statistics")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("📸 Total Analyses", stats['total_analyses'])
-    m2.metric("🌱 Remaining Planting Points", stats['total_planting_points'])
-    m3.metric("🟢 Total Plantable Area", f"{stats['total_plantable_m2']:.1f} m²")
-    m4.metric("🌳 Total Canopies Detected", stats['total_canopies'])
+    # ── CSS overrides ────────────────────────────────────────────────
+    st.markdown("""
+    <style>
+        [data-testid="stHeader"],
+        [data-testid="stToolbar"],
+        [data-testid="stDecoration"] { display: none !important; }
 
-    m5, m6, m7, m8 = st.columns(4)
-    m5.metric("🟡 Planted Points", stats.get('total_planted_points', 0))
-    m6.metric("🔴 Total Danger Area", f"{stats['total_danger_m2']:.1f} m²")
-    m7.metric("📏 Total Coverage", f"{stats['total_coverage_m2']:.1f} m²")
-    m8.metric("🚫 Forbidden-Filtered", stats['total_forbidden_filtered'])
-    m9, m10 = st.columns(2)
-    m9.metric("🏜️ Erosion-Filtered", stats['total_eroded_filtered'])
-    m10.metric("🧭 All Mapped Points", stats.get('total_mapped_points', len(all_points)))
+        [data-testid="stAppViewContainer"] > .main {
+            padding-top: 0 !important;
+            overflow: hidden !important;
+        }
 
-    st.markdown("---")
+        [data-testid="stMainBlockContainer"] {
+            max-width: none !important;
+            padding: 0 !important;
+        }
 
-    # ── Full Map ──────────────────────────────────────────────────
-    st.markdown("### 🗺️ All Planting Locations")
-    st.info(
-        f"Showing **{stats.get('total_mapped_points', len(all_points))}** mapped points from **{stats['total_analyses']}** analyses. "
-        f"**{stats['total_planting_points']}** remain to plant and **{stats.get('total_planted_points', 0)}** are already planted. "
-        f"Green = planned, yellow = planted."
-    )
+        [data-testid="stAppViewContainer"] [data-testid="block-container"] {
+            max-width: none !important;
+            padding: 0 !important;
+            width: 100% !important;
+            overflow: hidden !important;
+        }
 
-    # Determine map centre from the average of all analysis centres
-    _lats = [a['center_lat'] for a in analyses if a['center_lat']]
-    _lons = [a['center_lon'] for a in analyses if a['center_lon']]
-    if _lats and _lons:
-        _center = [sum(_lats) / len(_lats), sum(_lons) / len(_lons)]
-    else:
-        _center = [10.780, 122.625]  # Leganes default
+        [data-testid="stAppViewContainer"] [data-testid="block-container"] > div {
+            gap: 0 !important;
+        }
+
+        /* Hide history container — JS will reparent its content */
+        .st-key-analytics_history_surface {
+            display: none !important;
+        }
+
+        /* The JS injector component should be invisible */
+        .st-key-mv_js_injector {
+            position: fixed !important;
+            width: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Build the Folium map ─────────────────────────────────────────
+    _lats = [a["center_lat"] for a in analyses if a["center_lat"]]
+    _lons = [a["center_lon"] for a in analyses if a["center_lon"]]
+    _center = ([sum(_lats)/len(_lats), sum(_lons)/len(_lons)]
+               if _lats and _lons else [10.780, 122.625])
 
     analytics_map = folium.Map(
-        location=_center,
-        zoom_start=18,
-        tiles=None,
-        control_scale=True,
+        location=_center, zoom_start=18, tiles=None, control_scale=True,
     )
     _add_operational_map_layers(analytics_map)
 
-    # Show forbidden zone polygons (red)
+    mapped_points = stats.get("total_mapped_points", len(all_points))
+    planted_points = stats.get("total_planted_points", 0)
+    stats_cards = [
+        ("Saved analyses", f"{stats['total_analyses']}"),
+        ("Mapped points", f"{mapped_points}"),
+        ("Remaining", f"{stats['total_planting_points']}"),
+        ("Planted", f"{planted_points}"),
+        ("Plantable", f"{stats['total_plantable_m2']:.1f} m\u00b2"),
+        ("Danger", f"{stats['total_danger_m2']:.1f} m\u00b2"),
+    ]
+    stats_html = "".join(
+        f'<div class="analytics-stat-card"><span>{l}</span><strong>{v}</strong></div>'
+        for l, v in stats_cards
+    )
+
+    # ── In-Folium-iframe CSS ─────────────────────────────────────────
+    analytics_map.get_root().header.add_child(Element("""
+    <style>
+        html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#08100b; }
+        #map_div { position:absolute !important; inset:0 !important; width:100% !important; height:100% !important; }
+
+        .analytics-map-overlay { position:absolute; inset:0; z-index:900; pointer-events:none;
+            font-family:"Aptos","Trebuchet MS",sans-serif; }
+        .analytics-map-panel { position:absolute; pointer-events:auto;
+            background:rgba(15,30,20,0.78); border:1px solid rgba(255,255,255,0.08);
+            box-shadow:0 4px 24px rgba(0,0,0,0.4); backdrop-filter:blur(14px);
+            -webkit-backdrop-filter:blur(14px); color:#eef7f1; }
+
+        .analytics-map-hero { top:0.9rem; left:0.9rem; width:min(26rem,calc(100% - 8rem));
+            border-radius:8px; padding:0.8rem 1rem; }
+        .analytics-map-kicker { color:#98cfac; text-transform:uppercase; letter-spacing:0.16rem;
+            font-size:0.68rem; font-weight:800; margin-bottom:0.3rem; }
+        .analytics-map-title { color:#f3faf5; font-size:1.45rem; line-height:1.1; font-weight:800; margin:0; }
+        .analytics-map-copy { color:#cadbcc; font-size:0.82rem; line-height:1.5; margin:0.45rem 0 0; max-width:24rem; }
+        .analytics-map-badges { display:flex; flex-wrap:wrap; gap:0.35rem; margin-top:0.65rem; }
+        .analytics-map-badges span { background:rgba(255,255,255,0.06); border:1px solid rgba(143,211,167,0.14);
+            color:#eef7f1; border-radius:999px; padding:0.3rem 0.6rem; font-size:0.72rem; font-weight:700; }
+
+        .analytics-map-stats { left:0.9rem; bottom:3.2rem; width:min(38rem,calc(100% - 1.8rem));
+            display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:0.4rem;
+            background:transparent; border:0; box-shadow:none; backdrop-filter:none; }
+        .analytics-stat-card { background:rgba(15,30,20,0.82); border:1px solid rgba(255,255,255,0.06);
+            box-shadow:0 4px 24px rgba(0,0,0,0.4); backdrop-filter:blur(10px);
+            border-radius:8px; padding:0.55rem 0.6rem; }
+        .analytics-stat-card span { display:block; color:#8aac92; font-size:0.62rem; font-weight:700;
+            text-transform:uppercase; letter-spacing:0.04rem; margin-bottom:0.18rem; }
+        .analytics-stat-card strong { color:#f1faf4; font-size:1.05rem; font-weight:800;
+            font-family:"JetBrains Mono","Fira Code","Consolas",monospace; }
+
+        .analytics-map-legend { left:0.9rem; bottom:0.55rem; width:min(38rem,calc(100% - 1.8rem));
+            border-radius:8px; padding:0.4rem 0.8rem; }
+        .analytics-map-legend h3 { margin:0; color:#c8e0cd; font-size:0.72rem; font-weight:700;
+            text-transform:uppercase; letter-spacing:0.08rem; }
+        .analytics-map-legend ul { list-style:none; margin:0.3rem 0 0; padding:0;
+            display:flex; flex-wrap:wrap; gap:0.15rem 0.9rem; }
+        .analytics-map-legend li { display:flex; align-items:center; gap:0.35rem;
+            color:#d9ece0; font-size:0.74rem; }
+        .analytics-map-swatch { width:8px; height:8px; border-radius:50%; display:inline-block;
+            box-shadow:0 0 3px currentColor; }
+
+        .leaflet-top,.leaflet-bottom { z-index:1000; }
+        .leaflet-top.leaflet-right { top:0.9rem; right:0.9rem; }
+
+        @media (max-width:1100px) {
+            .analytics-map-stats { grid-template-columns:repeat(3,minmax(0,1fr)); bottom:4.2rem; }
+        }
+        @media (max-width:760px) {
+            .analytics-map-hero { width:calc(100% - 2rem); padding:0.7rem; }
+            .analytics-map-title { font-size:1.2rem; }
+            .analytics-map-stats { grid-template-columns:repeat(2,minmax(0,1fr)); bottom:5.2rem; }
+        }
+    </style>
+    """))
+
+    analytics_map.get_root().html.add_child(Element(f"""
+    <div class="analytics-map-overlay">
+        <div class="analytics-map-panel analytics-map-hero">
+            <div class="analytics-map-kicker">System Analytics</div>
+            <h1 class="analytics-map-title">Map Analytics</h1>
+            <p class="analytics-map-copy">All saved analyses and planting points on the orthophoto.</p>
+            <div class="analytics-map-badges">
+                <span>{stats['total_analyses']} analyses</span>
+                <span>{mapped_points} mapped</span>
+                <span>{stats['total_planting_points']} remaining</span>
+            </div>
+        </div>
+        <div class="analytics-map-panel analytics-map-stats">{stats_html}</div>
+        <div class="analytics-map-panel analytics-map-legend">
+            <h3>Legend</h3>
+            <ul>
+                <li><span class="analytics-map-swatch" style="color:#4CAF50;background:#4CAF50"></span>Planned</li>
+                <li><span class="analytics-map-swatch" style="color:#FFEE58;background:#FFEE58"></span>Planted</li>
+                <li><span class="analytics-map-swatch" style="color:#E53935;background:#E53935"></span>Forbidden</li>
+                <li><span class="analytics-map-swatch" style="color:#FB8C00;background:#FB8C00"></span>Eroded</li>
+                <li><span class="analytics-map-swatch" style="color:#1E88E5;background:#1E88E5"></span>Centres</li>
+            </ul>
+        </div>
+    </div>
+    """))
+
+    analytics_map.get_root().script.add_child(Element("""
+        function _aInv() { if (typeof map_div!=="undefined"&&map_div) map_div.invalidateSize(); }
+        window.addEventListener("load",function(){setTimeout(_aInv,120);setTimeout(_aInv,520);});
+        window.addEventListener("resize",_aInv);
+        if(window.ResizeObserver){new ResizeObserver(_aInv).observe(document.body);}
+    """))
+
+    # ── Map data layers ──────────────────────────────────────────────
     if _forbidden_filter.forbidden_polygons:
-        fz = folium.FeatureGroup(name='🚫 Forbidden Zones')
+        fz = folium.FeatureGroup(name="Forbidden Zones")
         for poly in _forbidden_filter.forbidden_polygons:
             coords = [(lat, lon) for lon, lat in poly.exterior.coords]
-            folium.Polygon(
-                locations=coords, color='red', fill=True,
-                fillColor='red', fillOpacity=0.30, weight=2,
-                tooltip='🚫 Forbidden Zone',
-            ).add_to(fz)
+            folium.Polygon(locations=coords, color="#C62828", fill=True,
+                fillColor="#E53935", fillOpacity=0.30, weight=2, tooltip="Forbidden Zone").add_to(fz)
         fz.add_to(analytics_map)
 
-    # Show eroded zone polygons (orange)
     if _eroded_filter.forbidden_polygons:
-        ez = folium.FeatureGroup(name='🏜️ Eroded Zones')
+        ez = folium.FeatureGroup(name="Eroded Zones")
         for poly in _eroded_filter.forbidden_polygons:
             coords = [(lat, lon) for lon, lat in poly.exterior.coords]
-            folium.Polygon(
-                locations=coords, color='orange', fill=True,
-                fillColor='orange', fillOpacity=0.30, weight=2,
-                tooltip='🏜️ Eroded Zone',
-            ).add_to(ez)
+            folium.Polygon(locations=coords, color="#EF6C00", fill=True,
+                fillColor="#FB8C00", fillOpacity=0.30, weight=2, tooltip="Eroded Zone").add_to(ez)
         ez.add_to(analytics_map)
 
-    # Colour each analysis differently
-    _colours = ['#4CAF50', '#2196F3', '#FF9800', '#E91E63', '#9C27B0',
-                '#00BCD4', '#CDDC39', '#FF5722', '#607D8B', '#795548']
-
-    for idx, analysis in enumerate(analyses):
-        colour = _colours[idx % len(_colours)]
-        grp = folium.FeatureGroup(name=f"📸 {analysis['image_name']} ({analysis['analyzed_at'][:10]})")
-
-        # Image centre marker
-        if analysis['center_lat'] and analysis['center_lon']:
+    for analysis in analyses:
+        grp = folium.FeatureGroup(name=f"{analysis['image_name']} ({analysis['analyzed_at'][:10]})")
+        if analysis["center_lat"] and analysis["center_lon"]:
             folium.Marker(
-                location=[analysis['center_lat'], analysis['center_lon']],
-                popup=f"📸 <b>{analysis['image_name']}</b><br>"
-                      f"Date: {analysis['analyzed_at']}<br>"
-                      f"Canopies: {analysis['canopy_count']}<br>"
-                      f"Planting pts: {analysis['hexagon_count']}<br>"
-                      f"Plantable: {analysis['plantable_area_m2']:.1f} m²",
-                icon=folium.Icon(color='blue', icon='camera', prefix='fa'),
-                tooltip=f"📸 {analysis['image_name']}",
+                location=[analysis["center_lat"], analysis["center_lon"]],
+                popup=f"<b>{analysis['image_name']}</b><br>Date: {analysis['analyzed_at']}<br>"
+                      f"Canopies: {analysis['canopy_count']}<br>Pts: {analysis['hexagon_count']}<br>"
+                      f"Plantable: {analysis['plantable_area_m2']:.1f} m\u00b2",
+                icon=folium.Icon(color="blue", icon="camera", prefix="fa"),
+                tooltip=analysis["image_name"],
             ).add_to(grp)
-
         grp.add_to(analytics_map)
 
-    # All planting points as a single layer
-    pts_grp = folium.FeatureGroup(name='🌱 All Planting Points')
+    pts_grp = folium.FeatureGroup(name="All Planting Points")
     for pt in all_points:
-        point_style = _saved_point_marker_style(pt.get("status"))
+        ps = _saved_point_marker_style(pt.get("status"))
         folium.CircleMarker(
-            location=[pt['latitude'], pt['longitude']],
-            radius=3,
-            color=point_style["border_color"],
-            fillColor=point_style["fill_color"],
-            fillOpacity=0.8,
-            weight=1,
-            tooltip=f"{point_style['label']} · {pt['image_name']} ({pt['analyzed_at'][:10]})",
-            popup=f"🌱 GPS: {pt['latitude']:.7f}°, {pt['longitude']:.7f}°<br>"
-                  f"Image: {pt['image_name']}<br>"
-                  f"Status: {point_style['label']}<br>"
-                  f"Buffer: {pt['buffer_m']}m | Area: {pt['area_m2']:.2f} m²",
+            location=[pt["latitude"], pt["longitude"]], radius=3,
+            color=ps["border_color"], fillColor=ps["fill_color"], fillOpacity=0.8, weight=1,
+            tooltip=f"{ps['label']} - {pt['image_name']} ({pt['analyzed_at'][:10]})",
+            popup=f"GPS: {pt['latitude']:.7f}, {pt['longitude']:.7f}<br>"
+                  f"Image: {pt['image_name']}<br>Status: {ps['label']}<br>"
+                  f"Buffer: {pt['buffer_m']}m | Area: {pt['area_m2']:.2f} m\u00b2",
         ).add_to(pts_grp)
     pts_grp.add_to(analytics_map)
 
     Fullscreen(position="topleft", title="Expand map", title_cancel="Exit fullscreen").add_to(analytics_map)
     folium.LayerControl(collapsed=False).add_to(analytics_map)
     _style_layer_control(analytics_map)
-    st_folium.st_folium(
-        analytics_map,
-        height=650,
-        key="analytics_map",
-        returned_objects=[],
-        use_container_width=True,
-    )
 
-    # ── Per-analysis breakdown table ──────────────────────────────
-    st.markdown("---")
-    st.markdown("### 📋 Analysis History")
+    # ── Render map ───────────────────────────────────────────────────
+    map_container = st.container(key="analytics_map_surface")
+    with map_container:
+        st_folium.st_folium(
+            analytics_map, width=None, height=700,
+            key="analytics_map", returned_objects=[], use_container_width=True,
+        )
 
-    for a in analyses:
-        with st.expander(f"📸 {a['image_name']} — {a['analyzed_at']} ({a['hexagon_count']} points)"):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("🌳 Canopies", a['canopy_count'])
-            c2.metric("🌱 Planting Pts", a['hexagon_count'])
-            c3.metric("🟢 Plantable", f"{a['plantable_area_m2']:.1f} m²")
-            c4.metric("🔴 Danger", f"{a['danger_area_m2']:.1f} m²")
+    # ── History container (hidden, content moved by JS) ──────────────
+    history_container = st.container(key="analytics_history_surface")
+    with history_container:
+        st.markdown("### Analysis History")
+        for a in analyses:
+            with st.expander(f"{a['image_name']} - {a['analyzed_at'][:10]} ({a['hexagon_count']} pts)"):
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Canopies", a["canopy_count"])
+                c2.metric("Planting Pts", a["hexagon_count"])
+                c3.metric("Plantable", f"{a['plantable_area_m2']:.1f} m\u00b2")
+                c4, c5, c6 = st.columns(3)
+                c4.metric("Danger", f"{a['danger_area_m2']:.1f} m\u00b2")
+                c5.metric("GSD", f"{a['gsd_cm']:.2f} cm/px" if a["gsd_cm"] else "-")
+                c6.metric("Coverage", f"{a['total_area_m2']:.1f} m\u00b2")
+                if a["center_lat"] and a["center_lon"]:
+                    st.caption(f"{a['center_lat']:.6f}, {a['center_lon']:.6f}")
+                if st.button("Delete", key=f"del_{a['id']}", use_container_width=True):
+                    delete_analysis(a["id"])
+                    st.success("Deleted. Refreshing...")
+                    st.rerun()
 
-            c5, c6, c7, c8 = st.columns(4)
-            c5.metric("📏 Coverage", f"{a['total_area_m2']:.1f} m²")
-            c6.metric("📐 GSD", f"{a['gsd_cm']:.2f} cm/px" if a['gsd_cm'] else "—")
-            c7.metric("🚫 Forbidden", a['forbidden_filtered'])
-            c8.metric("🏜️ Eroded", a['eroded_filtered'])
+        if all_points:
+            st.markdown("---")
+            st.markdown("### Export All Points")
+            st.caption(f"{len(all_points)} saved planting points")
+            _bulk_wps = hexagons_to_waypoints(all_points)
+            _bulk_meta = {
+                "image_name": "all_analyses",
+                "analyzed_at": datetime.now().isoformat(timespec="seconds"),
+                "total_points": len(_bulk_wps),
+            }
+            _bc1, _bc2 = st.columns(2)
+            with _bc1:
+                _bulk_csv = pd.DataFrame([{
+                    "Point #": w["point_num"], "Latitude": f"{w['lat']:.7f}",
+                    "Longitude": f"{w['lon']:.7f}", "Buffer (m)": w.get("buffer_m", ""),
+                    "Area (m\u00b2)": w.get("area_m2", ""), "Status": w.get("status", "planned"),
+                } for w in _bulk_wps]).to_csv(index=False)
+                st.download_button("CSV", _bulk_csv, "mangrovision_all_points.csv",
+                    "text/csv", use_container_width=True, key="bulk_csv")
+            with _bc2:
+                st.download_button("GPX", generate_gpx(_bulk_wps, _bulk_meta),
+                    "mangrovision_all_points.gpx", "application/gpx+xml",
+                    use_container_width=True, key="bulk_gpx")
+            _bc3, _bc4 = st.columns(2)
+            with _bc3:
+                st.download_button("KML", generate_kml(_bulk_wps, _bulk_meta),
+                    "mangrovision_all_points.kml", "application/vnd.google-earth.kml+xml",
+                    use_container_width=True, key="bulk_kml")
+            with _bc4:
+                st.download_button("GeoJSON", generate_geojson(_bulk_wps, _bulk_meta),
+                    "mangrovision_all_points.geojson", "application/geo+json",
+                    use_container_width=True, key="bulk_geojson")
+            st.caption("GPX for Garmin/Locus. KML for Google Earth. GeoJSON for QGIS.")
 
-            if a['center_lat'] and a['center_lon']:
-                st.caption(f"📍 Centre: {a['center_lat']:.6f}°, {a['center_lon']:.6f}°")
+    # ── JS injector via st.components.v1.html (actually executes JS!) ─
+    _js_injector = st.container(key="mv_js_injector")
+    with _js_injector:
+        stc.html("""
+        <script>
+        (function() {
+            var doc = window.parent.document;
 
-            if st.button(f"🗑️ Delete this analysis", key=f"del_{a['id']}"):
-                delete_analysis(a['id'])
-                st.success("Deleted. Refresh the page to update.")
-                st.rerun()
+            function mvSetup() {
+                /* ── 1. Force map to fill viewport ────────────────── */
+                var mapSurface = doc.querySelector('.st-key-analytics_map_surface');
+                if (mapSurface) {
+                    mapSurface.style.cssText = 'width:100%!important;height:100vh!important;' +
+                        'max-width:none!important;margin:0!important;padding:0!important;overflow:hidden!important;';
 
-    # ── Bulk Export All Planting Points ────────────────────────────
-    if all_points:
-        st.markdown("---")
-        st.markdown("### 📡 Export All Planting Points")
-        st.info(f"Export all **{len(all_points)}** saved planting points for field navigation")
+                    /* Force all child containers to fill */
+                    var kids = mapSurface.querySelectorAll('div');
+                    kids.forEach(function(d) {
+                        d.style.cssText += ';width:100%!important;height:100%!important;' +
+                            'max-width:none!important;margin:0!important;padding:0!important;' +
+                            'border:0!important;box-shadow:none!important;';
+                    });
 
-        _bulk_wps = hexagons_to_waypoints(all_points)
-        _bulk_meta = {
-            "image_name": "all_analyses",
-            "analyzed_at": datetime.now().isoformat(timespec="seconds"),
-            "total_points": len(_bulk_wps),
-        }
+                    /* Force the iframe itself */
+                    var iframes = mapSurface.querySelectorAll('iframe');
+                    iframes.forEach(function(iframe) {
+                        iframe.style.cssText = 'width:100%!important;height:100vh!important;' +
+                            'display:block!important;margin:0!important;border:0!important;' +
+                            'border-radius:0!important;background:transparent!important;';
+                    });
+                }
 
-        _bc1, _bc2, _bc3, _bc4 = st.columns(4)
-        with _bc1:
-            _bulk_csv = pd.DataFrame([{
-                "Point #": w["point_num"],
-                "Latitude": f"{w['lat']:.7f}",
-                "Longitude": f"{w['lon']:.7f}",
-                "Buffer (m)": w.get("buffer_m", ""),
-                "Area (m²)": w.get("area_m2", ""),
-                "Status": w.get("status", "planned"),
-            } for w in _bulk_wps]).to_csv(index=False)
-            st.download_button(
-                label="📥 CSV",
-                data=_bulk_csv,
-                file_name="mangrovision_all_points.csv",
-                mime="text/csv",
-                use_container_width=True,
-                key="bulk_csv",
-            )
-        with _bc2:
-            st.download_button(
-                label="📡 GPX (GPS)",
-                data=generate_gpx(_bulk_wps, _bulk_meta),
-                file_name="mangrovision_all_points.gpx",
-                mime="application/gpx+xml",
-                use_container_width=True,
-                key="bulk_gpx",
-            )
-        with _bc3:
-            st.download_button(
-                label="🌍 KML (Google Earth)",
-                data=generate_kml(_bulk_wps, _bulk_meta),
-                file_name="mangrovision_all_points.kml",
-                mime="application/vnd.google-earth.kml+xml",
-                use_container_width=True,
-                key="bulk_kml",
-            )
-        with _bc4:
-            st.download_button(
-                label="🗺️ GeoJSON (QGIS)",
-                data=generate_geojson(_bulk_wps, _bulk_meta),
-                file_name="mangrovision_all_points.geojson",
-                mime="application/geo+json",
-                use_container_width=True,
-                key="bulk_geojson",
-            )
-        st.caption("💡 GPX works with Garmin, Locus Map, OsmAnd. KML opens in Google Earth. GeoJSON imports into QGIS.")
+                /* ── 2. Hide the main container overflow ──────────── */
+                var mainArea = doc.querySelector('[data-testid="stAppViewContainer"] > .main');
+                if (mainArea) {
+                    mainArea.style.cssText += ';padding-top:0!important;overflow:hidden!important;';
+                }
+                var blockContainer = doc.querySelector('[data-testid="stMainBlockContainer"]');
+                if (blockContainer) {
+                    blockContainer.style.cssText += ';max-width:none!important;padding:0!important;overflow:hidden!important;';
+                }
+
+                /* ── 3. Move history into a drawer on body ────────── */
+                if (doc.getElementById('mv-analytics-drawer')) return; /* already done */
+
+                var historyEl = doc.querySelector('.st-key-analytics_history_surface');
+                if (!historyEl) return;
+
+                /* Create drawer */
+                var drawer = doc.createElement('div');
+                drawer.id = 'mv-analytics-drawer';
+                drawer.style.cssText =
+                    'position:fixed;left:0;right:0;bottom:0;height:55vh;z-index:99999;' +
+                    'background:linear-gradient(180deg,rgba(8,16,11,0.97),rgba(13,26,19,0.96));' +
+                    'border-top:1px solid rgba(120,202,149,0.20);' +
+                    'backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);' +
+                    'box-shadow:0 -8px 40px rgba(0,0,0,0.5);' +
+                    'overflow-y:auto;overflow-x:hidden;padding:1rem 1.5rem 2rem;' +
+                    'transform:translateY(100%);transition:transform 0.4s cubic-bezier(0.4,0,0.2,1);' +
+                    'scrollbar-width:thin;scrollbar-color:rgba(120,202,149,0.25) transparent;' +
+                    'color:#eef7f1;font-family:Aptos,Trebuchet MS,sans-serif;';
+
+                /* Move children from hidden Streamlit container into drawer */
+                while (historyEl.firstChild) {
+                    drawer.appendChild(historyEl.firstChild);
+                }
+                doc.body.appendChild(drawer);
+                historyEl.style.display = 'none';
+
+                /* Create pull-up tab */
+                var tab = doc.createElement('div');
+                tab.id = 'mv-drawer-tab';
+                tab.style.cssText =
+                    'position:fixed;bottom:0;left:50%;transform:translateX(-50%);z-index:100000;' +
+                    'cursor:pointer;background:rgba(15,30,20,0.90);' +
+                    'border:1px solid rgba(120,202,149,0.22);border-bottom:none;' +
+                    'border-radius:12px 12px 0 0;padding:7px 32px 5px;' +
+                    'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' +
+                    'box-shadow:0 -4px 20px rgba(0,0,0,0.35);' +
+                    'display:flex;align-items:center;gap:8px;' +
+                    'transition:background 0.2s ease,bottom 0.4s cubic-bezier(0.4,0,0.2,1);' +
+                    'user-select:none;';
+
+                tab.innerHTML =
+                    '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" ' +
+                    'stroke="#78ca95" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" ' +
+                    'style="transition:transform 0.4s cubic-bezier(0.4,0,0.2,1)">' +
+                    '<polyline points="18 15 12 9 6 15"></polyline></svg>' +
+                    '<span style="color:#c8e6ca;font-family:Aptos,Trebuchet MS,sans-serif;' +
+                    'font-size:0.76rem;font-weight:700;text-transform:uppercase;' +
+                    'letter-spacing:0.1rem">Analysis History</span>';
+                doc.body.appendChild(tab);
+
+                /* Toggle */
+                var isOpen = false;
+                tab.addEventListener('click', function() {
+                    isOpen = !isOpen;
+                    if (isOpen) {
+                        drawer.style.transform = 'translateY(0)';
+                        tab.style.bottom = '55vh';
+                        tab.querySelector('svg').style.transform = 'rotate(180deg)';
+                    } else {
+                        drawer.style.transform = 'translateY(100%)';
+                        tab.style.bottom = '0';
+                        tab.querySelector('svg').style.transform = 'rotate(0deg)';
+                    }
+                });
+
+                tab.addEventListener('mouseenter', function() {
+                    tab.style.background = 'rgba(25,50,35,0.95)';
+                });
+                tab.addEventListener('mouseleave', function() {
+                    tab.style.background = 'rgba(15,30,20,0.90)';
+                });
+            }
+
+            /* Run with delays to catch Streamlit's async rendering */
+            setTimeout(mvSetup, 300);
+            setTimeout(mvSetup, 800);
+            setTimeout(mvSetup, 1500);
+            setTimeout(mvSetup, 3000);
+        })();
+        </script>
+        """, height=0)
+
 
 
 def main():
@@ -3435,6 +4165,15 @@ def main():
     if st.session_state.get("workspace_mode") not in workspace_modes:
         st.session_state.workspace_mode = "Map Workspace"
 
+    # ── Sidebar nav icon map (SVG inline, no emoji) ──────────────────
+    _nav_icons = {
+        "Map Workspace": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.85"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>',
+        "Map Analytics": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.85"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+        "Eroded Zone Editor": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.85"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>',
+        "Planter Management": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.85"><path d="M11 20A7 7 0 0 1 9.8 6.9C15.5 4.9 17 3.5 17 3.5s1.5 2 2.1 7.4A5 5 0 0 1 13 17.9"/><path d="M11.4 20a3 3 0 0 0 2.6-3"/><path d="M2 21c0-3 1.9-5.5 4.5-6.3"/></svg>',
+        "Field Navigation": '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:6px;opacity:0.85"><circle cx="12" cy="12" r="10"/><polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76"/></svg>',
+    }
+
     with st.sidebar:
         st.markdown("""
         <div class="sidebar-brand">
@@ -3444,7 +4183,10 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown("### Workspace Views")
+        st.markdown("""
+        <div style="color:#8fd3a7;text-transform:uppercase;letter-spacing:0.14rem;
+                    font-size:0.72rem;font-weight:800;margin:0.6rem 0 0.45rem 0;">Workspace Views</div>
+        """, unsafe_allow_html=True)
         for option in workspace_modes:
             if st.button(
                 option,
@@ -3455,20 +4197,90 @@ def main():
                 st.session_state.workspace_mode = option
         mode = st.session_state.workspace_mode
 
-        st.markdown("---")
-        st.markdown("### System Snapshot")
-        st.metric("Saved analyses", workspace_stats['total_analyses'])
-        st.metric("Remaining points", workspace_stats['total_planting_points'])
-        st.metric("Active exclusions", total_exclusions)
+        # ── Enhancement 2: inject SVG icons into sidebar buttons via HTML ──
+        _icon_js_items = []
+        for _label, _svg in _nav_icons.items():
+            _escaped_svg = _svg.replace("'", "\\'")
+            _icon_js_items.append(
+                f"'{_label}': '{_escaped_svg}'"
+            )
+        _icon_js_map = '{' + ', '.join(_icon_js_items) + '}'
+        st.markdown(f"""
+        <script>
+        (function() {{
+            var iconMap = {_icon_js_map};
+            function injectNavIcons() {{
+                var sidebar = document.querySelector('section[data-testid="stSidebar"]');
+                if (!sidebar) return;
+                var buttons = sidebar.querySelectorAll('.stButton > button');
+                buttons.forEach(function(btn) {{
+                    var pEl = btn.querySelector('p') || btn;
+                    var text = (pEl.textContent || '').trim();
+                    if (iconMap[text] && !btn.querySelector('.mv-nav-icon')) {{
+                        var wrapper = document.createElement('span');
+                        wrapper.className = 'mv-nav-icon';
+                        wrapper.innerHTML = iconMap[text];
+                        pEl.insertBefore(wrapper, pEl.firstChild);
+                    }}
+                }});
+            }}
+            setTimeout(injectNavIcons, 600);
+            setTimeout(injectNavIcons, 1800);
+            if (window.MutationObserver) {{
+                new MutationObserver(function() {{ setTimeout(injectNavIcons, 150); }})
+                    .observe(document.body, {{ childList: true, subtree: true }});
+            }}
+        }})();
+        </script>
+        """, unsafe_allow_html=True)
 
-        ai_confidence = 0.75
+        st.markdown("---")
+
+        # ── Enhancement 4: System Snapshot with dark stat cards ──────────
+        _planter_stats = get_planter_dashboard_stats()
+        _active_planters = _planter_stats.get('active_planters', 0)
+        _session_date = datetime.now().strftime("%Y-%m-%d")
+        st.markdown(f"""
+        <div style="margin-bottom:0.6rem">
+            <div style="color:#8fd3a7;text-transform:uppercase;letter-spacing:0.14rem;font-size:0.72rem;
+                        font-weight:800;margin-bottom:0.55rem;">System Snapshot</div>
+            <div class="snapshot-grid">
+                <div class="snapshot-card">
+                    <div class="snapshot-label">Saved Analyses</div>
+                    <div class="snapshot-value">{workspace_stats['total_analyses']}</div>
+                </div>
+                <div class="snapshot-card">
+                    <div class="snapshot-label">Remaining Points</div>
+                    <div class="snapshot-value">{workspace_stats['total_planting_points']}</div>
+                </div>
+                <div class="snapshot-card">
+                    <div class="snapshot-label">Active Exclusions</div>
+                    <div class="snapshot-value">{total_exclusions}</div>
+                    <div class="snapshot-sub">{_forbidden_filter.zone_count} forbidden + {eroded_zone_count} eroded</div>
+                </div>
+                <div class="snapshot-card">
+                    <div class="snapshot-label">Active Planters</div>
+                    <div class="snapshot-value">{_active_planters}</div>
+                </div>
+                <div class="snapshot-card">
+                    <div class="snapshot-label">Session Date</div>
+                    <div class="snapshot-value" style="font-size:1.05rem">{_session_date}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        ai_confidence = 0.90
         ai_runtime_tuning = {}
         altitude = 6.0
         drone_model = "GENERIC_4K"
 
         if mode == "Map Workspace":
-            st.markdown("---")
-            st.markdown("### Analysis Controls")
+            st.markdown('<div style="height:1px;background:linear-gradient(90deg,transparent,rgba(120,202,149,0.18),transparent);margin:0.6rem 0;"></div>', unsafe_allow_html=True)
+            st.markdown("""
+            <div style="color:#8fd3a7;text-transform:uppercase;letter-spacing:0.14rem;
+                        font-size:0.72rem;font-weight:800;margin:0.3rem 0 0.4rem 0;">Analysis Controls</div>
+            """, unsafe_allow_html=True)
             canopy_buffer = st.slider(
                 "Danger Zone Buffer (meters)",
                 min_value=0.5,
@@ -3486,15 +4298,31 @@ def main():
                 step=0.1,
                 help="Size of hexagonal planting zones (green buffers)"
             )
-            st.caption("These values are applied when you run a new image analysis.")
+            st.markdown("""
+            <div style="color:#7aad82;font-size:0.68rem;margin-top:0.2rem;line-height:1.4;
+                        font-style:italic;">Values applied when you run a new image analysis.</div>
+            """, unsafe_allow_html=True)
         else:
             canopy_buffer = 1.0
             hexagon_size = 1.0
             st.markdown("---")
-            st.caption("Analysis controls appear here when you return to the map workspace.")
+            st.markdown("""
+            <div style="background:rgba(255,255,255,0.03);border:1px solid rgba(143,211,167,0.08);
+                        border-radius:10px;padding:0.55rem 0.7rem;margin-top:0.2rem;">
+                <div style="color:#8fd3a7;text-transform:uppercase;letter-spacing:0.14rem;
+                            font-size:0.62rem;font-weight:800;margin-bottom:0.2rem;">Analysis Controls</div>
+                <div style="color:#7aad82;font-size:0.72rem;line-height:1.45;">
+                    Available when you return to the map workspace.</div>
+            </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("---")
         _render_user_panel()
+
+    # Map Analytics gets full-viewport treatment — skip the main header entirely
+    if mode == "Map Analytics":
+        show_map_analytics()
+        return
 
     st.markdown(f"""
     <div class="main-header">
@@ -3520,10 +4348,6 @@ def main():
 
     if mode == "Eroded Zone Editor":
         show_eroded_zone_editor()
-        return
-
-    if mode == "Map Analytics":
-        show_map_analytics()
         return
 
     if mode == "Planter Management":

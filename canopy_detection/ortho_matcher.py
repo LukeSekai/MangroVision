@@ -8,13 +8,13 @@ Matches a drone image against WebODM orthophoto GeoTIFFs to:
 Supports MULTIPLE orthophotos (3 map parts). The correct one is selected
 automatically based on the drone image's GPS coordinates.
 
-The orthophotos use EPSG:32651 = WGS84 / UTM Zone 51N.
+Orthophoto transforms are read from GeoTIFF metadata when available.
 """
 
 import cv2
 import numpy as np
 import pyproj
-from PIL import Image as PILImage
+import rasterio
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 
@@ -26,60 +26,176 @@ from typing import Optional, Tuple, Dict, List
 
 _DESKTOP = Path.home() / "Desktop"
 
-ORTHO_REGISTRY = [
+_ORTHO_REGISTRY_SEEDS = [
     {
         "name": "1st MAP",
         "path": _DESKTOP / "WebODM" / "1st MAP" / "Task-of-2026-02-19T144959031Z-all (1)" / "odm_orthophoto" / "odm_orthophoto.tif",
-        "origin_x": 458971.930938,      # UTM Easting  of pixel (0,0) top-left
-        "origin_y": 1191823.193120,     # UTM Northing of pixel (0,0) top-left
-        "gsd_x": 0.0499921871,          # m/pixel (X → East)
-        "gsd_y": 0.0499914324,          # m/pixel (Y → North, image Y ↓)
-        "width": 2467,
-        "height": 3422,
     },
     {
         "name": "2nd MAP",
         "path": _DESKTOP / "WebODM" / "2nd MAP" / "Task-of-2026-02-26T144004414Z-all" / "odm_orthophoto" / "odm_orthophoto.tif",
+    },
+    {
+        "name": "3rd MAP",
+        "path": _DESKTOP / "WebODM" / "3rd MAP" / "Task-of-2026-02-26T220654471Z-all" / "odm_orthophoto" / "odm_orthophoto.tif",
+    },
+]
+
+_FALLBACK_ORTHO_METADATA = {
+    "1st MAP": {
+        "origin_x": 458971.930938,
+        "origin_y": 1191823.193120,
+        "gsd_x": 0.0499921871,
+        "gsd_y": 0.0499914324,
+        "width": 2467,
+        "height": 3422,
+        "crs": "EPSG:32651",
+    },
+    "2nd MAP": {
         "origin_x": 458878.837225,
         "origin_y": 1191788.394178,
         "gsd_x": 0.0499902759,
         "gsd_y": 0.0499928374,
         "width": 2965,
         "height": 2718,
+        "crs": "EPSG:32651",
     },
-    {
-        "name": "3rd MAP",
-        "path": _DESKTOP / "WebODM" / "3rd MAP" / "Task-of-2026-02-26T220654471Z-all" / "odm_orthophoto" / "odm_orthophoto.tif",
+    "3rd MAP": {
         "origin_x": 458847.596193,
         "origin_y": 1191710.998803,
         "gsd_x": 0.0499898637,
         "gsd_y": 0.0499937509,
         "width": 3835,
         "height": 3082,
+        "crs": "EPSG:32651",
     },
-]
+}
 
 # Also check the old single-file fallback path
 _LEGACY_PATH = Path(__file__).parent.parent / "MAP" / "odm_orthophoto" / "odm_orthophoto.tif"
 
 # ─── Active orthophoto state (set by select_orthophoto) ──────────────────────
-ORTHO_ORIGIN_X = 458971.930938
-ORTHO_ORIGIN_Y = 1191823.193120
-ORTHO_GSD_X    = 0.0499921871
-ORTHO_GSD_Y    = 0.0499914324
-ORTHO_GSD      = (ORTHO_GSD_X + ORTHO_GSD_Y) / 2.0
-ORTHO_PATH     = _LEGACY_PATH      # overwritten by select_orthophoto()
+_ORTHO_REGISTRY_CACHE: Optional[List[dict]] = None
+_ENTRY_TRANSFORMERS: Dict[str, Tuple[pyproj.Transformer, pyproj.Transformer]] = {}
 
-# CRS transformers (lazy-initialized)
-_to_utm   = None   # GPS (lon,lat) → UTM 51N (x,y)
-_from_utm = None   # UTM 51N (x,y) → GPS (lon,lat)
+ORTHO_ORIGIN_X = 0.0
+ORTHO_ORIGIN_Y = 0.0
+ORTHO_GSD_X = 0.0
+ORTHO_GSD_Y = 0.0
+ORTHO_GSD = 0.0
+ORTHO_PATH = _LEGACY_PATH
+ORTHO_CRS = "EPSG:32651"
+_ACTIVE_ORTHO_ENTRY: Optional[dict] = None
+_to_ortho_crs = None
+_from_ortho_crs = None
+
+
+def _fallback_entry(seed: dict) -> Optional[dict]:
+    """Return baked-in metadata if GeoTIFF metadata is unavailable."""
+    fallback = _FALLBACK_ORTHO_METADATA.get(seed["name"])
+    if fallback is None:
+        return None
+    return {
+        "name": seed["name"],
+        "path": Path(seed["path"]),
+        **fallback,
+    }
+
+
+def _read_orthophoto_bgr(path: Path) -> np.ndarray:
+    """Load an orthophoto TIFF into a BGR uint8 array."""
+    with rasterio.open(path) as dataset:
+        bands = [1, 2, 3] if dataset.count >= 3 else [1]
+        image = dataset.read(bands)
+
+    if image.shape[0] == 1:
+        image = np.repeat(image, 3, axis=0)
+
+    rgb = np.moveaxis(image[:3], 0, -1)
+    if rgb.dtype != np.uint8:
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+
+def _read_ortho_metadata(seed: dict) -> Optional[dict]:
+    """Read orthophoto bounds and pixel scale directly from the GeoTIFF."""
+    path = Path(seed["path"])
+    if not path.exists():
+        return None
+
+    try:
+        with rasterio.open(path) as dataset:
+            if dataset.crs is None:
+                raise ValueError("GeoTIFF has no CRS")
+
+            transform = dataset.transform
+            if abs(transform.b) > 1e-9 or abs(transform.d) > 1e-9:
+                raise ValueError("rotated orthophoto transforms are not supported")
+
+            return {
+                "name": seed["name"],
+                "path": path,
+                "origin_x": float(transform.c),
+                "origin_y": float(transform.f),
+                "gsd_x": abs(float(transform.a)),
+                "gsd_y": abs(float(transform.e)),
+                "width": int(dataset.width),
+                "height": int(dataset.height),
+                "crs": dataset.crs.to_string(),
+            }
+    except Exception as exc:
+        fallback = _fallback_entry(seed)
+        if fallback is not None:
+            print(f"[OrthoMatcher] Metadata read failed for '{seed['name']}', using fallback values: {exc}")
+            return fallback
+        print(f"[OrthoMatcher] Metadata read failed for '{seed['name']}': {exc}")
+        return None
+
+
+def _get_ortho_registry() -> List[dict]:
+    """Return all available orthophotos with live metadata."""
+    global _ORTHO_REGISTRY_CACHE
+    if _ORTHO_REGISTRY_CACHE is not None:
+        return _ORTHO_REGISTRY_CACHE
+
+    seeds = list(_ORTHO_REGISTRY_SEEDS)
+    seeds.append({"name": "Legacy MAP", "path": _LEGACY_PATH})
+
+    registry: List[dict] = []
+    for seed in seeds:
+        entry = _read_ortho_metadata(seed)
+        if entry is not None:
+            registry.append(entry)
+
+    _ORTHO_REGISTRY_CACHE = registry
+    return registry
+
+
+def _get_entry_transformers(entry: dict) -> Tuple[pyproj.Transformer, pyproj.Transformer]:
+    """Return GPS <-> orthophoto CRS transformers for an entry."""
+    crs_key = entry["crs"]
+    if crs_key not in _ENTRY_TRANSFORMERS:
+        _ENTRY_TRANSFORMERS[crs_key] = (
+            pyproj.Transformer.from_crs("EPSG:4326", crs_key, always_xy=True),
+            pyproj.Transformer.from_crs(crs_key, "EPSG:4326", always_xy=True),
+        )
+    return _ENTRY_TRANSFORMERS[crs_key]
+
+
+def _ensure_active_ortho() -> dict:
+    """Ensure the module has an active orthophoto before pixel/GPS conversion."""
+    global _ACTIVE_ORTHO_ENTRY
+    if _ACTIVE_ORTHO_ENTRY is None:
+        registry = _get_ortho_registry()
+        if not registry:
+            raise RuntimeError("No orthophoto metadata available")
+        _activate_ortho(registry[0])
+    return _ACTIVE_ORTHO_ENTRY
+
 
 def _get_transformers():
-    global _to_utm, _from_utm
-    if _to_utm is None:
-        _to_utm   = pyproj.Transformer.from_crs("EPSG:4326", "EPSG:32651", always_xy=True)
-        _from_utm = pyproj.Transformer.from_crs("EPSG:32651", "EPSG:4326", always_xy=True)
-    return _to_utm, _from_utm
+    _ensure_active_ortho()
+    return _to_ortho_crs, _from_ortho_crs
 
 
 def _ortho_bounds_utm(entry: dict) -> Tuple[float, float, float, float]:
@@ -97,16 +213,15 @@ def is_inside_any_orthophoto(lat: float, lon: float) -> bool:
     AND has actual imagery (non-black pixel).  WebODM orthophotos have
     irregular boundaries — NoData regions are (0,0,0) black pixels.
     """
-    to_utm, _ = _get_transformers()
-    utm_x, utm_y = to_utm.transform(lon, lat)
-
-    for entry in ORTHO_REGISTRY:
+    for entry in _get_ortho_registry():
+        to_entry_crs, _ = _get_entry_transformers(entry)
+        entry_x, entry_y = to_entry_crs.transform(lon, lat)
         w, e, s, n = _ortho_bounds_utm(entry)
-        if not (w <= utm_x <= e and s <= utm_y <= n):
+        if not (w <= entry_x <= e and s <= entry_y <= n):
             continue
         # Compute pixel coords in this ortho
-        px = int((utm_x - entry["origin_x"]) / entry["gsd_x"])
-        py = int((entry["origin_y"] - utm_y) / entry["gsd_y"])
+        px = int((entry_x - entry["origin_x"]) / entry["gsd_x"])
+        py = int((entry["origin_y"] - entry_y) / entry["gsd_y"])
         if px < 0 or py < 0 or px >= entry["width"] or py >= entry["height"]:
             continue
         # Check if actual pixel has data (not NoData black)
@@ -121,8 +236,7 @@ def is_inside_any_orthophoto(lat: float, lon: float) -> bool:
             p = Path(entry["path"])
             if p.exists():
                 try:
-                    pil_img = PILImage.open(str(p)).convert("RGB")
-                    img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+                    img = _read_orthophoto_bgr(p)
                     _ortho_cache[key] = img
                     b, g, r = img[py, px]
                     if int(b) + int(g) + int(r) > 30:
@@ -145,31 +259,33 @@ def select_orthophoto(lat: float, lon: float) -> Optional[dict]:
 
     Returns the chosen registry entry, or None if no match.
     """
-    global ORTHO_ORIGIN_X, ORTHO_ORIGIN_Y, ORTHO_GSD_X, ORTHO_GSD_Y, ORTHO_GSD, ORTHO_PATH
-
-    to_utm, _ = _get_transformers()
-    utm_x, utm_y = to_utm.transform(lon, lat)
+    registry = _get_ortho_registry()
+    if not registry:
+        print("[OrthoMatcher] No orthophoto found for (%.6f, %.6f)" % (lat, lon))
+        return None
 
     best = None
     best_margin = -1e30
 
-    for entry in ORTHO_REGISTRY:
-        if not entry["path"].exists():
-            continue
+    for entry in registry:
+        to_entry_crs, _ = _get_entry_transformers(entry)
+        entry_x, entry_y = to_entry_crs.transform(lon, lat)
         w, e, s, n = _ortho_bounds_utm(entry)
         # Margin = min distance from point to any edge (positive = inside)
-        margin = min(utm_x - w, e - utm_x, utm_y - s, n - utm_y)
+        margin = min(entry_x - w, e - entry_x, entry_y - s, n - entry_y)
         if margin > best_margin:
             best_margin = margin
             best = entry
 
     if best is None:
-        # Try legacy path as last resort
-        if _LEGACY_PATH.exists():
-            print("[OrthoMatcher] No registry match — using legacy path")
-            ORTHO_PATH = _LEGACY_PATH
-            return None
         print("[OrthoMatcher] No orthophoto found for (%.6f, %.6f)" % (lat, lon))
+        return None
+
+    if best_margin < -200:
+        print(
+            f"[OrthoMatcher] No orthophoto close enough for ({lat:.6f}, {lon:.6f}) "
+            f"(nearest edge distance {abs(best_margin):.0f}m)"
+        )
         return None
 
     # Set globals
@@ -218,8 +334,7 @@ def load_orthophoto() -> Optional[np.ndarray]:
         return None
     try:
         print(f"[OrthoMatcher] Loading {ORTHO_PATH.name} …")
-        pil_img = PILImage.open(str(ORTHO_PATH)).convert("RGB")
-        img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+        img = _read_orthophoto_bgr(ORTHO_PATH)
         _ortho_cache[key] = img
         return img
     except Exception as e:
@@ -455,15 +570,14 @@ def match_drone_to_ortho(
         error     (str)   – error message if success=False
     """
     # Sort orthophotos: best-fit first, then other available ones
-    to_utm, _ = _get_transformers()
-    utm_x, utm_y = to_utm.transform(center_lon, center_lat)
+    registry = _get_ortho_registry()
 
     scored_entries = []
-    for entry in ORTHO_REGISTRY:
-        if not entry["path"].exists():
-            continue
+    for entry in registry:
+        to_entry_crs, _ = _get_entry_transformers(entry)
+        entry_x, entry_y = to_entry_crs.transform(center_lon, center_lat)
         w, e, s, n = _ortho_bounds_utm(entry)
-        margin = min(utm_x - w, e - utm_x, utm_y - s, n - utm_y)
+        margin = min(entry_x - w, e - entry_x, entry_y - s, n - entry_y)
         scored_entries.append((margin, entry))
     scored_entries.sort(key=lambda x: -x[0])  # highest margin first (most inside)
 
@@ -517,13 +631,17 @@ def match_drone_to_ortho(
 
 def _activate_ortho(entry: dict):
     """Set the global ORTHO_* variables to use a specific ortho entry."""
-    global ORTHO_ORIGIN_X, ORTHO_ORIGIN_Y, ORTHO_GSD_X, ORTHO_GSD_Y, ORTHO_GSD, ORTHO_PATH
+    global ORTHO_ORIGIN_X, ORTHO_ORIGIN_Y, ORTHO_GSD_X, ORTHO_GSD_Y, ORTHO_GSD, ORTHO_PATH, ORTHO_CRS
+    global _ACTIVE_ORTHO_ENTRY, _to_ortho_crs, _from_ortho_crs
     ORTHO_ORIGIN_X = entry["origin_x"]
     ORTHO_ORIGIN_Y = entry["origin_y"]
     ORTHO_GSD_X    = entry["gsd_x"]
     ORTHO_GSD_Y    = entry["gsd_y"]
     ORTHO_GSD      = (ORTHO_GSD_X + ORTHO_GSD_Y) / 2.0
     ORTHO_PATH     = entry["path"]
+    ORTHO_CRS      = entry["crs"]
+    _ACTIVE_ORTHO_ENTRY = entry
+    _to_ortho_crs, _from_ortho_crs = _get_entry_transformers(entry)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

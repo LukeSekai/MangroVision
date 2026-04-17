@@ -26,7 +26,7 @@ class ProperDetectree2Detector:
     """
     
     def __init__(self, 
-                 confidence_threshold: float = 0.75,
+                 confidence_threshold: float = 0.90,
                  device: str = 'cpu'):
         """
         Initialize proper detectree2 detector

@@ -3,6 +3,7 @@ MangroVision planter-facing field app.
 """
 
 import json
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -726,7 +727,7 @@ def _format_route_distance(distance_meters: float | None) -> str:
 def _approx_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Return an approximate distance in meters using a simple planar conversion."""
     lat_scale = 111320.0
-    lon_scale = 111320.0
+    lon_scale = 111320.0 * math.cos(math.radians((lat1 + lat2) / 2.0))
     dy = (lat2 - lat1) * lat_scale
     dx = (lon2 - lon1) * lon_scale
     return (dx * dx + dy * dy) ** 0.5
