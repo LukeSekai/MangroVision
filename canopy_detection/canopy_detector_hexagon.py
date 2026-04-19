@@ -31,7 +31,7 @@ class HexagonDetector:
     def __init__(self,
                  altitude_m: float = 6.0,
                  drone_model: str = 'GENERIC_4K',
-                 ai_confidence: float = 0.90,
+                 ai_confidence: float = 0.65,
                  detection_mode: str = 'ai'):
         """
         Initialize the detector.
@@ -47,18 +47,16 @@ class HexagonDetector:
 
         self.altitude_m = altitude_m
         self.drone_model = drone_model
-        self.ai_confidence = 0.90 if detection_mode == 'ai' else ai_confidence
+        self.ai_confidence = max(0.05, min(float(ai_confidence), 0.99))
         self.detection_mode = detection_mode
         self.gsd = None
         self.image_shape = None
         self.ai_detector = None
 
-        if detection_mode == 'ai' and abs(float(ai_confidence) - 0.90) > 1e-6:
-            print(f"   AI confidence fixed at 0.90 (requested: {ai_confidence:.2f})")
-
         if detection_mode == 'ai' and DETECTREE2_AVAILABLE:
             print("Initializing MangroVision with AI detection system...")
             print(f"   Mode: {detection_mode.upper()}")
+            print(f"   Confidence threshold: {self.ai_confidence:.2f}")
             try:
                 self.ai_detector = ProperDetectree2Detector(
                     confidence_threshold=self.ai_confidence,

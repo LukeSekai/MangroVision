@@ -4,6 +4,7 @@ Uses the official detectree2 library for accurate tree crown delineation
 """
 
 import cv2
+import json
 import numpy as np
 from pathlib import Path
 from typing import Tuple, List, Dict, Optional, Callable, Any
@@ -41,6 +42,12 @@ class ProperDetectree2Detector:
         self.cfg = None
         self.model_path = None
         self.model_name = None
+        self.model_metadata: Dict[str, Any] = {}
+        self.model_metadata_path = None
+        self.num_classes = None
+        self.class_names: List[str] = []
+        self.canopy_class_ids: Optional[List[int]] = None
+        self.excluded_class_ids: List[int] = []
         self.runtime_tuning = {
             "tile_veg_threshold": 0.002,
             "min_crown_m2": 0.05,
@@ -85,6 +92,75 @@ class ProperDetectree2Detector:
             self.runtime_tuning["tile_overlap"] = max(0.0, min(float(tile_overlap), 0.6))
         if use_clean_crowns is not None:
             self.runtime_tuning["use_clean_crowns"] = bool(use_clean_crowns)
+
+    def _load_model_metadata(self, model_path: Path) -> Tuple[Dict[str, Any], Optional[str]]:
+        """Load optional sidecar metadata stored next to a checkpoint."""
+        candidates = [
+            model_path.with_suffix(".json"),
+            model_path.parent / "model_metadata.json",
+        ]
+        for candidate in candidates:
+            if not candidate.exists():
+                continue
+            try:
+                with candidate.open("r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                if isinstance(data, dict):
+                    return data, str(candidate)
+            except Exception as exc:
+                print(f"   [WARN] Failed to read model metadata from {candidate}: {exc}")
+        return {}, None
+
+    def _infer_num_classes(self, model_path: Path, metadata: Optional[Dict[str, Any]] = None) -> int:
+        """Infer ROI class count from metadata or checkpoint weights."""
+        if metadata:
+            value = metadata.get("num_classes")
+            if isinstance(value, int) and value > 0:
+                return value
+
+        try:
+            checkpoint = torch.load(str(model_path), map_location="cpu")
+            state = checkpoint.get("model", checkpoint)
+            cls_score = state.get("roi_heads.box_predictor.cls_score.weight")
+            if cls_score is not None and len(cls_score.shape) == 2:
+                return max(1, int(cls_score.shape[0] - 1))
+        except Exception as exc:
+            print(f"   [WARN] Could not infer class count from checkpoint: {exc}")
+
+        if "custom_mangrove_model" in str(model_path).replace("\\", "/"):
+            return 2
+        return 1
+
+    def _resolve_canopy_class_ids(self, metadata: Dict[str, Any], num_classes: int) -> Optional[List[int]]:
+        """Return the classes that should count as canopy for this app."""
+        raw_ids = metadata.get("canopy_class_ids")
+        if isinstance(raw_ids, list):
+            class_ids = sorted(
+                {
+                    int(value)
+                    for value in raw_ids
+                    if isinstance(value, (int, float)) and 0 <= int(value) < num_classes
+                }
+            )
+            if class_ids:
+                return class_ids
+
+        if num_classes == 1:
+            return [0]
+
+        return None
+
+    def _resolve_excluded_class_ids(self, metadata: Dict[str, Any], class_names: List[str]) -> List[int]:
+        """Map excluded class names into class ids when metadata provides them."""
+        excluded_names = metadata.get("excluded_class_names")
+        if not isinstance(excluded_names, list) or not class_names:
+            return []
+
+        excluded_ids: List[int] = []
+        for index, class_name in enumerate(class_names):
+            if class_name in excluded_names:
+                excluded_ids.append(index)
+        return excluded_ids
         
     def setup_model(self, model_path: str = None):
         """
@@ -105,6 +181,7 @@ class ProperDetectree2Detector:
             latest_model_garden = sorted(model_dir.glob("250312*.pth"))
             model_candidates = [(p, f"Model Garden ({p.name})") for p in latest_model_garden]
             model_candidates.extend([
+                (model_dir / 'try_new_latest_model' / 'model_final.pth', 'Try New Latest Model'),
                 (model_dir / 'custom_mangrove_model' / 'model_final.pth', 'Custom Mangrove Model'),
                 (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
                 (model_dir / 'detectree2_model.pth', 'Custom Model'),
@@ -123,6 +200,13 @@ class ProperDetectree2Detector:
                     f"No detectree2 model found in {model_dir}\n"
                     f"Download from: https://github.com/PatBall1/detectree2/releases"
                 )
+
+        model_path_obj = Path(model_path)
+        metadata, metadata_path = self._load_model_metadata(model_path_obj)
+        num_classes = self._infer_num_classes(model_path_obj, metadata)
+        class_names = metadata.get("class_names") if isinstance(metadata.get("class_names"), list) else []
+        canopy_class_ids = self._resolve_canopy_class_ids(metadata, num_classes)
+        excluded_class_ids = self._resolve_excluded_class_ids(metadata, class_names)
         
         # Prefer official detectree2 setup_cfg path, then fall back to manual config.
         cfg = None
@@ -144,11 +228,7 @@ class ProperDetectree2Detector:
             ))
             cfg.MODEL.WEIGHTS = model_path
 
-        # Single-class by default; local custom model path is 2-class in this project.
-        if "custom_mangrove_model" in str(model_path).replace("\\", "/"):
-            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
-        else:
-            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+        cfg.MODEL.ROI_HEADS.NUM_CLASSES = int(num_classes)
 
         cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
         cfg.MODEL.DEVICE = self.device
@@ -164,6 +244,21 @@ class ProperDetectree2Detector:
         self.predictor = DefaultPredictor(cfg)
         self.model_path = str(model_path)
         self.model_name = selected_model_name or Path(model_path).name
+        self.model_metadata = metadata
+        self.model_metadata_path = metadata_path
+        self.num_classes = int(num_classes)
+        self.class_names = [str(name) for name in class_names]
+        self.canopy_class_ids = canopy_class_ids
+        self.excluded_class_ids = excluded_class_ids
+        print(f"   Classes configured: {self.num_classes}")
+        if self.class_names:
+            print(f"   Class names: {', '.join(self.class_names)}")
+        if self.canopy_class_ids is not None:
+            print(f"   Canopy class ids: {self.canopy_class_ids}")
+        if self.excluded_class_ids:
+            print(f"   Excluded class ids: {self.excluded_class_ids}")
+        if self.model_metadata_path:
+            print(f"   Metadata: {self.model_metadata_path}")
         
         print(f"✅ Detectree2 Model Loaded!")
         return self.predictor
@@ -288,6 +383,9 @@ class ProperDetectree2Detector:
         
         # Run detection on each tile
         all_instances = []
+        score_pass_detections = 0
+        filtered_non_canopy_detections = 0
+        kept_class_counts: Dict[int, int] = {}
         min_crown_m2 = float(self.runtime_tuning.get("min_crown_m2", 0.05))
         max_crown_m2 = float(self.runtime_tuning.get("max_crown_m2", 60.0))
         gsd_used = float(gsd) if (gsd is not None and gsd > 0) else None
@@ -318,11 +416,23 @@ class ProperDetectree2Detector:
             instances = outputs["instances"].to("cpu")
             scores = instances.scores.numpy()
             masks = instances.pred_masks.numpy()
+            pred_classes = (
+                instances.pred_classes.numpy()
+                if instances.has("pred_classes")
+                else np.zeros(len(scores), dtype=np.int64)
+            )
 
             # Store each detection with global coordinates and confidence.
             for i in range(len(scores)):
                 if scores[i] >= self.confidence_threshold:
+                    score_pass_detections += 1
+                    class_id = int(pred_classes[i]) if i < len(pred_classes) else 0
+                    if self.canopy_class_ids is not None and class_id not in self.canopy_class_ids:
+                        filtered_non_canopy_detections += 1
+                        continue
+
                     mask = masks[i].astype(np.uint8)
+                    kept_class_counts[class_id] = kept_class_counts.get(class_id, 0) + 1
                     
                     # Find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -342,7 +452,8 @@ class ProperDetectree2Detector:
                                     all_instances.append({
                                         'polygon': poly,
                                         'score': scores[i],
-                                        'contour': contour_global
+                                        'contour': contour_global,
+                                        'class_id': class_id,
                                     })
                             except:
                                 continue
@@ -393,13 +504,21 @@ class ProperDetectree2Detector:
             'tile_veg_threshold': float(veg_tile_threshold),
             'raw_detections': len(all_instances),
             'total_ai_detections': len(all_instances),
+            'score_pass_detections': int(score_pass_detections),
+            'filtered_non_canopy_detections': int(filtered_non_canopy_detections),
+            'kept_class_counts': kept_class_counts,
             'final_trees': len(final_polygons),
             'num_detected_canopies': len(final_polygons),
+            'num_classes': self.num_classes,
+            'class_names': self.class_names,
+            'canopy_class_ids': self.canopy_class_ids,
+            'excluded_class_ids': self.excluded_class_ids,
             'gsd_used': gsd_used,
             'min_crown_m2': min_crown_m2,
             'max_crown_m2': max_crown_m2,
             'model_path': self.model_path,
             'model_name': self.model_name,
+            'model_metadata_path': self.model_metadata_path,
             'cleanup_iou': float(self.runtime_tuning.get("cleanup_iou", 0.75)),
             'fallback_nms_iou': float(self.runtime_tuning.get("fallback_nms_iou", 0.90)),
             'use_clean_crowns': use_clean_crowns,

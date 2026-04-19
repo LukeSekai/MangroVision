@@ -4700,7 +4700,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        ai_confidence = 0.90
+        ai_confidence = 0.65
         ai_runtime_tuning = {}
         altitude = 6.0
         drone_model = "GENERIC_4K"
