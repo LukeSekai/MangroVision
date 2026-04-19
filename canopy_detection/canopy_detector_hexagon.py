@@ -31,7 +31,7 @@ class HexagonDetector:
     def __init__(self,
                  altitude_m: float = 6.0,
                  drone_model: str = 'GENERIC_4K',
-                 ai_confidence: float = 0.90,
+                 ai_confidence: float = 0.80,
                  detection_mode: str = 'ai'):
         """
         Initialize the detector.
@@ -47,14 +47,14 @@ class HexagonDetector:
 
         self.altitude_m = altitude_m
         self.drone_model = drone_model
-        self.ai_confidence = 0.90 if detection_mode == 'ai' else ai_confidence
+        self.ai_confidence = 0.80 if detection_mode == 'ai' else ai_confidence
         self.detection_mode = detection_mode
         self.gsd = None
         self.image_shape = None
         self.ai_detector = None
 
-        if detection_mode == 'ai' and abs(float(ai_confidence) - 0.90) > 1e-6:
-            print(f"   AI confidence fixed at 0.90 (requested: {ai_confidence:.2f})")
+        if detection_mode == 'ai' and abs(float(ai_confidence) - 0.80) > 1e-6:
+            print(f"   AI confidence fixed at 0.80 (requested: {ai_confidence:.2f})")
 
         if detection_mode == 'ai' and DETECTREE2_AVAILABLE:
             print("Initializing MangroVision with AI detection system...")
@@ -245,7 +245,16 @@ class HexagonDetector:
 
             cleaned_mask[component_pixels] = 255
 
-        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        canopy_polygons = self.mask_to_polygons(cleaned_mask, min_area_m2=min_area_m2)
+
+        return canopy_polygons, cleaned_mask
+
+    def mask_to_polygons(self, mask: np.ndarray, min_area_m2: float = 0.5) -> List[Polygon]:
+        """Convert a binary canopy mask into shapely polygons."""
+        canopy_polygons: List[Polygon] = []
+        min_area_pixels = int(min_area_m2 / (self.gsd ** 2)) if self.gsd else 300
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             if cv2.contourArea(contour) <= min_area_pixels:
                 continue
@@ -265,7 +274,7 @@ class HexagonDetector:
                         elif isinstance(poly, MultiPolygon):
                             canopy_polygons.extend(list(poly.geoms))
 
-        return canopy_polygons, cleaned_mask
+        return canopy_polygons
 
     def create_danger_zones(self, canopy_polygons: List[Polygon], canopy_mask: np.ndarray, buffer_m: float = 1.0) -> Tuple[Polygon, np.ndarray]:
         """
@@ -468,20 +477,22 @@ class HexagonDetector:
             'accepted': 0
         }
         
-        # PROPER HEXAGONAL TESSELLATION GRID
+        # CORNER-TOUCH HEXAGON GRID
         # For flat-top hexagons with circumradius R:
-        #   - Same-row horizontal spacing = âˆš3 * R (buffers share edges, no gaps)
-        #   - Vertical row spacing = 3/2 * R
-        #   - Odd rows offset by âˆš3/2 * R
+        #   - Same-row horizontal spacing = 2 * R
+        #   - Vertical row spacing = âˆš3 * R
+        #   - Odd rows shift right by 1 * R
+        # This matches the separated layout shown in the preferred screenshot.
         R = buffer_radius_pixels
-        h_spacing = np.sqrt(3) * R   # ~1.732 * R between centers in same row
-        v_spacing = 1.5 * R          # 3/2 * R between rows
+        h_spacing = 2.0 * R
+        v_spacing = np.sqrt(3) * R
         
         # â”€â”€ Phase 1: Try multiple grid offsets, keep best â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # The fixed grid origin can miss valid areas. By trying several
         # phase shifts (fractions of the grid cell), we find the alignment
         # that covers the most plantable area.
         num_phases = 5  # Try 5Ã—5 = 25 phase combinations
+        num_phases = max(num_phases, 7)
         best_hexagons = []
         
         for phase_y_i in range(num_phases):
@@ -519,6 +530,10 @@ class HexagonDetector:
             (h_spacing * 0.25, v_spacing * 0.75),
             (h_spacing * 0.75, v_spacing * 0.75),
             (h_spacing * 0.5, v_spacing * 0.5),
+            (h_spacing * 0.125, v_spacing * 0.5),
+            (h_spacing * 0.875, v_spacing * 0.5),
+            (h_spacing * 0.5, v_spacing * 0.125),
+            (h_spacing * 0.5, v_spacing * 0.875),
         ]
         
         for dx, dy in sub_offsets:
@@ -529,23 +544,24 @@ class HexagonDetector:
                 placement_stats=placement_stats
             )
             for c in candidates:
-                cx, cy = c['center']
-                # Check this hexagon doesn't overlap any already-placed hexagon
-                too_close = False
-                allowed_overlap_px = (max_overlap_m / self.gsd) if (self.gsd and max_overlap_m > 0) else 0.0
-                for placed in best_hexagons + extra_hexagons:
-                    px, py = placed['center']
-                    dist = np.sqrt((cx - px)**2 + (cy - py)**2)
-                    # Minimum distance for non-overlapping buffers
-                    min_dist = buffer_radius_pixels + placed['buffer_radius_m'] / self.gsd
-                    if dist < (min_dist - allowed_overlap_px):
-                        too_close = True
-                        break
-                if not too_close:
+                if not self._buffers_overlap(c['buffer'], best_hexagons + extra_hexagons):
                     extra_hexagons.append(c)
+                elif placement_stats is not None:
+                    placement_stats['buffer_overlap_fail'] = placement_stats.get('buffer_overlap_fail', 0) + 1
         
         if extra_hexagons:
             print(f"    Phase 2 (gap filling): +{len(extra_hexagons)} extra hexagons")
+
+        dense_hexagons = self._dense_fill_remaining_gaps(
+            plantable_zone,
+            buffer_radius_pixels,
+            core_radius_pixels,
+            best_hexagons + extra_hexagons,
+            danger_distance_map=danger_distance_map,
+            placement_stats=placement_stats
+        )
+        if dense_hexagons:
+            print(f"    Phase 3 (dense edge fill): +{len(dense_hexagons)} extra hexagons")
 
         print(
             "    Placement diagnostics: "
@@ -553,11 +569,147 @@ class HexagonDetector:
             f"center_outside={placement_stats.get('center_outside', 0)}, "
             f"core_clearance_fail={placement_stats.get('core_clearance_fail', 0)}, "
             f"core_ratio_fail={placement_stats.get('core_ratio_fail', 0)}, "
-            f"buffer_ratio_fail={placement_stats.get('buffer_ratio_fail', 0)}"
+            f"buffer_ratio_fail={placement_stats.get('buffer_ratio_fail', 0)}, "
+            f"buffer_overlap_fail={placement_stats.get('buffer_overlap_fail', 0)}"
         )
         
-        all_hexagons = best_hexagons + extra_hexagons
+        all_hexagons = best_hexagons + extra_hexagons + dense_hexagons
         return all_hexagons
+
+    def _buffers_overlap(
+        self,
+        candidate_buffer: Polygon,
+        placed_hexagons: List[Dict],
+        area_tolerance_px: float = 1.0,
+    ) -> bool:
+        """Allow touching edges or corners, but reject true area overlap."""
+        for placed in placed_hexagons:
+            try:
+                overlap_area = candidate_buffer.intersection(placed['buffer']).area
+                if overlap_area > area_tolerance_px:
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _dense_fill_remaining_gaps(
+        self,
+        plantable_zone: Polygon,
+        buffer_radius_pixels: float,
+        core_radius_pixels: float,
+        placed_hexagons: List[Dict],
+        danger_distance_map: Optional[np.ndarray] = None,
+        placement_stats: Optional[Dict[str, int]] = None,
+    ) -> List[Dict]:
+        """Greedy fine-grid fill for irregular pockets the main lattice misses."""
+        if plantable_zone.is_empty:
+            return []
+
+        try:
+            occupied_union = unary_union([h['buffer'] for h in placed_hexagons]) if placed_hexagons else Polygon()
+            remaining_zone = plantable_zone.difference(occupied_union)
+        except Exception:
+            remaining_zone = plantable_zone
+
+        if remaining_zone.is_empty:
+            return []
+
+        minx, miny, maxx, maxy = remaining_zone.bounds
+        step_x = max(buffer_radius_pixels * 0.55, 6.0)
+        step_y = max(buffer_radius_pixels * 0.48, 6.0)
+        accepted: List[Dict] = []
+
+        row = 0
+        y = miny
+        while y <= maxy:
+            x = minx + (step_x * 0.5 if row % 2 == 1 else 0.0)
+            while x <= maxx:
+                if not remaining_zone.contains(Point(x, y)):
+                    x += step_x
+                    continue
+
+                candidate = self._evaluate_hex_candidate(
+                    plantable_zone,
+                    x,
+                    y,
+                    buffer_radius_pixels,
+                    core_radius_pixels,
+                    danger_distance_map=danger_distance_map,
+                    placement_stats=placement_stats
+                )
+                if candidate is not None:
+                    if not self._buffers_overlap(candidate['buffer'], placed_hexagons + accepted):
+                        accepted.append(candidate)
+                    elif placement_stats is not None:
+                        placement_stats['buffer_overlap_fail'] = placement_stats.get('buffer_overlap_fail', 0) + 1
+                x += step_x
+            y += step_y
+            row += 1
+
+        return accepted
+
+    def _evaluate_hex_candidate(
+        self,
+        plantable_zone: Polygon,
+        x: float,
+        y: float,
+        buffer_radius_pixels: float,
+        core_radius_pixels: float,
+        danger_distance_map: Optional[np.ndarray] = None,
+        placement_stats: Optional[Dict[str, int]] = None,
+    ) -> Optional[Dict]:
+        """Validate a candidate center and return the ready-to-place hex."""
+        center_point = Point(x, y)
+
+        if not plantable_zone.contains(center_point):
+            if placement_stats is not None:
+                placement_stats['center_outside'] = placement_stats.get('center_outside', 0) + 1
+            return None
+
+        hexagon_buffer = self.create_hexagon(x, y, buffer_radius_pixels)
+        hexagon_core = self.create_hexagon(x, y, core_radius_pixels)
+
+        if danger_distance_map is not None:
+            cx = int(round(x))
+            cy = int(round(y))
+            if (
+                cx < 0 or cy < 0
+                or cy >= danger_distance_map.shape[0]
+                or cx >= danger_distance_map.shape[1]
+                or float(danger_distance_map[cy, cx]) < (core_radius_pixels + 0.5)
+            ):
+                if placement_stats is not None:
+                    placement_stats['core_clearance_fail'] = placement_stats.get('core_clearance_fail', 0) + 1
+                return None
+
+        core_ratio = 0.0
+        if plantable_zone.intersects(hexagon_core):
+            core_ratio = hexagon_core.intersection(plantable_zone).area / max(hexagon_core.area, 1e-9)
+
+        buffer_safe_ratio = 0.0
+        if plantable_zone.intersects(hexagon_buffer):
+            buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / max(hexagon_buffer.area, 1e-9)
+
+        if core_ratio < 0.99:
+            if placement_stats is not None:
+                placement_stats['core_ratio_fail'] = placement_stats.get('core_ratio_fail', 0) + 1
+            return None
+        if buffer_safe_ratio < 0.70:
+            if placement_stats is not None:
+                placement_stats['buffer_ratio_fail'] = placement_stats.get('buffer_ratio_fail', 0) + 1
+            return None
+
+        if placement_stats is not None:
+            placement_stats['accepted'] = placement_stats.get('accepted', 0) + 1
+
+        return {
+            'buffer': hexagon_buffer,
+            'core': hexagon_core,
+            'center': (x, y),
+            'buffer_radius_m': buffer_radius_pixels * self.gsd,
+            'core_radius_m': core_radius_pixels * self.gsd,
+            'area_m2': hexagon_core.area * (self.gsd ** 2)
+        }
     
     def _tessellate_grid(
         self,
@@ -583,72 +735,22 @@ class HexagonDetector:
         y = start_y
         
         while y <= max_y:
-            # Proper tessellation offset: odd rows shift right by âˆš3/2 * R
-            x_offset = (np.sqrt(3) / 2) * R if row % 2 == 1 else 0
+            # Corner-touch offset: odd rows shift right by one radius.
+            x_offset = R if row % 2 == 1 else 0.0
             x = start_x + x_offset
             
             while x <= max_x:
-                center_point = Point(x, y)
-                
-                # Quick reject: center must be in plantable zone
-                if not plantable_zone.contains(center_point):
-                    if placement_stats is not None:
-                        placement_stats['center_outside'] = placement_stats.get('center_outside', 0) + 1
-                    x += h_spacing
-                    continue
-                
-                hexagon_buffer = self.create_hexagon(x, y, buffer_radius_pixels)
-                hexagon_core = self.create_hexagon(x, y, core_radius_pixels)
-
-                # Root-cause fix: enforce core safety in raster space against danger mask.
-                # If center does not have at least core-radius clearance, the core would
-                # visually land in red/purple danger areas due to vector/raster mismatch.
-                if danger_distance_map is not None:
-                    cx = int(round(x))
-                    cy = int(round(y))
-                    if (
-                        cx < 0 or cy < 0
-                        or cy >= danger_distance_map.shape[0]
-                        or cx >= danger_distance_map.shape[1]
-                        or float(danger_distance_map[cy, cx]) < (core_radius_pixels + 0.5)
-                    ):
-                        if placement_stats is not None:
-                            placement_stats['core_clearance_fail'] = placement_stats.get('core_clearance_fail', 0) + 1
-                        x += h_spacing
-                        continue
-
-                core_ratio = 0.0
-                if plantable_zone.intersects(hexagon_core):
-                    core_ratio = hexagon_core.intersection(plantable_zone).area / max(hexagon_core.area, 1e-9)
-
-                buffer_safe_ratio = 0.0
-                if plantable_zone.intersects(hexagon_buffer):
-                    buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / max(hexagon_buffer.area, 1e-9)
-
-                # Core must stay fully safe; buffer can overlap danger up to 30%.
-                if core_ratio < 0.99:
-                    if placement_stats is not None:
-                        placement_stats['core_ratio_fail'] = placement_stats.get('core_ratio_fail', 0) + 1
-                    x += h_spacing
-                    continue
-                if buffer_safe_ratio < 0.70:
-                    if placement_stats is not None:
-                        placement_stats['buffer_ratio_fail'] = placement_stats.get('buffer_ratio_fail', 0) + 1
-                    x += h_spacing
-                    continue
-
-                if placement_stats is not None:
-                    placement_stats['accepted'] = placement_stats.get('accepted', 0) + 1
-
-                hex_dict = {
-                    'buffer': hexagon_buffer,
-                    'core': hexagon_core,
-                    'center': (x, y),
-                    'buffer_radius_m': buffer_radius_pixels * self.gsd,
-                    'core_radius_m': core_radius_pixels * self.gsd,
-                    'area_m2': hexagon_core.area * (self.gsd ** 2)
-                }
-                hexagons.append(hex_dict)
+                hex_dict = self._evaluate_hex_candidate(
+                    plantable_zone,
+                    x,
+                    y,
+                    buffer_radius_pixels,
+                    core_radius_pixels,
+                    danger_distance_map=danger_distance_map,
+                    placement_stats=placement_stats
+                )
+                if hex_dict is not None:
+                    hexagons.append(hex_dict)
                 
                 x += h_spacing
             

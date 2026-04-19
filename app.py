@@ -39,6 +39,7 @@ from canopy_detection.ortho_matcher import (
     match_drone_to_ortho,
     drone_pixel_to_gps_via_homography,
     drone_pixel_to_gps_via_heading,
+    gps_to_ortho_pixel,
     select_orthophoto,
     is_inside_any_orthophoto,
 )
@@ -2154,6 +2155,131 @@ def _reload_eroded_filter():
     """Reload eroded zones from disk (called after saving new zones)"""
     global _eroded_filter
     _eroded_filter = ForbiddenZoneFilter(str(_ERODED_ZONES_PATH))
+
+
+def _gps_to_drone_pixel_via_homography(latitude, longitude, h_inverse):
+    """Map GPS coordinates into the drone image using the inverse ortho homography."""
+    ortho_x, ortho_y = gps_to_ortho_pixel(latitude, longitude)
+    pt = np.array([[[ortho_x, ortho_y]]], dtype=np.float64)
+    drone_pt = cv2.perspectiveTransform(pt, h_inverse)
+    px, py = drone_pt[0, 0]
+    return float(px), float(py)
+
+
+def _gps_to_drone_pixel_via_heading(
+    latitude,
+    longitude,
+    image_w,
+    image_h,
+    center_lat,
+    center_lon,
+    gsd,
+    heading_deg,
+):
+    """Approximate GPS → drone-pixel conversion when homography is unavailable."""
+    mpdlat = 111320.0
+    mpdlon = 111320.0 * np.cos(np.radians(center_lat))
+
+    east_m = (longitude - center_lon) * mpdlon
+    north_m = (latitude - center_lat) * mpdlat
+
+    heading_rad = np.radians(float(heading_deg))
+    offset_x_m = east_m * np.cos(heading_rad) - north_m * np.sin(heading_rad)
+    offset_y_m = east_m * np.sin(heading_rad) + north_m * np.cos(heading_rad)
+
+    px = (offset_x_m / gsd) + (image_w / 2.0)
+    py = (image_h / 2.0) - (offset_y_m / gsd)
+    return float(px), float(py)
+
+
+def _build_zone_mask_in_drone_pixels(image_shape, zone_polygons, gps_to_pixel):
+    """Rasterize lat/lon exclusion polygons into the current drone-image pixel space."""
+    h, w = image_shape
+    zone_mask = np.zeros((h, w), dtype=np.uint8)
+
+    for zone in zone_polygons or []:
+        geoms = list(zone.geoms) if hasattr(zone, "geoms") else [zone]
+        for geom in geoms:
+            if geom.is_empty or not hasattr(geom, "exterior"):
+                continue
+
+            exterior_pts = []
+            for lon, lat in geom.exterior.coords:
+                px, py = gps_to_pixel(lat, lon)
+                if np.isfinite(px) and np.isfinite(py):
+                    exterior_pts.append([int(round(px)), int(round(py))])
+
+            if len(exterior_pts) < 3:
+                continue
+
+            cv2.fillPoly(zone_mask, [np.array(exterior_pts, dtype=np.int32)], 255)
+
+            for interior in getattr(geom, "interiors", []):
+                hole_pts = []
+                for lon, lat in interior.coords:
+                    px, py = gps_to_pixel(lat, lon)
+                    if np.isfinite(px) and np.isfinite(py):
+                        hole_pts.append([int(round(px)), int(round(py))])
+                if len(hole_pts) >= 3:
+                    cv2.fillPoly(zone_mask, [np.array(hole_pts, dtype=np.int32)], 0)
+
+    return zone_mask
+
+
+def _apply_forbidden_zone_canopy_exclusion(detector, results, forbidden_mask):
+    """Remove canopy pixels that fall inside structural forbidden zones and rebuild results."""
+    canopy_mask = results.get("canopy_mask")
+    if not isinstance(canopy_mask, np.ndarray) or canopy_mask.shape != forbidden_mask.shape:
+        results["_forbidden_canopy_removed_pixels"] = 0
+        return results
+
+    filtered_canopy_mask = canopy_mask.copy()
+    filtered_canopy_mask[forbidden_mask > 0] = 0
+
+    removed_pixels = int(np.count_nonzero(canopy_mask) - np.count_nonzero(filtered_canopy_mask))
+    results["_forbidden_canopy_removed_pixels"] = removed_pixels
+    if removed_pixels <= 0:
+        return results
+
+    previous_canopy_count = int(results.get("canopy_count", 0))
+    canopy_polygons = detector.mask_to_polygons(filtered_canopy_mask)
+    danger_zone, danger_mask = detector.create_danger_zones(
+        canopy_polygons,
+        filtered_canopy_mask,
+        results["canopy_buffer_m"],
+    )
+    plantable_zone = detector.identify_plantable_zones(danger_zone)
+    hexagons = detector.generate_hexagonal_planting_zones(
+        plantable_zone,
+        results["hexagon_size_m"],
+        maximize_coverage=True,
+        danger_mask=danger_mask,
+        canopy_mask=filtered_canopy_mask,
+    )
+
+    total_area_m2 = float(results.get("total_area_m2", 0.0))
+    gsd = float(results["gsd_m_per_pixel"])
+    danger_area_m2 = danger_zone.area * (gsd ** 2) if not danger_zone.is_empty else 0.0
+    plantable_area_m2 = plantable_zone.area * (gsd ** 2) if not plantable_zone.is_empty else 0.0
+
+    results["canopy_polygons"] = canopy_polygons
+    results["canopy_mask"] = filtered_canopy_mask
+    results["canopy_count"] = len(canopy_polygons)
+    results["danger_zone"] = danger_zone
+    results["danger_mask"] = danger_mask
+    results["danger_area_m2"] = danger_area_m2
+    results["danger_percentage"] = (danger_area_m2 / total_area_m2 * 100) if total_area_m2 > 0 else 0.0
+    results["plantable_zone"] = plantable_zone
+    results["plantable_area_m2"] = plantable_area_m2
+    results["plantable_percentage"] = (plantable_area_m2 / total_area_m2 * 100) if total_area_m2 > 0 else 0.0
+    results["hexagons"] = hexagons
+    results["hexagon_count"] = len(hexagons)
+    results["_forbidden_canopy_removed_count"] = max(0, previous_canopy_count - len(canopy_polygons))
+
+    ai_metadata = dict(results.get("ai_metadata") or {})
+    ai_metadata["forbidden_zone_canopy_removed_pixels"] = removed_pixels
+    results["ai_metadata"] = ai_metadata
+    return results
 
 
 def _render_section_banner(kicker: str, title: str, subtitle: str, badges=None):
@@ -4700,7 +4826,7 @@ def main():
         </div>
         """, unsafe_allow_html=True)
 
-        ai_confidence = 0.90
+        ai_confidence = 0.80
         ai_runtime_tuning = {}
         altitude = 6.0
         drone_model = "GENERIC_4K"
@@ -5010,11 +5136,20 @@ def analyze_image(
                 proper_code_mtime = int((Path(__file__).parent / "canopy_detection" / "detectree2_proper.py").stat().st_mtime)
             except Exception:
                 proper_code_mtime = 0
+            try:
+                forbidden_zones_mtime = int(_FORBIDDEN_ZONES_PATH.stat().st_mtime)
+            except Exception:
+                forbidden_zones_mtime = 0
+            try:
+                eroded_zones_mtime = int(_ERODED_ZONES_PATH.stat().st_mtime)
+            except Exception:
+                eroded_zones_mtime = 0
             tuning_fingerprint = json.dumps(ai_runtime_tuning or {}, sort_keys=True)
             analysis_key = (
                 f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
                 f"{hexagon_size}_{ai_confidence}_{detection_mode}_"
                 f"{canopy_code_mtime}_{proper_code_mtime}_"
+                f"{forbidden_zones_mtime}_{eroded_zones_mtime}_"
                 f"{tuning_fingerprint}"
             )
             
@@ -5156,11 +5291,15 @@ def analyze_image(
                 
                 progress_bar.progress(65, text="🚫 Filtering forbidden & eroded zones...")
                 
-                # ── EARLY FORBIDDEN ZONE FILTERING ────────────────────────
-                # Filter hexagons BEFORE visualization so the Visual Results
-                # image also excludes planting points on bridges/towers/houses.
+                # ── EARLY EXCLUSION-ZONE FILTERING ────────────────────────
+                # 1. Remove structure zones from canopy before danger buffers are visualized.
+                # 2. Filter planting hexagons before visualization so the Visual Results
+                #    image also excludes forbidden/eroded zone planting points.
                 results['_forbidden_filtered'] = 0
-                if image_gps is not None and _forbidden_filter.zone_count > 0:
+                results['_eroded_filtered'] = 0
+                results['_forbidden_canopy_removed_pixels'] = 0
+                results['_forbidden_canopy_removed_count'] = 0
+                if image_gps is not None and (_forbidden_filter.zone_count > 0 or _eroded_filter.zone_count > 0):
                     _gsd = results['gsd_m_per_pixel']
                     _w, _h = results['image_size']
                     
@@ -5177,11 +5316,22 @@ def analyze_image(
                     else:
                         _match_result = st.session_state[_match_key]
                     
-                    # Build pixel→GPS converter
+                    # Build pixel↔GPS converters
                     if _match_result['success']:
                         _H = _match_result['H']
                         def _px_to_gps(px, py):
                             return drone_pixel_to_gps_via_homography(px, py, _H)
+                        try:
+                            _H_inv = np.linalg.inv(_H)
+                            def _gps_to_px(lat, lon):
+                                return _gps_to_drone_pixel_via_homography(lat, lon, _H_inv)
+                        except Exception:
+                            def _gps_to_px(lat, lon):
+                                return _gps_to_drone_pixel_via_heading(
+                                    lat, lon, _w, _h,
+                                    image_center_lat, image_center_lon,
+                                    _gsd, camera_heading
+                                )
                     else:
                         def _px_to_gps(px, py):
                             return drone_pixel_to_gps_via_heading(
@@ -5189,6 +5339,24 @@ def analyze_image(
                                 image_center_lat, image_center_lon,
                                 _gsd, camera_heading
                             )
+                        def _gps_to_px(lat, lon):
+                            return _gps_to_drone_pixel_via_heading(
+                                lat, lon, _w, _h,
+                                image_center_lat, image_center_lon,
+                                _gsd, camera_heading
+                            )
+
+                    if _forbidden_filter.zone_count > 0:
+                        _forbidden_mask = _build_zone_mask_in_drone_pixels(
+                            results['image'].shape[:2],
+                            _forbidden_filter.forbidden_polygons,
+                            _gps_to_px,
+                        )
+                        results = _apply_forbidden_zone_canopy_exclusion(
+                            detector,
+                            results,
+                            _forbidden_mask,
+                        )
                     
                     # Filter: keep only hexagons outside forbidden AND eroded zones
                     _safe = []
@@ -5272,6 +5440,13 @@ def analyze_image(
                 st.metric(
                     label="⬡ Planting Hexagons",
                     value=results['hexagon_count']
+                )
+
+            forbidden_canopy_removed_pixels = int(results.get('_forbidden_canopy_removed_pixels', 0) or 0)
+            if forbidden_canopy_removed_pixels > 0:
+                st.info(
+                    f"🚫 Removed {forbidden_canopy_removed_pixels} canopy pixels inside forbidden zones "
+                    f"before danger buffers and planting points were generated."
                 )
             
             st.markdown("---")

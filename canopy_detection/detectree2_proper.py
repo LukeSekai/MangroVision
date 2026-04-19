@@ -323,6 +323,8 @@ class ProperDetectree2Detector:
             for i in range(len(scores)):
                 if scores[i] >= self.confidence_threshold:
                     mask = masks[i].astype(np.uint8)
+                    if int(np.count_nonzero(mask)) <= 0:
+                        continue
                     
                     # Find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
