@@ -298,160 +298,302 @@ st.markdown("""
 
     /* Form submit button (Sign In) should match green theme */
     .stFormSubmitButton > button {
-        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
-        color: white !important;
-        border: none !important;
-        padding: 0.75rem 2rem;
-        font-size: 1.1rem;
-        font-weight: 600;
-        border-radius: 8px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: all 0.3s ease;
+        min-height: 56px;
+        border-radius: 18px;
+        border: 1px solid rgba(172, 223, 190, 0.14) !important;
+        background: linear-gradient(135deg, #3f7d59 0%, #5da579 100%) !important;
+        color: #f6fbf7 !important;
+        padding: 0.85rem 1.5rem;
+        font-size: 1rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        box-shadow:
+            0 14px 34px rgba(9, 32, 21, 0.34),
+            inset 0 1px 0 rgba(255, 255, 255, 0.12);
+        transition:
+            transform 180ms ease,
+            box-shadow 180ms ease,
+            filter 180ms ease;
         width: 100%;
     }
 
     .stFormSubmitButton > button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
+        filter: brightness(1.03);
+        box-shadow:
+            0 18px 42px rgba(9, 32, 21, 0.38),
+            inset 0 1px 0 rgba(255, 255, 255, 0.15);
+        background: linear-gradient(135deg, #457f5d 0%, #67ae82 100%) !important;
     }
 
     .stFormSubmitButton > button:focus,
     .stFormSubmitButton > button:active {
         outline: none !important;
-        border: 1px solid #7EC88D !important;
-        box-shadow: 0 0 0 2px rgba(126, 200, 141, 0.35) !important;
-        background: linear-gradient(135deg, #2D5F3F 0%, #4A9D6F 100%) !important;
+        border-color: rgba(173, 232, 194, 0.32) !important;
+        box-shadow:
+            0 0 0 4px rgba(93, 165, 121, 0.20),
+            0 18px 42px rgba(9, 32, 21, 0.34) !important;
+        background: linear-gradient(135deg, #457f5d 0%, #67ae82 100%) !important;
     }
 
     /* Auth panel */
+    .login-hero,
+    .auth-shell,
+    div[data-testid="stForm"],
+    .auth-stage {
+        position: relative;
+        overflow: hidden;
+        border: 1px solid rgba(164, 214, 183, 0.12);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        box-shadow:
+            0 28px 60px rgba(3, 12, 9, 0.38),
+            inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .login-hero::before,
+    .auth-shell::before,
+    div[data-testid="stForm"]::before,
+    .auth-stage::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+            radial-gradient(circle at top right, rgba(119, 181, 145, 0.12), transparent 34%),
+            linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0));
+        pointer-events: none;
+    }
+
     .login-hero {
-        padding: 2.1rem 2.15rem;
-        border-radius: 30px;
-        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
-        border: 1px solid rgba(143, 211, 167, 0.12);
-        box-shadow: 0 28px 50px rgba(8, 16, 11, 0.32);
+        padding: 32px;
+        border-radius: 32px;
+        background:
+            linear-gradient(165deg, rgba(8, 18, 13, 0.88) 0%, rgba(10, 22, 17, 0.72) 42%, rgba(14, 34, 25, 0.76) 100%);
         min-height: 100%;
     }
 
     .login-kicker {
-        color: #98cfac;
+        color: #9bcdb0;
         text-transform: uppercase;
         letter-spacing: 0.18rem;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 800;
-        margin-bottom: 0.6rem;
+        margin-bottom: 16px;
     }
 
     .login-hero h1 {
-        color: #f3faf5;
-        font-size: 3rem;
-        line-height: 1.02;
+        color: #f4fbf7;
+        font-size: clamp(2.75rem, 4vw, 4.25rem);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
         margin: 0;
+        max-width: 12ch;
     }
 
     .login-hero p {
-        color: #cadbcc;
-        font-size: 1rem;
-        line-height: 1.7;
-        margin: 0.9rem 0 0 0;
+        color: #d2e1d8;
+        font-size: 1.02rem;
+        line-height: 1.72;
+        margin: 24px 0 0 0;
         max-width: 640px;
     }
 
     .login-badge-row {
         display: flex;
         flex-wrap: wrap;
-        gap: 0.55rem;
-        margin-top: 1.1rem;
+        gap: 12px;
+        margin-top: 24px;
     }
 
     .login-badge-row span {
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(143, 211, 167, 0.12);
-        color: #eef7f1;
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(161, 205, 178, 0.12);
+        color: #eff8f2;
         border-radius: 999px;
-        padding: 0.48rem 0.8rem;
+        padding: 10px 16px;
         font-size: 0.82rem;
         font-weight: 700;
+        transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+    }
+
+    .login-badge-row span::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: linear-gradient(135deg, #8fcaa7, #5aa178);
+        box-shadow: 0 0 0 6px rgba(93, 165, 121, 0.12);
+    }
+
+    .login-badge-row span:hover {
+        transform: translateY(-2px);
+        border-color: rgba(188, 226, 201, 0.18);
+        background: rgba(255, 255, 255, 0.06);
     }
 
     .login-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.95rem;
-        margin-top: 1.25rem;
+        gap: 16px;
+        margin-top: 32px;
     }
 
     .login-grid-item {
-        background: rgba(255, 255, 255, 0.05);
-        border: 1px solid rgba(143, 211, 167, 0.10);
-        border-radius: 18px;
-        padding: 1rem;
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        padding: 20px;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(164, 214, 183, 0.10);
+        transition:
+            transform 180ms ease,
+            box-shadow 180ms ease,
+            border-color 180ms ease,
+            background 180ms ease;
     }
 
-    .login-grid-item strong {
+    .login-grid-item:hover {
+        transform: translateY(-4px);
+        background: rgba(255, 255, 255, 0.055);
+        border-color: rgba(184, 224, 198, 0.18);
+        box-shadow: 0 18px 34px rgba(4, 14, 10, 0.22);
+    }
+
+    .login-grid-icon {
+        width: 48px;
+        height: 48px;
+        min-width: 48px;
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background:
+            linear-gradient(145deg, rgba(96, 149, 117, 0.20), rgba(66, 105, 83, 0.18));
+        border: 1px solid rgba(176, 218, 190, 0.14);
+        color: #cde6d7;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .login-grid-icon svg {
+        width: 22px;
+        height: 22px;
+    }
+
+    .login-grid-copy strong {
         display: block;
-        color: #f1f8f3;
-        font-size: 0.98rem;
+        color: #f2faf5;
+        font-size: 1rem;
         font-weight: 800;
-        margin-bottom: 0.28rem;
+        margin-bottom: 8px;
     }
 
-    .login-grid-item span {
-        color: #c6dbcd;
+    .login-grid-copy span {
+        color: #c4d9cc;
         font-size: 0.92rem;
-        line-height: 1.55;
+        line-height: 1.6;
     }
 
     .auth-shell {
-        padding: 1.35rem;
-        border-radius: 28px;
-        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
-        border: 1px solid rgba(143, 211, 167, 0.12);
-        margin-bottom: 0.9rem;
-        box-shadow: 0 24px 44px rgba(8, 16, 11, 0.30);
+        padding: 32px;
+        border-radius: 30px;
+        background:
+            linear-gradient(165deg, rgba(8, 18, 13, 0.82) 0%, rgba(11, 24, 18, 0.66) 48%, rgba(14, 31, 23, 0.72) 100%);
+        margin-bottom: 16px;
     }
 
     .auth-caption {
-        color: #98cfac;
+        color: #9bcdb0;
         text-transform: uppercase;
         letter-spacing: 0.16rem;
         font-size: 0.74rem;
         font-weight: 800;
-        margin-bottom: 0.35rem;
+        margin-bottom: 12px;
     }
 
     .auth-title {
-        color: #f3faf5;
-        font-size: 2rem;
+        color: #f4fbf7;
+        font-size: clamp(2rem, 3vw, 2.7rem);
         font-weight: 800;
+        letter-spacing: -0.03em;
         margin: 0;
     }
 
     .auth-subtitle {
-        color: #cadbcc;
-        font-size: 0.97rem;
-        margin-top: 0.28rem;
-        margin-bottom: 0.9rem;
-        line-height: 1.6;
+        color: #d2e1d8;
+        font-size: 0.98rem;
+        margin-top: 16px;
+        margin-bottom: 20px;
+        line-height: 1.65;
+        max-width: 44ch;
+    }
+
+    .auth-meta-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 12px;
     }
 
     .auth-time {
-        color: #eef7f1;
+        flex: 1 1 320px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        color: #eef8f2;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(164, 214, 183, 0.10);
+        border-radius: 18px;
+        padding: 16px 18px;
+    }
+
+    .auth-time-label {
+        color: #9fc8ae;
+        font-size: 0.72rem;
         font-weight: 700;
-        background: rgba(255, 255, 255, 0.06);
-        border: 1px solid rgba(143, 211, 167, 0.12);
-        border-radius: 14px;
-        padding: 0.62rem 0.78rem;
-        margin-bottom: 0.75rem;
+        letter-spacing: 0.12rem;
+        text-transform: uppercase;
+    }
+
+    .auth-time-value {
+        color: #f4fbf7;
+        font-size: 1rem;
+        font-weight: 700;
+        line-height: 1.4;
+    }
+
+    .auth-status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 14px 18px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(164, 214, 183, 0.10);
+        color: #dcebe1;
+        font-size: 0.88rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .auth-status-pill::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #8fd3a8;
+        box-shadow: 0 0 0 6px rgba(97, 165, 122, 0.14);
     }
 
     /* Opaque login form card */
     div[data-testid="stForm"] {
-        background: rgba(255, 255, 255, 0.04) !important;
-        border: 1px solid rgba(143, 211, 167, 0.10) !important;
-        border-radius: 18px !important;
-        padding: 1rem !important;
+        background:
+            linear-gradient(180deg, rgba(10, 20, 16, 0.76) 0%, rgba(12, 26, 19, 0.64) 100%) !important;
+        border-radius: 30px !important;
+        padding: 32px !important;
     }
 
     div[data-testid="stForm"] label,
@@ -460,23 +602,176 @@ st.markdown("""
         color: #eef7f1 !important;
     }
 
+    .auth-form-intro {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: flex-start;
+        margin-bottom: 24px;
+    }
+
+    .auth-form-intro h3 {
+        margin: 0;
+        color: #f4fbf7;
+        font-size: 1.2rem;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+    }
+
+    .auth-form-intro p {
+        margin: 8px 0 0 0;
+        color: #b8cec0;
+        font-size: 0.92rem;
+        line-height: 1.6;
+    }
+
+    .auth-form-badge {
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(164, 214, 183, 0.12);
+        color: #d5e7dc;
+        font-size: 0.76rem;
+        font-weight: 700;
+        letter-spacing: 0.06rem;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .auth-field-label {
+        position: relative;
+        z-index: 1;
+        color: #eaf5ee;
+        font-size: 0.88rem;
+        font-weight: 700;
+        letter-spacing: 0.01em;
+        margin-bottom: 8px;
+    }
+
+    div[data-testid="stForm"] [data-testid="stTextInput"] {
+        position: relative;
+        z-index: 1;
+        margin-bottom: 20px;
+    }
+
     div[data-testid="stForm"] [data-baseweb="input"] {
-        background: rgba(255, 255, 255, 0.06) !important;
-        border-color: rgba(143, 211, 167, 0.14) !important;
+        min-height: 56px;
+        border-radius: 18px !important;
+        background: rgba(8, 20, 15, 0.72) !important;
+        border: 1px solid rgba(166, 207, 181, 0.14) !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+        transition:
+            border-color 180ms ease,
+            box-shadow 180ms ease,
+            background 180ms ease,
+            transform 180ms ease;
+    }
+
+    div[data-testid="stForm"] [data-baseweb="input"]:hover {
+        transform: translateY(-1px);
+        border-color: rgba(187, 224, 200, 0.18) !important;
+        background: rgba(10, 24, 18, 0.78) !important;
+    }
+
+    div[data-testid="stForm"] [data-baseweb="input"]:focus-within {
+        border-color: rgba(106, 191, 137, 0.82) !important;
+        box-shadow:
+            0 0 0 4px rgba(61, 121, 87, 0.18),
+            0 18px 36px rgba(7, 21, 15, 0.24) !important;
+        background: rgba(10, 24, 18, 0.84) !important;
     }
 
     div[data-testid="stForm"] input {
-        color: #eef7f1 !important;
+        color: #f4fbf7 !important;
+        background: transparent !important;
+        min-height: 56px !important;
+        padding: 0 18px 0 52px !important;
+        font-size: 0.98rem !important;
+    }
+
+    div[data-testid="stForm"] input::placeholder {
+        color: rgba(194, 212, 201, 0.60) !important;
+    }
+
+    div[data-testid="stForm"] input[aria-label="Username"] {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2398c7ab' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='8' r='3.5'/%3E%3Cpath d='M5 19c1.4-3 4-4.5 7-4.5s5.6 1.5 7 4.5'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: 18px center;
+        background-size: 18px 18px;
+    }
+
+    div[data-testid="stForm"] input[aria-label="Password"] {
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2398c7ab' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='11' width='14' height='9' rx='2'/%3E%3Cpath d='M8 11V8.5a4 4 0 0 1 8 0V11'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: 18px center;
+        background-size: 18px 18px;
+        padding-right: 44px !important;
+    }
+
+    div[data-testid="stForm"] [data-baseweb="input"] button {
+        color: rgba(208, 224, 214, 0.72) !important;
+    }
+
+    .auth-utility-row {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin: 4px 0 24px 0;
+    }
+
+    .auth-forgot {
+        text-align: right;
+    }
+
+    .auth-forgot-link {
+        color: #dff0e6;
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 0;
+    }
+
+    .auth-forgot-caption {
+        color: #9cb6a8;
+        font-size: 0.8rem;
+        line-height: 1.5;
+        margin-top: 4px;
+    }
+
+    div[data-testid="stForm"] [data-testid="stCheckbox"] {
+        margin-top: 2px;
+    }
+
+    div[data-testid="stForm"] [data-testid="stCheckbox"] label {
+        gap: 10px;
+    }
+
+    div[data-testid="stForm"] [data-testid="stCheckbox"] p {
+        margin: 0 !important;
+        color: #d8e7de !important;
+        font-size: 0.9rem !important;
+        font-weight: 600 !important;
+    }
+
+    .auth-form-note {
+        position: relative;
+        z-index: 1;
+        margin-top: 16px;
+        color: #99b4a5;
+        font-size: 0.82rem;
+        line-height: 1.55;
     }
 
     .auth-stage {
         text-align: center;
         color: #eef7f1;
         padding: 1.35rem 1rem;
-        border-radius: 20px;
-        background: linear-gradient(165deg, rgba(8, 16, 11, 0.96) 0%, rgba(16, 32, 24, 0.94) 100%);
-        border: 1px solid rgba(143, 211, 167, 0.12);
-        box-shadow: 0 24px 44px rgba(8, 16, 11, 0.30);
+        border-radius: 22px;
+        background: linear-gradient(165deg, rgba(8, 18, 13, 0.88) 0%, rgba(13, 28, 21, 0.72) 100%);
     }
 
     .account-card {
@@ -514,14 +809,12 @@ st.markdown("""
     /* Login input polish */
     div[data-testid="stTextInput"] input:focus,
     div[data-testid="stTextInput"] input[aria-invalid="true"] {
-        border-color: #4A9D6F !important;
-        box-shadow: 0 0 0 1px #4A9D6F !important;
+        border-color: #5da579 !important;
         outline: none !important;
     }
 
     div[data-testid="stTextInput"] [data-baseweb="input"]:focus-within {
-        border-color: #4A9D6F !important;
-        box-shadow: 0 0 0 1px #4A9D6F !important;
+        border-color: #5da579 !important;
     }
 
     /* Workspace shell */
@@ -1048,6 +1341,22 @@ st.markdown("""
         margin: 0.85rem 0 0.9rem 0;
     }
 
+    @media (max-width: 1100px) {
+        .auth-shell,
+        .login-hero,
+        div[data-testid="stForm"] {
+            padding: 24px !important;
+        }
+
+        .login-hero h1 {
+            max-width: none;
+        }
+
+        .auth-form-intro {
+            flex-direction: column;
+        }
+    }
+
     @media (max-width: 900px) {
         .main-header h1,
         .login-hero h1 {
@@ -1069,6 +1378,21 @@ st.markdown("""
         .operations-strip {
             padding: 1rem 1rem;
             border-radius: 22px;
+        }
+
+        div[data-testid="stForm"] {
+            padding: 20px !important;
+            border-radius: 24px !important;
+        }
+
+        .auth-meta-row,
+        .auth-utility-row {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .auth-forgot {
+            text-align: left;
         }
 
         .header-meta,
@@ -1537,8 +1861,8 @@ def _render_login_screen() -> bool:
                 background-image: url('{login_bg_data_uri}');
                 background-size: cover;
                 background-position: center;
-                filter: blur(8px);
-                transform: scale(1.06);
+                filter: blur(10px) saturate(0.7) brightness(0.55);
+                transform: scale(1.08);
                 z-index: -2;
                 pointer-events: none;
             }}
@@ -1547,7 +1871,11 @@ def _render_login_screen() -> bool:
                 content: "";
                 position: fixed;
                 inset: 0;
-                background: linear-gradient(135deg, rgba(6, 17, 14, 0.74) 0%, rgba(10, 23, 18, 0.68) 50%, rgba(17, 48, 33, 0.66) 100%);
+                background:
+                    radial-gradient(circle at 14% 20%, rgba(71, 125, 93, 0.22), transparent 28%),
+                    radial-gradient(circle at 82% 78%, rgba(66, 110, 86, 0.20), transparent 24%),
+                    radial-gradient(circle at 58% 52%, rgba(41, 75, 57, 0.16), transparent 36%),
+                    linear-gradient(135deg, rgba(5, 14, 11, 0.86) 0%, rgba(8, 19, 15, 0.82) 36%, rgba(11, 30, 22, 0.76) 100%);
                 z-index: -1;
                 pointer-events: none;
             }}
@@ -1564,6 +1892,13 @@ def _render_login_screen() -> bool:
             [data-testid="stAppViewContainer"] [data-testid="block-container"] {{
                 position: relative;
                 z-index: 3;
+                max-width: 1400px;
+                min-height: 100vh;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                padding-top: clamp(32px, 7vh, 88px);
+                padding-bottom: clamp(32px, 7vh, 88px);
             }}
         </style>
         """,
@@ -1593,29 +1928,65 @@ def _render_login_screen() -> bool:
         st.markdown("""
         <div class="login-hero">
             <div class="login-kicker">MangroVision Planning System</div>
-            <h1>Map-First Mangrove Planning Workspace</h1>
-            <p>Authenticate to access the live orthophoto workspace for canopy analysis, exclusion zoning, planting layout generation, and field export.</p>
+            <h1>Map-first planning for premium mangrove operations.</h1>
+            <p>Coordinate canopy analysis, exclusion zoning, planting layout generation, and field deployment from one controlled workspace.</p>
             <div class="login-badge-row">
-                <span>Orthophoto overlays</span>
-                <span>Exclusion zoning</span>
-                <span>Field export ready</span>
+                <span>Live orthophoto context</span>
+                <span>Audit-ready safety layers</span>
+                <span>Field deployment outputs</span>
             </div>
             <div class="login-grid">
                 <div class="login-grid-item">
-                    <strong>Operational mapping</strong>
-                    <span>Review the planting site on the live map before you queue any drone frame for analysis.</span>
+                    <div class="login-grid-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M9 18l-5 2V6l5-2 6 2 5-2v14l-5 2-6-2z"></path>
+                            <path d="M9 4v14"></path>
+                            <path d="M15 6v14"></path>
+                        </svg>
+                    </div>
+                    <div class="login-grid-copy">
+                        <strong>Operational Mapping</strong>
+                        <span>Review live imagery, canopy zones, and planting context before a run is approved.</span>
+                    </div>
                 </div>
                 <div class="login-grid-item">
-                    <strong>Layer-based review</strong>
-                    <span>Check forbidden zones, eroded areas, analysis locations, and planting points directly from the workspace.</span>
+                    <div class="login-grid-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 3l8 4.5-8 4.5-8-4.5L12 3z"></path>
+                            <path d="M4 12l8 4.5 8-4.5"></path>
+                            <path d="M4 16.5L12 21l8-4.5"></path>
+                        </svg>
+                    </div>
+                    <div class="login-grid-copy">
+                        <strong>Layer Review</strong>
+                        <span>Inspect forbidden zones, erosion overlays, and planting points in a single stack.</span>
+                    </div>
                 </div>
                 <div class="login-grid-item">
-                    <strong>Analysis workflow</strong>
-                    <span>Run canopy processing only after the site is visually confirmed and the target image is staged.</span>
+                    <div class="login-grid-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M4 19h16"></path>
+                            <path d="M7 15l3-3 3 2 4-5"></path>
+                            <path d="M17 9h.01"></path>
+                        </svg>
+                    </div>
+                    <div class="login-grid-copy">
+                        <strong>AI Analysis Flow</strong>
+                        <span>Stage drone frames, validate canopy coverage, and move from review to execution faster.</span>
+                    </div>
                 </div>
                 <div class="login-grid-item">
-                    <strong>Deployment output</strong>
-                    <span>Export planting coordinates for field navigation once the planting layout has been validated.</span>
+                    <div class="login-grid-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M12 3v12"></path>
+                            <path d="M7 10l5 5 5-5"></path>
+                            <path d="M5 20h14"></path>
+                        </svg>
+                    </div>
+                    <div class="login-grid-copy">
+                        <strong>Field Export Ready</strong>
+                        <span>Ship planting coordinates and reviewed plans into field operations with less rework.</span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1626,8 +1997,14 @@ def _render_login_screen() -> bool:
         <div class="auth-shell">
             <div class="auth-caption">Secure Access</div>
             <div class="auth-title">Workspace Login</div>
-            <div class="auth-subtitle">Sign in to continue to the MangroVision operations dashboard.</div>
-            <div class="auth-time">System time: {now_str}</div>
+            <div class="auth-subtitle">Sign in to continue to the MangroVision planning workspace for canopy review, zoning, and deployment workflows.</div>
+            <div class="auth-meta-row">
+                <div class="auth-time">
+                    <span class="auth-time-label">System Time</span>
+                    <span class="auth-time-value">{now_str}</span>
+                </div>
+                <div class="auth-status-pill">Encrypted session</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1637,9 +2014,59 @@ def _render_login_screen() -> bool:
             st.session_state.clear_login_fields = False
 
         with st.form("login_form", clear_on_submit=False):
-            username = st.text_input("Username", placeholder="Enter username", key="login_username")
-            password = st.text_input("Password", type="password", placeholder="Enter password", key="login_password")
+            st.markdown(
+                """
+                <div class="auth-form-intro">
+                    <div>
+                        <h3>Sign in with your planner account</h3>
+                        <p>Use your MangroVision credentials to access the operations dashboard.</p>
+                    </div>
+                    <div class="auth-form-badge">Enterprise Access</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            st.markdown('<div class="auth-field-label">Username</div>', unsafe_allow_html=True)
+            username = st.text_input(
+                "Username",
+                placeholder="Enter your username",
+                key="login_username",
+                label_visibility="collapsed",
+            )
+            st.markdown('<div class="auth-field-label">Password</div>', unsafe_allow_html=True)
+            password = st.text_input(
+                "Password",
+                type="password",
+                placeholder="Enter your password",
+                key="login_password",
+                label_visibility="collapsed",
+            )
+            utility_left, utility_right = st.columns([0.56, 0.44], gap="small")
+            with utility_left:
+                remember_me = st.checkbox(
+                    "Remember me",
+                    value=st.session_state.get("planner_remember_login", True),
+                    key="planner_remember_login",
+                )
+            with utility_right:
+                st.markdown(
+                    """
+                    <div class="auth-forgot">
+                        <div class="auth-forgot-link">Forgot Password?</div>
+                        <div class="auth-forgot-caption">Contact your workspace administrator.</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
             login_clicked = st.form_submit_button("Sign In", type="primary", use_container_width=True)
+            st.markdown(
+                """
+                <div class="auth-form-note">
+                    Protected workspace access for canopy analysis, exclusion zoning, and field export operations.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         if login_clicked:
             user = authenticate_user(username.strip(), password)
@@ -1653,7 +2080,10 @@ def _render_login_screen() -> bool:
                 st.session_state.auth_session_token = session_token
                 st.session_state.clear_login_fields = True
                 st.session_state.show_login_success = True
-                _set_auth_query(session_token)
+                if remember_me:
+                    _set_auth_query(session_token)
+                else:
+                    _set_auth_query(None)
                 st.rerun()
             else:
                 st.error("Invalid username or password.")

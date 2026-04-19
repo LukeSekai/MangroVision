@@ -90,3 +90,5 @@ desktop.ini
 # Temporary files
 *.tmp
 *.bak
+models/try_new_latest_model/model_metadata.json
+models/try_new_latest_model/model_final.pth
