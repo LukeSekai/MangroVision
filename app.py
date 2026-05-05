@@ -2242,7 +2242,17 @@ def _apply_forbidden_zone_canopy_exclusion(detector, results, forbidden_mask):
         return results
 
     previous_canopy_count = int(results.get("canopy_count", 0))
-    canopy_polygons = detector.mask_to_polygons(filtered_canopy_mask)
+    canopy_polygons = detector.mask_to_polygons(filtered_canopy_mask, min_area_m2=0.04)
+    rebuilt_mask = np.zeros_like(filtered_canopy_mask)
+    for poly in canopy_polygons:
+        try:
+            if poly.is_empty or poly.exterior is None:
+                continue
+            pts = np.array(poly.exterior.coords, dtype=np.int32)
+            cv2.fillPoly(rebuilt_mask, [pts], 255)
+        except Exception:
+            continue
+    filtered_canopy_mask = rebuilt_mask
     danger_zone, danger_mask = detector.create_danger_zones(
         canopy_polygons,
         filtered_canopy_mask,
@@ -5070,9 +5080,17 @@ def analyze_image(
                 image_center_lat = gps['latitude']
                 image_center_lon = gps['longitude']
                 
-                # Check if GPS is within orthophoto bounds
-                if (sw_lat <= image_center_lat <= ne_lat and 
-                    sw_lon <= image_center_lon <= ne_lon):
+                # Check if GPS is within any discovered orthophoto, not just
+                # the original three hard-coded map pieces.
+                try:
+                    _gps_inside_ortho = is_inside_any_orthophoto(image_center_lat, image_center_lon)
+                except Exception:
+                    _gps_inside_ortho = (
+                        sw_lat <= image_center_lat <= ne_lat and
+                        sw_lon <= image_center_lon <= ne_lon
+                    )
+
+                if _gps_inside_ortho:
                     st.success(f"✅ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (INSIDE map bounds)")
                     gps_valid = True
                     image_gps = gps
@@ -5097,7 +5115,7 @@ def analyze_image(
                 # Use detected altitude if available
                 if 'relative_altitude' in gps and gps['relative_altitude'] is not None:
                     altitude_to_use = gps['relative_altitude']
-                    st.info(f"✈️ Using detected altitude: {altitude_to_use:.1f}m (AGL from EXIF)")
+                    st.info(f"✈️ Using detected altitude: {altitude_to_use:.1f}m (AGL from DJI XMP)")
                 elif 'altitude' in gps and gps['altitude'] is not None:
                     altitude_to_use = gps['altitude']
                     st.info(f"✈️ Using detected altitude: {altitude_to_use:.1f}m (MSL from EXIF)")
@@ -5112,7 +5130,7 @@ def analyze_image(
                 heading_source = "Default (North)"
                 if gps.get('heading') is not None:
                     camera_heading = float(gps['heading'])
-                    heading_source = "EXIF GPSImgDirection"
+                    heading_source = gps.get('heading_source') or "EXIF GPSImgDirection"
                 st.info(f"🧭 Using heading: **{camera_heading:.1f}°** ({heading_source})")
             else:
                 st.error("❌ No GPS data found in image!")
@@ -5160,7 +5178,8 @@ def analyze_image(
                     altitude_m=altitude_to_use, 
                     drone_model=drone_to_use,
                     ai_confidence=ai_confidence,
-                    detection_mode=detection_mode
+                    detection_mode=detection_mode,
+                    camera_info=metadata.get('camera') or {}
                 )
                 if (
                     ai_runtime_tuning

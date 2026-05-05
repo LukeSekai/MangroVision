@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys; sys.path.insert\\(0, '..'\\); sys.path.insert\\(0, '.'\\); from api.main import app; print\\('Registered routes:'\\); [print\\(f'  {m:6s} {r.path}'\\) for r in app.routes for m in \\(r.methods if hasattr\\(r, 'methods'\\) else ['MOUNT']\\)]\")",
+      "Bash(PYTHONPATH=\"..;.\" python -m uvicorn api.main:app --host 127.0.0.1 --port 8765 --log-level warning)",
+      "Bash(curl -s http://127.0.0.1:8765/api/health)",
+      "Bash(curl -s -o /dev/null -w \"tile status=%{http_code}\\\\n\" \"http://127.0.0.1:8765/tiles/FINAL%20MAP/17/106886/62030.jpg\")",
+      "Bash(curl -s http://127.0.0.1:8765/api/zones/eroded)",
+      "Bash(curl -s -o /dev/null -w \"planters status=%{http_code}\\\\n\" http://127.0.0.1:8765/api/planters/)",
+      "Bash(curl -s -o /dev/null -w \"tile status=%{http_code}\\\\n\" \"http://127.0.0.1:8765/tiles/FINAL%20MAP/17/110181/$\\(ls 'c:/Users/Asus-Pc/Desktop/MangroVision/MAP/FINAL MAP/17/110181/')",
+      "Bash(curl -s -o /dev/null -w \"list analyses=%{http_code}\\\\n\" http://127.0.0.1:8765/api/analyses/)",
+      "Bash(curl -s -o /dev/null -w \"analysis 1 points=%{http_code}\\\\n\" http://127.0.0.1:8765/api/analyses/1/points)",
+      "Bash(curl -s -o /dev/null -w \"planters dashboard=%{http_code}\\\\n\" http://127.0.0.1:8765/api/planters/dashboard)",
+      "Bash(curl -s -o /dev/null -w \"map-points=%{http_code}\\\\n\" http://127.0.0.1:8765/api/planters/map-points)",
+      "Bash(curl -s -o /dev/null \"http://127.0.0.1:8765/shutdown-me-none\")",
+      "Bash(taskkill //F //FI \"WINDOWTITLE eq *uvicorn*\")",
+      "Bash(awk '{print $2}')",
+      "Bash(xargs -r kill -9)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('MangroVision_New/api/routes/processing.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK: processing.py parses'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(npx vite *)",
+      "Bash(curl -s -o /dev/null -w \"env_bundle=%{http_code}\\\\n\" \"https://ruby-ripe-hood-kevin.trycloudflare.com/@vite/client\")",
+      "Bash(curl -s \"https://ruby-ripe-hood-kevin.trycloudflare.com/src/main.jsx\")",
+      "Bash(curl -s \"https://ruby-ripe-hood-kevin.trycloudflare.com/src/stores/authStore.js\")",
+      "Bash(powershell -Command \"diff \\(Get-Content app.py | Select-Object -Index \\(5305..5350\\)\\) \\(Get-Content MangroVision_New\\\\api\\\\routes\\\\processing.py | Select-Object -Index \\(633..680\\)\\)\")",
+      "Read(//c/Users/Asus-Pc/Desktop/**)",
+      "Bash(C:/Users/Asus-Pc/Desktop/MangroVision/venv/Scripts/python.exe -c ' *)",
+      "Bash(\"C:/Users/Asus-Pc/Desktop/MangroVision/venv/Scripts/python.exe\" -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\Asus-Pc\\\\Desktop\\\\MangroVision\\\\canopy_detection\\\\canopy_detector_hexagon.py','r',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+    ]
+  }
+}

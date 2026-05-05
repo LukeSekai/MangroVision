@@ -32,7 +32,8 @@ class HexagonDetector:
                  altitude_m: float = 6.0,
                  drone_model: str = 'GENERIC_4K',
                  ai_confidence: float = 0.80,
-                 detection_mode: str = 'ai'):
+                 detection_mode: str = 'ai',
+                 camera_info: Optional[Dict] = None):
         """
         Initialize the detector.
 
@@ -49,6 +50,7 @@ class HexagonDetector:
         self.drone_model = drone_model
         self.ai_confidence = 0.80 if detection_mode == 'ai' else ai_confidence
         self.detection_mode = detection_mode
+        self.camera_info = camera_info or {}
         self.gsd = None
         self.image_shape = None
         self.ai_detector = None
@@ -79,12 +81,16 @@ class HexagonDetector:
 
     def calculate_gsd(self, image_width: int, image_height: int):
         """Calculate Ground Sample Distance for the image"""
-        self.gsd, specs = GSDCalculator.calculate_gsd_from_drone(
+        self.gsd, specs = GSDCalculator.calculate_gsd_from_metadata(
             altitude_m=self.altitude_m,
-            drone_model=self.drone_model
+            camera_info=self.camera_info,
+            drone_model=self.drone_model,
+            image_width_px=image_width,
+            image_height_px=image_height,
         )
         # Store as (height, width) to match numpy convention
         self.image_shape = (image_height, image_width)
+        self.gsd_specs = specs
         return self.gsd
 
     def _run_ai_detection(
@@ -172,7 +178,7 @@ class HexagonDetector:
 
         return canopy_polygons, canopy_mask
 
-    def _detect_hsv(self, image: np.ndarray) -> Tuple[List[Polygon], np.ndarray]:
+    def _detect_hsv(self, image: np.ndarray, min_area_m2: float = 0.12) -> Tuple[List[Polygon], np.ndarray]:
         """
         HSV canopy detection with vegetation-strength validation.
         Prevents large open mud/water areas from being mislabeled as canopy.
@@ -222,8 +228,8 @@ class HexagonDetector:
         canopy_polygons = []
         cleaned_mask = np.zeros_like(canopy_mask)
 
-        # Dynamic minimum area based on GSD (0.5 m2 minimum).
-        min_area_m2 = 0.5
+        # Dynamic minimum area based on GSD. Keep small real seedlings/canopies
+        # while relying on vegetation-strength checks to reject specks.
         min_area_pixels = int(min_area_m2 / (self.gsd ** 2)) if self.gsd else 300
 
         # Component-level filtering preserves interior gaps better than contour filling.
@@ -249,7 +255,7 @@ class HexagonDetector:
 
         return canopy_polygons, cleaned_mask
 
-    def mask_to_polygons(self, mask: np.ndarray, min_area_m2: float = 0.5) -> List[Polygon]:
+    def mask_to_polygons(self, mask: np.ndarray, min_area_m2: float = 0.12) -> List[Polygon]:
         """Convert a binary canopy mask into shapely polygons."""
         canopy_polygons: List[Polygon] = []
         min_area_pixels = int(min_area_m2 / (self.gsd ** 2)) if self.gsd else 300
@@ -797,7 +803,22 @@ class HexagonDetector:
             image,
             progress_callback=progress_callback,
         )
-        
+
+        # Rebuild canopy_mask from the polygons that actually survived the
+        # min-area filter. Otherwise small specks remain in canopy_mask and
+        # get painted purple by the visualization while never receiving a
+        # danger buffer (because create_danger_zones only sees the polygons).
+        if canopy_polygons:
+            aligned_mask = np.zeros_like(canopy_mask)
+            for poly in canopy_polygons:
+                if poly.is_empty or poly.exterior is None:
+                    continue
+                pts = np.array(poly.exterior.coords, dtype=np.int32)
+                cv2.fillPoly(aligned_mask, [pts], 255)
+            canopy_mask = aligned_mask
+        else:
+            canopy_mask = np.zeros_like(canopy_mask)
+
         # Step 2: Create danger zones (canopy + 1m buffer) with mask
         danger_zone, danger_mask = self.create_danger_zones(canopy_polygons, canopy_mask, canopy_buffer_m)
         
@@ -826,6 +847,7 @@ class HexagonDetector:
             'image_path': image_path,
             'image_size': (w, h),
             'gsd_m_per_pixel': self.gsd,
+            'gsd_specs': getattr(self, 'gsd_specs', {}),
             'altitude_m': self.altitude_m,
             'canopy_buffer_m': canopy_buffer_m,
             'hexagon_size_m': hexagon_size_m,
@@ -891,20 +913,38 @@ class HexagonDetector:
         class_counts = ai_metadata.get('class_counts', {})
         bungalon_count = class_counts.get(1, 0)
         other_ai_count = class_counts.get(0, 0)
+        if isinstance(bungalon_mask, np.ndarray) and bungalon_mask.shape == canopy_mask.shape:
+            bungalon_mask = cv2.bitwise_and(bungalon_mask, canopy_mask)
+        if isinstance(other_canopy_mask, np.ndarray) and other_canopy_mask.shape == canopy_mask.shape:
+            other_canopy_mask = cv2.bitwise_and(other_canopy_mask, canopy_mask)
         
-        # Create hexagon buffer mask
+        # Create hexagon buffer mask. Drawn at 50% of the actual buffer
+        # radius (still hexagonal, matching system semantics) so the map
+        # doesn't get cluttered. Real 1 m planting spacing is unchanged.
         hexagon_buffer_mask = np.zeros((h, w), dtype=np.uint8)
         for hex_info in results['hexagons']:
-            hexagon_buffer = hex_info['buffer']
-            pts = np.array(hexagon_buffer.exterior.coords, dtype=np.int32)
-            cv2.fillPoly(hexagon_buffer_mask, [pts], 255)
+            cx, cy = hex_info['center']
+            full_hex = hex_info['buffer']
+            # Scale the hex polygon by 0.5 around its own centre.
+            scaled_pts = np.array(
+                [
+                    [cx + 0.5 * (px - cx), cy + 0.5 * (py - cy)]
+                    for px, py in full_hex.exterior.coords
+                ],
+                dtype=np.int32,
+            )
+            cv2.fillPoly(hexagon_buffer_mask, [scaled_pts], 255)
         
         # Calculate buffer zones (danger buffer minus canopy)
         buffer_only_mask = np.zeros_like(canopy_mask)
         buffer_only_mask[danger_mask > 0] = 255
         buffer_only_mask[canopy_mask > 0] = 0
         
-        # Layer 1: Draw canopy areas with class-specific coloring
+        # Layer 1: Draw hexagon buffers in LIGHT GREEN. Keep this below canopy
+        # and danger layers so dense planting grids do not hide detections.
+        overlay[hexagon_buffer_mask > 0] = (144, 238, 144)  # Light green for safe buffer
+
+        # Layer 2: Draw canopy areas with class-specific coloring
         if bungalon_mask is not None and other_canopy_mask is not None:
             # Non-Bungalon canopy areas (purple) - includes HSV-only detections
             # HSV-only areas = canopy_mask minus all AI masks
@@ -922,11 +962,8 @@ class HexagonDetector:
             # No class info available - all purple (fallback)
             overlay[canopy_mask > 0] = (128, 0, 128)  # Purple for canopies
         
-        # Layer 2: Draw danger buffer zones in RED
+        # Layer 3: Draw danger buffer zones in RED
         overlay[buffer_only_mask > 0] = (0, 0, 255)  # Red for danger buffer
-        
-        # Layer 4: Draw hexagon buffers in LIGHT GREEN
-        overlay[hexagon_buffer_mask > 0] = (144, 238, 144)  # Light green for safe buffer
 
         # Layer 4.5: Overlap warning (buffer intersects danger zone)
         overlap_mask = cv2.bitwise_and(hexagon_buffer_mask, danger_mask)

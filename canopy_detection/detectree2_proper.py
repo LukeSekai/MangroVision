@@ -50,6 +50,10 @@ class ProperDetectree2Detector:
             "tile_size": 512,
             "tile_overlap": 0.25,
             "use_clean_crowns": False,
+            # Conservative color validation: keep AI as the detector, but reject
+            # predictions that have almost no mangrove-green pixels inside them.
+            "strict_canopy_hsv": True,
+            "detection_veg_min_ratio": 0.06,
         }
         
         print(f"🌳 Initializing Proper Detectree2 Library")
@@ -67,6 +71,8 @@ class ProperDetectree2Detector:
         tile_size: float = None,
         tile_overlap: float = None,
         use_clean_crowns: bool = None,
+        strict_canopy_hsv: bool = None,
+        detection_veg_min_ratio: float = None,
     ):
         """Update non-threshold inference tuning parameters."""
         if tile_veg_threshold is not None:
@@ -85,6 +91,10 @@ class ProperDetectree2Detector:
             self.runtime_tuning["tile_overlap"] = max(0.0, min(float(tile_overlap), 0.6))
         if use_clean_crowns is not None:
             self.runtime_tuning["use_clean_crowns"] = bool(use_clean_crowns)
+        if strict_canopy_hsv is not None:
+            self.runtime_tuning["strict_canopy_hsv"] = bool(strict_canopy_hsv)
+        if detection_veg_min_ratio is not None:
+            self.runtime_tuning["detection_veg_min_ratio"] = max(0.0, min(float(detection_veg_min_ratio), 0.95))
         
     def setup_model(self, model_path: str = None):
         """
@@ -101,11 +111,14 @@ class ProperDetectree2Detector:
         if model_path is None:
             model_dir = Path(__file__).parent.parent / 'models'
 
-            # Prefer latest model-garden checkpoints first, then local custom/legacy.
+            # MangroVision always prefers the locally trained 2-class custom_mangrove_model.
+            # Model-garden and tropical-base checkpoints are kept only as fallbacks.
             latest_model_garden = sorted(model_dir.glob("250312*.pth"))
-            model_candidates = [(p, f"Model Garden ({p.name})") for p in latest_model_garden]
-            model_candidates.extend([
+            model_candidates = [
                 (model_dir / 'custom_mangrove_model' / 'model_final.pth', 'Custom Mangrove Model'),
+            ]
+            model_candidates.extend((p, f"Model Garden ({p.name})") for p in latest_model_garden)
+            model_candidates.extend([
                 (model_dir / '230103_randresize_full.pth', 'Optimized Tropical (Zenodo 230103)'),
                 (model_dir / 'detectree2_model.pth', 'Custom Model'),
                 (model_dir / '230717_tropical_base.pth', 'Base Tropical (230717)'),
@@ -197,6 +210,55 @@ class ProperDetectree2Detector:
         vegetation_mask = cv2.morphologyEx(vegetation_mask, cv2.MORPH_CLOSE, kernel)
         
         return vegetation_mask
+
+    def _detect_strict_canopy_green_hsv(self, image: np.ndarray) -> np.ndarray:
+        """Return a stricter green vegetation mask for validating AI crowns."""
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        hue = hsv[:, :, 0]
+        sat = hsv[:, :, 1]
+        val = hsv[:, :, 2]
+
+        bgr_f = image.astype(np.float32)
+        b = bgr_f[:, :, 0]
+        g = bgr_f[:, :, 1]
+        r = bgr_f[:, :, 2]
+        excess_green = (2.0 * g) - r - b
+        green_dominance = (g > (r + 8.0)) & (g > (b + 6.0))
+
+        green_hue = (hue >= 24) & (hue <= 96) & (sat >= 35) & (val >= 20)
+        yellow_green = (hue >= 18) & (hue < 32) & (sat >= 55) & (val >= 35)
+        shadow_green = (hue >= 30) & (hue <= 100) & (sat >= 28) & (val >= 12) & (val <= 135)
+
+        strength = (excess_green > 12.0) | green_dominance
+        strict_mask = ((green_hue | yellow_green | shadow_green) & strength).astype(np.uint8) * 255
+
+        kernel = np.ones((3, 3), np.uint8)
+        strict_mask = cv2.morphologyEx(strict_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        strict_mask = cv2.morphologyEx(strict_mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+        return strict_mask
+
+    @staticmethod
+    def _mask_to_polygons(mask: np.ndarray, min_area_px: float) -> List[Polygon]:
+        """Convert a binary mask to polygons using a pixel-area cutoff."""
+        polygons: List[Polygon] = []
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            if len(contour) < 3 or cv2.contourArea(contour) < min_area_px:
+                continue
+            epsilon = 0.005 * cv2.arcLength(contour, True)
+            approx = cv2.approxPolyDP(contour, epsilon, True)
+            points = approx.reshape(-1, 2)
+            if len(points) < 3:
+                continue
+            try:
+                poly = Polygon(points)
+                if not poly.is_valid:
+                    poly = poly.buffer(0)
+                if isinstance(poly, Polygon) and poly.is_valid and not poly.is_empty:
+                    polygons.append(poly)
+            except Exception:
+                continue
+        return polygons
     
     def detect_from_image(self, 
                          image: np.ndarray,
@@ -288,8 +350,12 @@ class ProperDetectree2Detector:
         
         # Run detection on each tile
         all_instances = []
+        rejected_non_green = 0
         min_crown_m2 = float(self.runtime_tuning.get("min_crown_m2", 0.05))
         max_crown_m2 = float(self.runtime_tuning.get("max_crown_m2", 60.0))
+        strict_canopy_hsv = bool(self.runtime_tuning.get("strict_canopy_hsv", True))
+        detection_veg_min_ratio = float(self.runtime_tuning.get("detection_veg_min_ratio", 0.06))
+        strict_green_mask = self._detect_strict_canopy_green_hsv(image) if strict_canopy_hsv else None
         gsd_used = float(gsd) if (gsd is not None and gsd > 0) else None
         if gsd_used is not None:
             min_area_px = max(20.0, min_crown_m2 / (gsd_used ** 2))
@@ -309,12 +375,12 @@ class ProperDetectree2Detector:
             )
             if tile_idx % 10 == 0:
                 print(f"   Tile {current_tile}/{len(tiles)}...")
-            
+
             tile = image[y1:y2, x1:x2]
-            
+
             with torch.no_grad():
                 outputs = self.predictor(tile)
-            
+
             instances = outputs["instances"].to("cpu")
             scores = instances.scores.numpy()
             masks = instances.pred_masks.numpy()
@@ -325,16 +391,32 @@ class ProperDetectree2Detector:
                     mask = masks[i].astype(np.uint8)
                     if int(np.count_nonzero(mask)) <= 0:
                         continue
-                    
+
                     # Find contours
                     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    
+
                     for contour in contours:
+                        local_detection_mask = np.zeros(mask.shape, dtype=np.uint8)
+                        cv2.fillPoly(local_detection_mask, [contour], 1)
+                        detection_pixels = int(np.count_nonzero(local_detection_mask))
+                        if detection_pixels <= 0:
+                            continue
+
+                        if strict_canopy_hsv:
+                            strict_tile = strict_green_mask[y1:y2, x1:x2]
+                            green_pixels = int(np.count_nonzero((local_detection_mask > 0) & (strict_tile > 0)))
+                            vegetation_ratio = green_pixels / detection_pixels
+                            if vegetation_ratio < detection_veg_min_ratio:
+                                rejected_non_green += 1
+                                continue
+                        else:
+                            vegetation_ratio = 1.0
+
                         # Convert to global coordinates
                         contour_global = contour.copy()
                         contour_global[:, 0, 0] += x1
                         contour_global[:, 0, 1] += y1
-                        
+
                         # Convert to polygon
                         if len(contour_global) >= 3:
                             try:
@@ -344,12 +426,26 @@ class ProperDetectree2Detector:
                                     all_instances.append({
                                         'polygon': poly,
                                         'score': scores[i],
-                                        'contour': contour_global
+                                        'contour': contour_global,
+                                        'vegetation_ratio': vegetation_ratio,
                                     })
                             except:
                                 continue
-         
+
+            # Emit a post-inference tile_done event so subscribers can report
+            # "tile N processed" rather than "tile N starting".
+            _emit_progress(
+                "tile_done",
+                {
+                    "current_tile": int(current_tile),
+                    "total_tiles": len(tiles),
+                    "tile_detections": int(len(scores)),
+                },
+            )
+
         print(f"   Found {len(all_instances)} detections")
+        if rejected_non_green:
+            print(f"   Rejected {rejected_non_green} non-green AI detections")
 
         # High-recall default: skip aggressive clean_crowns unless explicitly enabled.
         use_clean_crowns = bool(self.runtime_tuning.get("use_clean_crowns", False))
@@ -384,6 +480,9 @@ class ProperDetectree2Detector:
                 cv2.fillPoly(combined_mask, [coords], 255)
             except:
                 continue
+
+        if strict_canopy_hsv:
+            print(f"   HSV validation retained {len(final_polygons)} AI canopy polygons")
         
         metadata = {
             'num_tiles': len(tiles),
@@ -397,6 +496,9 @@ class ProperDetectree2Detector:
             'total_ai_detections': len(all_instances),
             'final_trees': len(final_polygons),
             'num_detected_canopies': len(final_polygons),
+            'rejected_non_green_detections': int(rejected_non_green),
+            'strict_canopy_hsv': strict_canopy_hsv,
+            'detection_veg_min_ratio': detection_veg_min_ratio,
             'gsd_used': gsd_used,
             'min_crown_m2': min_crown_m2,
             'max_crown_m2': max_crown_m2,

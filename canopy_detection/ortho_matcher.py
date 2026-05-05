@@ -13,6 +13,7 @@ Orthophoto transforms are read from GeoTIFF metadata when available.
 
 import cv2
 import numpy as np
+import os
 import pyproj
 import rasterio
 from pathlib import Path
@@ -25,6 +26,8 @@ from typing import Optional, Tuple, Dict, List
 # ─────────────────────────────────────────────────────────────────────────────
 
 _DESKTOP = Path.home() / "Desktop"
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_ACTIVE_ORTHO_PATH = _DESKTOP / "WebODM" / "Practice_final_cut.tif"
 
 _ORTHO_REGISTRY_SEEDS = [
     {
@@ -74,8 +77,19 @@ _FALLBACK_ORTHO_METADATA = {
 # Also check the old single-file fallback path
 _LEGACY_PATH = Path(__file__).parent.parent / "MAP" / "odm_orthophoto" / "odm_orthophoto.tif"
 
+_ORTHO_SEARCH_ROOTS = [
+    _DESKTOP / "WebODM",
+    Path(__file__).parent.parent / "MAP",
+]
+
+_ORTHO_DIR_HINTS = {"odm_orthophoto"}
+_ORTHO_FILE_HINTS = ("ortho", "orthophoto", "merged", "final", "cut", "clipped")
+_NON_ORTHO_DIR_HINTS = {"odm_dem"}
+_NON_ORTHO_FILE_HINTS = ("dsm", "dtm", "dem")
+
 # ─── Active orthophoto state (set by select_orthophoto) ──────────────────────
 _ORTHO_REGISTRY_CACHE: Optional[List[dict]] = None
+_ORTHO_REGISTRY_CACHE_KEY: Optional[str] = None
 _ENTRY_TRANSFORMERS: Dict[str, Tuple[pyproj.Transformer, pyproj.Transformer]] = {}
 
 ORTHO_ORIGIN_X = 0.0
@@ -102,6 +116,64 @@ def _fallback_entry(seed: dict) -> Optional[dict]:
     }
 
 
+def _read_env_file_value(key: str) -> Optional[str]:
+    """Read backend map-source settings from local env files if present."""
+    for env_path in (
+        _PROJECT_ROOT / "MangroVision_New" / ".env.local",
+        _PROJECT_ROOT / "MangroVision_New" / ".env",
+    ):
+        if not env_path.exists():
+            continue
+        try:
+            for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                if name.strip() == key:
+                    return value.strip().strip('"').strip("'")
+        except Exception:
+            continue
+    return None
+
+
+def _resolve_configured_path(raw_path: str) -> Path:
+    expanded = os.path.expandvars(os.path.expanduser(raw_path))
+    path = Path(expanded)
+    if not path.is_absolute():
+        path = _PROJECT_ROOT / path
+    return path
+
+
+def _configured_ortho_seed() -> Optional[dict]:
+    """Return the active map GeoTIFF, if the system has one configured."""
+    auto_discovery = (
+        os.getenv("MANGROVISION_ORTHO_AUTO_DISCOVERY")
+        or _read_env_file_value("MANGROVISION_ORTHO_AUTO_DISCOVERY")
+        or ""
+    ).strip().lower()
+    if auto_discovery in {"1", "true", "yes", "on"}:
+        return None
+
+    configured_path = (
+        os.getenv("MANGROVISION_ORTHO_PATH")
+        or _read_env_file_value("MANGROVISION_ORTHO_PATH")
+    )
+    if configured_path:
+        path = _resolve_configured_path(configured_path)
+        name = (
+            os.getenv("MANGROVISION_ORTHO_NAME")
+            or _read_env_file_value("MANGROVISION_ORTHO_NAME")
+            or path.stem
+        )
+        return {"name": name, "path": path}
+
+    if _DEFAULT_ACTIVE_ORTHO_PATH.exists():
+        return {"name": "Practice_final_cut", "path": _DEFAULT_ACTIVE_ORTHO_PATH}
+
+    return None
+
+
 def _read_orthophoto_bgr(path: Path) -> np.ndarray:
     """Load an orthophoto TIFF into a BGR uint8 array."""
     with rasterio.open(path) as dataset:
@@ -118,10 +190,20 @@ def _read_orthophoto_bgr(path: Path) -> np.ndarray:
 
 
 def _read_ortho_metadata(seed: dict) -> Optional[dict]:
-    """Read orthophoto bounds and pixel scale directly from the GeoTIFF."""
+    """Read orthophoto bounds and pixel scale directly from the GeoTIFF.
+
+    If the seeded path is missing (WebODM tasks sometimes get the orthophoto
+    file renamed during export, e.g. `2nd.tif` instead of `odm_orthophoto.tif`),
+    fall back to any *.tif sitting in the same `odm_orthophoto` folder so the
+    registry self-heals across renames.
+    """
     path = Path(seed["path"])
     if not path.exists():
-        return None
+        sibling_tifs = sorted(path.parent.glob("*.tif")) if path.parent.exists() else []
+        if not sibling_tifs:
+            return None
+        path = sibling_tifs[0]
+        print(f"[OrthoMatcher] '{seed['name']}': seed path missing, using sibling {path.name}")
 
     try:
         with rasterio.open(path) as dataset:
@@ -152,22 +234,128 @@ def _read_ortho_metadata(seed: dict) -> Optional[dict]:
         return None
 
 
+def _is_orthophoto_tif(path: Path) -> bool:
+    """Return True for GeoTIFFs that look like orthophoto references."""
+    suffix = path.suffix.lower()
+    if suffix not in {".tif", ".tiff"}:
+        return False
+
+    stem = path.stem.lower()
+    parts = [part.lower() for part in path.parts]
+    if any(part in _NON_ORTHO_DIR_HINTS for part in parts):
+        return False
+    if any(hint in stem for hint in _NON_ORTHO_FILE_HINTS):
+        return False
+    if any(part in _ORTHO_DIR_HINTS for part in parts):
+        return True
+    if any(hint in stem for hint in _ORTHO_FILE_HINTS):
+        return True
+
+    # Some exported reference folders are named like FINAL MAP / TRY MAP and
+    # contain a single georeferenced TIFF with a custom name.
+    return any("map" in part for part in parts)
+
+
+def _ortho_seed_name(path: Path, root: Path) -> str:
+    """Build a readable, unique-ish name for a discovered orthophoto."""
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        rel = path
+
+    folders = list(rel.parts[:-1])
+    lower_folders = [folder.lower() for folder in folders]
+    if "odm_orthophoto" in lower_folders:
+        folders = folders[:lower_folders.index("odm_orthophoto")]
+
+    if not folders:
+        return path.stem
+    return " / ".join(folders)
+
+
+def _discover_ortho_seeds() -> List[dict]:
+    """Auto-discover orthophoto GeoTIFFs across the local map folders.
+
+    This scans the whole Desktop/WebODM tree and the project MAP folder, so it
+    catches layouts like:
+    - 1st/1st/1st-orthophoto.tif
+    - 1st MAP/Task-of-.../odm_orthophoto/odm_orthophoto.tif
+    - 5th MAP/1/odm_orthophoto/1.tif
+    - Map1/MAP-1-orthophoto.tif
+    - right/Right Side Map/Map10/Map10-orthophoto.tif
+    - six/6th/6th-orthophoto.tif
+    """
+    found: List[dict] = []
+    seen_paths: set[str] = set()
+
+    for root in _ORTHO_SEARCH_ROOTS:
+        if not root.exists():
+            continue
+        for tif in root.rglob("*"):
+            if not tif.is_file() or not _is_orthophoto_tif(tif):
+                continue
+            key = str(tif.resolve()).lower()
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            found.append({"name": _ortho_seed_name(tif, root), "path": tif})
+
+    return found
+
+
 def _get_ortho_registry() -> List[dict]:
     """Return all available orthophotos with live metadata."""
-    global _ORTHO_REGISTRY_CACHE
-    if _ORTHO_REGISTRY_CACHE is not None:
+    global _ORTHO_REGISTRY_CACHE, _ORTHO_REGISTRY_CACHE_KEY
+
+    configured_seed = _configured_ortho_seed()
+    cache_key = (
+        str(Path(configured_seed["path"]).resolve()).lower()
+        if configured_seed is not None
+        else "__auto_discovery__"
+    )
+    if _ORTHO_REGISTRY_CACHE is not None and _ORTHO_REGISTRY_CACHE_KEY == cache_key:
+        return _ORTHO_REGISTRY_CACHE
+
+    if configured_seed is not None:
+        entry = _read_ortho_metadata(configured_seed)
+        if entry is None:
+            print(f"[OrthoMatcher] Configured orthophoto not available: {configured_seed['path']}")
+            _ORTHO_REGISTRY_CACHE = []
+        else:
+            _ORTHO_REGISTRY_CACHE = [entry]
+            print(f"[OrthoMatcher] Using configured orthophoto: {entry['name']} ({entry['path']})")
+        _ORTHO_REGISTRY_CACHE_KEY = cache_key
         return _ORTHO_REGISTRY_CACHE
 
     seeds = list(_ORTHO_REGISTRY_SEEDS)
     seeds.append({"name": "Legacy MAP", "path": _LEGACY_PATH})
 
+    # Append any discovered orthophotos that aren't already in the seed list.
+    seen_paths = {str(Path(s["path"])).lower() for s in seeds}
+    for discovered in _discover_ortho_seeds():
+        key = str(discovered["path"]).lower()
+        if key in seen_paths:
+            continue
+        seeds.append(discovered)
+        seen_paths.add(key)
+
     registry: List[dict] = []
+    seen_resolved: set[str] = set()
     for seed in seeds:
         entry = _read_ortho_metadata(seed)
-        if entry is not None:
-            registry.append(entry)
+        if entry is None:
+            continue
+        # Dedupe by the path the metadata reader actually used (handles the
+        # case where a seed pointed at a missing filename and the sibling
+        # fallback resolved to the same TIFF that auto-discovery also found).
+        resolved = str(Path(entry["path"]).resolve()).lower()
+        if resolved in seen_resolved:
+            continue
+        seen_resolved.add(resolved)
+        registry.append(entry)
 
     _ORTHO_REGISTRY_CACHE = registry
+    _ORTHO_REGISTRY_CACHE_KEY = cache_key
     return registry
 
 
@@ -512,13 +700,30 @@ def _match_single_ortho(
     center_mapped = cv2.perspectiveTransform(
         np.float32([[[dw/2, dh/2]]]), H_to_ortho
     )[0, 0]
-    center_dist = np.hypot(center_mapped[0] - cx_o, center_mapped[1] - cy_o)
-    max_center_drift = max(dw, dh) * scale * 1.5  # allow up to 1.5x footprint drift
+    center_dx_px = float(center_mapped[0] - cx_o)
+    center_dy_px = float(center_mapped[1] - cy_o)
+    center_offset_east_m = center_dx_px * ORTHO_GSD_X
+    center_offset_north_m = -center_dy_px * ORTHO_GSD_Y
+    center_dist = np.hypot(center_dx_px, center_dy_px)
+    center_dist_m = center_dist * ORTHO_GSD
+    footprint_max_px = max(dw * scale, dh * scale)
+    # GPS can be a little noisy, but a valid visual match should still keep the
+    # image center close to the tagged camera position. The previous 1.5x
+    # footprint allowance could accept convincing false positives on repetitive
+    # shoreline/roof textures.
+    max_center_drift = min(footprint_max_px * 0.35, 25.0 / max(ORTHO_GSD, 1e-9))
+    max_center_drift = max(max_center_drift, 5.0 / max(ORTHO_GSD, 1e-9))
     if center_dist > max_center_drift:
         return {
             "success": False,
             "inliers": inlier_count,
             "confidence": confidence,
+            "center_drift_px": float(center_dist),
+            "center_drift_m": float(center_dist_m),
+            "center_offset_east_m": float(center_offset_east_m),
+            "center_offset_north_m": float(center_offset_north_m),
+            "center_max_drift_px": float(max_center_drift),
+            "center_max_drift_m": float(max_center_drift * ORTHO_GSD),
             "error": f"Homography centre drifted {center_dist:.0f}px "
                      f"(max {max_center_drift:.0f}px)"
         }
@@ -538,6 +743,12 @@ def _match_single_ortho(
         "inliers": inlier_count,
         "total_matches": len(good),
         "patch_bounds": (x1, y1, x2, y2),
+        "center_drift_px": float(center_dist),
+        "center_drift_m": float(center_dist_m),
+        "center_offset_east_m": float(center_offset_east_m),
+        "center_offset_north_m": float(center_offset_north_m),
+        "center_max_drift_px": float(max_center_drift),
+        "center_max_drift_m": float(max_center_drift * ORTHO_GSD),
         "error": None,
     }
 
@@ -556,7 +767,7 @@ def match_drone_to_ortho(
 ) -> Dict:
     """
     Match *drone_image* against ALL available orthophoto maps and return the
-    result with the highest number of inliers.
+    strongest result by inliers, confidence, and center-drift sanity.
 
     Tries the best-fit orthophoto first (by GPS), then all others. This
     handles cases where the drone is near the edge of one map but overlaps
@@ -581,11 +792,16 @@ def match_drone_to_ortho(
         scored_entries.append((margin, entry))
     scored_entries.sort(key=lambda x: -x[0])  # highest margin first (most inside)
 
+    inside_entries = [(margin, entry) for margin, entry in scored_entries if margin >= 0]
+    if inside_entries:
+        scored_entries = inside_entries
+
     if not scored_entries:
         return {"success": False, "error": "No orthophoto files found — check WebODM folder paths"}
 
     best_result = None
-    best_inliers = -1
+    best_entry = None
+    best_score = -1.0
     errors = []
 
     for margin, entry in scored_entries:
@@ -603,23 +819,33 @@ def match_drone_to_ortho(
             margin_factor, max_features,
         )
 
-        if result["success"] and result["inliers"] > best_inliers:
-            best_result = result
-            best_inliers = result["inliers"]
-            best_result["ortho_name"] = tag
-            # If we have a really good match, stop early
-            if best_inliers >= 30 and result["confidence"] >= 0.35:
-                print(f"[OrthoMatcher] Good match on '{tag}': {best_inliers} inliers, conf={result['confidence']:.0%}")
-                break
+        if result["success"]:
+            drift_ratio = result.get("center_drift_px", 0.0) / max(result.get("center_max_drift_px", 1.0), 1.0)
+            score = result["inliers"] * (0.5 + result["confidence"]) / (1.0 + drift_ratio)
+            result["match_score"] = float(score)
+            result["ortho_name"] = tag
+            result["ortho_path"] = str(entry["path"])
+            result["ortho_margin_m"] = float(margin)
+            print(
+                f"[OrthoMatcher] Match on '{tag}': {result['inliers']} inliers, "
+                f"conf={result['confidence']:.0%}, drift={result.get('center_drift_px', 0):.0f}px, "
+                f"score={score:.1f}"
+            )
+            if score > best_score:
+                best_result = result
+                best_entry = entry
+                best_score = score
         elif not result["success"]:
             errors.append(f"{tag}: {result['error']}")
 
     if best_result is not None:
         # Re-activate the winning orthophoto so pixel→GPS conversions use it
-        for _, entry in scored_entries:
-            if entry["name"] == best_result.get("ortho_name"):
-                _activate_ortho(entry)
-                break
+        if best_entry is not None:
+            _activate_ortho(best_entry)
+            print(
+                f"[OrthoMatcher] Best match: '{best_entry['name']}' "
+                f"score={best_score:.1f}, path={best_entry['path']}"
+            )
         return best_result
 
     # All failed — return the most informative error

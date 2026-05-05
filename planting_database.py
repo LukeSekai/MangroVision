@@ -77,7 +77,9 @@ def _create_tables(conn: sqlite3.Connection):
             canopy_buffer_m     REAL,
             hexagon_size_m      REAL,
             forbidden_filtered  INTEGER DEFAULT 0,
-            eroded_filtered     INTEGER DEFAULT 0
+            eroded_filtered     INTEGER DEFAULT 0,
+            original_image      TEXT,
+            visualization_image TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_analyses_user
@@ -204,6 +206,12 @@ def _table_columns(conn: sqlite3.Connection, table_name: str) -> set:
 
 def _migrate_schema(conn: sqlite3.Connection):
     """Apply additive schema migrations for existing local databases."""
+    analyses_columns = _table_columns(conn, "analyses")
+    if "original_image" not in analyses_columns:
+        conn.execute("ALTER TABLE analyses ADD COLUMN original_image TEXT")
+    if "visualization_image" not in analyses_columns:
+        conn.execute("ALTER TABLE analyses ADD COLUMN visualization_image TEXT")
+
     planter_columns = _table_columns(conn, "planters")
     if "username" not in planter_columns:
         conn.execute("ALTER TABLE planters ADD COLUMN username TEXT")
@@ -530,6 +538,8 @@ def save_analysis(
     results: dict,
     hexagons: list,
     user_id: Optional[int] = None,
+    original_image: Optional[str] = None,
+    visualization_image: Optional[str] = None,
 ) -> Tuple[int, int, int]:
     """
     Persist an analysis and its planting points.
@@ -549,13 +559,18 @@ def save_analysis(
     if user_id is None:
         user_id = get_or_create_default_user()
 
-    # ── Replace previous analysis for the same area ───────────────
-    if center_lat is not None and center_lon is not None:
+    # ── Replace previous analysis only when the SAME image is re-run
+    #    in the same area. Different images in the same area stay
+    #    side-by-side so their unique points are preserved. Per-point
+    #    dedup still prevents overlapping markers.
+    if center_lat is not None and center_lon is not None and image_name:
         old_rows = conn.execute("""
             SELECT id FROM analyses
-            WHERE center_lat BETWEEN ? AND ?
+            WHERE image_name = ?
+              AND center_lat BETWEEN ? AND ?
               AND center_lon BETWEEN ? AND ?
         """, (
+            image_name,
             center_lat - _ANALYSIS_MATCH_DEG, center_lat + _ANALYSIS_MATCH_DEG,
             center_lon - _ANALYSIS_MATCH_DEG, center_lon + _ANALYSIS_MATCH_DEG,
         )).fetchall()
@@ -572,8 +587,9 @@ def save_analysis(
              plantable_area_m2, plantable_pct,
              hexagon_count, ai_confidence,
              canopy_buffer_m, hexagon_size_m,
-             forbidden_filtered, eroded_filtered)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+             forbidden_filtered, eroded_filtered,
+             original_image, visualization_image)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (
         user_id,
         image_name,
@@ -597,6 +613,8 @@ def save_analysis(
         results.get('hexagon_size_m'),
         results.get('_forbidden_filtered', 0),
         results.get('_eroded_filtered', 0),
+        original_image,
+        visualization_image,
     ))
     analysis_id = cur.lastrowid
 
@@ -704,6 +722,27 @@ def count_nearby_points(
     )).fetchone()
     conn.close()
     return row['cnt'] if row else 0
+
+
+def get_saved_point_locations(
+    lat_min: float,
+    lat_max: float,
+    lon_min: float,
+    lon_max: float,
+) -> List[Tuple[float, float]]:
+    """
+    Return the raw (lat, lon) of every saved planting point inside the bbox.
+    Used at processing time to filter new analysis hexagons that would
+    overlap points already in the database.
+    """
+    conn = _get_connection()
+    rows = conn.execute("""
+        SELECT latitude, longitude FROM planting_points
+        WHERE latitude  BETWEEN ? AND ?
+          AND longitude BETWEEN ? AND ?
+    """, (lat_min, lat_max, lon_min, lon_max)).fetchall()
+    conn.close()
+    return [(float(r['latitude']), float(r['longitude'])) for r in rows]
 
 
 # ====================================================================
@@ -860,6 +899,16 @@ def get_planter(planter_id: int) -> Optional[dict]:
     """Return one planter row or None."""
     conn = _get_connection()
     row = conn.execute("SELECT * FROM planters WHERE id = ?", (planter_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def get_analysis_by_id(analysis_id: int) -> Optional[dict]:
+    """Return one saved analysis row by id, or None if not found."""
+    conn = _get_connection()
+    row = conn.execute(
+        "SELECT * FROM analyses WHERE id = ?", (analysis_id,),
+    ).fetchone()
     conn.close()
     return dict(row) if row else None
 

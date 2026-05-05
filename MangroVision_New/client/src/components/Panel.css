@@ -1,0 +1,198 @@
+/* ================================================================
+   Floating Panel — sits over the map with rounded corners, shadow,
+   hide/show toggle, and smooth animated collapsible cards.
+   ================================================================ */
+
+/* Toggle button */
+
+.panel-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-pill);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: all var(--duration-fast) var(--ease-out);
+  white-space: nowrap;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.panel-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+}
+
+.panel-toggle:active {
+  transform: translateY(0);
+}
+
+.panel-toggle:not(.panel-toggle-hidden) {
+  right: calc(var(--panel-width) + 28px);
+}
+
+.panel-toggle svg {
+  transition: transform var(--duration-normal) var(--ease-out);
+}
+
+/* Panel container */
+
+.floating-panel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  bottom: 12px;
+  width: var(--panel-width);
+  display: flex;
+  flex-direction: column;
+  z-index: 11;
+  transition: transform var(--duration-normal) var(--ease-out),
+              opacity var(--duration-fast) var(--ease-out);
+  overflow: hidden;
+  pointer-events: auto;
+}
+
+.floating-panel-hidden {
+  transform: translateX(calc(100% + 24px));
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Panel header */
+
+.floating-panel-header {
+  padding: 16px 20px 12px;
+  flex-shrink: 0;
+  background: var(--surface-base);
+  border-radius: var(--radius-lg);
+  margin: 0 12px 8px;
+  box-shadow: var(--shadow-xs);
+  border: 1px solid var(--border-light);
+}
+
+.floating-panel-title {
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.floating-panel-subtitle {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Panel body — scrollable stack of cards */
+
+.floating-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Individual card sections */
+
+.panel-card {
+  background: var(--surface-base);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+  transition: box-shadow var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out);
+}
+
+.panel-card:hover {
+  box-shadow: var(--shadow-sm);
+}
+
+.panel-card-open {
+  border-color: rgba(22, 163, 74, 0.15);
+}
+
+.panel-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.panel-card-header:hover {
+  background: var(--surface-hover);
+}
+
+.panel-card-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.panel-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--green-700);
+  flex-shrink: 0;
+}
+
+.panel-card-title {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.panel-card-badge {
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  min-width: 18px;
+  text-align: center;
+}
+
+.panel-card-chevron {
+  color: var(--text-muted);
+  transition: transform var(--duration-normal) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.panel-card-chevron-open {
+  transform: rotate(180deg);
+}
+
+/* Animated collapse body */
+
+.panel-card-body-wrapper {
+  transition: height 280ms var(--ease-out);
+  will-change: height;
+}
+
+.panel-card-body {
+  padding: 0 14px 14px;
+}

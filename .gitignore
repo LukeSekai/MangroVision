@@ -33,6 +33,7 @@ htmlcov/
 
 # Data and logs
 *.log
+planting_zones.db
 
 # Model files (LARGE - download separately via Google Drive)
 models/*.pth
@@ -92,3 +93,4 @@ desktop.ini
 *.bak
 models/try_new_latest_model/model_metadata.json
 models/try_new_latest_model/model_final.pth
+11

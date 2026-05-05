@@ -1,0 +1,32 @@
+.app-shell {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+}
+
+.app-main {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Map fills the entire main area as a background layer */
+.map-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+/* Content floats above the map */
+.content-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* Allow pointer events on actual content within the layer */
+.content-layer > * {
+  pointer-events: auto;
+}

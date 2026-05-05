@@ -3,6 +3,7 @@ EXIF metadata extraction for drone images.
 """
 
 import os
+import re
 from typing import Dict, Optional
 
 from PIL import Image
@@ -11,6 +12,8 @@ from PIL.ExifTags import GPSTAGS, TAGS
 
 class ExifExtractor:
     """Extract GPS and camera metadata from image EXIF tags."""
+
+    _DJI_XMP_RE = re.compile(rb'(?:drone-dji|dji):([A-Za-z0-9_]+)="([^"]*)"')
 
     @staticmethod
     def get_exif_data(image_path: str) -> Dict:
@@ -25,6 +28,15 @@ class ExifExtractor:
             for tag_id, value in exif.items():
                 tag_name = TAGS.get(tag_id, tag_id)
                 exif_data[tag_name] = value
+
+            try:
+                exif_ifd = exif.get_ifd(0x8769)
+                if exif_ifd:
+                    for tag_id, value in exif_ifd.items():
+                        tag_name = TAGS.get(tag_id, tag_id)
+                        exif_data[tag_name] = value
+            except (KeyError, AttributeError):
+                pass
 
             try:
                 gps_ifd = exif.get_ifd(0x8825)
@@ -49,6 +61,44 @@ class ExifExtractor:
         m = float(value[1])
         s = float(value[2])
         return d + (m / 60.0) + (s / 3600.0)
+
+    @staticmethod
+    def _clean_text(value) -> str:
+        """Normalize EXIF ASCII strings that DJI pads with NUL bytes."""
+        if value is None:
+            return ''
+        if isinstance(value, bytes):
+            value = value.decode('utf-8', errors='ignore')
+        return str(value).replace('\x00', '').strip()
+
+    @staticmethod
+    def _as_float(value) -> Optional[float]:
+        """Return a numeric EXIF/XMP value as float when possible."""
+        if value is None:
+            return None
+        try:
+            if isinstance(value, tuple):
+                return float(value[0]) / float(value[1]) if value[1] != 0 else None
+            return float(str(value).strip())
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
+
+    @staticmethod
+    def get_xmp_dji_data(image_path: str) -> Dict:
+        """Extract DJI XMP attributes embedded in JPEG APP1 metadata."""
+        try:
+            with open(image_path, 'rb') as image_file:
+                payload = image_file.read()
+        except OSError:
+            return {}
+
+        xmp_data = {}
+        for key, raw_value in ExifExtractor._DJI_XMP_RE.findall(payload):
+            name = key.decode('utf-8', errors='ignore')
+            text_value = raw_value.decode('utf-8', errors='ignore').strip()
+            numeric_value = ExifExtractor._as_float(text_value)
+            xmp_data[name] = numeric_value if numeric_value is not None else text_value
+        return xmp_data
 
     @staticmethod
     def get_gps_info(exif_data: Dict) -> Optional[Dict]:
@@ -91,10 +141,10 @@ class ExifExtractor:
 
         if 'GPSImgDirection' in gps_parsed:
             heading = gps_parsed['GPSImgDirection']
-            if isinstance(heading, tuple):
-                gps_info['heading'] = float(heading[0]) / float(heading[1]) if heading[1] != 0 else 0.0
-            else:
-                gps_info['heading'] = float(heading)
+            parsed_heading = ExifExtractor._as_float(heading)
+            if parsed_heading is not None:
+                gps_info['heading'] = parsed_heading % 360.0
+                gps_info['heading_source'] = 'EXIF GPSImgDirection'
 
         return gps_info or None
 
@@ -104,35 +154,34 @@ class ExifExtractor:
         camera_info = {}
 
         if 'Make' in exif_data:
-            camera_info['make'] = exif_data['Make']
+            camera_info['make'] = ExifExtractor._clean_text(exif_data['Make'])
         if 'Model' in exif_data:
-            camera_info['model'] = exif_data['Model']
+            camera_info['model'] = ExifExtractor._clean_text(exif_data['Model'])
         if 'ExifImageWidth' in exif_data:
             camera_info['image_width'] = exif_data['ExifImageWidth']
         if 'ExifImageHeight' in exif_data:
             camera_info['image_height'] = exif_data['ExifImageHeight']
 
         if 'FocalLength' in exif_data:
-            focal = exif_data['FocalLength']
-            if isinstance(focal, tuple):
-                camera_info['focal_length_mm'] = focal[0] / focal[1]
-            else:
-                camera_info['focal_length_mm'] = float(focal)
+            focal = ExifExtractor._as_float(exif_data['FocalLength'])
+            if focal is not None:
+                camera_info['focal_length_mm'] = focal
+        if 'FocalLengthIn35mmFilm' in exif_data:
+            focal_35 = ExifExtractor._as_float(exif_data['FocalLengthIn35mmFilm'])
+            if focal_35 is not None:
+                camera_info['focal_length_35mm'] = focal_35
 
         if 'ISOSpeedRatings' in exif_data:
             camera_info['iso'] = exif_data['ISOSpeedRatings']
         if 'FNumber' in exif_data:
-            f_number = exif_data['FNumber']
-            if isinstance(f_number, tuple):
-                camera_info['aperture'] = f_number[0] / f_number[1]
-            else:
-                camera_info['aperture'] = float(f_number)
+            aperture = ExifExtractor._as_float(exif_data['FNumber'])
+            if aperture is not None:
+                camera_info['aperture'] = aperture
         if 'ExposureTime' in exif_data:
-            exposure = exif_data['ExposureTime']
-            if isinstance(exposure, tuple):
-                camera_info['shutter_speed'] = f"1/{int(exposure[1] / exposure[0])}"
-            else:
-                camera_info['shutter_speed'] = exposure
+            exposure_value = ExifExtractor._as_float(exif_data['ExposureTime'])
+            if exposure_value and exposure_value > 0:
+                reciprocal = round(1.0 / exposure_value)
+                camera_info['shutter_speed'] = f"1/{reciprocal}" if reciprocal > 1 else exposure_value
 
         if 'DateTime' in exif_data:
             camera_info['datetime'] = exif_data['DateTime']
@@ -143,26 +192,64 @@ class ExifExtractor:
     def extract_all_metadata(image_path: str) -> Dict:
         """Return the normalized metadata payload used by the app."""
         exif_data = ExifExtractor.get_exif_data(image_path)
+        xmp_data = ExifExtractor.get_xmp_dji_data(image_path)
         if not exif_data:
             return {
                 'has_exif': False,
                 'has_gps': False,
+                'xmp': xmp_data,
                 'error': 'No EXIF data found in image',
             }
 
         gps_info = ExifExtractor.get_gps_info(exif_data)
         camera_info = ExifExtractor.get_camera_info(exif_data)
 
+        if gps_info is None:
+            gps_info = {}
+
+        rel_altitude = ExifExtractor._as_float(xmp_data.get('RelativeAltitude'))
+        abs_altitude = ExifExtractor._as_float(xmp_data.get('AbsoluteAltitude'))
+        if rel_altitude is not None:
+            gps_info['relative_altitude'] = rel_altitude
+        if abs_altitude is not None:
+            gps_info['absolute_altitude'] = abs_altitude
+
+        flight_yaw = ExifExtractor._as_float(xmp_data.get('FlightYawDegree'))
+        gimbal_yaw = ExifExtractor._as_float(xmp_data.get('GimbalYawDegree'))
+        if gps_info.get('heading') is None:
+            if flight_yaw is not None:
+                gps_info['heading'] = (flight_yaw + (gimbal_yaw or 0.0)) % 360.0
+                gps_info['heading_source'] = 'DJI XMP FlightYawDegree'
+            elif gimbal_yaw is not None:
+                gps_info['heading'] = gimbal_yaw % 360.0
+                gps_info['heading_source'] = 'DJI XMP GimbalYawDegree'
+
+        for xmp_key, camera_key in (
+            ('GimbalPitchDegree', 'gimbal_pitch_degree'),
+            ('GimbalRollDegree', 'gimbal_roll_degree'),
+            ('FlightPitchDegree', 'flight_pitch_degree'),
+            ('FlightRollDegree', 'flight_roll_degree'),
+        ):
+            numeric_value = ExifExtractor._as_float(xmp_data.get(xmp_key))
+            if numeric_value is not None:
+                camera_info[camera_key] = numeric_value
+
         image = Image.open(image_path)
         width, height = image.size
 
+        has_gps_coordinates = (
+            gps_info.get('latitude') is not None
+            and gps_info.get('longitude') is not None
+        )
+
         return {
             'has_exif': True,
-            'has_gps': gps_info is not None,
-            'gps': gps_info,
+            'has_gps': has_gps_coordinates,
+            'gps': gps_info or None,
             'camera': camera_info,
             'image_width': camera_info.get('image_width', width),
             'image_height': camera_info.get('image_height', height),
+            'xmp': xmp_data,
             'file_path': image_path,
             'file_size_mb': os.path.getsize(image_path) / (1024 * 1024),
         }
@@ -170,10 +257,12 @@ class ExifExtractor:
     @staticmethod
     def detect_drone_model(camera_info: Dict) -> str:
         """Map camera make/model strings to known drone presets."""
-        make = camera_info.get('make', '').upper()
-        model = camera_info.get('model', '').upper()
+        make = ExifExtractor._clean_text(camera_info.get('make', '')).upper()
+        model = ExifExtractor._clean_text(camera_info.get('model', '')).upper()
 
         if 'DJI' in make or 'DJI' in model:
+            if 'FC7703' in model:
+                return 'DJI_FC7703'
             if 'MINI 3' in model or 'MINI3' in model:
                 return 'DJI_MINI_3'
             if 'MAVIC 3' in model or 'MAVIC3' in model:
