@@ -1,8 +1,96 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import './PlanterManagement.css';
+
+function EditPlanterDialog({ planter, form, onChange, onSave, onClose, busy, error }) {
+  const dialogRef = useRef(null);
+
+  useEffect(() => {
+    const el = dialogRef.current;
+    if (!el) return;
+    const firstInput = el.querySelector('input, select, textarea');
+    firstInput?.focus();
+
+    const handleKey = (e) => {
+      if (e.key === 'Escape' && !busy) { onClose(); return; }
+      if (e.key !== 'Tab') return;
+      const focusables = el.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      );
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [busy, onClose]);
+
+  return (
+    <div className="planter-edit-backdrop" onMouseDown={busy ? undefined : onClose}>
+      <div
+        ref={dialogRef}
+        className="planter-edit-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-planter-title"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="planter-edit-header">
+          <h3 id="edit-planter-title" className="planter-edit-title">Edit {planter.full_name}</h3>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            onClick={onClose}
+            aria-label="Close edit dialog"
+            disabled={busy}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Full name</label>
+          <input className="form-input" type="text" value={form.full_name} onChange={(e) => onChange({ full_name: e.target.value })} disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Phone</label>
+          <input className="form-input" type="text" value={form.phone} onChange={(e) => onChange({ phone: e.target.value })} disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Base label</label>
+          <input className="form-input" type="text" value={form.base_label} onChange={(e) => onChange({ base_label: e.target.value })} disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Notes</label>
+          <textarea className="form-input" value={form.notes} onChange={(e) => onChange({ notes: e.target.value })} rows={2} disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Reset password (leave blank to keep current)</label>
+          <input className="form-input" type="password" value={form.password} onChange={(e) => onChange({ password: e.target.value })} autoComplete="new-password" disabled={busy} />
+        </div>
+        <div className="form-group">
+          <label className="form-label">Status</label>
+          <select className="form-select" value={form.status} onChange={(e) => onChange({ status: e.target.value })} disabled={busy}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+          </select>
+        </div>
+        {error && <div className="assign-message assign-error">{error}</div>}
+        <div className="planter-edit-actions">
+          <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn btn-primary btn-sm" onClick={onSave} disabled={busy}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -38,6 +126,13 @@ export default function PlanterManagement() {
   // Deactivate confirmation modal state
   const [deactivateTarget, setDeactivateTarget] = useState(null);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
+
+  // Archive assignment confirmation modal state
+  const [archiveTarget, setArchiveTarget] = useState(null);
+  const [archiveBusy, setArchiveBusy] = useState(false);
+
+  // Reactivate busy tracking
+  const [reactivateBusyId, setReactivateBusyId] = useState(null);
 
   // Per-assignment point-status drill down
   const [assignmentPointsCache, setAssignmentPointsCache] = useState({});
@@ -95,12 +190,16 @@ export default function PlanterManagement() {
   };
 
   const handleArchive = async (id) => {
+    setArchiveBusy(true);
     try {
       await fetch(`${API}/api/assignments/${id}/archive`, { method: 'POST' });
+      setArchiveTarget(null);
       loadData();
       fetchPoints();
     } catch (err) {
       console.error('Archive failed:', err);
+    } finally {
+      setArchiveBusy(false);
     }
   };
 
@@ -172,6 +271,7 @@ export default function PlanterManagement() {
   };
 
   const handleReactivate = async (planter) => {
+    setReactivateBusyId(planter.id);
     try {
       await fetch(`${API}/api/planters/${planter.id}`, {
         method: 'PATCH',
@@ -181,6 +281,8 @@ export default function PlanterManagement() {
       loadData();
     } catch (err) {
       console.error('Reactivate failed:', err);
+    } finally {
+      setReactivateBusyId(null);
     }
   };
 
@@ -339,7 +441,13 @@ export default function PlanterManagement() {
                     <span className="planter-meta">Inactive</span>
                   </div>
                   <div className="planter-actions">
-                    <button className="btn btn-ghost btn-sm" onClick={() => handleReactivate(p)}>Reactivate</button>
+                    <button
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => handleReactivate(p)}
+                      disabled={reactivateBusyId === p.id}
+                    >
+                      {reactivateBusyId === p.id ? 'Reactivating…' : 'Reactivate'}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -375,7 +483,12 @@ export default function PlanterManagement() {
                         {a.planter_name} · {a.pending_points}/{a.total_points} pending
                       </span>
                     </button>
-                    <button className="btn btn-ghost btn-sm btn-icon" onClick={() => handleArchive(a.id)} title="Archive">
+                    <button
+                      className="btn btn-ghost btn-sm btn-icon"
+                      onClick={() => setArchiveTarget(a)}
+                      title={`Archive ${a.title || `Assignment #${a.id}`}`}
+                      aria-label={`Archive ${a.title || `Assignment #${a.id}`}`}
+                    >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" />
                       </svg>
@@ -439,75 +552,15 @@ export default function PlanterManagement() {
       </PanelCard>
 
       {editingPlanter && (
-        <div className="planter-edit-backdrop" onClick={() => setEditingPlanter(null)}>
-          <div className="planter-edit-dialog" onClick={(e) => e.stopPropagation()}>
-            <h3 className="planter-edit-title">Edit {editingPlanter.full_name}</h3>
-            <div className="form-group">
-              <label className="form-label">Full name</label>
-              <input
-                className="form-input"
-                type="text"
-                value={editForm.full_name}
-                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Phone</label>
-              <input
-                className="form-input"
-                type="text"
-                value={editForm.phone}
-                onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Base label</label>
-              <input
-                className="form-input"
-                type="text"
-                value={editForm.base_label}
-                onChange={(e) => setEditForm({ ...editForm, base_label: e.target.value })}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Notes</label>
-              <textarea
-                className="form-input"
-                value={editForm.notes}
-                onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                rows={2}
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Reset password (leave blank to keep current)</label>
-              <input
-                className="form-input"
-                type="password"
-                value={editForm.password}
-                onChange={(e) => setEditForm({ ...editForm, password: e.target.value })}
-                autoComplete="new-password"
-              />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Status</label>
-              <select
-                className="form-select"
-                value={editForm.status}
-                onChange={(e) => setEditForm({ ...editForm, status: e.target.value })}
-              >
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-              </select>
-            </div>
-            {editError && <div className="assign-message assign-error">{editError}</div>}
-            <div className="planter-edit-actions">
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditingPlanter(null)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleEditSave} disabled={editBusy}>
-                {editBusy ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <EditPlanterDialog
+          planter={editingPlanter}
+          form={editForm}
+          onChange={(updates) => setEditForm((f) => ({ ...f, ...updates }))}
+          onSave={handleEditSave}
+          onClose={() => { if (!editBusy) setEditingPlanter(null); }}
+          busy={editBusy}
+          error={editError}
+        />
       )}
 
       <Modal
@@ -525,6 +578,22 @@ export default function PlanterManagement() {
           the field app until reactivated.
         </p>
         <p>Existing assignments and saved planting points are not affected.</p>
+      </Modal>
+
+      <Modal
+        open={Boolean(archiveTarget)}
+        title={`Archive "${archiveTarget?.title || `Assignment #${archiveTarget?.id}`}"?`}
+        variant="warning"
+        confirmLabel="Archive assignment"
+        cancelLabel="Cancel"
+        busy={archiveBusy}
+        onConfirm={() => handleArchive(archiveTarget.id)}
+        onCancel={() => { if (!archiveBusy) setArchiveTarget(null); }}
+      >
+        <p>
+          This archives the assignment for <strong>{archiveTarget?.planter_name}</strong>. The
+          planter will no longer see it in the field app. Existing planting point records are not deleted.
+        </p>
       </Modal>
     </Panel>
   );

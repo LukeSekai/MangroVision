@@ -56,6 +56,7 @@ export default function MapView() {
   const mapRef = useRef(null);
   const layersRef = useRef({});
   const fittedRef = useRef(false);
+  const pointsFingerprintRef = useRef('');
 
   const center = useMapStore((s) => s.center);
   const zoom = useMapStore((s) => s.zoom);
@@ -192,13 +193,31 @@ export default function MapView() {
     toggle(layers.erodedLayer, layerVisibility.eroded);
   }, [layerVisibility]);
 
-  // Sync points
+  // Sync points — skip the redraw entirely when only unrelated store fields
+  // changed (e.g. stats refresh after a tab switch with no actual point data change).
   useEffect(() => {
     const map = mapRef.current;
     const layer = layersRef.current.pointLayer;
     if (!map || !layer) return;
 
+    // Build a lightweight fingerprint: id + status for every point.
+    // If it matches the last render we skip the clear-and-redraw so the map
+    // view stays rock-steady when pages call fetchPoints() on mount.
+    const fingerprint = points
+      .map((p) => {
+        const status = p.assigned_planter_name
+          ? (p.assignment_status === 'completed' ? 'completed' : 'assigned')
+          : (p.planting_status || 'planned');
+        return `${p.id}:${status}`;
+      })
+      .join(',');
+
+    if (fingerprint === pointsFingerprintRef.current && fittedRef.current) return;
+    pointsFingerprintRef.current = fingerprint;
+
     layer.clearLayers();
+
+    const statusBg = { planned: '#dcfce7', assigned: '#dbeafe', planted: '#fef3c7', completed: '#d1fae5' };
 
     points.forEach((p) => {
       const status = p.assigned_planter_name
@@ -206,7 +225,6 @@ export default function MapView() {
         : (p.planting_status || 'planned');
 
       const color = STATUS_COLORS[status] || STATUS_COLORS.planned;
-      const statusBg = { planned: '#dcfce7', assigned: '#dbeafe', planted: '#fef3c7', completed: '#d1fae5' };
 
       const z = map.getZoom();
       const marker = L.circleMarker([p.latitude, p.longitude], {
@@ -234,9 +252,11 @@ export default function MapView() {
       marker.addTo(layer);
     });
 
+    // Only fit on the very first load so the admin's manual pan/zoom is
+    // preserved across every tab switch. maxZoom: 22 ≈ 5 m scale.
     if (points.length > 0 && !fittedRef.current) {
       const bounds = L.latLngBounds(points.map((p) => [p.latitude, p.longitude]));
-      map.fitBounds(bounds, { padding: [60, 420, 60, 100], maxZoom: 19, animate: true });
+      map.fitBounds(bounds, { padding: [60, 420, 60, 100], maxZoom: 21, animate: true });
       fittedRef.current = true;
     }
   }, [points, setSelectedPoint]);

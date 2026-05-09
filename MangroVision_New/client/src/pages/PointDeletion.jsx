@@ -106,7 +106,7 @@ export default function PointDeletion() {
 
     const map = L.map(containerRef.current, {
       center: [10.78, 122.6253],
-      zoom: 17,
+      zoom: 21,
       maxZoom: 24,
       zoomControl: false,
       attributionControl: false,
@@ -223,7 +223,7 @@ export default function PointDeletion() {
 
     if (selectablePoints.length > 0 && !fittedRef.current) {
       const bounds = L.latLngBounds(selectablePoints.map((point) => [point.latitude, point.longitude]));
-      map.fitBounds(bounds, { padding: [60, 420, 60, 100], maxZoom: 19, animate: true });
+      map.fitBounds(bounds, { padding: [60, 420, 60, 100], maxZoom: 21, animate: true });
       fittedRef.current = true;
     }
   }, [selectablePoints, selectedIds, togglePoint]);

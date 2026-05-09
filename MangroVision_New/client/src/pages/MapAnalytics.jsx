@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
+import Modal from '../components/Modal';
 import ResultsOverlay from './ResultsOverlay';
 import './ResultsOverlay.css';
 import './ImageProcessing.css';
@@ -29,9 +30,12 @@ export default function MapAnalytics() {
 
   const [busyExport, setBusyExport] = useState('');
   const [deleteError, setDeleteError] = useState('');
+  const [exportError, setExportError] = useState('');
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
   const [loadingAnalysisId, setLoadingAnalysisId] = useState(null);
   const [analysisLoadError, setAnalysisLoadError] = useState('');
+  const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => {
     fetchStats();
@@ -47,18 +51,24 @@ export default function MapAnalytics() {
 
   const handleDeleteAnalysis = async (analysisId) => {
     setDeleteError('');
+    setDeleteBusy(true);
     try {
       const response = await fetch(`${API}/api/analyses/${analysisId}`, { method: 'DELETE' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.detail || 'Delete failed');
       }
+      setPendingDeleteId(null);
       fetchStats();
       fetchPoints();
     } catch (error) {
       setDeleteError(error.message || 'Delete failed');
+    } finally {
+      setDeleteBusy(false);
     }
   };
+
+  const pendingDeleteAnalysis = analyses.find((a) => a.id === pendingDeleteId);
 
   const handleOpenAnalysis = async (analysisId) => {
     if (loadingAnalysisId) return;
@@ -128,7 +138,7 @@ export default function MapAnalytics() {
       const blob = await response.blob();
       downloadBlob(blob, `mangrovision_all_points.${format}`);
     } catch (error) {
-      setDeleteError(error.message || 'Export failed');
+      setExportError(error.message || 'Export failed');
     } finally {
       setBusyExport('');
     }
@@ -283,9 +293,10 @@ export default function MapAnalytics() {
                     className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
                     onClick={(event) => {
                       event.stopPropagation();
-                      handleDeleteAnalysis(analysis.id);
+                      setPendingDeleteId(analysis.id);
                     }}
-                    title="Delete analysis"
+                    title={`Delete ${analysis.image_name}`}
+                    aria-label={`Delete analysis ${analysis.image_name}`}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="3 6 5 6 21 6" />
@@ -311,11 +322,18 @@ export default function MapAnalytics() {
         }
         defaultOpen={false}
       >
+        {exportError && <div className="analytics-error">{exportError}</div>}
         <div className="export-grid">
-          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('csv')} disabled={!allSavedPoints.length || busyExport === 'csv'}>CSV</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('gpx')} disabled={!allSavedPoints.length || busyExport === 'gpx'}>GPX</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('kml')} disabled={!allSavedPoints.length || busyExport === 'kml'}>KML</button>
-          <button className="btn btn-secondary btn-sm" onClick={() => handleExport('geojson')} disabled={!allSavedPoints.length || busyExport === 'geojson'}>GeoJSON</button>
+          {['csv', 'gpx', 'kml', 'geojson'].map((fmt) => (
+            <button
+              key={fmt}
+              className="btn btn-secondary btn-sm"
+              onClick={() => { setExportError(''); handleExport(fmt); }}
+              disabled={!allSavedPoints.length || Boolean(busyExport)}
+            >
+              {busyExport === fmt ? 'Exporting…' : fmt.toUpperCase()}
+            </button>
+          ))}
         </div>
       </PanelCard>
 
@@ -330,6 +348,19 @@ export default function MapAnalytics() {
         onSave={() => {}}
         onExport={handleExportSelected}
       />
+
+      <Modal
+        open={Boolean(pendingDeleteId)}
+        title={`Delete "${pendingDeleteAnalysis?.image_name || 'this analysis'}"?`}
+        variant="danger"
+        confirmLabel="Delete analysis"
+        cancelLabel="Cancel"
+        busy={deleteBusy}
+        onConfirm={() => handleDeleteAnalysis(pendingDeleteId)}
+        onCancel={() => { if (!deleteBusy) setPendingDeleteId(null); }}
+      >
+        <p>This permanently removes the analysis and all its saved planting points from the database. This action cannot be undone.</p>
+      </Modal>
     </Panel>
   );
 }

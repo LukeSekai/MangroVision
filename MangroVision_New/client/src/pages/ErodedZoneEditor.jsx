@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
+import Modal from '../components/Modal';
 import './ErodedZoneEditor.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -13,12 +14,16 @@ export default function ErodedZoneEditor() {
   const mapInstance = useMapStore((s) => s.mapInstance);
 
   const [deleting, setDeleting] = useState(null);
+  const [pendingDeleteIndex, setPendingDeleteIndex] = useState(null);
+  const [clearAllOpen, setClearAllOpen] = useState(false);
+  const [clearAllBusy, setClearAllBusy] = useState(false);
   const [drawing, setDrawing] = useState(false);
   const [drawLayer, setDrawLayer] = useState(null);
   const [drawnCoords, setDrawnCoords] = useState(null);
   const [zoneName, setZoneName] = useState('');
   const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
+  const [saveMsgText, setSaveMsgText] = useState('');
+  const [saveMsgIsError, setSaveMsgIsError] = useState(false);
 
   useEffect(() => { fetchZones(); }, [fetchZones]);
 
@@ -115,7 +120,8 @@ export default function ErodedZoneEditor() {
   const saveZone = async () => {
     if (!drawnCoords) return;
     setSaving(true);
-    setSaveMsg('');
+    setSaveMsgText('');
+    setSaveMsgIsError(false);
     try {
       const feature = {
         type: 'Feature',
@@ -137,11 +143,13 @@ export default function ErodedZoneEditor() {
         throw new Error(err.detail || 'Failed to save zone');
       }
 
-      setSaveMsg('Zone saved');
+      setSaveMsgText('Zone saved');
+      setSaveMsgIsError(false);
       cancelDrawing();
       fetchZones();
     } catch (err) {
-      setSaveMsg(`Error: ${err.message}`);
+      setSaveMsgText(err.message || 'Failed to save zone');
+      setSaveMsgIsError(true);
     } finally {
       setSaving(false);
     }
@@ -149,17 +157,26 @@ export default function ErodedZoneEditor() {
 
   const handleDeleteEroded = async (index) => {
     setDeleting(index);
+    setSaveMsgText('');
+    setSaveMsgIsError(false);
     try {
       const res = await fetch(`${API}/api/zones/eroded/${index}`, { method: 'DELETE' });
-      if (res.ok) fetchZones();
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || 'Failed to delete zone');
+      }
+      setPendingDeleteIndex(null);
+      fetchZones();
     } catch (err) {
-      console.error('Delete failed:', err);
+      setSaveMsgText(err.message || 'Failed to delete zone');
+      setSaveMsgIsError(true);
     } finally {
       setDeleting(null);
     }
   };
 
   const handleClearAll = async () => {
+    setClearAllBusy(true);
     try {
       const res = await fetch(`${API}/api/zones/eroded`, {
         method: 'PUT',
@@ -170,10 +187,15 @@ export default function ErodedZoneEditor() {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || 'Failed to clear zones');
       }
+      setClearAllOpen(false);
       fetchZones();
-      setSaveMsg('All eroded zones cleared');
+      setSaveMsgText('All eroded zones cleared');
+      setSaveMsgIsError(false);
     } catch (err) {
-      setSaveMsg(`Error: ${err.message}`);
+      setSaveMsgText(err.message || 'Failed to clear zones');
+      setSaveMsgIsError(true);
+    } finally {
+      setClearAllBusy(false);
     }
   };
 
@@ -245,7 +267,11 @@ export default function ErodedZoneEditor() {
               </button>
               <button className="btn btn-ghost btn-sm" onClick={cancelDrawing}>Cancel</button>
             </div>
-            {saveMsg && <p className="text-sm" style={{ color: saveMsg.startsWith('Error') ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>{saveMsg}</p>}
+            {saveMsgText && (
+              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
+                {saveMsgText}
+              </p>
+            )}
           </div>
         )}
       </PanelCard>
@@ -260,7 +286,7 @@ export default function ErodedZoneEditor() {
           <button className="btn btn-secondary btn-sm" onClick={handleExportGeoJSON} disabled={!erodedFeatures.length}>
             Export GeoJSON
           </button>
-          <button className="btn btn-ghost btn-sm" onClick={handleClearAll} disabled={!erodedFeatures.length}>
+          <button className="btn btn-ghost btn-sm" onClick={() => setClearAllOpen(true)} disabled={!erodedFeatures.length}>
             Clear All
           </button>
         </div>
@@ -277,9 +303,10 @@ export default function ErodedZoneEditor() {
                 </div>
                 <button
                   className="btn btn-ghost btn-sm btn-icon"
-                  onClick={() => handleDeleteEroded(i)}
+                  onClick={() => setPendingDeleteIndex(i)}
                   disabled={deleting === i}
-                  title="Delete zone"
+                  title={`Delete ${getZoneName(f, i, 'Eroded')}`}
+                  aria-label={`Delete ${getZoneName(f, i, 'Eroded')}`}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -315,6 +342,31 @@ export default function ErodedZoneEditor() {
           )}
         </div>
       </PanelCard>
+      <Modal
+        open={pendingDeleteIndex !== null}
+        title={`Delete "${pendingDeleteIndex !== null ? getZoneName(erodedFeatures[pendingDeleteIndex], pendingDeleteIndex, 'Eroded') : ''}"?`}
+        variant="danger"
+        confirmLabel="Delete zone"
+        cancelLabel="Cancel"
+        busy={deleting !== null && deleting === pendingDeleteIndex}
+        onConfirm={() => handleDeleteEroded(pendingDeleteIndex)}
+        onCancel={() => { if (deleting === null) setPendingDeleteIndex(null); }}
+      >
+        <p>This permanently removes the eroded zone from the map. This action cannot be undone.</p>
+      </Modal>
+
+      <Modal
+        open={clearAllOpen}
+        title={`Clear all ${erodedFeatures.length} eroded zone${erodedFeatures.length !== 1 ? 's' : ''}?`}
+        variant="danger"
+        confirmLabel="Clear all zones"
+        cancelLabel="Cancel"
+        busy={clearAllBusy}
+        onConfirm={handleClearAll}
+        onCancel={() => { if (!clearAllBusy) setClearAllOpen(false); }}
+      >
+        <p>This permanently removes all drawn eroded zones. This action cannot be undone.</p>
+      </Modal>
     </Panel>
   );
 }

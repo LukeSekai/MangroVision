@@ -439,6 +439,43 @@
   cursor: not-allowed;
 }
 
+/* Empty state */
+.field-empty-state {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 16px;
+  padding: 28px 32px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  text-align: center;
+  pointer-events: none;
+  z-index: 8;
+  max-width: min(340px, calc(100% - 32px));
+  color: #475569;
+}
+
+.field-empty-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 0;
+}
+
+.field-empty-sub {
+  font-size: 13px;
+  color: #64748b;
+  line-height: 1.5;
+  margin: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .field-overlay,
   .field-overlay-backdrop {

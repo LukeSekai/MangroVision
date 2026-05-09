@@ -709,6 +709,17 @@ export default function FieldApp() {
           <div className="field-route-error" role="alert">{routeError}</div>
         )}
 
+        {!loading && points.length === 0 && !loadError && (
+          <div className="field-empty-state" role="status">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+              <circle cx="12" cy="10" r="3" />
+            </svg>
+            <p className="field-empty-title">No points assigned yet</p>
+            <p className="field-empty-sub">Ask your team admin to assign you some planting points.</p>
+          </div>
+        )}
+
         {!hintDismissed && points.length > 0 && !route && (
           <div className="field-hint-pill" role="status">
             Tap a marker to see options
