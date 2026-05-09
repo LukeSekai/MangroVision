@@ -1,11 +1,14 @@
 import { create } from 'zustand';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 export const useMapStore = create((set, get) => ({
   // Map viewport
   center: [122.6253, 10.7800],  // Leganes Katunggan Park, Iloilo
-  zoom: 17,
+  // Initial zoom 21 puts the Leaflet scale-bar at roughly "5 m" at this
+  // latitude (~7.3 cm per pixel * 68 px = 5 m). Lower the zoom to see a
+  // wider area; higher to see individual canopies in finer detail.
+  zoom: 21,
   setView: (center, zoom) => set({ center, zoom }),
 
   // Stats
@@ -36,6 +39,37 @@ export const useMapStore = create((set, get) => ({
       console.error('Failed to fetch points:', err);
       set({ loadingPoints: false });
     }
+  },
+  deletePoints: async (pointIds) => {
+    const ids = [...new Set((pointIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
+    if (!ids.length) throw new Error('Select at least one planting point.');
+
+    const res = await fetch(`${API}/api/planters/map-points`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ point_ids: ids }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(payload.detail || 'Point deletion failed');
+    }
+
+    const deletedIds = new Set((payload.deleted_point_ids || []).map((id) => Number(id)));
+    set((state) => ({
+      points: state.points.filter((point) => !deletedIds.has(Number(point.id))),
+      selectedPointId: deletedIds.has(Number(state.selectedPointId)) ? null : state.selectedPointId,
+      stats: state.stats
+        ? {
+            ...state.stats,
+            points: (state.stats.points || []).filter((point) => !deletedIds.has(Number(point.id))),
+            total_mapped_points: Math.max(
+              0,
+              (state.stats.total_mapped_points ?? state.points.length) - deletedIds.size,
+            ),
+          }
+        : state.stats,
+    }));
+    return payload;
   },
 
   // Zones

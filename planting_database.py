@@ -811,6 +811,103 @@ def delete_analysis(analysis_id: int):
     conn.close()
 
 
+def delete_planting_points(point_ids: List[int]) -> dict:
+    """Remove specific planting points and clean up affected assignment batches."""
+    normalized_ids: List[int] = []
+    seen: set[int] = set()
+    for raw_id in point_ids:
+        try:
+            point_id = int(raw_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Invalid planting point id.") from error
+        if point_id <= 0:
+            raise ValueError("Invalid planting point id.")
+        if point_id not in seen:
+            normalized_ids.append(point_id)
+            seen.add(point_id)
+
+    if not normalized_ids:
+        raise ValueError("Select at least one planting point.")
+
+    conn = _get_connection()
+    try:
+        placeholders = ",".join("?" for _ in normalized_ids)
+        point_rows = conn.execute(f"""
+            SELECT id, analysis_id
+            FROM planting_points
+            WHERE id IN ({placeholders})
+        """, tuple(normalized_ids)).fetchall()
+
+        if not point_rows:
+            return {
+                "status": "deleted",
+                "deleted_count": 0,
+                "deleted_point_ids": [],
+                "affected_assignment_ids": [],
+                "affected_analysis_ids": [],
+            }
+
+        existing_ids = {int(row["id"]) for row in point_rows}
+        deleted_ids = [point_id for point_id in normalized_ids if point_id in existing_ids]
+        analysis_ids = sorted({int(row["analysis_id"]) for row in point_rows})
+        deleted_placeholders = ",".join("?" for _ in deleted_ids)
+
+        assignment_rows = conn.execute(f"""
+            SELECT DISTINCT assignment_id
+            FROM planter_assignment_points
+            WHERE planting_point_id IN ({deleted_placeholders})
+        """, tuple(deleted_ids)).fetchall()
+        assignment_ids = sorted({int(row["assignment_id"]) for row in assignment_rows})
+
+        conn.execute(f"""
+            DELETE FROM planter_assignment_points
+            WHERE planting_point_id IN ({deleted_placeholders})
+        """, tuple(deleted_ids))
+        conn.execute(f"""
+            DELETE FROM planting_points
+            WHERE id IN ({deleted_placeholders})
+        """, tuple(deleted_ids))
+
+        for assignment_id in assignment_ids:
+            remaining_rows = conn.execute("""
+                SELECT id, sequence_num
+                FROM planter_assignment_points
+                WHERE assignment_id = ?
+                ORDER BY sequence_num ASC, id ASC
+            """, (assignment_id,)).fetchall()
+            for sequence_num, row in enumerate(remaining_rows, start=1):
+                if int(row["sequence_num"]) != sequence_num:
+                    conn.execute(
+                        "UPDATE planter_assignment_points SET sequence_num = ? WHERE id = ?",
+                        (sequence_num, row["id"]),
+                    )
+            _refresh_assignment_status(conn, assignment_id)
+
+        for analysis_id in analysis_ids:
+            count_row = conn.execute(
+                "SELECT COUNT(*) AS point_count FROM planting_points WHERE analysis_id = ?",
+                (analysis_id,),
+            ).fetchone()
+            conn.execute(
+                "UPDATE analyses SET hexagon_count = ? WHERE id = ?",
+                (int(count_row["point_count"] or 0), analysis_id),
+            )
+
+        conn.commit()
+        return {
+            "status": "deleted",
+            "deleted_count": len(deleted_ids),
+            "deleted_point_ids": deleted_ids,
+            "affected_assignment_ids": assignment_ids,
+            "affected_analysis_ids": analysis_ids,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # ====================================================================
 #  Planter Management
 # ====================================================================

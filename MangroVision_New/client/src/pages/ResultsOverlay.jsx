@@ -231,6 +231,7 @@ export default function ResultsOverlay({
   const safePointCount = (mapInfo.safe_points_geojson?.features || []).length;
   const forbiddenFilteredCount = metrics.forbidden_filtered_count ?? 0;
   const erodedFilteredCount = metrics.eroded_filtered_count ?? 0;
+  const orthophotoCanopyFilteredCount = metrics.orthophoto_canopy_filtered_count ?? 0;
   const clippedOutsideCount = metrics.clipped_outside_orthophoto ?? 0;
   const duplicateFilteredCount = metrics.duplicate_filtered_count ?? 0;
   const displayedHeading = metadata.detected_heading ?? metadata.camera_heading;
@@ -280,9 +281,20 @@ export default function ResultsOverlay({
             </div>
             <div className="rs-image-card">
               <div className="rs-image-label">Original Image</div>
-              {originalPreview || result.images?.original_data_url ? (
+              {/*
+                Prefer the backend's original_data_url over the browser-side
+                FileReader preview because OpenCV (backend) ignores EXIF
+                Orientation while the browser respects it. Mixing the two
+                in adjacent panels makes the AI overlay look "shifted"
+                relative to the original even though the pixels match. Use
+                the backend image so both panels show the exact pixels the
+                detector processed, in the same orientation. The FileReader
+                preview is kept only as a last-resort fallback for the
+                pre-result loading state.
+              */}
+              {result.images?.original_data_url || originalPreview ? (
                 <img
-                  src={originalPreview || result.images.original_data_url}
+                  src={result.images?.original_data_url || originalPreview}
                   alt="Original drone input"
                   className="rs-image"
                 />
@@ -319,7 +331,7 @@ export default function ResultsOverlay({
                 <MetricItem icon={ICON_PERCENT} label="Canopy Coverage" primary>
                   {fmt(metrics.canopy_coverage_pct, 2)}%
                 </MetricItem>
-                <MetricItem icon={ICON_TREE} label="Tree Count" primary>
+                <MetricItem icon={ICON_TREE} label="Canopy Components" primary>
                   {metrics.canopy_count ?? 0}
                 </MetricItem>
               </div>
@@ -352,10 +364,19 @@ export default function ResultsOverlay({
                     ? fmt(metrics.ai_confidence_threshold, 2)
                     : '—'}
                 </MetricItem>
+                <MetricItem icon={ICON_TREE} label="AI Instances">
+                  {metrics.ai_instance_count ?? metrics.canopy_count ?? 0}
+                </MetricItem>
                 <MetricItem icon={ICON_PIN} label="Ortho Match">
                   {matchSuccess
                     ? `${Math.round((matchConfidence || 0) * 100)}%`
                     : 'Fallback'}
+                </MetricItem>
+                <MetricItem icon={ICON_WARN} label="Below Conf.">
+                  {metrics.ai_below_confidence_detections ?? 0}
+                </MetricItem>
+                <MetricItem icon={ICON_AREA} label="Max Filtered">
+                  {metrics.ai_rejected_too_large_detections ?? 0}
                 </MetricItem>
               </div>
             </div>
@@ -436,6 +457,9 @@ export default function ResultsOverlay({
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Eroded Filtered">
                   {erodedFilteredCount}
+                </MetricItem>
+                <MetricItem icon={ICON_WARN} label="Canopy Recheck">
+                  {orthophotoCanopyFilteredCount}
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Clipped Outside">
                   {clippedOutsideCount}

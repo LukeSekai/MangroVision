@@ -25,12 +25,17 @@ class ProperDetectree2Detector:
     Uses official detectree2 prediction pipeline for maximum accuracy
     """
     
-    def __init__(self, 
-                 confidence_threshold: float = 0.90,
+    def __init__(self,
+                 confidence_threshold: float = 0.87,
                  device: str = 'cpu'):
         """
         Initialize proper detectree2 detector
-        
+
+        The default confidence threshold is 0.85. The selected checkpoint
+        was evaluated at SCORE_THRESH_TEST=0.5; running at 0.85
+        is a precision-leaning operating point that keeps low-confidence
+        AI proposals from contaminating the planting pipeline.
+
         Args:
             confidence_threshold: Minimum confidence score (0-1)
             device: 'cpu' or 'cuda'
@@ -43,17 +48,32 @@ class ProperDetectree2Detector:
         self.model_name = None
         self.runtime_tuning = {
             "tile_veg_threshold": 0.002,
-            "min_crown_m2": 0.05,
-            "max_crown_m2": 60.0,
+            # Lowered to 0.01 m^2 (~11 cm crown diameter at typical drone GSD)
+            # so even very small saplings and recently planted seedlings
+            # survive the area gate. The strict_canopy_hsv gate below remains
+            # the primary defense against tiny false positives.
+            "min_crown_m2": 0.01,
+            "max_crown_m2": 250.0,
             "cleanup_iou": 0.75,
             "fallback_nms_iou": 0.90,
             "tile_size": 512,
             "tile_overlap": 0.25,
             "use_clean_crowns": False,
+            "merge_canopy_fragments": True,
+            # Bumped from 0.45 m → 1.50 m so adjacent crowns whose buffers
+            # would otherwise leave red triangular wedges in the visualization
+            # get morph-closed into a continuous canopy mass. This affects
+            # *only* the rasterized canopy mass and the danger-buffer outline;
+            # individual crown counts (final_polygons) are unchanged.
+            "canopy_merge_gap_m": 1.5,
+            # Bumped from 0.25 m → 0.5 m so the AI mask absorbs slightly more
+            # of the adjacent strict-green vegetation, eliminating the thin
+            # purple-to-red mottling at canopy edges.
+            "canopy_hsv_expansion_m": 0.5,
             # Conservative color validation: keep AI as the detector, but reject
             # predictions that have almost no mangrove-green pixels inside them.
             "strict_canopy_hsv": True,
-            "detection_veg_min_ratio": 0.06,
+            "detection_veg_min_ratio": 0.03,
         }
         
         print(f"🌳 Initializing Proper Detectree2 Library")
@@ -71,6 +91,9 @@ class ProperDetectree2Detector:
         tile_size: float = None,
         tile_overlap: float = None,
         use_clean_crowns: bool = None,
+        merge_canopy_fragments: bool = None,
+        canopy_merge_gap_m: float = None,
+        canopy_hsv_expansion_m: float = None,
         strict_canopy_hsv: bool = None,
         detection_veg_min_ratio: float = None,
     ):
@@ -91,6 +114,12 @@ class ProperDetectree2Detector:
             self.runtime_tuning["tile_overlap"] = max(0.0, min(float(tile_overlap), 0.6))
         if use_clean_crowns is not None:
             self.runtime_tuning["use_clean_crowns"] = bool(use_clean_crowns)
+        if merge_canopy_fragments is not None:
+            self.runtime_tuning["merge_canopy_fragments"] = bool(merge_canopy_fragments)
+        if canopy_merge_gap_m is not None:
+            self.runtime_tuning["canopy_merge_gap_m"] = max(0.0, min(float(canopy_merge_gap_m), 2.0))
+        if canopy_hsv_expansion_m is not None:
+            self.runtime_tuning["canopy_hsv_expansion_m"] = max(0.0, min(float(canopy_hsv_expansion_m), 2.0))
         if strict_canopy_hsv is not None:
             self.runtime_tuning["strict_canopy_hsv"] = bool(strict_canopy_hsv)
         if detection_veg_min_ratio is not None:
@@ -109,13 +138,19 @@ class ProperDetectree2Detector:
 
         # Find model file
         if model_path is None:
-            model_dir = Path(__file__).parent.parent / 'models'
+            project_root = Path(__file__).parent.parent
+            model_dir = project_root / 'models'
+            try_model_dir = project_root / 'MangroVision_New' / 'try_model'
 
-            # MangroVision always prefers the locally trained 2-class custom_mangrove_model.
-            # Model-garden and tropical-base checkpoints are kept only as fallbacks.
+            # Prefer the newly selected refined checkpoint bundled with the
+            # MangroVision_New workspace. Older local weights remain as
+            # fallbacks so the app can still start if the try_model file is
+            # missing on another machine.
             latest_model_garden = sorted(model_dir.glob("250312*.pth"))
             model_candidates = [
-                (model_dir / 'custom_mangrove_model' / 'model_final.pth', 'Custom Mangrove Model'),
+                (try_model_dir / 'model_final.pth', 'MangroVision New Try Model (2-class)'),
+                (model_dir / 'custom_mangrove_model' / 'model_final.pth', 'Custom Mangrove Model (2-class)'),
+                (model_dir / 'latest_mangrove_only' / 'model_final.pth', 'Latest Mangrove Only (1-class)'),
             ]
             model_candidates.extend((p, f"Model Garden ({p.name})") for p in latest_model_garden)
             model_candidates.extend([
@@ -157,13 +192,22 @@ class ProperDetectree2Detector:
             ))
             cfg.MODEL.WEIGHTS = model_path
 
-        # Single-class by default; local custom model path is 2-class in this project.
-        if "custom_mangrove_model" in str(model_path).replace("\\", "/"):
+        # Set NUM_CLASSES per checkpoint family. latest_mangrove_only and the
+        # tropical-base / model-garden checkpoints are 1-class (canopy only);
+        # the legacy custom_mangrove_model directory holds 2-class checkpoints
+        # (Mangrove canopy / Non mangrove).
+        path_str = str(model_path).replace("\\", "/")
+        if "latest_mangrove_only" in path_str:
+            cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
+        elif "custom_mangrove_model" in path_str or "MangroVision_New/try_model" in path_str:
             cfg.MODEL.ROI_HEADS.NUM_CLASSES = 2
         else:
             cfg.MODEL.ROI_HEADS.NUM_CLASSES = 1
 
-        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = self.confidence_threshold
+        # Ask Detectron2 for candidates down to the model's evaluation threshold,
+        # then apply the user-facing confidence gate ourselves. This lets the
+        # analysis report how many candidates were below the active threshold.
+        cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = min(0.50, float(self.confidence_threshold))
         cfg.MODEL.DEVICE = self.device
 
         # Keep more proposals in dense canopies.
@@ -259,6 +303,103 @@ class ProperDetectree2Detector:
             except Exception:
                 continue
         return polygons
+
+    @staticmethod
+    def _polygons_to_mask(polygons: List[Polygon], shape: Tuple[int, int]) -> np.ndarray:
+        """Rasterize polygons into a binary mask."""
+        h, w = shape
+        mask = np.zeros((h, w), dtype=np.uint8)
+        for poly in polygons:
+            try:
+                if poly is None or poly.is_empty or poly.exterior is None:
+                    continue
+                coords = np.array(poly.exterior.coords, dtype=np.int32)
+                cv2.fillPoly(mask, [coords], 255)
+            except Exception:
+                continue
+        return mask
+
+    @staticmethod
+    def _metric_kernel_size(distance_m: float, gsd: Optional[float], fallback_px: int = 31) -> int:
+        """Convert a metric morphology distance to a bounded odd kernel size."""
+        if gsd is not None and gsd > 0 and distance_m > 0:
+            size = int(round(distance_m / gsd))
+        else:
+            size = fallback_px if distance_m > 0 else 0
+        if size <= 0:
+            return 0
+        size = max(3, min(size, 151))
+        if size % 2 == 0:
+            size += 1
+        return size
+
+    def _merge_fragmented_canopy_mask(
+        self,
+        instance_mask: np.ndarray,
+        strict_green_mask: Optional[np.ndarray],
+        gsd: Optional[float],
+        min_area_px: float,
+    ) -> Tuple[List[Polygon], np.ndarray, Dict[str, Any]]:
+        """Merge nearby AI fragments into canopy coverage components."""
+        merge_enabled = bool(self.runtime_tuning.get("merge_canopy_fragments", True))
+        if not merge_enabled or int(np.count_nonzero(instance_mask)) == 0:
+            return (
+                self._mask_to_polygons(instance_mask, min_area_px),
+                instance_mask,
+                {
+                    "merge_canopy_fragments": merge_enabled,
+                    "canopy_merge_gap_m": 0.0,
+                    "canopy_hsv_expansion_m": 0.0,
+                    "canopy_merge_added_pixels": 0,
+                },
+            )
+
+        merge_gap_m = float(self.runtime_tuning.get("canopy_merge_gap_m", 0.45))
+        hsv_expansion_m = float(self.runtime_tuning.get("canopy_hsv_expansion_m", 0.25))
+        merge_kernel_size = self._metric_kernel_size(merge_gap_m, gsd)
+        expansion_kernel_size = self._metric_kernel_size(hsv_expansion_m, gsd, fallback_px=17)
+
+        merged_mask = instance_mask.copy()
+        before_pixels = int(np.count_nonzero(merged_mask))
+
+        if (
+            strict_green_mask is not None
+            and strict_green_mask.shape == merged_mask.shape
+            and expansion_kernel_size > 0
+        ):
+            expansion_kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (expansion_kernel_size, expansion_kernel_size),
+            )
+            nearby_ai = cv2.dilate(merged_mask, expansion_kernel, iterations=1)
+            green_near_ai = cv2.bitwise_and(strict_green_mask, nearby_ai)
+            merged_mask = cv2.bitwise_or(merged_mask, green_near_ai)
+
+        if merge_kernel_size > 0:
+            merge_kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (merge_kernel_size, merge_kernel_size),
+            )
+            merged_mask = cv2.morphologyEx(merged_mask, cv2.MORPH_CLOSE, merge_kernel, iterations=1)
+
+        coverage_polygons = self._mask_to_polygons(merged_mask, min_area_px)
+        if not coverage_polygons:
+            coverage_polygons = self._mask_to_polygons(instance_mask, min_area_px)
+            merged_mask = instance_mask
+
+        after_pixels = int(np.count_nonzero(merged_mask))
+        return (
+            coverage_polygons,
+            merged_mask,
+            {
+                "merge_canopy_fragments": merge_enabled,
+                "canopy_merge_gap_m": merge_gap_m,
+                "canopy_hsv_expansion_m": hsv_expansion_m,
+                "canopy_merge_kernel_px": merge_kernel_size,
+                "canopy_hsv_expansion_kernel_px": expansion_kernel_size,
+                "canopy_merge_added_pixels": max(0, after_pixels - before_pixels),
+            },
+        )
     
     def detect_from_image(self, 
                          image: np.ndarray,
@@ -350,11 +491,16 @@ class ProperDetectree2Detector:
         
         # Run detection on each tile
         all_instances = []
+        total_model_detections = 0
+        below_confidence_detections = 0
         rejected_non_green = 0
+        rejected_too_small = 0
+        rejected_too_large = 0
+        rejected_invalid_geometry = 0
         min_crown_m2 = float(self.runtime_tuning.get("min_crown_m2", 0.05))
-        max_crown_m2 = float(self.runtime_tuning.get("max_crown_m2", 60.0))
+        max_crown_m2 = float(self.runtime_tuning.get("max_crown_m2", 250.0))
         strict_canopy_hsv = bool(self.runtime_tuning.get("strict_canopy_hsv", True))
-        detection_veg_min_ratio = float(self.runtime_tuning.get("detection_veg_min_ratio", 0.06))
+        detection_veg_min_ratio = float(self.runtime_tuning.get("detection_veg_min_ratio", 0.03))
         strict_green_mask = self._detect_strict_canopy_green_hsv(image) if strict_canopy_hsv else None
         gsd_used = float(gsd) if (gsd is not None and gsd > 0) else None
         if gsd_used is not None:
@@ -387,50 +533,65 @@ class ProperDetectree2Detector:
 
             # Store each detection with global coordinates and confidence.
             for i in range(len(scores)):
-                if scores[i] >= self.confidence_threshold:
-                    mask = masks[i].astype(np.uint8)
-                    if int(np.count_nonzero(mask)) <= 0:
+                total_model_detections += 1
+                if scores[i] < self.confidence_threshold:
+                    below_confidence_detections += 1
+                    continue
+
+                mask = masks[i].astype(np.uint8)
+                if int(np.count_nonzero(mask)) <= 0:
+                    continue
+
+                # Find contours
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                for contour in contours:
+                    local_detection_mask = np.zeros(mask.shape, dtype=np.uint8)
+                    cv2.fillPoly(local_detection_mask, [contour], 1)
+                    detection_pixels = int(np.count_nonzero(local_detection_mask))
+                    if detection_pixels <= 0:
                         continue
 
-                    # Find contours
-                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                    for contour in contours:
-                        local_detection_mask = np.zeros(mask.shape, dtype=np.uint8)
-                        cv2.fillPoly(local_detection_mask, [contour], 1)
-                        detection_pixels = int(np.count_nonzero(local_detection_mask))
-                        if detection_pixels <= 0:
+                    if strict_canopy_hsv:
+                        strict_tile = strict_green_mask[y1:y2, x1:x2]
+                        green_pixels = int(np.count_nonzero((local_detection_mask > 0) & (strict_tile > 0)))
+                        vegetation_ratio = green_pixels / detection_pixels
+                        if vegetation_ratio < detection_veg_min_ratio:
+                            rejected_non_green += 1
                             continue
+                    else:
+                        vegetation_ratio = 1.0
 
-                        if strict_canopy_hsv:
-                            strict_tile = strict_green_mask[y1:y2, x1:x2]
-                            green_pixels = int(np.count_nonzero((local_detection_mask > 0) & (strict_tile > 0)))
-                            vegetation_ratio = green_pixels / detection_pixels
-                            if vegetation_ratio < detection_veg_min_ratio:
-                                rejected_non_green += 1
+                    # Convert to global coordinates
+                    contour_global = contour.copy()
+                    contour_global[:, 0, 0] += x1
+                    contour_global[:, 0, 1] += y1
+
+                    # Convert to polygon
+                    if len(contour_global) >= 3:
+                        try:
+                            points = contour_global.reshape(-1, 2)
+                            poly = Polygon(points)
+                            if not poly.is_valid:
+                                poly = poly.buffer(0)
+                            if not isinstance(poly, Polygon) or poly.is_empty:
+                                rejected_invalid_geometry += 1
                                 continue
-                        else:
-                            vegetation_ratio = 1.0
-
-                        # Convert to global coordinates
-                        contour_global = contour.copy()
-                        contour_global[:, 0, 0] += x1
-                        contour_global[:, 0, 1] += y1
-
-                        # Convert to polygon
-                        if len(contour_global) >= 3:
-                            try:
-                                points = contour_global.reshape(-1, 2)
-                                poly = Polygon(points)
-                                if poly.is_valid and (min_area_px <= poly.area <= max_area_px):
-                                    all_instances.append({
-                                        'polygon': poly,
-                                        'score': scores[i],
-                                        'contour': contour_global,
-                                        'vegetation_ratio': vegetation_ratio,
-                                    })
-                            except:
+                            if poly.area < min_area_px:
+                                rejected_too_small += 1
                                 continue
+                            if poly.area > max_area_px:
+                                rejected_too_large += 1
+                                continue
+                            all_instances.append({
+                                'polygon': poly,
+                                'score': scores[i],
+                                'contour': contour_global,
+                                'vegetation_ratio': vegetation_ratio,
+                            })
+                        except Exception:
+                            rejected_invalid_geometry += 1
+                            continue
 
             # Emit a post-inference tile_done event so subscribers can report
             # "tile N processed" rather than "tile N starting".
@@ -444,8 +605,12 @@ class ProperDetectree2Detector:
             )
 
         print(f"   Found {len(all_instances)} detections")
+        if below_confidence_detections:
+            print(f"   Ignored {below_confidence_detections} candidates below confidence {self.confidence_threshold:.2f}")
         if rejected_non_green:
             print(f"   Rejected {rejected_non_green} non-green AI detections")
+        if rejected_too_large:
+            print(f"   Rejected {rejected_too_large} detections above max crown area {max_crown_m2:.1f} m2")
 
         # High-recall default: skip aggressive clean_crowns unless explicitly enabled.
         use_clean_crowns = bool(self.runtime_tuning.get("use_clean_crowns", False))
@@ -462,27 +627,36 @@ class ProperDetectree2Detector:
                 iou_threshold=float(self.runtime_tuning.get("fallback_nms_iou", 0.90))
             )
 
-        print(f"   ✅ {len(final_polygons)} trees detected after cleanup")
+        instance_mask = self._polygons_to_mask(final_polygons, (h, w))
+        coverage_polygons, combined_mask, merge_metadata = self._merge_fragmented_canopy_mask(
+            instance_mask=instance_mask,
+            strict_green_mask=strict_green_mask,
+            gsd=gsd_used,
+            min_area_px=min_area_px,
+        )
+
+        print(f"   ✅ {len(final_polygons)} AI instances after cleanup")
+        if merge_metadata.get("merge_canopy_fragments"):
+            print(
+                f"   Coverage merge produced {len(coverage_polygons)} canopy components "
+                f"(+{merge_metadata.get('canopy_merge_added_pixels', 0)} px)"
+            )
         _emit_progress(
             "tile_complete",
             {
                 "total_tiles": len(tiles),
                 "raw_detections": int(len(all_instances)),
-                "final_trees": int(len(final_polygons)),
+                "final_trees": int(len(coverage_polygons)),
+                "instance_trees": int(len(final_polygons)),
             },
         )
-         
-        # Create combined mask
-        combined_mask = np.zeros((h, w), dtype=np.uint8)
-        for poly in final_polygons:
-            try:
-                coords = np.array(poly.exterior.coords, dtype=np.int32)
-                cv2.fillPoly(combined_mask, [coords], 255)
-            except:
-                continue
 
         if strict_canopy_hsv:
             print(f"   HSV validation retained {len(final_polygons)} AI canopy polygons")
+
+        instance_pixels = int(np.count_nonzero(instance_mask))
+        coverage_pixels = int(np.count_nonzero(combined_mask))
+        area_factor = (gsd_used ** 2) if gsd_used is not None else 0.0
         
         metadata = {
             'num_tiles': len(tiles),
@@ -492,16 +666,25 @@ class ProperDetectree2Detector:
             'tile_size': tile_size,
             'overlap': overlap,
             'tile_veg_threshold': float(veg_tile_threshold),
+            'model_candidate_detections': int(total_model_detections),
+            'below_confidence_detections': int(below_confidence_detections),
             'raw_detections': len(all_instances),
             'total_ai_detections': len(all_instances),
-            'final_trees': len(final_polygons),
-            'num_detected_canopies': len(final_polygons),
+            'instance_tree_count': len(final_polygons),
+            'final_trees': len(coverage_polygons),
+            'coverage_component_count': len(coverage_polygons),
+            'num_detected_canopies': len(coverage_polygons),
             'rejected_non_green_detections': int(rejected_non_green),
+            'rejected_too_small_detections': int(rejected_too_small),
+            'rejected_too_large_detections': int(rejected_too_large),
+            'rejected_invalid_geometry': int(rejected_invalid_geometry),
             'strict_canopy_hsv': strict_canopy_hsv,
             'detection_veg_min_ratio': detection_veg_min_ratio,
             'gsd_used': gsd_used,
             'min_crown_m2': min_crown_m2,
             'max_crown_m2': max_crown_m2,
+            'instance_canopy_area_m2': instance_pixels * area_factor,
+            'coverage_canopy_area_m2': coverage_pixels * area_factor,
             'model_path': self.model_path,
             'model_name': self.model_name,
             'cleanup_iou': float(self.runtime_tuning.get("cleanup_iou", 0.75)),
@@ -509,8 +692,9 @@ class ProperDetectree2Detector:
             'use_clean_crowns': use_clean_crowns,
             'detection_method': 'detectree2_official'
         }
+        metadata.update(merge_metadata)
          
-        return final_polygons, combined_mask, metadata
+        return coverage_polygons, combined_mask, metadata
 
     def _clean_with_detectree2_outputs(self, instances: List[Dict]) -> List[Polygon]:
         """Apply detectree2 clean_crowns overlap-cleaning on polygon outputs."""

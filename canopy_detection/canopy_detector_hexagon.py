@@ -31,7 +31,7 @@ class HexagonDetector:
     def __init__(self,
                  altitude_m: float = 6.0,
                  drone_model: str = 'GENERIC_4K',
-                 ai_confidence: float = 0.80,
+                 ai_confidence: float = 0.87,
                  detection_mode: str = 'ai',
                  camera_info: Optional[Dict] = None):
         """
@@ -40,7 +40,11 @@ class HexagonDetector:
         Args:
             altitude_m: Flight altitude in meters
             drone_model: Drone model for GSD calculation
-            ai_confidence: Confidence threshold for AI detection (0-1)
+            ai_confidence: Confidence threshold for AI detection (0-1).
+                Default 0.85 - a precision-leaning operating point above
+                the selected checkpoint's 0.50 evaluation threshold, chosen
+                to keep the planting pipeline clean of low-confidence AI
+                proposals.
             detection_mode: 'ai' or 'hsv'
         """
         if detection_mode not in {'ai', 'hsv'}:
@@ -48,15 +52,16 @@ class HexagonDetector:
 
         self.altitude_m = altitude_m
         self.drone_model = drone_model
-        self.ai_confidence = 0.80 if detection_mode == 'ai' else ai_confidence
+        # Honor the caller-supplied confidence so the UI slider, the FastAPI
+        # form default, and the model checkpoint can be tuned together. The
+        # previous version hard-clamped this, which suppressed valid
+        # detections from the new 1-class checkpoint that was tuned at 0.5.
+        self.ai_confidence = float(ai_confidence)
         self.detection_mode = detection_mode
         self.camera_info = camera_info or {}
         self.gsd = None
         self.image_shape = None
         self.ai_detector = None
-
-        if detection_mode == 'ai' and abs(float(ai_confidence) - 0.80) > 1e-6:
-            print(f"   AI confidence fixed at 0.80 (requested: {ai_confidence:.2f})")
 
         if detection_mode == 'ai' and DETECTREE2_AVAILABLE:
             print("Initializing MangroVision with AI detection system...")
@@ -808,6 +813,13 @@ class HexagonDetector:
         # min-area filter. Otherwise small specks remain in canopy_mask and
         # get painted purple by the visualization while never receiving a
         # danger buffer (because create_danger_zones only sees the polygons).
+        #
+        # After the rebuild, apply a small morphological close on the result
+        # so the simplified polygon contours (each polygon was approxPolyDP'd
+        # before being returned) are smoothed back into a continuous-looking
+        # canopy. Without this step the rasterized mask shows the angular
+        # edges of the simplified polygons, which is what produces the
+        # "red triangular wedges between adjacent crowns" artifact.
         if canopy_polygons:
             aligned_mask = np.zeros_like(canopy_mask)
             for poly in canopy_polygons:
@@ -815,6 +827,26 @@ class HexagonDetector:
                     continue
                 pts = np.array(poly.exterior.coords, dtype=np.int32)
                 cv2.fillPoly(aligned_mask, [pts], 255)
+
+            # Post-rebuild smoothing. Kernel size of ~10 cm at typical drone
+            # GSD (1-2 cm/px) is large enough to bridge sub-pixel polygon
+            # rounding without merging genuinely-separate crowns. The kernel
+            # is clamped so very-fine-GSD imagery doesn't get an oversized
+            # close that erases real gaps.
+            close_radius_m = 0.10
+            if self.gsd and self.gsd > 0:
+                close_px = int(round(close_radius_m / self.gsd))
+            else:
+                close_px = 5
+            close_px = max(2, min(close_px, 20))
+            kernel_size = 2 * close_px + 1
+            kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
+            )
+            aligned_mask = cv2.morphologyEx(
+                aligned_mask, cv2.MORPH_CLOSE, kernel, iterations=1
+            )
+
             canopy_mask = aligned_mask
         else:
             canopy_mask = np.zeros_like(canopy_mask)

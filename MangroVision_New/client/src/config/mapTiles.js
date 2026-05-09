@@ -1,4 +1,4 @@
-const DEFAULT_TILE_SERVER = 'http://localhost:8000/tiles';
+const DEFAULT_TILE_SERVER = '/tiles';
 const DEFAULT_TILESET_PATH = 'TRIAL MAP';
 const DEFAULT_MAX_NATIVE_ZOOM = 20;
 const DEFAULT_TILE_EXTENSION = 'png';

@@ -6,7 +6,7 @@ import './ResultsOverlay.css';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 function downloadBlob(blob, fileName) {
   const url = window.URL.createObjectURL(blob);

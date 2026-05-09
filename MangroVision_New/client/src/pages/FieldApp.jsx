@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import Modal from '../components/Modal';
 import { usePlanterAuthStore } from '../stores/planterAuthStore';
 import { ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import './FieldApp.css';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE || '';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -29,6 +30,39 @@ const STATUS_COLOR = {
   completed: '#059669',
   skipped: '#9ca3af',
 };
+
+const getFieldPointRadius = (zoom) => {
+  if (zoom >= 22) return 3.5;
+  if (zoom >= 21) return 2.4;
+  if (zoom >= 20) return 1.6;
+  if (zoom >= 19) return 1.05;
+  if (zoom >= 18) return 0.8;
+  if (zoom >= 17) return 0.65;
+  return 0.55;
+};
+
+const getFieldPointWeight = (zoom) => {
+  if (zoom >= 22) return 1.1;
+  if (zoom >= 21) return 0.75;
+  if (zoom >= 20) return 0.45;
+  if (zoom >= 19) return 0.2;
+  return 0;
+};
+
+function approxDistanceMeters(a, b) {
+  const [lat1, lon1] = a;
+  const [lat2, lon2] = b;
+  const earthRadiusM = 6371000;
+  const toRad = (value) => (value * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const rLat1 = toRad(lat1);
+  const rLat2 = toRad(lat2);
+  const hav =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadiusM * Math.atan2(Math.sqrt(hav), Math.sqrt(1 - hav));
+}
 
 function getCurrentLocation(options = {}) {
   return new Promise((resolve, reject) => {
@@ -64,7 +98,15 @@ async function fetchRoute(origin, dest, travelMode = 'walking') {
     } catch (_) { /* ignore parse errors */ }
     throw new Error(detail);
   }
-  return response.json();
+  const data = await response.json();
+  const polyline = Array.isArray(data.polyline) ? data.polyline : [];
+  const routeEnd = polyline[polyline.length - 1];
+  const targetGapM = routeEnd ? approxDistanceMeters(routeEnd, dest) : 0;
+  return {
+    ...data,
+    final_connector: targetGapM >= 3 ? [routeEnd, dest] : null,
+    target_gap_m: targetGapM,
+  };
 }
 
 function AuthScreen() {
@@ -247,6 +289,16 @@ function PointsMap({ points, selectedId, onSelect, route, userLocation }) {
     mapRef.current = map;
     layerRef.current = L.layerGroup().addTo(map);
 
+    map.on('zoomend', () => {
+      const zoom = map.getZoom();
+      const radius = getFieldPointRadius(zoom);
+      const weight = getFieldPointWeight(zoom);
+      markersRef.current.forEach((marker) => {
+        marker.setRadius(radius);
+        marker.setStyle({ weight });
+      });
+    });
+
     return () => {
       map.remove();
       mapRef.current = null;
@@ -269,10 +321,11 @@ function PointsMap({ points, selectedId, onSelect, route, userLocation }) {
 
     validPoints.forEach((point) => {
       const color = STATUS_COLOR[point.assignment_status] || '#2563eb';
+      const zoom = map.getZoom();
       const marker = L.circleMarker([point.latitude, point.longitude], {
-        radius: 9,
+        radius: getFieldPointRadius(zoom),
         color: '#0f172a',
-        weight: 2,
+        weight: getFieldPointWeight(zoom),
         fillColor: color,
         fillOpacity: 0.9,
       });
@@ -289,10 +342,13 @@ function PointsMap({ points, selectedId, onSelect, route, userLocation }) {
 
   useEffect(() => {
     markersRef.current.forEach((marker, id) => {
+      const map = mapRef.current;
+      const zoom = map?.getZoom() ?? 17;
       marker.setStyle({
-        weight: id === selectedId ? 4 : 2,
+        weight: id === selectedId ? Math.max(1.2, getFieldPointWeight(zoom) + 0.8) : getFieldPointWeight(zoom),
         color: id === selectedId ? '#dc2626' : '#0f172a',
       });
+      marker.setRadius(id === selectedId ? getFieldPointRadius(zoom) + 0.7 : getFieldPointRadius(zoom));
     });
     const selected = points.find((p) => p.assignment_point_id === selectedId);
     const map = mapRef.current;
@@ -311,16 +367,30 @@ function PointsMap({ points, selectedId, onSelect, route, userLocation }) {
     }
 
     if (route?.polyline?.length >= 2) {
-      const latlngs = route.polyline;
-      const line = L.polyline(latlngs, {
+      const routeGroup = L.layerGroup().addTo(map);
+      const line = L.polyline(route.polyline, {
         color: '#0f766e',
-        weight: 5,
+        weight: 4,
         opacity: 0.9,
         lineCap: 'round',
         lineJoin: 'round',
-      }).addTo(map);
-      routeLayerRef.current = line;
-      map.fitBounds(line.getBounds(), { padding: [60, 60], maxZoom: 19 });
+      }).addTo(routeGroup);
+      let bounds = line.getBounds();
+
+      if (route.final_connector?.length === 2) {
+        const connector = L.polyline(route.final_connector, {
+          color: '#f59e0b',
+          weight: 4,
+          opacity: 0.95,
+          dashArray: '8 8',
+          lineCap: 'round',
+          lineJoin: 'round',
+        }).addTo(routeGroup);
+        bounds = bounds.extend(connector.getBounds());
+      }
+
+      routeLayerRef.current = routeGroup;
+      map.fitBounds(bounds, { padding: [60, 60], maxZoom: 20 });
     }
   }, [route]);
 
@@ -496,6 +566,7 @@ export default function FieldApp() {
   const [userLocation, setUserLocation] = useState(null);
   const [routeBusy, setRouteBusy] = useState(false);
   const [routeError, setRouteError] = useState('');
+  const [welcomeOpen, setWelcomeOpen] = useState(false);
 
   const handleSelect = useCallback((id) => {
     setSelectedId(id);
@@ -549,6 +620,17 @@ export default function FieldApp() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    if (isAuthenticated && sessionStorage.getItem('mv_field_show_welcome') === '1') {
+      setWelcomeOpen(true);
+    }
+  }, [isAuthenticated, planter?.id]);
+
+  const closeWelcome = () => {
+    sessionStorage.removeItem('mv_field_show_welcome');
+    setWelcomeOpen(false);
+  };
 
   const selected = useMemo(
     () => points.find((p) => p.assignment_point_id === selectedId) || null,
@@ -644,6 +726,16 @@ export default function FieldApp() {
         actionError={markError}
         routeBusy={routeBusy}
       />
+
+      <Modal
+        open={welcomeOpen}
+        title={`Welcome back${planter?.full_name ? `, ${planter.full_name}` : ''}`}
+        confirmLabel="Continue"
+        cancelLabel=""
+        onConfirm={closeWelcome}
+      >
+        <p>Your field map is ready.</p>
+      </Modal>
     </div>
   );
 }

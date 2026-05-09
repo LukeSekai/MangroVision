@@ -1,16 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
+import Modal from '../components/Modal';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
+import { useProcessingStore } from '../stores/processingStore';
 import ResultsOverlay from './ResultsOverlay';
 import './ResultsOverlay.css';
 import './ImageProcessing.css';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 const DEFAULT_ALTITUDE = 6.0;
 const DEFAULT_DRONE_MODEL = 'GENERIC_4K';
-const DEFAULT_AI_CONFIDENCE = 0.80;
+const DEFAULT_AI_CONFIDENCE = 0.87;
 
 function downloadBlob(blob, fileName) {
   const url = window.URL.createObjectURL(blob);
@@ -23,221 +25,110 @@ function downloadBlob(blob, fileName) {
   window.URL.revokeObjectURL(url);
 }
 
-function downloadText(content, fileName, mime = 'text/plain;charset=utf-8') {
-  downloadBlob(new Blob([content], { type: mime }), fileName);
-}
-
-function downloadDataUrl(dataUrl, fileName) {
-  const link = document.createElement('a');
-  link.href = dataUrl;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-}
-
-function formatMaybeNumber(value, digits = 1) {
-  if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
-  return Number(value).toFixed(digits);
-}
-
 export default function ImageProcessing() {
   const user = useAuthStore((s) => s.user);
   const setCurrentAnalysis = useMapStore((s) => s.setCurrentAnalysis);
   const clearCurrentAnalysis = useMapStore((s) => s.clearCurrentAnalysis);
   const appendSavedAnalysis = useMapStore((s) => s.appendSavedAnalysis);
 
+  // All processing state lives in the store so it survives navigation.
+  const processing = useProcessingStore((s) => s.processing);
+  const stage = useProcessingStore((s) => s.stage);
+  const progress = useProcessingStore((s) => s.progress);
+  const result = useProcessingStore((s) => s.result);
+  const error = useProcessingStore((s) => s.error);
+  const saving = useProcessingStore((s) => s.saving);
+  const saveError = useProcessingStore((s) => s.saveError);
+  const overlayOpen = useProcessingStore((s) => s.overlayOpen);
+  const previewUrl = useProcessingStore((s) => s.previewUrl);
+  const storedFileName = useProcessingStore((s) => s.fileName);
+  const startProcess = useProcessingStore((s) => s.startProcess);
+  const saveCurrentAnalysis = useProcessingStore((s) => s.saveCurrentAnalysis);
+  const resetProcessing = useProcessingStore((s) => s.reset);
+  const setOverlayOpen = useProcessingStore((s) => s.setOverlayOpen);
+
   const fileRef = useRef(null);
-  const abortRef = useRef(null);
-
   const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [processing, setProcessing] = useState(false);
-  const [stage, setStage] = useState(null);
-  const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const [saveError, setSaveError] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [overlayOpen, setOverlayOpen] = useState(false);
-
-  const [canopyBuffer, setCanopyBuffer] = useState(1.0);
+  const [canopyBuffer, setCanopyBuffer] = useState(2.0);
   const [hexagonSize, setHexagonSize] = useState(1.0);
+  const [clearModalOpen, setClearModalOpen] = useState(false);
 
-  useEffect(() => {
-    return () => {
-      if (abortRef.current) abortRef.current.abort();
-      clearCurrentAnalysis();
-    };
-  }, [clearCurrentAnalysis]);
+  // The preview shown in the upload panel: prefer the freshly-selected local
+  // file's preview if one exists; otherwise rehydrate from the store so users
+  // who navigate back mid-processing still see their thumbnail.
+  const preview = previewUrl;
+  const displayedFileName = file?.name || storedFileName;
 
   const handleFileSelect = (event) => {
     const selectedFile = event.target.files?.[0];
     if (!selectedFile) return;
 
+    // Local file blob is needed to actually start the upload. Store gets the
+    // preview URL via a quick FileReader pass inside startProcess.
     setFile(selectedFile);
-    setError('');
-    setSaveError('');
-    setResult(null);
     clearCurrentAnalysis();
 
     const reader = new FileReader();
-    reader.onload = (loadEvent) => setPreview(loadEvent.target?.result || null);
+    reader.onload = (loadEvent) => {
+      // Pre-populate the preview in the store so it's visible immediately
+      // (the same image is sent again on Process, no extra cost).
+      useProcessingStore.setState({
+        previewUrl: loadEvent.target?.result || '',
+        fileName: selectedFile.name,
+        result: null,
+        error: '',
+        overlayOpen: false,
+      });
+    };
     reader.readAsDataURL(selectedFile);
   };
 
   const handleClear = () => {
     setFile(null);
-    setPreview(null);
-    setProcessing(false);
-    setStage(null);
-    setProgress(0);
-    setResult(null);
-    setError('');
-    setSaveError('');
-    setOverlayOpen(false);
     clearCurrentAnalysis();
+    resetProcessing();
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  const handleProcess = async () => {
-    if (!file) return;
+  const requestClear = () => {
+    if (!file && !result && !preview) return;
+    setClearModalOpen(true);
+  };
 
-    setProcessing(true);
-    setError('');
-    setSaveError('');
-    setResult(null);
-    clearCurrentAnalysis();
-    setStage('Uploading image...');
-    setProgress(1);
+  const confirmClear = () => {
+    handleClear();
+    setClearModalOpen(false);
+  };
 
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      const formData = new FormData();
-      formData.append('image', file);
-      formData.append('altitude', String(DEFAULT_ALTITUDE));
-      formData.append('drone_model', DEFAULT_DRONE_MODEL);
-      formData.append('canopy_buffer', String(canopyBuffer));
-      formData.append('hexagon_size', String(hexagonSize));
-      formData.append('ai_confidence', String(DEFAULT_AI_CONFIDENCE));
-      formData.append('ai_runtime_tuning', JSON.stringify({}));
-
-      const response = await fetch(`${API}/api/analyses/process-stream`, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
-
-      if (!response.ok || !response.body) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || `Processing failed (${response.status})`);
+  const handleProcess = () => {
+    if (!file || processing) return;
+    // Fire-and-forget: the store handles the fetch, the AbortController, and
+    // updating processing/stage/progress/result/error in its own state. We do
+    // not await this, so navigating away does NOT cancel the request.
+    startProcess({
+      file,
+      altitude: DEFAULT_ALTITUDE,
+      drone_model: DEFAULT_DRONE_MODEL,
+      canopy_buffer: canopyBuffer,
+      hexagon_size: hexagonSize,
+      ai_confidence: DEFAULT_AI_CONFIDENCE,
+      ai_runtime_tuning: {},
+    }).then(() => {
+      // After processing settles, see if the result wants to live on the map.
+      const finalResult = useProcessingStore.getState().result;
+      if (finalResult?.map?.available) {
+        setCurrentAnalysis(finalResult);
       }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let finalPayload = null;
-      let streamError = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary !== -1) {
-          const rawEvent = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-
-          const dataLine = rawEvent
-            .split('\n')
-            .find((line) => line.startsWith('data:'));
-          if (dataLine) {
-            const jsonText = dataLine.slice(5).trim();
-            if (jsonText) {
-              let event;
-              try {
-                event = JSON.parse(jsonText);
-              } catch {
-                event = null;
-              }
-              if (event) {
-                if (event.type === 'progress') {
-                  if (typeof event.stage === 'string') setStage(event.stage);
-                  if (typeof event.pct === 'number') setProgress(event.pct);
-                } else if (event.type === 'result') {
-                  finalPayload = event.payload;
-                } else if (event.type === 'error') {
-                  streamError = event.detail || 'Processing failed';
-                }
-              }
-            }
-          }
-          boundary = buffer.indexOf('\n\n');
-        }
-      }
-
-      if (streamError) throw new Error(streamError);
-      if (!finalPayload) throw new Error('Processing ended without a result');
-
-      setStage('Complete!');
-      setProgress(100);
-      setResult(finalPayload);
-      setOverlayOpen(true);
-      if (finalPayload.map?.available) {
-        setCurrentAnalysis(finalPayload);
-      }
-    } catch (processError) {
-      if (processError.name !== 'AbortError') {
-        setStage(null);
-        setProgress(0);
-        setError(processError.message || 'Processing failed');
-      }
-    } finally {
-      abortRef.current = null;
-      setProcessing(false);
-    }
+    });
   };
 
   const handleSaveToDatabase = async () => {
-    if (!result?.analysis_key || saving || result.saved) return;
-
-    setSaving(true);
-    setSaveError('');
-    try {
-      const response = await fetch(`${API}/api/analyses/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          analysis_key: result.analysis_key,
-          user_id: user?.id ?? null,
-        }),
+    const outcome = await saveCurrentAnalysis(user?.id ?? null);
+    if (outcome) {
+      appendSavedAnalysis({
+        result: outcome.savedResult,
+        savePayload: outcome.savePayload,
       });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Save failed');
-      }
-
-      const payload = await response.json();
-      const savedResult = {
-        ...result,
-        saved: true,
-        analysis_id: payload.analysis_id,
-        save_summary: {
-          analysis_id: payload.analysis_id,
-          new_points: payload.new_points,
-          skipped_duplicates: payload.skipped_duplicates,
-        },
-      };
-      setResult(savedResult);
-      appendSavedAnalysis({ result: savedResult, savePayload: payload });
-    } catch (saveAnalysisError) {
-      setSaveError(saveAnalysisError.message || 'Save failed');
-    } finally {
-      setSaving(false);
     }
   };
 
@@ -264,18 +155,10 @@ export default function ImageProcessing() {
     downloadBlob(blob, `mangrovision_${result.uploaded_file_name}.${extension}`);
   };
 
-  const exportButtonsDisabled = !result?.exports?.waypoints?.length;
-  const metricSummary = result?.metrics;
-  const coordinateRows = result?.map?.coordinates || [];
-  const warnings = result?.messages?.warnings || [];
-  const infos = result?.messages?.info || [];
-  const overlaps = result?.overlaps?.analyses || [];
-  const saveSummary = result?.save_summary;
-
   return (
     <Panel
       title="Image Processing"
-      subtitle={result?.uploaded_file_name ? result.uploaded_file_name : 'Analyze drone imagery'}
+      subtitle={result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
     >
       <PanelCard
         title="Upload Image"
@@ -311,10 +194,10 @@ export default function ImageProcessing() {
             </div>
           )}
         </label>
-        {file && !processing && (
+        {displayedFileName && !processing && (
           <div className="file-info">
-            <span className="file-name">{file.name}</span>
-            <button className="btn btn-ghost btn-sm" onClick={handleClear}>Clear</button>
+            <span className="file-name">{displayedFileName}</span>
+            <button className="btn btn-ghost btn-sm" onClick={requestClear}>Clear</button>
           </div>
         )}
       </PanelCard>
@@ -332,7 +215,7 @@ export default function ImageProcessing() {
         <div className="config-list">
           <div className="config-row">
             <span className="config-label">AI Confidence</span>
-            <span className="config-value">0.80</span>
+            <span className="config-value">{DEFAULT_AI_CONFIDENCE.toFixed(2)}</span>
           </div>
           <div className="config-row config-row-input">
             <label className="config-label" htmlFor="canopy-buffer">Danger Buffer (m)</label>
@@ -374,7 +257,9 @@ export default function ImageProcessing() {
           <div className="progress-bar-track">
             <div className="progress-bar-fill" style={{ width: `${progress}%` }} />
           </div>
-          <p className="progress-tip">The map stays interactive while the analysis runs in the background.</p>
+          <p className="progress-tip">
+            Processing keeps running if you switch tabs or open another page — a small status badge appears at the bottom-right while it works.
+          </p>
         </div>
       )}
 
@@ -411,12 +296,27 @@ export default function ImageProcessing() {
             type="button"
             className="btn btn-secondary btn-lg"
             style={{ width: '100%' }}
-            onClick={handleClear}
+            onClick={requestClear}
           >
             Process Another Image
           </button>
         </div>
       )}
+
+      <Modal
+        open={clearModalOpen}
+        title={result ? 'Discard current analysis?' : 'Remove selected image?'}
+        variant="danger"
+        confirmLabel={result ? 'Discard analysis' : 'Remove image'}
+        onConfirm={confirmClear}
+        onCancel={() => setClearModalOpen(false)}
+      >
+        {result ? (
+          <p>This clears the current preview from the workspace. Saved analyses stay in the database.</p>
+        ) : (
+          <p>This removes the selected image from the upload panel.</p>
+        )}
+      </Modal>
 
       <ResultsOverlay
         open={overlayOpen && Boolean(result)}

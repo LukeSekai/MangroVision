@@ -4,7 +4,7 @@ import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
 import './ErodedZoneEditor.css';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 export default function ErodedZoneEditor() {
   const erodedZones = useMapStore((s) => s.erodedZones);

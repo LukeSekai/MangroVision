@@ -127,6 +127,59 @@
   border-top: 1px solid rgba(255, 255, 255, 0.06);
 }
 
+.sidebar-clock {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  color: rgba(255, 255, 255, 0.76);
+  overflow: hidden;
+}
+
+.sidebar-clock-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--green-300);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 50%;
+}
+
+.sidebar-clock-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+.sidebar:hover .sidebar-clock-text {
+  opacity: 1;
+}
+
+.sidebar-clock-date {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.sidebar-clock-time {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
 .sidebar-user {
   display: flex;
   align-items: center;

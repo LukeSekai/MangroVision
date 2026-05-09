@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 const PLANTER_TOKEN_KEY = 'mv_planter_token';
 const PLANTER_USER_KEY = 'mv_planter_user';
@@ -43,6 +43,7 @@ export const usePlanterAuthStore = create((set, get) => ({
     const data = await res.json();
     localStorage.setItem(PLANTER_TOKEN_KEY, data.token);
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
+    sessionStorage.setItem('mv_field_show_welcome', '1');
     set({
       token: data.token,
       planter: data.planter,
@@ -68,6 +69,7 @@ export const usePlanterAuthStore = create((set, get) => ({
     const data = await res.json();
     localStorage.setItem(PLANTER_TOKEN_KEY, data.token);
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
+    sessionStorage.setItem('mv_field_show_welcome', '1');
     set({
       token: data.token,
       planter: data.planter,

@@ -25,6 +25,7 @@ const PREVIEW_COLORS = {
   safe: '#0f9d58',
   forbidden: '#c62828',
   eroded: '#ef6c00',
+  canopy: '#7c3aed',
 };
 
 // Scale marker radius + border weight with zoom so dense point clouds don't
@@ -281,6 +282,7 @@ export default function MapView() {
     const safeFeatures = currentAnalysis.map.safe_points_geojson?.features || [];
     const forbiddenFeatures = currentAnalysis.map.forbidden_filtered_geojson?.features || [];
     const erodedFeatures = currentAnalysis.map.eroded_filtered_geojson?.features || [];
+    const orthophotoCanopyFeatures = currentAnalysis.map.orthophoto_canopy_filtered_geojson?.features || [];
     const centerFeature = currentAnalysis.map.image_center_feature;
 
     if (Array.isArray(analysisOverlay?.bounds)) {
@@ -355,6 +357,26 @@ export default function MapView() {
         .addTo(processingFilteredLayer);
     });
 
+    orthophotoCanopyFeatures.forEach((feature) => {
+      const [lon, lat] = feature.geometry.coordinates;
+      const props = feature.properties || {};
+      L.circleMarker([lat, lon], {
+        radius: getPreviewFilteredRadius(map.getZoom()),
+        color: PREVIEW_COLORS.canopy,
+        weight: 2,
+        fillColor: '#ddd6fe',
+        fillOpacity: 0.9,
+      })
+        .bindPopup(`
+          <div style="font-family:'Inter',sans-serif;min-width:170px;">
+            <div style="font-weight:700;font-size:14px;margin-bottom:6px;color:${PREVIEW_COLORS.canopy};">Filtered Preview Point</div>
+            <div style="font-size:12px;color:#111827;">${lat.toFixed(7)}, ${lon.toFixed(7)}</div>
+            <div style="font-size:12px;color:#6b7280;margin-top:6px;">${props.reason || 'Overlaps canopy in orthophoto recheck'}</div>
+          </div>
+        `)
+        .addTo(processingFilteredLayer);
+    });
+
     if (centerFeature?.geometry?.coordinates) {
       const [lon, lat] = centerFeature.geometry.coordinates;
       const props = centerFeature.properties || {};
@@ -373,6 +395,7 @@ export default function MapView() {
     const previewLatLngs = safeFeatures
       .concat(forbiddenFeatures)
       .concat(erodedFeatures)
+      .concat(orthophotoCanopyFeatures)
       .map((feature) => {
         const [lon, lat] = feature.geometry.coordinates;
         return [lat, lon];

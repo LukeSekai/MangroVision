@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import './Sidebar.css';
@@ -11,6 +12,18 @@ const NAV_ITEMS = [
         <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
         <line x1="8" y1="2" x2="8" y2="18" />
         <line x1="16" y1="6" x2="16" y2="22" />
+      </svg>
+    ),
+  },
+  {
+    to: '/points',
+    label: 'Delete Points',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 6h18" />
+        <path d="M8 6V4h8v2" />
+        <path d="M19 6l-1 14H6L5 6" />
+        <circle cx="12" cy="12" r="1" />
       </svg>
     ),
   },
@@ -49,6 +62,47 @@ const NAV_ITEMS = [
   },
 ];
 
+function SidebarClock() {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const dateLabel = useMemo(
+    () => now.toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    }),
+    [now],
+  );
+  const timeLabel = useMemo(
+    () => now.toLocaleTimeString(undefined, {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    }),
+    [now],
+  );
+
+  return (
+    <div className="sidebar-clock" title={`${dateLabel} ${timeLabel}`}>
+      <div className="sidebar-clock-icon" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
+        </svg>
+      </div>
+      <div className="sidebar-clock-text">
+        <span className="sidebar-clock-date">{dateLabel}</span>
+        <span className="sidebar-clock-time">{timeLabel}</span>
+      </div>
+    </div>
+  );
+}
+
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
@@ -84,6 +138,7 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-bottom">
+        <SidebarClock />
         <div className="sidebar-user" title={user?.full_name}>
           <div className="sidebar-avatar">
             {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}

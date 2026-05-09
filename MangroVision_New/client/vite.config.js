@@ -6,6 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     host: true,
+    proxy: {
+      '/api': 'http://localhost:8000',
+      '/tiles': 'http://localhost:8000',
+    },
     allowedHosts: [
       '.trycloudflare.com',
       '.ngrok-free.app',

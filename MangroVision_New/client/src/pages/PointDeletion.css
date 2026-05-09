@@ -1,0 +1,140 @@
+.point-cleanup-page {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.point-cleanup-map {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.point-cleanup-page .floating-panel,
+.point-cleanup-page .panel-toggle {
+  z-index: 15;
+}
+
+.cleanup-selection-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cleanup-selection-count {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.cleanup-selection-label {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cleanup-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.cleanup-delete-button {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.cleanup-muted,
+.cleanup-notice,
+.cleanup-error {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border-radius: var(--radius-md);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+
+.cleanup-muted {
+  padding-left: 0;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.cleanup-notice {
+  color: var(--green-800);
+  background: var(--green-50);
+  border: 1px solid var(--green-200);
+}
+
+.cleanup-error {
+  color: #991b1b;
+  background: #fee2e2;
+  border: 1px solid #fecaca;
+}
+
+.cleanup-selected-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.cleanup-selected-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.cleanup-selected-item:last-child {
+  border-bottom: 0;
+}
+
+.cleanup-selected-main {
+  min-width: 0;
+}
+
+.cleanup-selected-title {
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.cleanup-selected-meta {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 0.71875rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cleanup-remove-button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+}
+
+@media (max-width: 760px) {
+  .point-cleanup-page .floating-panel {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    width: auto;
+    max-height: 48vh;
+  }
+
+  .point-cleanup-page .panel-toggle:not(.panel-toggle-hidden) {
+    right: 20px;
+  }
+}

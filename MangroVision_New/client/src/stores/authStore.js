@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 export const useAuthStore = create((set, get) => ({
   isAuthenticated: !!localStorage.getItem('mv_token'),
@@ -24,6 +24,7 @@ export const useAuthStore = create((set, get) => ({
       full_name: data.full_name,
       role: data.role,
     }));
+    sessionStorage.setItem('mv_show_welcome', '1');
     set({
       isAuthenticated: true,
       token: data.token,

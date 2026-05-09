@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
+import Modal from '../components/Modal';
 import './PlanterManagement.css';
 
-const API = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API = import.meta.env.VITE_API_BASE || '';
 
 const STATUS_LABEL = {
   planned: 'Planned',
@@ -33,6 +34,10 @@ export default function PlanterManagement() {
   });
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState('');
+
+  // Deactivate confirmation modal state
+  const [deactivateTarget, setDeactivateTarget] = useState(null);
+  const [deactivateBusy, setDeactivateBusy] = useState(false);
 
   // Batch assignment builder state
   const [batchPlanterId, setBatchPlanterId] = useState(null);
@@ -158,17 +163,27 @@ export default function PlanterManagement() {
     }
   };
 
-  const handleDeactivate = async (planter) => {
-    const confirmed = window.confirm(
-      `Deactivate ${planter.full_name}? They will no longer be able to sign in until reactivated.`,
-    );
-    if (!confirmed) return;
+  const handleDeactivate = (planter) => {
+    setDeactivateTarget(planter);
+  };
+
+  const confirmDeactivate = async () => {
+    if (!deactivateTarget) return;
+    setDeactivateBusy(true);
     try {
-      await fetch(`${API}/api/planters/${planter.id}`, { method: 'DELETE' });
+      await fetch(`${API}/api/planters/${deactivateTarget.id}`, { method: 'DELETE' });
+      setDeactivateTarget(null);
       loadData();
     } catch (err) {
       console.error('Deactivate failed:', err);
+    } finally {
+      setDeactivateBusy(false);
     }
+  };
+
+  const cancelDeactivate = () => {
+    if (deactivateBusy) return;
+    setDeactivateTarget(null);
   };
 
   const handleReactivate = async (planter) => {
@@ -658,6 +673,23 @@ export default function PlanterManagement() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={Boolean(deactivateTarget)}
+        title={`Deactivate ${deactivateTarget?.full_name || 'planter'}?`}
+        variant="danger"
+        confirmLabel="Deactivate"
+        cancelLabel="Cancel"
+        busy={deactivateBusy}
+        onConfirm={confirmDeactivate}
+        onCancel={cancelDeactivate}
+      >
+        <p>
+          {deactivateTarget?.full_name || 'This planter'} will no longer be able to sign in to
+          the field app until reactivated.
+        </p>
+        <p>Existing assignments and saved planting points are not affected.</p>
+      </Modal>
     </Panel>
   );
 }

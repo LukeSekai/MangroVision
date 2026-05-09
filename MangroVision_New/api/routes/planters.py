@@ -11,6 +11,7 @@ from planting_database import (
     assign_planting_point_to_planter,
     create_planter,
     create_planter_assignment,
+    delete_planting_points,
     get_planter,
     get_planter_dashboard_stats,
     get_planter_field_points,
@@ -60,6 +61,10 @@ class CreateAssignmentRequest(BaseModel):
     notes: str = ""
 
 
+class DeleteMapPointsRequest(BaseModel):
+    point_ids: List[int]
+
+
 @router.get("/")
 def get_planters(include_inactive: bool = True):
     return list_planters(include_inactive=include_inactive)
@@ -73,6 +78,14 @@ def dashboard_stats():
 @router.get("/map-points")
 def map_points():
     return list_planter_assignment_map_points()
+
+
+@router.delete("/map-points")
+def delete_map_points(body: DeleteMapPointsRequest):
+    try:
+        return delete_planting_points(body.point_ids)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @router.post("/assign-point")

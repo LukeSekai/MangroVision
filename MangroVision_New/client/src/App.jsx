@@ -5,6 +5,7 @@ import MapAnalytics from './pages/MapAnalytics';
 import PlanterManagement from './pages/PlanterManagement';
 import ErodedZoneEditor from './pages/ErodedZoneEditor';
 import ImageProcessing from './pages/ImageProcessing';
+import PointDeletion from './pages/PointDeletion';
 import FieldApp from './pages/FieldApp';
 import LoginScreen from './components/LoginScreen';
 import { useAuthStore } from './stores/authStore';
@@ -32,6 +33,7 @@ export default function App() {
     <AppShell>
       <Routes>
         <Route path="/" element={<MapAnalytics />} />
+        <Route path="/points" element={<PointDeletion />} />
         <Route path="/planters" element={<PlanterManagement />} />
         <Route path="/processing" element={<ImageProcessing />} />
         <Route path="/zones" element={<ErodedZoneEditor />} />

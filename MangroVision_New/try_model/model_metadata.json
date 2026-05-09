@@ -1,0 +1,125 @@
+{
+  "variant": "mangrove_canopy_two_class_head",
+  "source_variant": "roboflow",
+  "num_classes": 2,
+  "class_names": [
+    "Bungalon canopy",
+    "Mangrove-Canopy"
+  ],
+  "canopy_class_ids": [
+    1
+  ],
+  "unused_class_names": [
+    "Bungalon canopy"
+  ],
+  "excluded_class_names": [
+    "Non mangrove",
+    "Nypa"
+  ],
+  "annotation_mapping": {
+    "Bungalon canopy": "unused placeholder to preserve custom_mangrove_model class-0 head",
+    "Mangrove-Canopy": "all kept source mangrove annotations mapped to class index 1",
+    "Non mangrove": "dropped",
+    "Nypa": "dropped"
+  },
+  "train_annotations": "datasets\\mangrove_canopy_two_class_head\\train\\_annotations.coco.json",
+  "valid_annotations": "datasets\\mangrove_canopy_two_class_head\\valid\\_annotations.coco.json",
+  "test_annotations": "datasets\\mangrove_canopy_two_class_head\\test\\_annotations.coco.json",
+  "starting_weights": "models\\custom_mangrove_model\\model_final.pth",
+  "output_dir": "train_outputs\\mangrove_canopy_two_class_head_20260509_014928",
+  "model_final": "models\\custom_mangrove_model_canopy_refined\\model_final.pth",
+  "solver": {
+    "ims_per_batch": 2,
+    "base_lr": 1e-05,
+    "max_iter": 3000,
+    "steps": [
+      1500,
+      2125
+    ],
+    "gamma": 0.1,
+    "warmup_iters": 100,
+    "warmup_factor": 0.001,
+    "checkpoint_period": 250,
+    "eval_period": 250,
+    "sampler_train": "RepeatFactorTrainingSampler",
+    "repeat_threshold": 1.0,
+    "num_workers": 0
+  },
+  "model_config": {
+    "base_model": "COCO-InstanceSegmentation/mask_rcnn_R_101_FPN_3x.yaml",
+    "score_thresh_test": 0.5,
+    "pre_nms_topk_test": 6000,
+    "post_nms_topk_test": 3000,
+    "rpn_nms_thresh": 0.6,
+    "detections_per_image": 1000,
+    "input_format": "BGR",
+    "min_size_train": [
+      512
+    ],
+    "max_size_train": 512,
+    "min_size_test": 512,
+    "max_size_test": 512,
+    "augmentation": [
+      "RandomRotation(0, 360)",
+      "RandomFlip(horizontal)",
+      "RandomBrightness(0.7, 1.5)",
+      "RandomLighting(0.7)",
+      "RandomContrast(0.6, 1.3)",
+      "RandomSaturation(0.8, 1.4)",
+      "ResizeScale(0.6, 1.4, 512, 512)"
+    ]
+  },
+  "device": "cuda",
+  "gpu_name": "NVIDIA GeForce RTX 3050 Ti Laptop GPU",
+  "torch_version": "2.11.0+cu128",
+  "torch_cuda_version": "12.8",
+  "nvidia_smi": "NVIDIA GeForce RTX 3050 Ti Laptop GPU, 4096 MiB, 591.74",
+  "created_at": "2026-05-09T02:27:54",
+  "selected_deploy_checkpoint": {
+    "source_checkpoint": "train_outputs\\mangrove_canopy_two_class_head_20260509_014928\\model_best.pth",
+    "iteration": 1749,
+    "selection_basis": "best valid segm/AP",
+    "valid_bbox": {
+      "AP": 14.224040666336574,
+      "AP50": 44.12296398758971,
+      "AP75": 2.885624281355253,
+      "APs": 4.045261669024045,
+      "APm": 14.9358088285397,
+      "APl": 16.724447626511495,
+      "AP-Bungalon canopy": NaN,
+      "AP-Mangrove-Canopy": 14.224040666336574
+    },
+    "valid_segm": {
+      "AP": 27.57024305297204,
+      "AP50": 48.7931990315448,
+      "AP75": 28.97914675953758,
+      "APs": 2.8267368926640586,
+      "APm": 27.92135727878136,
+      "APl": 31.049240819935786,
+      "AP-Bungalon canopy": NaN,
+      "AP-Mangrove-Canopy": 27.57024305297204
+    }
+  },
+  "held_out_test_results_for_selected_checkpoint": {
+    "bbox": {
+      "AP": 11.094136951250116,
+      "AP50": 33.896851505857,
+      "AP75": 3.5524257153130874,
+      "APs": 1.0120012001200118,
+      "APm": 12.03397411691951,
+      "APl": 13.943080183296347,
+      "AP-Bungalon canopy": NaN,
+      "AP-Mangrove-Canopy": 11.094136951250116
+    },
+    "segm": {
+      "AP": 17.822002293320505,
+      "AP50": 32.50227000181107,
+      "AP75": 18.3055596075043,
+      "APs": 0.991610505588374,
+      "APm": 18.558822540651953,
+      "APl": 21.218810706638827,
+      "AP-Bungalon canopy": NaN,
+      "AP-Mangrove-Canopy": 17.822002293320505
+    }
+  }
+}

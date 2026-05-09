@@ -37,6 +37,7 @@ if str(_ROOT / "canopy_detection") not in sys.path:
 from canopy_detector_hexagon import HexagonDetector
 from exif_extractor import ExifExtractor
 from forbidden_zone_filter import ForbiddenZoneFilter
+import ortho_matcher  # imported as module so we can read live ORTHO_GSD globals
 from ortho_matcher import (
     drone_pixel_to_gps_via_heading,
     drone_pixel_to_gps_via_homography,
@@ -75,11 +76,32 @@ class SaveProcessedAnalysisRequest(BaseModel):
     user_id: Optional[int] = None
 
 
+# Safety buffer applied to forbidden polygons before the point-in-polygon
+# check. Two reasons it is non-zero:
+#   1. Drone-pixel-to-GPS projection has 1-3 m residual error at low SIFT
+#      match confidence, so a hexagon visually on a forbidden structure can
+#      project to a lat/lon just outside the polygon. A 2 m buffer absorbs
+#      that error and prevents false-safe classifications around pavilions,
+#      walkways, and other structures.
+#   2. Independently of projection error, planting right against a man-made
+#      structure is undesirable; a small enforced gap is good practice.
+# Eroded zones do not need the same defensive buffer because they are
+# wide-area sediment polygons and a 2 m halo would cost too much plantable area.
+_FORBIDDEN_SAFETY_BUFFER_M = 2.0
+_ERODED_SAFETY_BUFFER_M = 0.0
+
+
 def _load_zone_filters() -> tuple[ForbiddenZoneFilter, ForbiddenZoneFilter]:
     """Load current forbidden and eroded zone filters from disk."""
     return (
-        ForbiddenZoneFilter(str(_FORBIDDEN_ZONES_PATH)),
-        ForbiddenZoneFilter(str(_ERODED_ZONES_PATH)),
+        ForbiddenZoneFilter(
+            str(_FORBIDDEN_ZONES_PATH),
+            safety_buffer_m=_FORBIDDEN_SAFETY_BUFFER_M,
+        ),
+        ForbiddenZoneFilter(
+            str(_ERODED_ZONES_PATH),
+            safety_buffer_m=_ERODED_SAFETY_BUFFER_M,
+        ),
     )
 
 
@@ -159,6 +181,133 @@ def _filtered_hexagons_to_geojson(
     }
 
 
+_ORTHO_CANOPY_RECHECK_RADIUS_M = 0.45
+_ORTHO_CANOPY_STRONG_RATIO = 0.12
+
+
+def _orthophoto_pixel_context(latitude: float, longitude: float) -> Optional[dict[str, Any]]:
+    """Return the orthophoto image and pixel containing a GPS coordinate."""
+    try:
+        registry = ortho_matcher._get_ortho_registry()
+    except Exception:
+        return None
+
+    for entry in registry:
+        try:
+            to_entry_crs, _ = ortho_matcher._get_entry_transformers(entry)
+            entry_x, entry_y = to_entry_crs.transform(longitude, latitude)
+            west, east, south, north = ortho_matcher._ortho_bounds_utm(entry)
+            if not (west <= entry_x <= east and south <= entry_y <= north):
+                continue
+
+            px = int(round((entry_x - entry["origin_x"]) / entry["gsd_x"]))
+            py = int(round((entry["origin_y"] - entry_y) / entry["gsd_y"]))
+
+            key = str(entry["path"])
+            ortho_image = ortho_matcher._ortho_cache.get(key)
+            if ortho_image is None:
+                ortho_image = ortho_matcher._read_orthophoto_bgr(Path(entry["path"]))
+                ortho_matcher._ortho_cache[key] = ortho_image
+
+            if 0 <= px < ortho_image.shape[1] and 0 <= py < ortho_image.shape[0]:
+                return {
+                    "entry": entry,
+                    "image": ortho_image,
+                    "px": px,
+                    "py": py,
+                    "gsd": (float(entry["gsd_x"]) + float(entry["gsd_y"])) / 2.0,
+                }
+        except Exception:
+            continue
+
+    return None
+
+
+def _orthophoto_canopy_recheck(latitude: float, longitude: float) -> Optional[dict[str, Any]]:
+    """Detect obvious canopy/vegetation under a projected map point."""
+    context = _orthophoto_pixel_context(latitude, longitude)
+    if context is None:
+        return None
+
+    ortho_image = context["image"]
+    px = int(context["px"])
+    py = int(context["py"])
+    ortho_gsd = max(float(context["gsd"]), 1e-9)
+    radius_px = max(3, int(round(_ORTHO_CANOPY_RECHECK_RADIUS_M / ortho_gsd)))
+
+    y1 = max(0, py - radius_px)
+    y2 = min(ortho_image.shape[0], py + radius_px + 1)
+    x1 = max(0, px - radius_px)
+    x2 = min(ortho_image.shape[1], px + radius_px + 1)
+    patch = ortho_image[y1:y2, x1:x2]
+    if patch.size == 0:
+        return None
+
+    hsv = cv2.cvtColor(patch, cv2.COLOR_BGR2HSV)
+    hue = hsv[:, :, 0]
+    sat = hsv[:, :, 1]
+    val = hsv[:, :, 2]
+
+    bgr = patch.astype(np.float32)
+    blue = bgr[:, :, 0]
+    green = bgr[:, :, 1]
+    red = bgr[:, :, 2]
+    excess_green = (2.0 * green) - red - blue
+
+    bright_green = (
+        (hue >= 20)
+        & (hue <= 92)
+        & (sat >= 45)
+        & (val >= 45)
+        & (green > blue + 20.0)
+        & (green >= red - 8.0)
+        & (excess_green > 6.0)
+    )
+    shadow_green = (
+        (hue >= 28)
+        & (hue <= 100)
+        & (sat >= 30)
+        & (val >= 20)
+        & (val <= 150)
+        & (green > red + 4.0)
+        & (green > blue + 12.0)
+        & (excess_green > 10.0)
+    )
+    strong_green = (
+        (hue >= 22)
+        & (hue <= 90)
+        & (sat >= 55)
+        & (val >= 45)
+        & (green > blue + 28.0)
+        & (green >= red - 5.0)
+        & (excess_green > 14.0)
+    )
+
+    valid = (blue + green + red) > 30.0
+    valid_count = int(np.count_nonzero(valid))
+    if valid_count <= 0:
+        return None
+
+    cy = py - y1
+    cx = px - x1
+    center_strong = bool(strong_green[cy, cx]) if 0 <= cy < strong_green.shape[0] and 0 <= cx < strong_green.shape[1] else False
+    green_mask = (bright_green | shadow_green) & valid
+    strong_mask = strong_green & valid
+    green_ratio = float(np.count_nonzero(green_mask) / valid_count)
+    strong_ratio = float(np.count_nonzero(strong_mask) / valid_count)
+    is_canopy = bool(center_strong or strong_ratio >= _ORTHO_CANOPY_STRONG_RATIO)
+
+    return {
+        "is_canopy": is_canopy,
+        "orthophoto": context["entry"].get("name"),
+        "ortho_px": px,
+        "ortho_py": py,
+        "green_ratio": green_ratio,
+        "strong_green_ratio": strong_ratio,
+        "center_strong_green": center_strong,
+    }
+
+
 def _image_center_feature(
     latitude: Optional[float],
     longitude: Optional[float],
@@ -206,8 +355,83 @@ def _sanitize_match_result(match_result: Optional[dict[str, Any]]) -> Optional[d
         "center_drift_m": _json_float(match_result.get("center_drift_m")),
         "center_offset_east_m": _json_float(match_result.get("center_offset_east_m")),
         "center_offset_north_m": _json_float(match_result.get("center_offset_north_m")),
+        "gps_anchored": bool(match_result.get("gps_anchored", False)),
+        "projection_rebuilt": bool(match_result.get("projection_rebuilt", False)),
+        "projection_rotation_source": match_result.get("projection_rotation_source"),
+        "heading_diff_vs_exif_deg": _json_float(match_result.get("heading_diff_vs_exif_deg")),
+        "rejected_reason": match_result.get("rejected_reason"),
         "error": match_result.get("error"),
     }
+
+
+# Master switch for visual ortho-matching. When False, the SIFT-based
+# `match_drone_to_ortho` step is skipped entirely and every drone image is
+# projected onto the ortho using only GPS center + EXIF heading + GSD-derived
+# scale (the heading-based fallback that already lives in
+# `drone_pixel_to_gps_via_heading`). Use this when the visual matcher
+# converges at low confidence and produces worse projections than the
+# straight metric path would. Flipping this to True restores SIFT.
+_USE_SIFT_MATCHING = True
+
+# SIFT-vs-EXIF heading disagreement is recorded as telemetry but is NEVER
+# used to reject a SIFT match. Real-world DJI flights routinely show 10–30°
+# compass-vs-visual gaps because the magnetic compass drifts near metal,
+# water, and shorelines. SIFT, matching against the orthophoto, is the more
+# trustworthy source of orientation when it has converged. SIFT's own gates
+# (inlier count, RANSAC confidence, center-drift cap) are sufficient to
+# decide validity.
+
+
+def _angular_diff(a: float, b: float) -> float:
+    """Smallest signed angular difference (a - b) in degrees, in [-180, 180).
+
+    Handles wrap-around so 359 vs 1 reports as -2, not 358.
+    """
+    return (float(a) - float(b) + 180.0) % 360.0 - 180.0
+
+
+def _post_process_match(
+    match_result: dict[str, Any],
+    drone_image: np.ndarray,
+    center_lat: float,
+    center_lon: float,
+    camera_heading: Optional[float],
+    drone_gsd: float,
+) -> dict[str, Any]:
+    """Trust SIFT's homography unmodified when it succeeds.
+
+    Earlier versions of this function GPS-anchored the SIFT homography
+    (forcing the drone center to map to the EXIF GPS coordinate) and even
+    rebuilt scale from physical GSD. Both "corrections" turned out to push
+    the drone overlay AWAY from the structures it should land on whenever
+    the orthophoto's georeference is offset from the drone's GPS — which is
+    exactly the case in the project's WebODM-built map. The visual ground
+    truth here is the orthophoto, not the GPS metadata.
+
+    SIFT matches drone pixels directly against the orthophoto pixels, so its
+    homography places the drone overlay on the same pixels the dashed
+    forbidden polygons are drawn on. We now respect that placement.
+
+    The function still records telemetry (heading disagreement vs EXIF, and
+    SIFT's reported center drift relative to GPS) so it's visible in the
+    response, but no fields on the homography itself are altered.
+    """
+    if not match_result.get("success"):
+        return match_result
+
+    sift_heading = match_result.get("heading")
+    if camera_heading is not None and sift_heading is not None:
+        match_result["heading_diff_vs_exif_deg"] = float(
+            _angular_diff(sift_heading, camera_heading)
+        )
+
+    # The match_result already carries center_drift_* from `match_drone_to_ortho`.
+    # Surface a flag that downstream code / UI can use to know the homography
+    # is the raw SIFT one (not anchored or rebuilt).
+    match_result["gps_anchored"] = False
+    match_result["projection_rebuilt"] = False
+    match_result["projection_rotation_source"] = "sift_raw"
+    return match_result
 
 
 def _match_drone_to_ortho_robust(
@@ -215,8 +439,32 @@ def _match_drone_to_ortho_robust(
     center_lat: float,
     center_lon: float,
     drone_gsd: float,
+    camera_heading: Optional[float] = None,
 ) -> dict[str, Any]:
-    """Run SIFT matching with a wider retry before allowing heading fallback."""
+    """Run SIFT matching with a wider retry before allowing heading fallback.
+
+    On a successful SIFT match, the SIFT homography is REPLACED with a clean
+    physics-based reconstruction. SIFT contributes only the rotation angle
+    (when its confidence is high enough); scale and translation come from
+    the exact drone-to-ortho GSD ratio and the GPS-tagged image center.
+    This avoids letting low-confidence SIFT matches put a 10-20 m offset
+    on the drone overlay because SIFT's noisy scale or translation got used.
+
+    Heading disagreement between SIFT and EXIF is recorded as telemetry
+    only; SIFT's own gates inside `match_drone_to_ortho` decide validity.
+
+    When `_USE_SIFT_MATCHING` is False, the SIFT step is skipped entirely
+    and a synthetic failure is returned, forcing the caller to use
+    `drone_pixel_to_gps_via_heading` for projection — pure GPS + EXIF
+    heading + GSD, no visual matching at all.
+    """
+    if not _USE_SIFT_MATCHING:
+        return {
+            "success": False,
+            "rejected_reason": "sift_disabled_by_config",
+            "error": "Visual ortho-matching is disabled. Using GPS + EXIF heading projection.",
+        }
+
     result = match_drone_to_ortho(
         drone_image=drone_image,
         center_lat=center_lat,
@@ -224,7 +472,9 @@ def _match_drone_to_ortho_robust(
         drone_gsd=drone_gsd,
     )
     if result.get("success"):
-        return result
+        return _post_process_match(
+            result, drone_image, center_lat, center_lon, camera_heading, drone_gsd
+        )
 
     retry = match_drone_to_ortho(
         drone_image=drone_image,
@@ -237,7 +487,9 @@ def _match_drone_to_ortho_robust(
     if retry.get("success"):
         retry["retry_used"] = True
         retry["first_error"] = result.get("error")
-        return retry
+        return _post_process_match(
+            retry, drone_image, center_lat, center_lon, camera_heading, drone_gsd
+        )
     retry["first_error"] = result.get("error")
     return retry
 
@@ -862,6 +1114,7 @@ def _execute_canopy_workflow(
             center_lat=image_center_lat,
             center_lon=image_center_lon,
             drone_gsd=_gsd,
+            camera_heading=camera_heading,
         )
 
         if match_result.get("success"):
@@ -997,8 +1250,10 @@ def _execute_canopy_workflow(
     safe_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("hexagons", [])]
     forbidden_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("_forbidden_hexagons", [])]
     eroded_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("_eroded_hexagons", [])]
+    orthophoto_canopy_hexagons: list[dict[str, Any]] = []
     forbidden_filtered_count = int(results.get("_forbidden_filtered", 0) or 0)
     eroded_filtered_count = int(results.get("_eroded_filtered", 0) or 0)
+    orthophoto_canopy_filtered_count = 0
     clipped_outside_orthophoto = 0
     detected_heading = camera_heading
     analysis_overlay = None
@@ -1012,6 +1267,7 @@ def _execute_canopy_workflow(
                 center_lat=map_center_lat,
                 center_lon=map_center_lon,
                 drone_gsd=gsd,
+                camera_heading=camera_heading,
             )
 
         if match_result.get("success"):
@@ -1071,6 +1327,28 @@ def _execute_canopy_workflow(
                 f"{clipped_outside_orthophoto} planting points were removed because they fall outside orthophoto coverage."
             )
 
+        if safe_hexagons:
+            rechecked_hexagons = []
+            for hexagon in safe_hexagons:
+                canopy_recheck = _orthophoto_canopy_recheck(
+                    float(hexagon["_gps_lat"]),
+                    float(hexagon["_gps_lon"]),
+                )
+                if canopy_recheck and canopy_recheck.get("is_canopy"):
+                    hexagon["_orthophoto_canopy_recheck"] = canopy_recheck
+                    orthophoto_canopy_hexagons.append(hexagon)
+                else:
+                    rechecked_hexagons.append(hexagon)
+            safe_hexagons = rechecked_hexagons
+            orthophoto_canopy_filtered_count = len(orthophoto_canopy_hexagons)
+            if orthophoto_canopy_filtered_count > 0:
+                info_messages.append(
+                    f"{orthophoto_canopy_filtered_count} planting points were removed because they landed on canopy in the orthophoto recheck."
+                )
+
+    results["hexagons"] = safe_hexagons
+    results["hexagon_count"] = len(safe_hexagons)
+
     # Render after final map/export filtering so the image-space preview shows
     # the same planting-point set as coordinates, exports, and map markers.
     _emit(progress_cb, "Rendering visualization overlay", 90)
@@ -1115,6 +1393,11 @@ def _execute_canopy_workflow(
         "Inside eroded zone",
         "Filtered Eroded Points",
     )
+    orthophoto_canopy_filtered_geojson = _filtered_hexagons_to_geojson(
+        orthophoto_canopy_hexagons,
+        "Overlaps canopy in orthophoto recheck",
+        "Filtered Orthophoto Canopy Points",
+    )
 
     image_center_feature = _image_center_feature(
         map_center_lat,
@@ -1137,6 +1420,7 @@ def _execute_canopy_workflow(
     }
 
     can_save = bool(map_image_gps is not None and map_center_lat is not None and map_center_lon is not None)
+    ai_meta = results.get("ai_metadata") or {}
 
     _emit(progress_cb, "Encoding preview images", 97)
     response_payload = {
@@ -1187,6 +1471,7 @@ def _execute_canopy_workflow(
             "safe_hexagon_count": len(safe_hexagons),
             "forbidden_filtered_count": forbidden_filtered_count,
             "eroded_filtered_count": eroded_filtered_count,
+            "orthophoto_canopy_filtered_count": orthophoto_canopy_filtered_count,
             "duplicate_filtered_count": int(results.get("_duplicate_filtered", 0) or 0),
             "clipped_outside_orthophoto": clipped_outside_orthophoto,
             "forbidden_canopy_removed_pixels": int(results.get("_forbidden_canopy_removed_pixels", 0) or 0),
@@ -1196,11 +1481,24 @@ def _execute_canopy_workflow(
             "coverage_m": results["coverage_m"],
             "total_area_m2": results["total_area_m2"],
             "altitude_m": results["altitude_m"],
-            "tile_count": int((results.get("ai_metadata") or {}).get("num_tiles_processed", 0) or 0),
+            "tile_count": int(ai_meta.get("num_tiles_processed", 0) or 0),
             "processing_time_sec": round(time.time() - workflow_start_time, 2),
-            "model_name": (results.get("ai_metadata") or {}).get("model_name"),
+            "model_name": ai_meta.get("model_name"),
             "ai_confidence_threshold": float(ai_confidence),
-            "ai_avg_confidence": _safe_float((results.get("ai_metadata") or {}).get("avg_confidence")),
+            "ai_avg_confidence": _safe_float(ai_meta.get("avg_confidence")),
+            "ai_instance_count": int(ai_meta.get("instance_tree_count", results["canopy_count"]) or 0),
+            "ai_raw_detections": int(ai_meta.get("raw_detections", 0) or 0),
+            "ai_model_candidate_detections": int(ai_meta.get("model_candidate_detections", 0) or 0),
+            "ai_below_confidence_detections": int(ai_meta.get("below_confidence_detections", 0) or 0),
+            "ai_rejected_non_green_detections": int(ai_meta.get("rejected_non_green_detections", 0) or 0),
+            "ai_rejected_too_large_detections": int(ai_meta.get("rejected_too_large_detections", 0) or 0),
+            "ai_rejected_too_small_detections": int(ai_meta.get("rejected_too_small_detections", 0) or 0),
+            "ai_coverage_component_count": int(ai_meta.get("coverage_component_count", results["canopy_count"]) or 0),
+            "ai_canopy_merge_added_m2": _safe_float(
+                (float(ai_meta.get("canopy_merge_added_pixels", 0) or 0) * (results["gsd_m_per_pixel"] ** 2))
+            ),
+            "ai_canopy_merge_gap_m": _safe_float(ai_meta.get("canopy_merge_gap_m")),
+            "ai_max_crown_m2": _safe_float(ai_meta.get("max_crown_m2")),
         },
         "images": {
             "original_data_url": _encode_image_data_url(results["image"]),
@@ -1214,6 +1512,7 @@ def _execute_canopy_workflow(
             "safe_points_geojson": safe_points_geojson,
             "forbidden_filtered_geojson": forbidden_filtered_geojson,
             "eroded_filtered_geojson": eroded_filtered_geojson,
+            "orthophoto_canopy_filtered_geojson": orthophoto_canopy_filtered_geojson,
             "coordinates": coordinate_rows,
         },
         "exports": {
@@ -1267,9 +1566,9 @@ async def process_image(
     image: UploadFile = File(...),
     altitude: float = Form(6.0),
     drone_model: str = Form("Autel_EVO_II_Pro"),
-    canopy_buffer: float = Form(1.0),
+    canopy_buffer: float = Form(2.0),
     hexagon_size: float = Form(1.5),
-    ai_confidence: float = Form(0.3),
+    ai_confidence: float = Form(0.87),
     detection_mode: Optional[str] = Form(None),
     ai_runtime_tuning: str = Form("{}"),
 ):
@@ -1301,9 +1600,9 @@ async def process_image_stream(
     image: UploadFile = File(...),
     altitude: float = Form(6.0),
     drone_model: str = Form("Autel_EVO_II_Pro"),
-    canopy_buffer: float = Form(1.0),
+    canopy_buffer: float = Form(2.0),
     hexagon_size: float = Form(1.5),
-    ai_confidence: float = Form(0.3),
+    ai_confidence: float = Form(0.87),
     detection_mode: Optional[str] = Form(None),
     ai_runtime_tuning: str = Form("{}"),
 ):

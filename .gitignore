@@ -44,8 +44,7 @@ models/*.weights
 
 # Custom trained models (share via Google Drive ~810 MB total)
 models/custom_mangrove_model/
-models/230103_randresize_full.pth
-models/230717_tropical_base.pth
+
 
 # Training outputs and datasets
 training_data/
@@ -93,4 +92,8 @@ desktop.ini
 *.bak
 models/try_new_latest_model/model_metadata.json
 models/try_new_latest_model/model_final.pth
+models/latest_mangrove_only/model_metadata.json
+models/latest_mangrove_only/model_final.pth
+MangroVision_New/try_model/model_final.pth
+MangroVision_New/try_model/model_metadata.json
 11
