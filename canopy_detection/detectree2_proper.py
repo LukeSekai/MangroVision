@@ -65,11 +65,11 @@ class ProperDetectree2Detector:
             # get morph-closed into a continuous canopy mass. This affects
             # *only* the rasterized canopy mass and the danger-buffer outline;
             # individual crown counts (final_polygons) are unchanged.
-            "canopy_merge_gap_m": 1.5,
+            "canopy_merge_gap_m": 0.20,
             # Bumped from 0.25 m → 0.5 m so the AI mask absorbs slightly more
             # of the adjacent strict-green vegetation, eliminating the thin
             # purple-to-red mottling at canopy edges.
-            "canopy_hsv_expansion_m": 0.5,
+            "canopy_hsv_expansion_m": 0.10,
             # Conservative color validation: keep AI as the detector, but reject
             # predictions that have almost no mangrove-green pixels inside them.
             "strict_canopy_hsv": True,
@@ -289,7 +289,10 @@ class ProperDetectree2Detector:
         for contour in contours:
             if len(contour) < 3 or cv2.contourArea(contour) < min_area_px:
                 continue
-            epsilon = 0.005 * cv2.arcLength(contour, True)
+            # Large merged canopy components have long perimeters. Using a
+            # perimeter-scaled epsilon without a cap turns natural mask edges
+            # into coarse triangles, which then creates false canopy wedges.
+            epsilon = min(1.0, 0.001 * cv2.arcLength(contour, True))
             approx = cv2.approxPolyDP(contour, epsilon, True)
             points = approx.reshape(-1, 2)
             if len(points) < 3:
@@ -354,8 +357,8 @@ class ProperDetectree2Detector:
                 },
             )
 
-        merge_gap_m = float(self.runtime_tuning.get("canopy_merge_gap_m", 0.45))
-        hsv_expansion_m = float(self.runtime_tuning.get("canopy_hsv_expansion_m", 0.25))
+        merge_gap_m = float(self.runtime_tuning.get("canopy_merge_gap_m", 0.20))
+        hsv_expansion_m = float(self.runtime_tuning.get("canopy_hsv_expansion_m", 0.10))
         merge_kernel_size = self._metric_kernel_size(merge_gap_m, gsd)
         expansion_kernel_size = self._metric_kernel_size(hsv_expansion_m, gsd, fallback_px=17)
 

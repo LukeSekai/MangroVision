@@ -183,6 +183,9 @@ def _filtered_hexagons_to_geojson(
 
 _ORTHO_CANOPY_RECHECK_RADIUS_M = 0.45
 _ORTHO_CANOPY_STRONG_RATIO = 0.12
+_ORTHO_CANOPY_MIN_CLUSTER_M2 = 0.006
+_RAW_MATCH_MAX_DRIFT_FOR_COORDS_M = 0.75
+_RAW_MATCH_MIN_CONFIDENCE_FOR_COORDS = 0.65
 
 
 def _orthophoto_pixel_context(latitude: float, longitude: float) -> Optional[dict[str, Any]]:
@@ -223,8 +226,12 @@ def _orthophoto_pixel_context(latitude: float, longitude: float) -> Optional[dic
     return None
 
 
-def _orthophoto_canopy_recheck(latitude: float, longitude: float) -> Optional[dict[str, Any]]:
-    """Detect obvious canopy/vegetation under a projected map point."""
+def _orthophoto_canopy_recheck(
+    latitude: float,
+    longitude: float,
+    safety_radius_m: Optional[float] = None,
+) -> Optional[dict[str, Any]]:
+    """Detect obvious canopy/vegetation too close to a projected map point."""
     context = _orthophoto_pixel_context(latitude, longitude)
     if context is None:
         return None
@@ -233,7 +240,8 @@ def _orthophoto_canopy_recheck(latitude: float, longitude: float) -> Optional[di
     px = int(context["px"])
     py = int(context["py"])
     ortho_gsd = max(float(context["gsd"]), 1e-9)
-    radius_px = max(3, int(round(_ORTHO_CANOPY_RECHECK_RADIUS_M / ortho_gsd)))
+    radius_m = max(_ORTHO_CANOPY_RECHECK_RADIUS_M, float(safety_radius_m or 0.0))
+    radius_px = max(3, int(round(radius_m / ortho_gsd)))
 
     y1 = max(0, py - radius_px)
     y2 = min(ortho_image.shape[0], py + radius_px + 1)
@@ -283,27 +291,48 @@ def _orthophoto_canopy_recheck(latitude: float, longitude: float) -> Optional[di
         & (excess_green > 14.0)
     )
 
-    valid = (blue + green + red) > 30.0
+    yy, xx = np.ogrid[:patch.shape[0], :patch.shape[1]]
+    cy = py - y1
+    cx = px - x1
+    dist_px = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
+    circle = dist_px <= radius_px
+
+    valid = ((blue + green + red) > 30.0) & circle
     valid_count = int(np.count_nonzero(valid))
     if valid_count <= 0:
         return None
 
-    cy = py - y1
-    cx = px - x1
     center_strong = bool(strong_green[cy, cx]) if 0 <= cy < strong_green.shape[0] and 0 <= cx < strong_green.shape[1] else False
     green_mask = (bright_green | shadow_green) & valid
     strong_mask = strong_green & valid
     green_ratio = float(np.count_nonzero(green_mask) / valid_count)
     strong_ratio = float(np.count_nonzero(strong_mask) / valid_count)
-    is_canopy = bool(center_strong or strong_ratio >= _ORTHO_CANOPY_STRONG_RATIO)
+    strong_pixels = int(np.count_nonzero(strong_mask))
+    min_cluster_px = max(8, int(round(_ORTHO_CANOPY_MIN_CLUSTER_M2 / (ortho_gsd ** 2))))
+
+    nearest_canopy_m = None
+    if strong_pixels > 0:
+        nearest_canopy_m = float(np.min(dist_px[strong_mask]) * ortho_gsd)
+
+    is_center_canopy = bool(center_strong or strong_ratio >= _ORTHO_CANOPY_STRONG_RATIO)
+    is_too_close = bool(
+        nearest_canopy_m is not None
+        and nearest_canopy_m <= radius_m
+        and strong_pixels >= min_cluster_px
+    )
+    is_canopy = bool(is_center_canopy or is_too_close)
 
     return {
         "is_canopy": is_canopy,
         "orthophoto": context["entry"].get("name"),
         "ortho_px": px,
         "ortho_py": py,
+        "safety_radius_m": radius_m,
+        "nearest_canopy_m": nearest_canopy_m,
         "green_ratio": green_ratio,
         "strong_green_ratio": strong_ratio,
+        "strong_green_pixels": strong_pixels,
+        "min_cluster_pixels": min_cluster_px,
         "center_strong_green": center_strong,
     }
 
@@ -358,6 +387,7 @@ def _sanitize_match_result(match_result: Optional[dict[str, Any]]) -> Optional[d
         "gps_anchored": bool(match_result.get("gps_anchored", False)),
         "projection_rebuilt": bool(match_result.get("projection_rebuilt", False)),
         "projection_rotation_source": match_result.get("projection_rotation_source"),
+        "projection_rebuild_reason": match_result.get("projection_rebuild_reason"),
         "heading_diff_vs_exif_deg": _json_float(match_result.get("heading_diff_vs_exif_deg")),
         "rejected_reason": match_result.get("rejected_reason"),
         "error": match_result.get("error"),
@@ -388,6 +418,57 @@ def _angular_diff(a: float, b: float) -> float:
     Handles wrap-around so 359 vs 1 reports as -2, not 358.
     """
     return (float(a) - float(b) + 180.0) % 360.0 - 180.0
+
+
+def _build_metric_centered_homography(
+    drone_image: np.ndarray,
+    center_lat: float,
+    center_lon: float,
+    drone_gsd: float,
+    heading_deg: float,
+) -> Optional[np.ndarray]:
+    """Build a GPS-centered drone-pixel to orthophoto-pixel transform."""
+    if not isinstance(drone_image, np.ndarray) or drone_image.ndim < 2:
+        return None
+    if drone_gsd is None or drone_gsd <= 0:
+        return None
+
+    image_h, image_w = drone_image.shape[:2]
+    if image_h <= 0 or image_w <= 0:
+        return None
+
+    try:
+        center_ox, center_oy = gps_to_ortho_pixel(center_lat, center_lon)
+        ortho_gsd_x = float(ortho_matcher.ORTHO_GSD_X or ortho_matcher.ORTHO_GSD)
+        ortho_gsd_y = float(ortho_matcher.ORTHO_GSD_Y or ortho_matcher.ORTHO_GSD)
+    except Exception:
+        return None
+
+    if ortho_gsd_x <= 0 or ortho_gsd_y <= 0:
+        return None
+
+    cx = image_w / 2.0
+    cy = image_h / 2.0
+    theta = np.radians(-float(heading_deg))
+    cos_t = float(np.cos(theta))
+    sin_t = float(np.sin(theta))
+
+    h00 = drone_gsd * cos_t / ortho_gsd_x
+    h01 = drone_gsd * sin_t / ortho_gsd_x
+    h02 = center_ox - (h00 * cx) - (h01 * cy)
+
+    h10 = -drone_gsd * sin_t / ortho_gsd_y
+    h11 = drone_gsd * cos_t / ortho_gsd_y
+    h12 = center_oy - (h10 * cx) - (h11 * cy)
+
+    return np.array(
+        [
+            [h00, h01, h02],
+            [h10, h11, h12],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float64,
+    )
 
 
 def _post_process_match(
@@ -425,12 +506,36 @@ def _post_process_match(
             _angular_diff(sift_heading, camera_heading)
         )
 
-    # The match_result already carries center_drift_* from `match_drone_to_ortho`.
-    # Surface a flag that downstream code / UI can use to know the homography
-    # is the raw SIFT one (not anchored or rebuilt).
     match_result["gps_anchored"] = False
     match_result["projection_rebuilt"] = False
     match_result["projection_rotation_source"] = "sift_raw"
+
+    center_drift_m = match_result.get("center_drift_m")
+    confidence = match_result.get("confidence")
+    needs_metric_anchor = (
+        (center_drift_m is not None and float(center_drift_m) > _RAW_MATCH_MAX_DRIFT_FOR_COORDS_M)
+        or (confidence is not None and float(confidence) < _RAW_MATCH_MIN_CONFIDENCE_FOR_COORDS)
+    )
+    if needs_metric_anchor:
+        heading_for_projection = sift_heading if sift_heading is not None else camera_heading
+        if heading_for_projection is not None:
+            rebuilt_h = _build_metric_centered_homography(
+                drone_image=drone_image,
+                center_lat=center_lat,
+                center_lon=center_lon,
+                drone_gsd=drone_gsd,
+                heading_deg=float(heading_for_projection),
+            )
+            if rebuilt_h is not None:
+                match_result["raw_H"] = match_result.get("H")
+                match_result["H"] = rebuilt_h
+                match_result["gps_anchored"] = True
+                match_result["projection_rebuilt"] = True
+                match_result["projection_rotation_source"] = "sift_heading_metric_anchor"
+                match_result["projection_rebuild_reason"] = (
+                    f"raw match drift/confidence outside coordinate limits "
+                    f"({float(center_drift_m or 0):.2f} m, {float(confidence or 0):.0%})"
+                )
     return match_result
 
 
@@ -1333,6 +1438,7 @@ def _execute_canopy_workflow(
                 canopy_recheck = _orthophoto_canopy_recheck(
                     float(hexagon["_gps_lat"]),
                     float(hexagon["_gps_lon"]),
+                    safety_radius_m=canopy_buffer,
                 )
                 if canopy_recheck and canopy_recheck.get("is_canopy"):
                     hexagon["_orthophoto_canopy_recheck"] = canopy_recheck
@@ -1343,7 +1449,7 @@ def _execute_canopy_workflow(
             orthophoto_canopy_filtered_count = len(orthophoto_canopy_hexagons)
             if orthophoto_canopy_filtered_count > 0:
                 info_messages.append(
-                    f"{orthophoto_canopy_filtered_count} planting points were removed because they landed on canopy in the orthophoto recheck."
+                    f"{orthophoto_canopy_filtered_count} planting points were removed because they landed on or too close to canopy in the orthophoto recheck."
                 )
 
     results["hexagons"] = safe_hexagons
@@ -1395,7 +1501,7 @@ def _execute_canopy_workflow(
     )
     orthophoto_canopy_filtered_geojson = _filtered_hexagons_to_geojson(
         orthophoto_canopy_hexagons,
-        "Overlaps canopy in orthophoto recheck",
+        "Too close to canopy in orthophoto recheck",
         "Filtered Orthophoto Canopy Points",
     )
 

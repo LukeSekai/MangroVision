@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
@@ -39,16 +39,6 @@ export default function PlanterManagement() {
   const [deactivateTarget, setDeactivateTarget] = useState(null);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
 
-  // Batch assignment builder state
-  const [batchPlanterId, setBatchPlanterId] = useState(null);
-  const [batchPointIds, setBatchPointIds] = useState(() => new Set());
-  const [batchTitle, setBatchTitle] = useState('');
-  const [batchDate, setBatchDate] = useState('');
-  const [batchTravelMode, setBatchTravelMode] = useState('walking');
-  const [batchBusy, setBatchBusy] = useState(false);
-  const [batchError, setBatchError] = useState('');
-  const [batchSuccess, setBatchSuccess] = useState('');
-
   // Per-assignment point-status drill down
   const [assignmentPointsCache, setAssignmentPointsCache] = useState({});
   const [pointStatusBusyId, setPointStatusBusyId] = useState(null);
@@ -76,11 +66,6 @@ export default function PlanterManagement() {
   const selectedPoint = points.find((p) => p.id === selectedPointId);
   const activePlanters = planters.filter((p) => p.status === 'active');
   const inactivePlanters = planters.filter((p) => p.status !== 'active');
-
-  const unassignedPoints = useMemo(
-    () => points.filter((p) => !p.assignment_status || p.assignment_status === 'planned'),
-    [points],
-  );
 
   const handleAssign = async () => {
     if (!selectedPointId || !selectedPlanterId) return;
@@ -199,50 +184,6 @@ export default function PlanterManagement() {
     }
   };
 
-  const togglePointInBatch = (id) => {
-    setBatchPointIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  const handleCreateBatch = async () => {
-    if (!batchPlanterId || batchPointIds.size === 0) return;
-    setBatchBusy(true);
-    setBatchError('');
-    setBatchSuccess('');
-    try {
-      const res = await fetch(`${API}/api/planters/${batchPlanterId}/assignments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planting_point_ids: Array.from(batchPointIds),
-          title: batchTitle || '',
-          assignment_date: batchDate || '',
-          travel_mode: batchTravelMode,
-          notes: '',
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Batch assignment failed');
-      }
-      const data = await res.json();
-      setBatchSuccess(`Assignment #${data.assignment_id} created with ${batchPointIds.size} points`);
-      setBatchPointIds(new Set());
-      setBatchTitle('');
-      setBatchDate('');
-      fetchPoints();
-      loadData();
-    } catch (err) {
-      setBatchError(err.message);
-    } finally {
-      setBatchBusy(false);
-    }
-  };
-
   const loadAssignmentPoints = async (assignmentId) => {
     if (assignmentPointsCache[assignmentId]) {
       setAssignmentPointsCache((prev) => ({ ...prev, [assignmentId]: undefined }));
@@ -354,111 +295,6 @@ export default function PlanterManagement() {
             Click a planting point on the map to assign it to a planter.
           </p>
         )}
-      </PanelCard>
-
-      <PanelCard
-        title="Batch Assignment Builder"
-        badge={batchPointIds.size || undefined}
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        }
-        defaultOpen={false}
-      >
-        <div className="form-group">
-          <label className="form-label">Planter</label>
-          <select
-            className="form-select"
-            value={batchPlanterId || ''}
-            onChange={(e) => setBatchPlanterId(Number(e.target.value) || null)}
-          >
-            <option value="">Select a planter...</option>
-            {activePlanters.map((p) => (
-              <option key={p.id} value={p.id}>{p.full_name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Title (optional)</label>
-          <input
-            className="form-input"
-            type="text"
-            value={batchTitle}
-            onChange={(e) => setBatchTitle(e.target.value)}
-            placeholder="e.g. Zone A sweep"
-          />
-        </div>
-        <div className="form-group" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-          <div>
-            <label className="form-label">Date</label>
-            <input
-              className="form-input"
-              type="date"
-              value={batchDate}
-              onChange={(e) => setBatchDate(e.target.value)}
-            />
-          </div>
-          <div>
-            <label className="form-label">Travel</label>
-            <select
-              className="form-select"
-              value={batchTravelMode}
-              onChange={(e) => setBatchTravelMode(e.target.value)}
-            >
-              <option value="walking">Walking</option>
-              <option value="boat">Boat</option>
-              <option value="motorbike">Motorbike</option>
-            </select>
-          </div>
-        </div>
-
-        <div className="batch-point-picker">
-          <div className="batch-picker-header">
-            <span>Pick points ({batchPointIds.size} selected)</span>
-            {batchPointIds.size > 0 && (
-              <button className="btn btn-ghost btn-sm" onClick={() => setBatchPointIds(new Set())}>
-                Clear
-              </button>
-            )}
-          </div>
-          <div className="batch-point-list">
-            {unassignedPoints.length === 0 ? (
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-                No unassigned planting points. Run a new image analysis to generate more points.
-              </p>
-            ) : (
-              unassignedPoints.slice(0, 80).map((p) => {
-                const checked = batchPointIds.has(p.id);
-                return (
-                  <label key={p.id} className={`batch-point-row ${checked ? 'batch-point-row-on' : ''}`}>
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => togglePointInBatch(p.id)}
-                    />
-                    <span className="batch-point-name">Point #{p.point_num}</span>
-                    <span className="batch-point-src">{p.image_name}</span>
-                  </label>
-                );
-              })
-            )}
-            {unassignedPoints.length > 80 && (
-              <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 6 }}>
-                Showing the first 80 of {unassignedPoints.length} unassigned points.
-              </p>
-            )}
-          </div>
-        </div>
-
-        <button
-          className="btn btn-primary btn-sm"
-          style={{ marginTop: 10, width: '100%' }}
-          onClick={handleCreateBatch}
-          disabled={!batchPlanterId || batchPointIds.size === 0 || batchBusy}
-        >
-          {batchBusy ? 'Creating...' : `Create Assignment (${batchPointIds.size})`}
-        </button>
-        {batchError && <div className="assign-message assign-error">{batchError}</div>}
-        {batchSuccess && <div className="assign-message assign-success">{batchSuccess}</div>}
       </PanelCard>
 
       <PanelCard

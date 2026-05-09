@@ -150,65 +150,6 @@
   color: var(--text-muted);
 }
 
-/* Batch assignment builder */
-.batch-point-picker {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border-light);
-}
-
-.batch-picker-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.batch-point-list {
-  max-height: 220px;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding-right: 2px;
-}
-
-.batch-point-row {
-  display: grid;
-  grid-template-columns: 18px 1fr auto;
-  align-items: center;
-  gap: 8px;
-  font-size: 0.75rem;
-  padding: 5px 6px;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-}
-
-.batch-point-row:hover {
-  background: var(--surface-hover);
-}
-
-.batch-point-row-on {
-  background: var(--green-50);
-}
-
-.batch-point-name {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.batch-point-src {
-  color: var(--text-muted);
-  font-size: 0.6875rem;
-  max-width: 140px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Assignment drill-down */
 .assignment-row-group {
   display: flex;

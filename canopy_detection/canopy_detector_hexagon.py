@@ -269,7 +269,10 @@ class HexagonDetector:
         for contour in contours:
             if cv2.contourArea(contour) <= min_area_pixels:
                 continue
-            epsilon = 0.005 * cv2.arcLength(contour, True)
+            # Keep large canopy components faithful to the raster mask. A
+            # pure perimeter-scaled epsilon over-simplifies big merged crowns
+            # into diagonal/triangular polygons.
+            epsilon = min(1.0, 0.001 * cv2.arcLength(contour, True))
             approx = cv2.approxPolyDP(contour, epsilon, True)
             points = approx.reshape(-1, 2)
 
@@ -809,18 +812,16 @@ class HexagonDetector:
             progress_callback=progress_callback,
         )
 
-        # Rebuild canopy_mask from the polygons that actually survived the
-        # min-area filter. Otherwise small specks remain in canopy_mask and
-        # get painted purple by the visualization while never receiving a
-        # danger buffer (because create_danger_zones only sees the polygons).
-        #
-        # After the rebuild, apply a small morphological close on the result
-        # so the simplified polygon contours (each polygon was approxPolyDP'd
-        # before being returned) are smoothed back into a continuous-looking
-        # canopy. Without this step the rasterized mask shows the angular
-        # edges of the simplified polygons, which is what produces the
-        # "red triangular wedges between adjacent crowns" artifact.
-        if canopy_polygons:
+        # For the AI path, the detector returns an already-filtered raster
+        # coverage mask. Keep that mask as the visual/source-of-truth layer;
+        # rebuilding it from polygons can reintroduce simplification artifacts
+        # on large merged canopy components.
+        ai_mask_is_authoritative = bool(
+            (getattr(self, "_ai_metadata", {}) or {}).get("detection_method")
+        )
+        if ai_mask_is_authoritative and isinstance(canopy_mask, np.ndarray):
+            canopy_mask = ((canopy_mask > 0).astype(np.uint8) * 255)
+        elif canopy_polygons:
             aligned_mask = np.zeros_like(canopy_mask)
             for poly in canopy_polygons:
                 if poly.is_empty or poly.exterior is None:
