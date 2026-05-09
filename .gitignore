@@ -35,20 +35,26 @@ htmlcov/
 *.log
 planting_zones.db
 
-# Model files (LARGE - download separately via Google Drive)
-models/*.pth
-models/*.ckpt
-models/*.pkl
-models/*.h5
-models/*.weights
+# Model files and local ML artifacts
+models/
+MangroVision_New/try_model/
+*.pth
+*.pt
+*.ckpt
+*.pkl
+*.h5
+*.weights
+*.onnx
+model_metadata.json
 
-# Custom trained models (share via Google Drive ~810 MB total)
-models/custom_mangrove_model/
-
-
-# Training outputs and datasets
+# Training outputs, datasets, and experiment runs
+datasets/
 training_data/
+training_runs/
+training_runs_smoke/
+train_outputs/
 metrics.json
+*.pid
 
 # Large data files - excluded from repository
 flight_videos/
@@ -58,6 +64,7 @@ drone_images/
 # Output and test results
 output/
 output_geojson/
+TestImages/
 *.jpg
 *.png
 !README_assets/*.png
@@ -90,10 +97,7 @@ desktop.ini
 # Temporary files
 *.tmp
 *.bak
-models/try_new_latest_model/model_metadata.json
-models/try_new_latest_model/model_final.pth
-models/latest_mangrove_only/model_metadata.json
-models/latest_mangrove_only/model_final.pth
-MangroVision_New/try_model/model_final.pth
-MangroVision_New/try_model/model_metadata.json
-11
+
+# Local experiment scripts that are not part of the UI app
+scripts/filter_to_*.py
+scripts/train_*.py
