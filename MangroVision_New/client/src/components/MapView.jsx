@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useLocation } from 'react-router-dom';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { useMapStore } from '../stores/mapStore';
@@ -36,41 +37,42 @@ const PREVIEW_COLORS = {
   canopy: '#7c3aed',
 };
 
-// Scale marker radius + border weight with zoom so dense point clouds don't
-// clump into a green blob at 20m / 50m / 100m scale views.
-// Marker radii bumped up across the board so points stay readable at the
-// 10-15 m zoom range (zooms 19-20). At zoom 20 (~10 m scale bar) the dots
-// were 1.6 px, which is below the natural visibility threshold on
-// satellite/orthophoto backgrounds.
-const getPointRadius = (zoom) => {
-  if (zoom >= 22) return 4.5;
-  if (zoom >= 21) return 3.5;
-  if (zoom >= 20) return 3.0;   // 10 m view — was 1.6
-  if (zoom >= 19) return 2.2;   // 20 m view — was 1.05
-  if (zoom >= 18) return 1.6;
-  if (zoom >= 17) return 1.2;
-  return 1.0;
+// Keep admin map point sizing in sync with the Delete Points map so points
+// don't visually jump larger/smaller while moving between sections.
+const getPointRadius = (zoom, selected = false) => {
+  const base = zoom >= 22
+    ? 3.5
+    : zoom >= 21
+      ? 2.4
+      : zoom >= 20
+        ? 1.6
+        : zoom >= 19
+          ? 1.05
+          : zoom >= 18
+            ? 0.8
+            : zoom >= 17
+              ? 0.65
+              : 0.55;
+  return selected ? Math.max(base + 1.2, base * 1.8) : base;
 };
 
-// Outline weight tracks the radius so the dark stroke stays proportional
-// instead of disappearing entirely at lower zooms.
-const getPointWeight = (zoom) => {
-  if (zoom >= 22) return 1.4;
-  if (zoom >= 21) return 1.2;
-  if (zoom >= 20) return 1.0;   // was 0.45
-  if (zoom >= 19) return 0.7;   // was 0.2
-  if (zoom >= 18) return 0.4;
-  return 0.25;
+const getPointWeight = (zoom, selected = false) => {
+  if (selected) return zoom >= 20 ? 1.8 : 1.2;
+  if (zoom >= 22) return 1.1;
+  if (zoom >= 21) return 0.75;
+  if (zoom >= 20) return 0.45;
+  if (zoom >= 19) return 0.2;
+  return 0;
 };
 
 const getPreviewFilteredRadius = (zoom) => Math.max(0.6, getPointRadius(zoom) - 0.35);
 const getAnalysisPointRadius = (zoom) => Math.max(0.45, getPointRadius(zoom) * 0.45);
 
 export default function MapView() {
+  const location = useLocation();
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const layersRef = useRef({});
-  const fittedRef = useRef(false);
   const pointsFingerprintRef = useRef('');
   // True while we're applying an external store change to the map. Lets the
   // moveend handler ignore that programmatic move so we don't write the same
@@ -79,24 +81,28 @@ export default function MapView() {
 
   const center = useMapStore((s) => s.center);
   const zoom = useMapStore((s) => s.zoom);
-  const setView = useMapStore((s) => s.setView);
   const points = useMapStore((s) => s.points);
-  const fetchPoints = useMapStore((s) => s.fetchPoints);
-  const fetchZones = useMapStore((s) => s.fetchZones);
   const forbiddenZones = useMapStore((s) => s.forbiddenZones);
   const erodedZones = useMapStore((s) => s.erodedZones);
   const setSelectedPoint = useMapStore((s) => s.setSelectedPoint);
-  const setMapInstance = useMapStore((s) => s.setMapInstance);
   const layerVisibility = useMapStore((s) => s.layerVisibility);
   const currentAnalysis = useMapStore((s) => s.currentAnalysis);
+  const deletionSelectedPointIds = useMapStore((s) => s.deletionSelectedPointIds);
+  const toggleDeletionPoint = useMapStore((s) => s.toggleDeletionPoint);
+  const isPointDeletionMode = location.pathname === '/points';
 
   // Initialize map
   useEffect(() => {
-    if (mapRef.current) return;
+    if (mapRef.current || !containerRef.current) return undefined;
+
+    // Read the initial view once. The map writes user pans/zooms back into
+    // mapStore, so subscribing this initialization effect to center/zoom would
+    // tear Leaflet down and recreate it on every interaction.
+    const initial = useMapStore.getState();
 
     const map = L.map(containerRef.current, {
-      center: [center[1], center[0]],
-      zoom: zoom,
+      center: [initial.center[1], initial.center[0]],
+      zoom: initial.zoom,
       maxZoom: 24,
       zoomControl: false,
       attributionControl: false,
@@ -154,7 +160,7 @@ export default function MapView() {
       processingFilteredLayer,
     };
     mapRef.current = map;
-    setMapInstance(map);
+    useMapStore.getState().setMapInstance(map);
 
     // Persist user pans + zooms back to the store so other map-bearing pages
     // (PointDeletion in particular) inherit the same view when they mount.
@@ -166,19 +172,23 @@ export default function MapView() {
         return;
       }
       const c = map.getCenter();
-      setView([c.lng, c.lat], map.getZoom());
+      useMapStore.getState().setView([c.lng, c.lat], map.getZoom());
     });
 
     // Rescale point markers when zoom changes so they don't clump when zoomed out
     map.on('zoomend', () => {
       const z = map.getZoom();
-      const r = getPointRadius(z);
-      const w = getPointWeight(z);
       const rFiltered = getPreviewFilteredRadius(z);
       if (layersRef.current.pointLayer) {
         layersRef.current.pointLayer.eachLayer((m) => {
-          if (typeof m.setStyle === 'function') m.setStyle({ weight: w });
-          if (typeof m.setRadius === 'function') m.setRadius(r);
+          const selected = Boolean(m.options.mgDeletionSelected);
+          if (typeof m.setStyle === 'function') {
+            m.setStyle({
+              color: selected ? '#7f1d1d' : '#000000',
+              weight: getPointWeight(z, selected),
+            });
+          }
+          if (typeof m.setRadius === 'function') m.setRadius(getPointRadius(z, selected));
         });
       }
       if (layersRef.current.processingLayer) {
@@ -199,6 +209,7 @@ export default function MapView() {
     const observer = new ResizeObserver(() => map.invalidateSize());
     observer.observe(containerRef.current);
 
+    const { fetchPoints, fetchZones } = useMapStore.getState();
     fetchPoints();
     fetchZones();
 
@@ -206,8 +217,9 @@ export default function MapView() {
       observer.disconnect();
       map.remove();
       mapRef.current = null;
+      useMapStore.getState().setMapInstance(null);
     };
-  }, [center, fetchPoints, fetchZones, setMapInstance, setView, zoom]);
+  }, []);
 
   // When the store's view changes (e.g. PointDeletion wrote to it on its own
   // moveend), bring this map to the same view. The skip ref + a rough equality
@@ -251,7 +263,11 @@ export default function MapView() {
     // Build a lightweight fingerprint: id + status for every point.
     // If it matches the last render we skip the clear-and-redraw so the map
     // view stays rock-steady when pages call fetchPoints() on mount.
-    const fingerprint = points
+    const deletionSelectedIds = new Set(deletionSelectedPointIds.map(Number));
+    const deletionSelectionKey = isPointDeletionMode
+      ? [...deletionSelectedIds].sort((a, b) => a - b).join(',')
+      : '';
+    const fingerprint = `${isPointDeletionMode ? 'delete' : 'normal'}:${deletionSelectionKey}:` + points
       .map((p) => {
         const status = p.assigned_planter_name
           ? (p.assignment_status === 'completed' ? 'completed' : 'assigned')
@@ -260,7 +276,7 @@ export default function MapView() {
       })
       .join(',');
 
-    if (fingerprint === pointsFingerprintRef.current && fittedRef.current) return;
+    if (fingerprint === pointsFingerprintRef.current) return;
     pointsFingerprintRef.current = fingerprint;
 
     layer.clearLayers();
@@ -273,17 +289,20 @@ export default function MapView() {
       const status = p.assigned_planter_name
         ? (p.assignment_status === 'completed' ? 'completed' : 'assigned')
         : (p.planting_status || 'planned');
+      const pointId = Number(p.id);
+      const isDeletionSelected = isPointDeletionMode && deletionSelectedIds.has(pointId);
 
-      const color = STATUS_COLORS[status] || STATUS_COLORS.planned;
+      const color = isDeletionSelected ? '#ef4444' : (STATUS_COLORS[status] || STATUS_COLORS.planned);
 
       const z = map.getZoom();
       const marker = L.circleMarker([p.latitude, p.longitude], {
-        radius: getPointRadius(z),
+        radius: getPointRadius(z, isDeletionSelected),
         fillColor: color,
-        color: '#000000',
-        weight: getPointWeight(z),
-        fillOpacity: 0.92,
+        color: isDeletionSelected ? '#7f1d1d' : '#000000',
+        weight: getPointWeight(z, isDeletionSelected),
+        fillOpacity: isDeletionSelected ? 0.96 : 0.92,
         opacity: 0.95,
+        mgDeletionSelected: isDeletionSelected,
       });
 
       marker.bindPopup(`
@@ -291,25 +310,25 @@ export default function MapView() {
           <div style="font-weight:700;font-size:14px;margin-bottom:4px;">Point #${p.point_num}</div>
           <div style="font-size:12px;color:#6b7280;margin-bottom:8px;">${p.image_name || ''}</div>
           <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
-            <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${statusBg[status] || '#f3f4f6'};font-weight:700;text-transform:uppercase;">${status}</span>
+            <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${isDeletionSelected ? '#fee2e2' : (statusBg[status] || '#f3f4f6')};font-weight:700;text-transform:uppercase;color:${isDeletionSelected ? '#991b1b' : 'inherit'};">${isDeletionSelected ? 'selected' : status}</span>
             ${p.assigned_planter_name ? `<span style="font-size:12px;color:#6b7280;">${p.assigned_planter_name}</span>` : ''}
           </div>
           <div style="font-size:11px;color:#9ca3af;margin-top:8px;font-family:monospace;">${p.latitude.toFixed(7)}, ${p.longitude.toFixed(7)}</div>
         </div>
       `, { maxWidth: 260 });
 
-      marker.on('click', () => setSelectedPoint(p.id));
+      marker.on('click', () => {
+        if (isPointDeletionMode) {
+          if (Number.isFinite(pointId)) toggleDeletionPoint(pointId);
+          return;
+        }
+        setSelectedPoint(p.id);
+      });
       marker.addTo(layer);
     });
 
-    // Only fit on the very first load so the admin's manual pan/zoom is
     // preserved across every tab switch. maxZoom: 22 ≈ 5 m scale.
-    if (points.length > 0 && !fittedRef.current) {
-      const bounds = L.latLngBounds(points.map((p) => [p.latitude, p.longitude]));
-      map.fitBounds(bounds, { padding: [60, 420, 60, 100], maxZoom: 21, animate: true });
-      fittedRef.current = true;
-    }
-  }, [points, setSelectedPoint]);
+  }, [points, setSelectedPoint, isPointDeletionMode, deletionSelectedPointIds, toggleDeletionPoint]);
 
   // Sync zones
   useEffect(() => {

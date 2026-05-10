@@ -34,45 +34,37 @@ export default function ErodedZoneEditor() {
   const startDrawing = useCallback(() => {
     if (!mapInstance) return;
     setDrawing(true);
-    setSaveMsg('');
+    setSaveMsgText('');
+    setSaveMsgIsError(false);
     setDrawnCoords(null);
 
     // Temporary drawing layer
     const layer = L.featureGroup().addTo(mapInstance);
     setDrawLayer(layer);
 
-    // Change cursor
+    // Change cursor while the user is placing vertices.
     mapInstance.getContainer().style.cursor = 'crosshair';
 
     const points = [];
     let polyline = null;
+    let firstMarker = null;
+    let polygonClosed = false;
 
-    const onClick = (e) => {
-      points.push([e.latlng.lat, e.latlng.lng]);
+    const isSamePoint = (a, b) => (
+      Math.abs(a[0] - b[0]) < 1e-10 &&
+      Math.abs(a[1] - b[1]) < 1e-10
+    );
 
-      // Draw a marker for each vertex
-      L.circleMarker(e.latlng, {
-        radius: 5, fillColor: '#ea580c', color: '#fff', weight: 2, fillOpacity: 1,
-      }).addTo(layer);
-
-      // Update the polyline preview
-      if (polyline) layer.removeLayer(polyline);
-      if (points.length > 1) {
-        polyline = L.polyline(points, {
-          color: '#ea580c', weight: 2, dashArray: '6 4',
-        }).addTo(layer);
-      }
-    };
-
-    const onDblClick = (e) => {
-      L.DomEvent.stopPropagation(e);
-      L.DomEvent.preventDefault(e);
+    const closePolygon = () => {
+      if (polygonClosed) return;
 
       if (points.length < 3) {
-        setSaveMsg('Need at least 3 points for a polygon');
+        setSaveMsgText('Add at least 3 points before closing the zone');
+        setSaveMsgIsError(true);
         return;
       }
 
+      polygonClosed = true;
       // Close the polygon
       const closed = [...points, points[0]];
 
@@ -84,20 +76,65 @@ export default function ErodedZoneEditor() {
 
       // Store coordinates in GeoJSON format [lng, lat]
       setDrawnCoords(closed.map(([lat, lng]) => [lng, lat]));
+      setSaveMsgText('Zone closed. Review it, then save.');
+      setSaveMsgIsError(false);
 
       // Clean up events
       mapInstance.off('click', onClick);
-      mapInstance.off('dblclick', onDblClick);
       mapInstance.getContainer().style.cursor = '';
     };
 
+    const onClick = (e) => {
+      if (polygonClosed) return;
+      const nextPoint = [e.latlng.lat, e.latlng.lng];
+      if (points.length && isSamePoint(points[points.length - 1], nextPoint)) return;
+      points.push(nextPoint);
+
+      const marker = L.circleMarker(e.latlng, {
+        radius: points.length === 1 ? 7 : 5,
+        fillColor: points.length === 1 ? '#22c55e' : '#ea580c',
+        color: '#fff',
+        weight: points.length === 1 ? 3 : 2,
+        fillOpacity: 1,
+        bubblingMouseEvents: points.length !== 1,
+        className: points.length === 1 ? 'zone-first-vertex' : '',
+      }).addTo(layer);
+
+      if (points.length === 1) {
+        firstMarker = marker;
+        firstMarker.bindTooltip('Click to close zone', {
+          permanent: false,
+          direction: 'top',
+          offset: [0, -8],
+        });
+        firstMarker.on('click', (event) => {
+          if (event.originalEvent) {
+            L.DomEvent.stopPropagation(event.originalEvent);
+            L.DomEvent.preventDefault(event.originalEvent);
+          }
+          closePolygon();
+        });
+      }
+
+      // Update the polyline preview
+      if (polyline) layer.removeLayer(polyline);
+      if (points.length > 1) {
+        polyline = L.polyline(points, {
+          color: '#ea580c', weight: 2, dashArray: '6 4',
+        }).addTo(layer);
+      }
+
+      if (points.length >= 3) {
+        setSaveMsgText('Click the first green point to close the zone');
+        setSaveMsgIsError(false);
+      }
+    };
+
     mapInstance.on('click', onClick);
-    mapInstance.on('dblclick', onDblClick);
 
     // Store cleanup functions
     layer._cleanupFn = () => {
       mapInstance.off('click', onClick);
-      mapInstance.off('dblclick', onDblClick);
       mapInstance.getContainer().style.cursor = '';
     };
   }, [mapInstance]);
@@ -114,6 +151,16 @@ export default function ErodedZoneEditor() {
     setDrawLayer(null);
     setDrawnCoords(null);
     setZoneName('');
+    setSaveMsgText('');
+    setSaveMsgIsError(false);
+  }, [drawLayer, mapInstance]);
+
+  useEffect(() => () => {
+    if (!drawLayer) return;
+    if (drawLayer._cleanupFn) drawLayer._cleanupFn();
+    if (mapInstance && mapInstance.hasLayer(drawLayer)) {
+      mapInstance.removeLayer(drawLayer);
+    }
   }, [drawLayer, mapInstance]);
 
   // Save the drawn zone
@@ -143,9 +190,9 @@ export default function ErodedZoneEditor() {
         throw new Error(err.detail || 'Failed to save zone');
       }
 
+      cancelDrawing();
       setSaveMsgText('Zone saved');
       setSaveMsgIsError(false);
-      cancelDrawing();
       fetchZones();
     } catch (err) {
       setSaveMsgText(err.message || 'Failed to save zone');
@@ -236,18 +283,28 @@ export default function ErodedZoneEditor() {
               Draw New Eroded Zone
             </button>
             <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-              Click points on the map to draw a polygon. Double-click to finish.
+              Click points on the map to draw a polygon. Click the first green point to close it.
             </p>
+            {saveMsgText && (
+              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
+                {saveMsgText}
+              </p>
+            )}
           </div>
         ) : !drawnCoords ? (
           <div>
             <div className="drawing-active">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-              <span>Drawing active — click on the map</span>
+              <span>Drawing active - click the first green point to close</span>
             </div>
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={cancelDrawing}>
               Cancel
             </button>
+            {saveMsgText && (
+              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
+                {saveMsgText}
+              </p>
+            )}
           </div>
         ) : (
           <div className="save-form">

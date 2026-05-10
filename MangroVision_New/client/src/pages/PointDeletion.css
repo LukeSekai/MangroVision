@@ -2,12 +2,17 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
+  pointer-events: none;
 }
 
-.point-cleanup-map {
-  position: absolute;
-  inset: 0;
-  z-index: 0;
+.content-layer > .point-cleanup-page {
+  pointer-events: none;
+}
+
+.point-cleanup-page .floating-panel,
+.point-cleanup-page .panel-toggle,
+.point-cleanup-page .modal-backdrop {
+  pointer-events: auto;
 }
 
 .point-cleanup-page .floating-panel,

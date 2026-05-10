@@ -1,15 +1,51 @@
 import { create } from 'zustand';
 
 const API = import.meta.env.VITE_API_BASE || '';
+const MAP_VIEW_STORAGE_KEY = 'mv_admin_map_view';
+const DEFAULT_MAP_CENTER = [122.6253, 10.7800]; // Leganes Katunggan Park, Iloilo
+// Around the Leaflet 50 m scale-bar range at this latitude.
+const DEFAULT_MAP_ZOOM = 18;
+
+function readStoredMapView() {
+  if (typeof window === 'undefined') {
+    return { center: DEFAULT_MAP_CENTER, zoom: DEFAULT_MAP_ZOOM };
+  }
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(MAP_VIEW_STORAGE_KEY) || 'null');
+    const center = Array.isArray(stored?.center) ? stored.center.map(Number) : null;
+    const zoom = Number(stored?.zoom);
+    if (
+      center?.length === 2 &&
+      center.every(Number.isFinite) &&
+      Number.isFinite(zoom)
+    ) {
+      return { center, zoom };
+    }
+  } catch {
+    // Ignore malformed saved view and use the default below.
+  }
+  return { center: DEFAULT_MAP_CENTER, zoom: DEFAULT_MAP_ZOOM };
+}
+
+function persistMapView(center, zoom) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(MAP_VIEW_STORAGE_KEY, JSON.stringify({ center, zoom }));
+  } catch {
+    // localStorage can be unavailable in private/restricted contexts.
+  }
+}
+
+const initialMapView = readStoredMapView();
 
 export const useMapStore = create((set, get) => ({
   // Map viewport
-  center: [122.6253, 10.7800],  // Leganes Katunggan Park, Iloilo
-  // Initial zoom 21 puts the Leaflet scale-bar at roughly "5 m" at this
-  // latitude (~7.3 cm per pixel * 68 px = 5 m). Lower the zoom to see a
-  // wider area; higher to see individual canopies in finer detail.
-  zoom: 21,
-  setView: (center, zoom) => set({ center, zoom }),
+  center: initialMapView.center,
+  zoom: initialMapView.zoom,
+  setView: (center, zoom) => {
+    persistMapView(center, zoom);
+    set({ center, zoom });
+  },
 
   // Stats
   stats: null,
@@ -58,6 +94,9 @@ export const useMapStore = create((set, get) => ({
     set((state) => ({
       points: state.points.filter((point) => !deletedIds.has(Number(point.id))),
       selectedPointId: deletedIds.has(Number(state.selectedPointId)) ? null : state.selectedPointId,
+      deletionSelectedPointIds: state.deletionSelectedPointIds
+        .map(Number)
+        .filter((id) => !deletedIds.has(id)),
       stats: state.stats
         ? {
             ...state.stats,
@@ -91,6 +130,48 @@ export const useMapStore = create((set, get) => ({
   // Selected point
   selectedPointId: null,
   setSelectedPoint: (id) => set({ selectedPointId: id }),
+
+  // Delete Points selection. This lives in the shared map store so the
+  // delete workflow can use the already-mounted main map instead of creating
+  // a second Leaflet instance that reloads tiles on navigation.
+  deletionSelectedPointIds: [],
+  toggleDeletionPoint: (id) => {
+    const numericId = Number(id);
+    if (!Number.isFinite(numericId)) return;
+    set((state) => {
+      const selected = new Set(state.deletionSelectedPointIds.map(Number));
+      if (selected.has(numericId)) selected.delete(numericId);
+      else selected.add(numericId);
+      return { deletionSelectedPointIds: [...selected] };
+    });
+  },
+  addDeletionPoints: (ids) => {
+    const nextIds = (ids || []).map(Number).filter(Number.isFinite);
+    if (!nextIds.length) return;
+    set((state) => {
+      const selected = new Set(state.deletionSelectedPointIds.map(Number));
+      nextIds.forEach((id) => selected.add(id));
+      return { deletionSelectedPointIds: [...selected] };
+    });
+  },
+  removeDeletionPoint: (id) => {
+    const numericId = Number(id);
+    if (!Number.isFinite(numericId)) return;
+    set((state) => ({
+      deletionSelectedPointIds: state.deletionSelectedPointIds
+        .map(Number)
+        .filter((selectedId) => selectedId !== numericId),
+    }));
+  },
+  clearDeletionSelection: () => set({ deletionSelectedPointIds: [] }),
+  pruneDeletionSelection: (validIds) => {
+    const valid = new Set((validIds || []).map(Number).filter(Number.isFinite));
+    set((state) => ({
+      deletionSelectedPointIds: state.deletionSelectedPointIds
+        .map(Number)
+        .filter((selectedId) => valid.has(selectedId)),
+    }));
+  },
 
   // Current unsaved processing preview
   currentAnalysis: null,
