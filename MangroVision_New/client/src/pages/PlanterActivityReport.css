@@ -1,0 +1,623 @@
+/* The PlanterActivityReport adds `par-open` to <body> while it is on screen.
+   Hide the floating Panel toggle (the "Hide / Show" pill on the right) so
+   it doesn't sit on top of the modal backdrop. */
+body.par-open .panel-toggle { display: none !important; }
+
+@keyframes par-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+@keyframes par-pop-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.par-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  animation: par-fade-in 180ms ease-out;
+}
+
+.par-card {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 56px);
+  background: #f8fafc;
+  border-radius: 20px;
+  box-shadow:
+    0 1px 1px rgba(15, 23, 42, 0.04),
+    0 28px 60px -12px rgba(15, 23, 42, 0.32),
+    0 8px 16px -8px rgba(15, 23, 42, 0.18);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  animation: par-pop-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.par-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 22px 26px 18px;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.par-eyebrow {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #2f7a48;
+}
+
+.par-title {
+  margin: 4px 0 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.01em;
+}
+
+.par-close {
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+  flex-shrink: 0;
+}
+
+.par-close:hover { background: rgba(15, 23, 42, 0.06); color: #0f172a; }
+.par-close:focus-visible { outline: 2px solid #2f7a48; outline-offset: 2px; }
+
+.par-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 22px 26px 28px;
+}
+
+.par-status,
+.par-error {
+  padding: 24px 12px;
+  text-align: center;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.par-error {
+  color: #b91c1c;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 12px;
+}
+
+/* ── Top summary row — 3 columns x 2 rows ───────────────────────────── */
+
+.par-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: 1fr;
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.par-summary-stat {
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.par-summary-value {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.par-summary-label {
+  margin-top: 2px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+/* Coloured 4 px left border per accent — the original look. */
+.par-summary-green  { border-left: 4px solid #16a34a; }
+.par-summary-blue   { border-left: 4px solid #2563eb; }
+.par-summary-amber  { border-left: 4px solid #eab308; }
+.par-summary-indigo { border-left: 4px solid #6366f1; }
+.par-summary-slate  { border-left: 4px solid #64748b; }
+.par-summary-gray   { border-left: 4px solid #cbd5e1; }
+
+/* ── Per-planter cards ───────────────────────────────────────────────── */
+
+.par-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 16px;
+  align-items: stretch;          /* every card stretches to row height */
+}
+
+.par-planter {
+  background: #ffffff;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;        /* enables footer pinned to bottom */
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 8px 16px -8px rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(15, 23, 42, 0.04);
+  /* Coloured 4 px left accent per status — same convention as the summary
+     stat cards above so the two sections feel like one design family. */
+  border-left: 4px solid #16a34a;
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  height: 100%;                  /* fill the grid row's stretched height */
+}
+
+.par-planter-completed   { border-left-color: #15803d; }
+.par-planter-in-progress { border-left-color: #eab308; }
+.par-planter-ready       { border-left-color: #0d9488; }
+.par-planter-idle        { border-left-color: #94a3b8; }
+.par-planter-inactive    { border-left-color: #cbd5e1; }
+
+.par-planter:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06), 0 12px 24px -8px rgba(15, 23, 42, 0.10);
+}
+
+.par-planter-inactive { opacity: 0.85; }
+
+/*
+ * Header row: avatar + name + status pill.
+ * Tint kept at the slightly-greener level (#dcfce7 → #ecfdf5) with a faint
+ * diagonal sheen so the section reads as part of the green theme alongside
+ * the left-side accent on the card itself.
+ */
+.par-planter-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: flex-start;
+  padding: 16px 18px 14px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 70%),
+    linear-gradient(180deg, #dcfce7 0%, #ecfdf5 100%);
+  border-bottom: 1px solid rgba(22, 163, 74, 0.20);
+}
+
+.par-planter-inactive .par-planter-head {
+  /* Subdue the green when the planter is inactive so it doesn't look
+     like an active session — keep a faint trace so it still reads as
+     part of the same component family. */
+  background: linear-gradient(180deg, #f1f5f9 0%, #f8fafc 100%);
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.par-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+}
+
+.par-planter-identity { min-width: 0; }
+
+.par-planter-name {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.par-planter-meta {
+  margin-top: 2px;
+  font-size: 0.78rem;
+  color: #475569;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.par-status-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.par-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  background: #ffffff;
+}
+
+.par-status-pill-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.par-status-pill-completed   { color: #15803d; background: rgba(22, 163, 74, 0.18); }
+.par-status-pill-in-progress { color: #a16207; background: rgba(234, 179, 8, 0.20); }
+.par-status-pill-ready       { color: #0f766e; background: rgba(13, 148, 136, 0.18); }
+.par-status-pill-idle        { color: #475569; background: rgba(100, 116, 139, 0.18); }
+.par-status-pill-inactive    { color: #b91c1c; background: rgba(239, 68, 68, 0.14); }
+
+.par-status-sub {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.7rem;
+  color: #475569;
+}
+
+.par-status-sub-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ── Body (grows so footer pins to bottom) ──────────────────────────── */
+
+.par-planter-body {
+  flex: 1;                       /* THIS is what makes the footer stick down */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px 14px;
+}
+
+.par-planter-meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  padding-bottom: 8px;
+}
+
+/* ── Items list (assignments) ────────────────────────────────────────── */
+
+.par-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.par-items-head {
+  display: grid;
+  grid-template-columns: 1fr 56px 130px;
+  gap: 12px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed rgba(15, 23, 42, 0.08);
+}
+
+.par-items-head-qty,
+.par-items-head-progress {
+  text-align: right;
+}
+
+.par-items-row {
+  display: grid;
+  grid-template-columns: 1fr 56px 130px;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 0.84rem;
+}
+
+.par-items-name { min-width: 0; }
+
+.par-items-title {
+  color: #0f172a;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.par-items-sub {
+  margin-top: 1px;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.par-items-qty {
+  text-align: right;
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+}
+
+.par-items-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.par-items-progress-track {
+  flex: 1;
+  height: 6px;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.par-items-progress-fill {
+  height: 100%;
+  background: #2563eb;
+  border-radius: 999px;
+}
+
+.par-items-progress-text {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #475569;
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+  text-align: right;
+}
+
+.par-items-empty {
+  font-size: 0.82rem;
+  color: #94a3b8;
+  font-style: italic;
+  padding: 8px 0;
+}
+
+.par-items-more {
+  font-size: 0.74rem;
+  color: #94a3b8;
+  font-style: italic;
+  padding-top: 4px;
+}
+
+/* ── Footer (pinned to bottom of every card) ─────────────────────────── */
+
+.par-planter-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 18px 16px;
+  border-top: 1px solid rgba(15, 23, 42, 0.06);
+  background: #ffffff;
+  margin-top: auto;              /* belt-and-braces with parent flex grow */
+}
+
+.par-total-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.par-total-label {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.par-total-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.par-total-fraction {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.par-total-pct {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #16a34a;
+  font-variant-numeric: tabular-nums;
+}
+
+.par-total-bar {
+  height: 8px;
+  background: rgba(15, 23, 42, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.par-total-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #16a34a 0%, #15803d 100%);
+  border-radius: 999px;
+  transition: width 220ms ease;
+}
+
+/* ── Action buttons (now green theme) ───────────────────────────────── */
+
+.par-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.par-action {
+  height: 40px;
+  border-radius: 12px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 100ms ease, background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+  border: 1px solid transparent;
+}
+
+.par-action:focus-visible {
+  outline: 2px solid #16a34a;
+  outline-offset: 2px;
+}
+
+.par-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Secondary = outlined red ("Deactivate" — destructive action) */
+.par-action-secondary {
+  background: #ffffff;
+  color: #b91c1c;
+  border-color: #dc2626;
+}
+
+.par-action-secondary:hover:not(:disabled) {
+  background: rgba(220, 38, 38, 0.06);
+  border-color: #b91c1c;
+}
+
+.par-action-secondary:focus-visible {
+  outline-color: #dc2626;
+}
+
+/* Primary = filled green ("See Details") */
+.par-action-primary {
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #15803d;
+  box-shadow: 0 2px 6px -2px rgba(21, 128, 61, 0.45);
+}
+
+.par-action-primary:hover:not(:disabled) {
+  background: #15803d;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px -2px rgba(21, 128, 61, 0.55);
+}
+
+.par-action-primary:active:not(:disabled) { transform: translateY(0); }
+
+/* ── Pagination ─────────────────────────────────────────────────────── */
+
+.par-pagination {
+  margin-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+  border-radius: 14px;
+}
+
+.par-pagination-info {
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.par-pagination-info strong {
+  color: #0f172a;
+  font-variant-numeric: tabular-nums;
+}
+
+.par-pagination-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.par-pagination-btn,
+.par-pagination-page {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  border: 1px solid rgba(15, 23, 42, 0.10);
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.par-pagination-btn:hover:not(:disabled),
+.par-pagination-page:hover:not(.is-active) {
+  background: #f1f5f9;
+}
+
+.par-pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.par-pagination-page.is-active {
+  background: #16a34a;
+  color: #ffffff;
+  border-color: #15803d;
+  box-shadow: 0 2px 6px -2px rgba(21, 128, 61, 0.45);
+}
+
+/* ── Mobile breakpoint ──────────────────────────────────────────────── */
+
+@media (max-width: 900px) {
+  .par-card    { width: 100%; max-height: calc(100vh - 24px); border-radius: 16px; }
+  .par-backdrop{ padding: 12px; }
+  .par-header  { padding: 18px 20px 14px; }
+  .par-body    { padding: 18px 20px 22px; }
+  .par-summary { grid-template-columns: repeat(2, 1fr); }
+  .par-grid    { grid-template-columns: 1fr; }
+  .par-items-head, .par-items-row { grid-template-columns: 1fr 50px 110px; }
+  .par-pagination { justify-content: center; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .par-backdrop, .par-card, .par-action { animation: none; transition: none; }
+}

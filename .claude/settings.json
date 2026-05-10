@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "PowerShell(Get-ChildItem -Path 'c:\\\\Users\\\\Asus-Pc\\\\Desktop\\\\MangroVision' -Recurse -Force -ErrorAction SilentlyContinue -Include '_annotations.coco.json' -Depth 6 | Select-Object FullName, @{Name='SizeKB';Expression={[math]::Round\\($_.Length/1KB,1\\)}}, LastWriteTime | Format-Table -AutoSize | Out-String -Width 250)"
+      "PowerShell(Get-ChildItem -Path 'c:\\\\Users\\\\Asus-Pc\\\\Desktop\\\\MangroVision' -Recurse -Force -ErrorAction SilentlyContinue -Include '_annotations.coco.json' -Depth 6 | Select-Object FullName, @{Name='SizeKB';Expression={[math]::Round\\($_.Length/1KB,1\\)}}, LastWriteTime | Format-Table -AutoSize | Out-String -Width 250)",
+      "PowerShell($cmd = Get-Command cloudflared -ErrorAction SilentlyContinue; if \\($cmd\\) { \"FOUND: $\\($cmd.Source\\)\"; & cloudflared --version } else { \"cloudflared NOT installed\"; winget --version 2>$null; if \\($LASTEXITCODE -eq 0\\) { \"winget available\" } else { \"winget unavailable\" } })",
+      "Bash(curl -sf -o /dev/null -w \"vite=%{http_code}\\\\n\" http://localhost:5173/)",
+      "Bash(curl -sf -o /dev/null -w \"api=%{http_code}\\\\n\" http://localhost:8000/api/health)",
+      "PowerShell(Get-Process | Where-Object { $_.ProcessName -in 'node','python','uvicorn','cloudflared' } | Select-Object Id, ProcessName, @{Name='Cmd';Expression={\\(Get-CimInstance Win32_Process -Filter \"ProcessId=$\\($_.Id\\)\"\\).CommandLine}} | Format-Table -AutoSize | Out-String -Width 200)",
+      "Bash(../venv/Scripts/python.exe start_dev.py)",
+      "Bash(curl -sf -o /dev/null http://localhost:5173/)",
+      "Bash(curl -sf -o /dev/null http://localhost:8000/api/health)",
+      "Bash(\"C:/Program Files \\(x86\\)/cloudflared/cloudflared.exe\" tunnel --url http://localhost:5173 --no-autoupdate)"
     ]
   }
 }

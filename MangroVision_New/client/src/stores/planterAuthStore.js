@@ -44,6 +44,8 @@ export const usePlanterAuthStore = create((set, get) => ({
     localStorage.setItem(PLANTER_TOKEN_KEY, data.token);
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
     sessionStorage.setItem('mv_field_show_welcome', '1');
+    // First-time entry — UI greets with "Welcome", not "Welcome back".
+    sessionStorage.setItem('mv_field_welcome_kind', 'register');
     set({
       token: data.token,
       planter: data.planter,
@@ -70,6 +72,8 @@ export const usePlanterAuthStore = create((set, get) => ({
     localStorage.setItem(PLANTER_TOKEN_KEY, data.token);
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
     sessionStorage.setItem('mv_field_show_welcome', '1');
+    // Returning planter — UI greets with "Welcome back".
+    sessionStorage.setItem('mv_field_welcome_kind', 'login');
     set({
       token: data.token,
       planter: data.planter,

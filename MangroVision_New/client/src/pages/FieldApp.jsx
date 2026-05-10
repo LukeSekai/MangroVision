@@ -23,11 +23,18 @@ const STATUS_LABEL = {
   skipped: 'Skipped',
 };
 
+// Field-side palette. The planter assignment lifecycle on the database side
+// uses 'pending' (assigned to me, not yet planted) and 'completed' (I have
+// planted it). Both 'planned' and 'assigned' map to blue so any not-yet-done
+// state is visually identical on the planter map. 'completed' / 'planted'
+// is the freshly-planted state and renders YELLOW so it stands clearly
+// apart from blue assigned points.
 const STATUS_COLOR = {
-  planned: '#2563eb',
-  assigned: '#2563eb',
-  planted: '#d97706',
-  completed: '#059669',
+  planned: '#2563eb',    // blue — still pending
+  assigned: '#2563eb',   // blue — still pending
+  pending: '#2563eb',    // blue — DB enum for "still pending"
+  planted: '#eab308',    // yellow — planter has marked this complete
+  completed: '#eab308',  // yellow — DB enum for "planted"
   skipped: '#9ca3af',
 };
 
@@ -368,18 +375,23 @@ function PointsMap({ points, selectedId, onSelect, route, userLocation }) {
 
     if (route?.polyline?.length >= 2) {
       const routeGroup = L.layerGroup().addTo(map);
+      // Main routed path — royal blue for high-contrast visibility against
+      // the satellite/orthophoto basemap. Solid line.
       const line = L.polyline(route.polyline, {
-        color: '#0f766e',
+        color: '#4169e1',
         weight: 4,
-        opacity: 0.9,
+        opacity: 0.95,
         lineCap: 'round',
         lineJoin: 'round',
       }).addTo(routeGroup);
       let bounds = line.getBounds();
 
       if (route.final_connector?.length === 2) {
+        // Final-leg connector ("you must walk this last bit off-road") in
+        // light orange + dashed so it reads as a different style from the
+        // main routed path without competing for attention.
         const connector = L.polyline(route.final_connector, {
-          color: '#f59e0b',
+          color: '#fdba74',
           weight: 4,
           opacity: 0.95,
           dashArray: '8 8',
@@ -567,6 +579,15 @@ export default function FieldApp() {
   const [routeBusy, setRouteBusy] = useState(false);
   const [routeError, setRouteError] = useState('');
   const [welcomeOpen, setWelcomeOpen] = useState(false);
+  // 'register' = first-time sign-up → greet with "Welcome".
+  // 'login'    = returning planter   → greet with "Welcome back".
+  const [welcomeKind, setWelcomeKind] = useState('login');
+
+  // Two-step plant flow: confirmation modal asks before the API call,
+  // success modal acknowledges after. Both are state-driven so they survive
+  // tab switches in the same window.
+  const [pendingMarkPoint, setPendingMarkPoint] = useState(null);
+  const [completedMarkPoint, setCompletedMarkPoint] = useState(null);
 
   const handleSelect = useCallback((id) => {
     setSelectedId(id);
@@ -623,12 +644,18 @@ export default function FieldApp() {
 
   useEffect(() => {
     if (isAuthenticated && sessionStorage.getItem('mv_field_show_welcome') === '1') {
+      // Use the kind flag set by the auth store to pick "Welcome" vs
+      // "Welcome back". Default to 'login' if the flag is missing so an
+      // unknown state still produces the safer "Welcome back" greeting.
+      const kind = sessionStorage.getItem('mv_field_welcome_kind') || 'login';
+      setWelcomeKind(kind === 'register' ? 'register' : 'login');
       setWelcomeOpen(true);
     }
   }, [isAuthenticated, planter?.id]);
 
   const closeWelcome = () => {
     sessionStorage.removeItem('mv_field_show_welcome');
+    sessionStorage.removeItem('mv_field_welcome_kind');
     setWelcomeOpen(false);
   };
 
@@ -637,17 +664,44 @@ export default function FieldApp() {
     [points, selectedId],
   );
 
-  const handleMark = async (point, status) => {
+  // PointActionSheet now opens the confirmation modal instead of calling
+  // the API directly, so a planter never marks a point as planted by
+  // accident. We also close the bottom action sheet immediately so the
+  // confirmation modal isn't half-hidden behind it on phone screens.
+  // If the planter cancels, they re-tap the marker to reopen the sheet.
+  const handleMark = (point, _status) => {
+    setMarkError('');
+    setSelectedId(null);
+    setPendingMarkPoint(point);
+  };
+
+  const cancelMark = () => {
+    if (markBusy) return;
+    setPendingMarkPoint(null);
+  };
+
+  const confirmMark = async () => {
+    const point = pendingMarkPoint;
+    if (!point) return;
     setMarkBusy(true);
     setMarkError('');
     try {
-      await markPointStatus(point.assignment_point_id, status);
+      await markPointStatus(point.assignment_point_id, 'completed');
       await reload();
+      // Close the confirmation modal AND the action sheet, then open the
+      // success modal so the planter sees explicit acknowledgement.
+      setPendingMarkPoint(null);
+      setSelectedId(null);
+      setCompletedMarkPoint(point);
     } catch (error) {
       setMarkError(error.message || 'Could not update point status');
     } finally {
       setMarkBusy(false);
     }
+  };
+
+  const closeCompletionModal = () => {
+    setCompletedMarkPoint(null);
   };
 
   if (!isAuthenticated) {
@@ -740,12 +794,52 @@ export default function FieldApp() {
 
       <Modal
         open={welcomeOpen}
-        title={`Welcome back${planter?.full_name ? `, ${planter.full_name}` : ''}`}
+        title={`${welcomeKind === 'register' ? 'Welcome' : 'Welcome back'}${planter?.full_name ? `, ${planter.full_name}` : ''}`}
         confirmLabel="Continue"
         cancelLabel=""
         onConfirm={closeWelcome}
       >
-        <p>Your field map is ready.</p>
+        <p>
+          {welcomeKind === 'register'
+            ? 'Your planter account is ready. Your assigned planting points will appear on the map below.'
+            : 'Your field map is ready.'}
+        </p>
+      </Modal>
+
+      <Modal
+        open={Boolean(pendingMarkPoint)}
+        title={`Mark point${pendingMarkPoint?.point_num ? ` #${pendingMarkPoint.point_num}` : ''} as planted?`}
+        variant="warning"
+        confirmLabel="Yes, mark as planted"
+        cancelLabel="Not yet"
+        busy={markBusy}
+        onConfirm={confirmMark}
+        onCancel={cancelMark}
+      >
+        <p>
+          Confirm that you have planted a mangrove seedling at this point.
+          The marker will turn yellow on your map and the admin's records
+          will update accordingly.
+        </p>
+        {markError && (
+          <p style={{ color: '#dc2626', marginTop: 8 }}>{markError}</p>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(completedMarkPoint)}
+        title="Point planted!"
+        variant="success"
+        confirmLabel="Continue"
+        cancelLabel=""
+        onConfirm={closeCompletionModal}
+      >
+        <p>
+          Great work — point
+          {completedMarkPoint?.point_num ? ` #${completedMarkPoint.point_num}` : ''}
+          {' '}has been recorded as planted. It now shows in yellow on your
+          field map.
+        </p>
       </Modal>
     </div>
   );

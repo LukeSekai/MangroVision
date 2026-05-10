@@ -1564,7 +1564,13 @@ def get_assignment_points(assignment_id: int) -> List[dict]:
 
 
 def get_planter_field_points(planter_id: int) -> List[dict]:
-    """Return all active assignment points for one planter, ordered for field use."""
+    """Return active and completed assignment points for one planter.
+
+    Completed assignments are included so finished points remain on the
+    field map (rendered as "planted" in yellow) instead of disappearing
+    the moment the last point in a batch is completed. Use the
+    'archived' status when an assignment really should be hidden.
+    """
     conn = _get_connection()
     rows = conn.execute("""
         SELECT
@@ -1594,7 +1600,7 @@ def get_planter_field_points(planter_id: int) -> List[dict]:
         JOIN planting_points pp ON pp.id = pap.planting_point_id
         JOIN analyses a ON a.id = pp.analysis_id
         WHERE pa.planter_id = ?
-          AND pa.status = 'active'
+          AND pa.status IN ('active', 'completed')
         ORDER BY pa.assignment_date DESC, pap.sequence_num ASC
     """, (planter_id,)).fetchall()
     conn.close()

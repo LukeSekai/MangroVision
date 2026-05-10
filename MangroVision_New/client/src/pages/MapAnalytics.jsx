@@ -37,6 +37,11 @@ export default function MapAnalytics() {
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
 
+  // Two-step "Export Saved Points" flow — confirmation modal asks before
+  // running the export, success modal acknowledges after the download completes.
+  const [pendingExportFormat, setPendingExportFormat] = useState(null);
+  const [completedExportFormat, setCompletedExportFormat] = useState(null);
+
   useEffect(() => {
     fetchStats();
     fetchPoints();
@@ -108,10 +113,26 @@ export default function MapAnalytics() {
     downloadBlob(blob, `mangrovision_${selectedAnalysis.uploaded_file_name}.${format}`);
   };
 
-  const handleExport = async (format) => {
-    if (!allSavedPoints.length) return;
+  // Wrapped in a request → confirm → perform → success flow so users get a
+  // confirmation modal before the bulk export runs and an explicit success
+  // modal when the file lands.
+  const requestSavedPointsExport = (format) => {
+    if (!allSavedPoints.length || busyExport) return;
+    setExportError('');
+    setPendingExportFormat(format);
+  };
+
+  const cancelSavedPointsExport = () => {
+    if (busyExport) return;
+    setPendingExportFormat(null);
+  };
+
+  const performSavedPointsExport = async () => {
+    const format = pendingExportFormat;
+    if (!format || !allSavedPoints.length) return;
 
     setBusyExport(format);
+    setExportError('');
     try {
       const response = await fetch(`${API}/api/export/${format}`, {
         method: 'POST',
@@ -137,6 +158,8 @@ export default function MapAnalytics() {
 
       const blob = await response.blob();
       downloadBlob(blob, `mangrovision_all_points.${format}`);
+      setPendingExportFormat(null);
+      setCompletedExportFormat(format);
     } catch (error) {
       setExportError(error.message || 'Export failed');
     } finally {
@@ -328,7 +351,7 @@ export default function MapAnalytics() {
             <button
               key={fmt}
               className="btn btn-secondary btn-sm"
-              onClick={() => { setExportError(''); handleExport(fmt); }}
+              onClick={() => requestSavedPointsExport(fmt)}
               disabled={!allSavedPoints.length || Boolean(busyExport)}
             >
               {busyExport === fmt ? 'Exporting…' : fmt.toUpperCase()}
@@ -360,6 +383,42 @@ export default function MapAnalytics() {
         onCancel={() => { if (!deleteBusy) setPendingDeleteId(null); }}
       >
         <p>This permanently removes the analysis and all its saved planting points from the database. This action cannot be undone.</p>
+      </Modal>
+
+      <Modal
+        open={Boolean(pendingExportFormat)}
+        title={`Export all saved points as ${pendingExportFormat?.toUpperCase() || ''}?`}
+        variant="info"
+        confirmLabel={`Download ${pendingExportFormat?.toUpperCase() || ''}`.trim()}
+        cancelLabel="Cancel"
+        busy={Boolean(busyExport)}
+        onConfirm={performSavedPointsExport}
+        onCancel={cancelSavedPointsExport}
+      >
+        <p>
+          {allSavedPoints.length} saved planting point{allSavedPoints.length === 1 ? '' : 's'}
+          {' '}across all analyses will be bundled into a single
+          {' '}<strong>.{pendingExportFormat || 'file'}</strong> download.
+        </p>
+        <p>The file will be saved to your browser's downloads folder.</p>
+        {exportError && (
+          <p style={{ color: '#dc2626', marginTop: 8 }}>{exportError}</p>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(completedExportFormat)}
+        title={`${completedExportFormat?.toUpperCase() || 'File'} downloaded`}
+        variant="success"
+        confirmLabel="Got it"
+        cancelLabel=""
+        onConfirm={() => setCompletedExportFormat(null)}
+      >
+        <p>
+          {allSavedPoints.length} planting point{allSavedPoints.length === 1 ? '' : 's'} exported as
+          {' '}<strong>mangrovision_all_points.{completedExportFormat}</strong>.
+          {' '}Check your downloads folder.
+        </p>
       </Modal>
     </Panel>
   );

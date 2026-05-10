@@ -1,6 +1,43 @@
 import { useEffect, useState } from 'react';
 import { TILESET_PATH } from '../config/mapTiles';
+import Modal from '../components/Modal';
 import './ResultsOverlay.css';
+
+// Per-format metadata for the confirmation/success modals. Keeping it inline
+// next to the consumer so the labels and descriptions stay close to the
+// buttons that trigger them.
+const EXPORT_FORMAT_META = {
+  png: {
+    label: 'Visualization PNG',
+    extension: 'png',
+    description: 'Annotated drone image with detected canopies, danger buffers, and planting points.',
+  },
+  json: {
+    label: 'JSON Data',
+    extension: 'json',
+    description: 'Raw analysis result for programmatic use or thesis appendix.',
+  },
+  csv: {
+    label: 'CSV',
+    extension: 'csv',
+    description: 'Spreadsheet-friendly waypoint table (latitude, longitude, point #, area).',
+  },
+  gpx: {
+    label: 'GPX',
+    extension: 'gpx',
+    description: 'GPX waypoints that load on handheld GPS units and field-mapping apps.',
+  },
+  kml: {
+    label: 'KML',
+    extension: 'kml',
+    description: 'KML overlay that opens in Google Earth and Google My Maps.',
+  },
+  geojson: {
+    label: 'GeoJSON',
+    extension: 'geojson',
+    description: 'GeoJSON for QGIS, Mapbox, Leaflet, and other GIS tools.',
+  },
+};
 
 const ICON_AREA = (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
@@ -155,6 +192,12 @@ export default function ResultsOverlay({
   const [exportError, setExportError] = useState('');
   const [showCoords, setShowCoords] = useState(false);
 
+  // Two-step export flow:
+  //   pendingExportFormat — user clicked an export button, confirmation modal asks
+  //   completedExportFormat — file finished downloading, success modal acknowledges
+  const [pendingExportFormat, setPendingExportFormat] = useState(null);
+  const [completedExportFormat, setCompletedExportFormat] = useState(null);
+
   useEffect(() => {
     if (open) {
       setVisible(true);
@@ -201,12 +244,46 @@ export default function ResultsOverlay({
     if (event.target === event.currentTarget) onClose();
   };
 
-  const runExport = async (format) => {
-    if (!onExport) return;
+  // Each export now goes through:
+  //   1. requestExport(format)  → opens the confirmation modal (no I/O yet)
+  //   2. performExport()        → runs after the user confirms; downloads the file
+  //   3. completedExportFormat  → success modal opens automatically
+  const requestExport = (format) => {
+    if (!format || !EXPORT_FORMAT_META[format]) return;
+    setExportError('');
+    setPendingExportFormat(format);
+  };
+
+  const cancelExport = () => {
+    if (busyExport) return;
+    setPendingExportFormat(null);
+  };
+
+  const performExport = async () => {
+    const format = pendingExportFormat;
+    if (!format) return;
+
     setBusyExport(format);
     setExportError('');
     try {
-      await onExport(format);
+      if (format === 'png') {
+        const dataUrl = result.images?.visualization_data_url;
+        if (!dataUrl) throw new Error('Visualization image is not available.');
+        downloadDataUrl(dataUrl, `${baseName}_visualization.png`);
+      } else if (format === 'json') {
+        const payload = result.exports?.json_results;
+        if (!payload) throw new Error('JSON results payload is not available.');
+        downloadText(
+          JSON.stringify(payload, null, 2),
+          `${baseName}_results.json`,
+          'application/json',
+        );
+      } else {
+        if (!onExport) throw new Error('Export handler is not wired up.');
+        await onExport(format);
+      }
+      setPendingExportFormat(null);
+      setCompletedExportFormat(format);
     } catch (err) {
       setExportError(err?.message || `Could not export ${format.toUpperCase()}`);
     } finally {
@@ -214,17 +291,7 @@ export default function ResultsOverlay({
     }
   };
 
-  const handleDownloadViz = () => {
-    const dataUrl = result.images?.visualization_data_url;
-    if (!dataUrl) return;
-    downloadDataUrl(dataUrl, `${baseName}_visualization.png`);
-  };
-
-  const handleDownloadJson = () => {
-    const payload = result.exports?.json_results;
-    if (!payload) return;
-    downloadText(JSON.stringify(payload, null, 2), `${baseName}_results.json`, 'application/json');
-  };
+  const closeCompletedExportModal = () => setCompletedExportFormat(null);
 
   const matchSuccess = mapInfo.match?.success;
   const matchConfidence = mapInfo.match?.confidence;
@@ -495,23 +562,23 @@ export default function ResultsOverlay({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={handleDownloadViz}
-                    disabled={!result.images?.visualization_data_url}
+                    onClick={() => requestExport('png')}
+                    disabled={!result.images?.visualization_data_url || Boolean(busyExport)}
                   >
                     Visualization PNG
                   </button>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={handleDownloadJson}
-                    disabled={!result.exports?.json_results}
+                    onClick={() => requestExport('json')}
+                    disabled={!result.exports?.json_results || Boolean(busyExport)}
                   >
                     JSON Data
                   </button>
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runExport('csv')}
+                    onClick={() => requestExport('csv')}
                     disabled={Boolean(busyExport)}
                   >
                     {busyExport === 'csv' ? 'Exporting…' : 'CSV'}
@@ -519,7 +586,7 @@ export default function ResultsOverlay({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runExport('gpx')}
+                    onClick={() => requestExport('gpx')}
                     disabled={Boolean(busyExport)}
                   >
                     {busyExport === 'gpx' ? 'Exporting…' : 'GPX'}
@@ -527,7 +594,7 @@ export default function ResultsOverlay({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runExport('kml')}
+                    onClick={() => requestExport('kml')}
                     disabled={Boolean(busyExport)}
                   >
                     {busyExport === 'kml' ? 'Exporting…' : 'KML'}
@@ -535,7 +602,7 @@ export default function ResultsOverlay({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => runExport('geojson')}
+                    onClick={() => requestExport('geojson')}
                     disabled={Boolean(busyExport)}
                   >
                     {busyExport === 'geojson' ? 'Exporting…' : 'GeoJSON'}
@@ -632,6 +699,37 @@ export default function ResultsOverlay({
           </section>
         </div>
       </div>
+
+      <Modal
+        open={Boolean(pendingExportFormat)}
+        title={`Download as ${EXPORT_FORMAT_META[pendingExportFormat]?.label || pendingExportFormat?.toUpperCase()}?`}
+        variant="info"
+        confirmLabel={`Download ${EXPORT_FORMAT_META[pendingExportFormat]?.extension?.toUpperCase() || ''}`.trim()}
+        cancelLabel="Cancel"
+        busy={Boolean(busyExport)}
+        onConfirm={performExport}
+        onCancel={cancelExport}
+      >
+        <p>{EXPORT_FORMAT_META[pendingExportFormat]?.description}</p>
+        <p>The file will be saved to your browser's downloads folder.</p>
+        {exportError && (
+          <p style={{ color: '#dc2626', marginTop: 8 }}>{exportError}</p>
+        )}
+      </Modal>
+
+      <Modal
+        open={Boolean(completedExportFormat)}
+        title={`${EXPORT_FORMAT_META[completedExportFormat]?.label || completedExportFormat?.toUpperCase() || 'File'} downloaded`}
+        variant="success"
+        confirmLabel="Got it"
+        cancelLabel=""
+        onConfirm={closeCompletedExportModal}
+      >
+        <p>
+          The {EXPORT_FORMAT_META[completedExportFormat]?.label || completedExportFormat?.toUpperCase()}
+          {' '}file has been saved to your downloads folder.
+        </p>
+      </Modal>
     </div>
   );
 }

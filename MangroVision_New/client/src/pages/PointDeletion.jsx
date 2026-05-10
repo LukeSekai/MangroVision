@@ -42,6 +42,10 @@ export default function PointDeletion() {
   const layersRef = useRef({});
   const fittedRef = useRef(false);
 
+  // Track external moves we apply so the moveend handler doesn't echo them
+  // back to the store and create a render loop.
+  const skipNextSyncRef = useRef(false);
+
   const points = useMapStore((s) => s.points);
   const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
@@ -50,6 +54,12 @@ export default function PointDeletion() {
   const forbiddenZones = useMapStore((s) => s.forbiddenZones);
   const erodedZones = useMapStore((s) => s.erodedZones);
   const deletePoints = useMapStore((s) => s.deletePoints);
+  // Subscribe to center/zoom only for the cross-sync effect below; the
+  // initial map view in the init effect is read via getState() so the init
+  // effect's `[]` deps stay empty (we don't want to re-create the map on
+  // every pan).
+  const center = useMapStore((s) => s.center);
+  const zoom = useMapStore((s) => s.zoom);
 
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -104,12 +114,30 @@ export default function PointDeletion() {
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return undefined;
 
+    // Pull the initial view from the shared mapStore so this page opens at
+    // exactly the same position/zoom the user was looking at on the main
+    // MapAnalytics map. Store-side `center` is [lon, lat]; Leaflet expects
+    // [lat, lon]. Using getState() instead of subscribed values keeps this
+    // effect's deps empty so the map isn't re-created on every pan.
+    const initial = useMapStore.getState();
     const map = L.map(containerRef.current, {
-      center: [10.78, 122.6253],
-      zoom: 21,
+      center: [initial.center[1], initial.center[0]],
+      zoom: initial.zoom,
       maxZoom: 24,
       zoomControl: false,
       attributionControl: false,
+    });
+
+    // Persist user pans + zooms back to the shared store so the main
+    // MapView (still mounted in the background) and any other page that
+    // reads the store sees the same view when this page unmounts.
+    map.on('moveend', () => {
+      if (skipNextSyncRef.current) {
+        skipNextSyncRef.current = false;
+        return;
+      }
+      const c = map.getCenter();
+      useMapStore.getState().setView([c.lng, c.lat], map.getZoom());
     });
 
     const satellite = L.tileLayer(
@@ -181,6 +209,22 @@ export default function PointDeletion() {
       try { erodedLayer.addData(erodedZones); } catch { /* skip malformed geojson */ }
     }
   }, [forbiddenZones, erodedZones]);
+
+  // Pull external store changes (e.g. user panned the underlying MapView
+  // before opening this page, or another tab's interaction wrote a new
+  // view). Equality check + skip-ref guards against feedback loops with
+  // the moveend handler above.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const c = map.getCenter();
+    const sameLng = Math.abs(c.lng - center[0]) < 1e-7;
+    const sameLat = Math.abs(c.lat - center[1]) < 1e-7;
+    const sameZoom = map.getZoom() === zoom;
+    if (sameLng && sameLat && sameZoom) return;
+    skipNextSyncRef.current = true;
+    map.setView([center[1], center[0]], zoom, { animate: false });
+  }, [center, zoom]);
 
   useEffect(() => {
     const map = mapRef.current;

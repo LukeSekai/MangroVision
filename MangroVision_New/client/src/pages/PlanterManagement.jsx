@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMapStore } from '../stores/mapStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
+import PlanterActivityReport from './PlanterActivityReport';
 import './PlanterManagement.css';
 
 function EditPlanterDialog({ planter, form, onChange, onSave, onClose, busy, error }) {
@@ -126,6 +127,10 @@ export default function PlanterManagement() {
   // Deactivate confirmation modal state
   const [deactivateTarget, setDeactivateTarget] = useState(null);
   const [deactivateBusy, setDeactivateBusy] = useState(false);
+
+  // Activity report (full-screen overlay) — purely additive view, doesn't
+  // disturb the existing Dashboard / Roster / Assignments layout.
+  const [reportOpen, setReportOpen] = useState(false);
 
   // Archive assignment confirmation modal state
   const [archiveTarget, setArchiveTarget] = useState(null);
@@ -351,6 +356,18 @@ export default function PlanterManagement() {
               <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{dashStats.completed_assigned_points}</div>
             </div>
           </div>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            style={{ marginTop: 12, width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            onClick={() => setReportOpen(true)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 3v18h18" />
+              <path d="M7 14l4-4 4 4 5-5" />
+            </svg>
+            View Activity Report
+          </button>
         </PanelCard>
       )}
 
@@ -416,6 +433,12 @@ export default function PlanterManagement() {
           ) : (
             <>
               {activePlanters.map((p) => (
+                /*
+                 * Roster row is now read-only. Edit and Deactivate actions
+                 * live in the Activity Report ("See Details" / "Deactivate"
+                 * per-planter card) so the roster panel stays focused on a
+                 * quick at-a-glance list.
+                 */
                 <div key={p.id} className="planter-row">
                   <div className="planter-avatar">{p.full_name?.charAt(0)?.toUpperCase()}</div>
                   <div className="planter-info">
@@ -423,10 +446,6 @@ export default function PlanterManagement() {
                     <span className="planter-meta">
                       {p.username ? `@${p.username} · ` : ''}{p.active_assignments || 0} assignments
                     </span>
-                  </div>
-                  <div className="planter-actions">
-                    <button className="btn btn-ghost btn-sm" onClick={() => openEdit(p)}>Edit</button>
-                    <button className="btn btn-ghost btn-sm" onClick={() => handleDeactivate(p)}>Deactivate</button>
                   </div>
                 </div>
               ))}
@@ -562,6 +581,11 @@ export default function PlanterManagement() {
           error={editError}
         />
       )}
+
+      <PlanterActivityReport
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+      />
 
       <Modal
         open={Boolean(deactivateTarget)}

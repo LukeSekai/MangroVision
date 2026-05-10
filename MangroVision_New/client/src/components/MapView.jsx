@@ -13,11 +13,19 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
+// Admin-side palette. Mirrors the planter view so the same point reads the
+// same colour on both maps:
+//   - planned   = green  (no planter assigned yet)
+//   - assigned  = blue   (assigned but not yet planted)
+//   - planted   = yellow (planter completed this point in the field)
+//   - completed = yellow (DB enum equivalent of planted; still distinct from
+//                         the never-touched "planned" green so reviewers can
+//                         see at a glance which points are done)
 const STATUS_COLORS = {
   planned: '#16a34a',
   assigned: '#2563eb',
-  planted: '#d97706',
-  completed: '#059669',
+  planted: '#eab308',
+  completed: '#eab308',
   skipped: '#9ca3af',
 };
 
@@ -30,22 +38,29 @@ const PREVIEW_COLORS = {
 
 // Scale marker radius + border weight with zoom so dense point clouds don't
 // clump into a green blob at 20m / 50m / 100m scale views.
+// Marker radii bumped up across the board so points stay readable at the
+// 10-15 m zoom range (zooms 19-20). At zoom 20 (~10 m scale bar) the dots
+// were 1.6 px, which is below the natural visibility threshold on
+// satellite/orthophoto backgrounds.
 const getPointRadius = (zoom) => {
-  if (zoom >= 22) return 3.5;
-  if (zoom >= 21) return 2.4;
-  if (zoom >= 20) return 1.6;
-  if (zoom >= 19) return 1.05;
-  if (zoom >= 18) return 0.8;
-  if (zoom >= 17) return 0.65;
-  return 0.55;
+  if (zoom >= 22) return 4.5;
+  if (zoom >= 21) return 3.5;
+  if (zoom >= 20) return 3.0;   // 10 m view — was 1.6
+  if (zoom >= 19) return 2.2;   // 20 m view — was 1.05
+  if (zoom >= 18) return 1.6;
+  if (zoom >= 17) return 1.2;
+  return 1.0;
 };
 
+// Outline weight tracks the radius so the dark stroke stays proportional
+// instead of disappearing entirely at lower zooms.
 const getPointWeight = (zoom) => {
-  if (zoom >= 22) return 1.1;
-  if (zoom >= 21) return 0.75;
-  if (zoom >= 20) return 0.45;
-  if (zoom >= 19) return 0.2;
-  return 0;
+  if (zoom >= 22) return 1.4;
+  if (zoom >= 21) return 1.2;
+  if (zoom >= 20) return 1.0;   // was 0.45
+  if (zoom >= 19) return 0.7;   // was 0.2
+  if (zoom >= 18) return 0.4;
+  return 0.25;
 };
 
 const getPreviewFilteredRadius = (zoom) => Math.max(0.6, getPointRadius(zoom) - 0.35);
@@ -57,9 +72,14 @@ export default function MapView() {
   const layersRef = useRef({});
   const fittedRef = useRef(false);
   const pointsFingerprintRef = useRef('');
+  // True while we're applying an external store change to the map. Lets the
+  // moveend handler ignore that programmatic move so we don't write the same
+  // view back to the store (which would cause a render loop).
+  const skipNextSyncRef = useRef(false);
 
   const center = useMapStore((s) => s.center);
   const zoom = useMapStore((s) => s.zoom);
+  const setView = useMapStore((s) => s.setView);
   const points = useMapStore((s) => s.points);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const fetchZones = useMapStore((s) => s.fetchZones);
@@ -136,6 +156,19 @@ export default function MapView() {
     mapRef.current = map;
     setMapInstance(map);
 
+    // Persist user pans + zooms back to the store so other map-bearing pages
+    // (PointDeletion in particular) inherit the same view when they mount.
+    map.on('moveend', () => {
+      if (skipNextSyncRef.current) {
+        // This moveend was triggered by us applying a store change to the
+        // map. Don't echo it back to the store.
+        skipNextSyncRef.current = false;
+        return;
+      }
+      const c = map.getCenter();
+      setView([c.lng, c.lat], map.getZoom());
+    });
+
     // Rescale point markers when zoom changes so they don't clump when zoomed out
     map.on('zoomend', () => {
       const z = map.getZoom();
@@ -174,7 +207,22 @@ export default function MapView() {
       map.remove();
       mapRef.current = null;
     };
-  }, [center, fetchPoints, fetchZones, setMapInstance, zoom]);
+  }, [center, fetchPoints, fetchZones, setMapInstance, setView, zoom]);
+
+  // When the store's view changes (e.g. PointDeletion wrote to it on its own
+  // moveend), bring this map to the same view. The skip ref + a rough equality
+  // check below prevent feedback loops with the moveend handler above.
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const c = map.getCenter();
+    const sameLng = Math.abs(c.lng - center[0]) < 1e-7;
+    const sameLat = Math.abs(c.lat - center[1]) < 1e-7;
+    const sameZoom = map.getZoom() === zoom;
+    if (sameLng && sameLat && sameZoom) return;
+    skipNextSyncRef.current = true;
+    map.setView([center[1], center[0]], zoom, { animate: false });
+  }, [center, zoom]);
 
   // Sync layer visibility
   useEffect(() => {
@@ -217,7 +265,9 @@ export default function MapView() {
 
     layer.clearLayers();
 
-    const statusBg = { planned: '#dcfce7', assigned: '#dbeafe', planted: '#fef3c7', completed: '#d1fae5' };
+    // Popup status badge background. completed / planted now use the same
+    // amber tint so the point's badge matches the yellow marker.
+    const statusBg = { planned: '#dcfce7', assigned: '#dbeafe', planted: '#fef3c7', completed: '#fef3c7' };
 
     points.forEach((p) => {
       const status = p.assigned_planter_name
