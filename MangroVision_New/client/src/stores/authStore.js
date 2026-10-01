@@ -1,13 +1,30 @@
 import { create } from 'zustand';
+import { useMapStore } from './mapStore';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
-export const useAuthStore = create((set, get) => ({
-  isAuthenticated: !!localStorage.getItem('mv_token'),
-  token: localStorage.getItem('mv_token') || null,
-  user: JSON.parse(localStorage.getItem('mv_user') || 'null'),
+// Remove credentials left by pre-cookie releases. Only non-sensitive display
+// data remains cached; the server-side HttpOnly cookie is authoritative.
+localStorage.removeItem('mv_token');
+localStorage.removeItem('mangrovision_token');
+
+function readStoredUser() {
+  try {
+    return JSON.parse(localStorage.getItem('mv_user') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+const initialUser = readStoredUser();
+
+export const useAuthStore = create((set) => ({
+  isAuthenticated: Boolean(initialUser),
+  token: initialUser ? 'cookie' : null,
+  user: initialUser,
 
   login: async (username, password) => {
+    useMapStore.getState().resetWorkspaceData();
     const res = await fetch(`${API}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -18,7 +35,6 @@ export const useAuthStore = create((set, get) => ({
       throw new Error(err.detail || 'Login failed');
     }
     const data = await res.json();
-    localStorage.setItem('mv_token', data.token);
     localStorage.setItem('mv_user', JSON.stringify({
       id: data.user_id,
       full_name: data.full_name,
@@ -27,28 +43,23 @@ export const useAuthStore = create((set, get) => ({
     sessionStorage.setItem('mv_show_welcome', '1');
     set({
       isAuthenticated: true,
-      token: data.token,
+      token: 'cookie',
       user: { id: data.user_id, full_name: data.full_name, role: data.role },
     });
   },
 
   logout: () => {
-    const token = get().token;
-    if (token) {
-      fetch(`${API}/api/auth/logout?token=${token}`, { method: 'POST' }).catch(() => {});
-    }
-    localStorage.removeItem('mv_token');
+    useMapStore.getState().resetWorkspaceData();
+    fetch(`${API}/api/auth/logout`, { method: 'POST' }).catch(() => {});
     localStorage.removeItem('mv_user');
     set({ isAuthenticated: false, token: null, user: null });
   },
 
   hydrateSession: async () => {
-    const token = get().token;
-    if (!token) return;
     try {
-      const res = await fetch(`${API}/api/auth/session?token=${encodeURIComponent(token)}`);
+      const res = await fetch(`${API}/api/auth/session`);
       if (!res.ok) {
-        localStorage.removeItem('mv_token');
+        useMapStore.getState().resetWorkspaceData();
         localStorage.removeItem('mv_user');
         set({ isAuthenticated: false, token: null, user: null });
         return;
@@ -56,7 +67,7 @@ export const useAuthStore = create((set, get) => ({
       const data = await res.json();
       const user = { id: data.user_id, full_name: data.full_name, role: data.role };
       localStorage.setItem('mv_user', JSON.stringify(user));
-      set({ isAuthenticated: true, user });
+      set({ isAuthenticated: true, token: 'cookie', user });
     } catch {
       // Leave the cached session in place on transient network failures.
     }

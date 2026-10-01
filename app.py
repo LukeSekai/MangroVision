@@ -28,7 +28,6 @@ from urllib.parse import urlencode
 import streamlit_folium as st_folium
 import folium
 from branca.element import Element
-from pyproj import Transformer
 
 # Add canopy_detection to path
 sys.path.append(str(Path(__file__).parent / "canopy_detection"))
@@ -2257,6 +2256,8 @@ def _apply_forbidden_zone_canopy_exclusion(detector, results, forbidden_mask):
         canopy_polygons,
         filtered_canopy_mask,
         results["canopy_buffer_m"],
+        extra_mask=results.get("seedling_mask"),
+        extra_buffer_m=results.get("seedling_buffer_m", 0.0),
     )
     plantable_zone = detector.identify_plantable_zones(danger_zone)
     hexagons = detector.generate_hexagonal_planting_zones(
@@ -2349,7 +2350,7 @@ def _add_operational_map_layers(map_obj, orthophoto_name: str = "Orthophoto Over
     ).add_to(map_obj)
 
     folium.TileLayer(
-        tiles=f"{tile_server_base_url}/FINAL%20MAP/{{z}}/{{x}}/{{y}}.jpg",
+        tiles=f"{tile_server_base_url}/FINAL/{{z}}/{{x}}/{{y}}.png",
         attr='MangroVision Orthophoto | QGIS',
         name=orthophoto_name,
         overlay=True,
@@ -4037,15 +4038,17 @@ def show_eroded_zone_editor():
     <div class="info-box">
         <strong>🏜️ Eroded Zone Editor</strong><br>
         <span style="color: #1565C0;">
-        Draw polygons on the map to mark <strong>eroded areas</strong> where mangroves
-        should <strong>not</strong> be planted. These zones will be excluded from
-        planting recommendations just like forbidden zones (towers, bridges, houses).<br><br>
+        Draw polygons on the map to mark <strong>eroded areas</strong>. Planting
+        points remain visible inside these zones, but are labeled
+        <strong>Not Available for Planting</strong>. Removing a zone returns its
+        unassigned points to <strong>Planned</strong>. Structural forbidden zones
+        still remove planting points.<br><br>
         <strong>How to use:</strong><br>
         1. Use the polygon draw tool (▣) on the left side of the map<br>
         2. Click points on the map to define the eroded area boundary<br>
         3. Double-click to finish the polygon<br>
         4. Click <strong>"💾 Save Eroded Zones"</strong> to save<br>
-        5. Saved zones will automatically be applied when analyzing drone images
+        5. Saved zones remain visible with analyzed planting points
         </span>
     </div>
     """, unsafe_allow_html=True)
@@ -4277,7 +4280,7 @@ def show_eroded_zone_editor():
     st.markdown("""
     <div style="background: #1E1E1E; padding: 1rem; border-radius: 8px; margin-top: 1rem;">
         <strong style="color: #fff;">Legend:</strong><br>
-        <span style="color: #FF6F00;">■</span> <span style="color: #ccc;">Eroded Zones (no planting)</span><br>
+        <span style="color: #FF6F00;">■</span> <span style="color: #ccc;">Eroded Zones (covered points visible but unavailable)</span><br>
         <span style="color: #FF0000;">■</span> <span style="color: #ccc;">Forbidden Zones - structures (no planting)</span><br>
         <span style="color: #4CAF50;">■</span> <span style="color: #ccc;">Safe for planting (shown in Analyze mode)</span>
     </div>
@@ -4720,7 +4723,8 @@ def main():
     workflow_label = "Standard canopy mapping" if ai_available else "Backup canopy mapping"
     workspace_stats = get_all_stats()
     eroded_zone_count = len(_eroded_filter.forbidden_polygons)
-    total_exclusions = _forbidden_filter.zone_count + eroded_zone_count
+    total_exclusions = _forbidden_filter.zone_count
+    total_zone_layers = total_exclusions + eroded_zone_count
     workspace_modes = [
         "Map Workspace",
         "Map Analytics",
@@ -4820,9 +4824,9 @@ def main():
                     <div class="snapshot-value">{workspace_stats['total_planting_points']}</div>
                 </div>
                 <div class="snapshot-card">
-                    <div class="snapshot-label">Active Exclusions</div>
-                    <div class="snapshot-value">{total_exclusions}</div>
-                    <div class="snapshot-sub">{_forbidden_filter.zone_count} forbidden + {eroded_zone_count} eroded</div>
+                    <div class="snapshot-label">GIS Zone Layers</div>
+                    <div class="snapshot-value">{total_zone_layers}</div>
+                    <div class="snapshot-sub">{_forbidden_filter.zone_count} forbidden + {eroded_zone_count} erosion advisories</div>
                 </div>
                 <div class="snapshot-card">
                     <div class="snapshot-label">Active Planters</div>
@@ -4906,7 +4910,7 @@ def main():
             <div class="header-meta">
                 <div class="header-badge">{workspace_stats['total_analyses']} saved analyses</div>
                 <div class="header-badge">{workspace_stats['total_planting_points']} remaining planting points</div>
-                <div class="header-badge">{total_exclusions} active exclusion polygons</div>
+                <div class="header-badge">{total_exclusions} structural exclusion polygons</div>
             </div>
         </div>
     </div>
@@ -5051,22 +5055,6 @@ def analyze_image(
             
             metadata = ExifExtractor.extract_all_metadata(str(temp_path))
             
-            # Orthophoto map bounds — derived from ALL 3 WebODM orthophotos
-            # 1st MAP: W=458971.9 E=459095.3 S=1191652.1 N=1191823.2
-            # 2nd MAP: W=458878.8 E=459027.1 S=1191652.5 N=1191788.4
-            # 3rd MAP: W=458847.6 E=459039.3 S=1191556.9 N=1191711.0
-            bounds_utm = {
-                'north': 1191823.193,    # 1st MAP top
-                'south': 1191556.918,    # 3rd MAP bottom
-                'east':  459095.262,     # 1st MAP right
-                'west':  458847.596      # 3rd MAP left
-            }
-            
-            # Convert to lat/lon for display
-            transformer = Transformer.from_crs("EPSG:32651", "EPSG:4326", always_xy=True)
-            sw_lon, sw_lat = transformer.transform(bounds_utm['west'], bounds_utm['south'])
-            ne_lon, ne_lat = transformer.transform(bounds_utm['east'], bounds_utm['north'])
-            
             # GPS validation
             image_gps = None
             image_center_lat = None
@@ -5084,11 +5072,15 @@ def analyze_image(
                 # the original three hard-coded map pieces.
                 try:
                     _gps_inside_ortho = is_inside_any_orthophoto(image_center_lat, image_center_lon)
-                except Exception:
-                    _gps_inside_ortho = (
-                        sw_lat <= image_center_lat <= ne_lat and
-                        sw_lon <= image_center_lon <= ne_lon
+                except Exception as map_check_error:
+                    progress_bar.progress(100, text="Analysis stopped — GIS boundary check failed")
+                    st.error(
+                        "The GIS map boundary could not be verified, so analysis "
+                        "was not started. Please check the configured map data and try again."
                     )
+                    st.caption(f"Boundary check error: {map_check_error}")
+                    st.session_state.run_analysis = False
+                    return
 
                 if _gps_inside_ortho:
                     st.success(f"✅ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (INSIDE map bounds)")
@@ -5107,10 +5099,17 @@ def analyze_image(
                             f"Run detection, then save only if you want to update the database."
                         )
                 else:
-                    st.warning(f"⚠️ GPS Found: {image_center_lat:.6f}°, {image_center_lon:.6f}° (OUTSIDE map bounds)")
-                    st.info("Map will show markers, but they may be outside the orthophoto area")
-                    gps_valid = False  # Still process, but warn user
-                    image_gps = gps
+                    progress_bar.progress(100, text="Analysis stopped — image is outside the GIS map")
+                    st.error(
+                        "This image is outside the supported GIS map area. "
+                        "Analysis was not started. Upload a geotagged image "
+                        "captured within the mapped project area."
+                    )
+                    st.caption(
+                        f"Image GPS: {image_center_lat:.6f}°, {image_center_lon:.6f}°"
+                    )
+                    st.session_state.run_analysis = False
+                    return
                 
                 # Use detected altitude if available
                 if 'relative_altitude' in gps and gps['relative_altitude'] is not None:
@@ -5163,11 +5162,12 @@ def analyze_image(
             except Exception:
                 eroded_zones_mtime = 0
             tuning_fingerprint = json.dumps(ai_runtime_tuning or {}, sort_keys=True)
+            erosion_policy_version = "dynamic_unavailable_v1"
             analysis_key = (
                 f"{uploaded_file.name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
                 f"{hexagon_size}_{ai_confidence}_{detection_mode}_"
                 f"{canopy_code_mtime}_{proper_code_mtime}_"
-                f"{forbidden_zones_mtime}_{eroded_zones_mtime}_"
+                f"{forbidden_zones_mtime}_{eroded_zones_mtime}_{erosion_policy_version}_"
                 f"{tuning_fingerprint}"
             )
             
@@ -5308,17 +5308,18 @@ def analyze_image(
                 
                 progress_bar.progress(60, text="⬡ Generating planting hexagons...")
                 
-                progress_bar.progress(65, text="🚫 Filtering forbidden & eroded zones...")
+                progress_bar.progress(65, text="🚫 Filtering structural forbidden zones...")
                 
                 # ── EARLY EXCLUSION-ZONE FILTERING ────────────────────────
                 # 1. Remove structure zones from canopy before danger buffers are visualized.
                 # 2. Filter planting hexagons before visualization so the Visual Results
-                #    image also excludes forbidden/eroded zone planting points.
+                #    image also excludes structural forbidden-zone planting points.
+                # Eroded zones retain points but dynamically mark them unavailable.
                 results['_forbidden_filtered'] = 0
                 results['_eroded_filtered'] = 0
                 results['_forbidden_canopy_removed_pixels'] = 0
                 results['_forbidden_canopy_removed_count'] = 0
-                if image_gps is not None and (_forbidden_filter.zone_count > 0 or _eroded_filter.zone_count > 0):
+                if image_gps is not None and _forbidden_filter.zone_count > 0:
                     _gsd = results['gsd_m_per_pixel']
                     _w, _h = results['image_size']
                     
@@ -5377,10 +5378,9 @@ def analyze_image(
                             _forbidden_mask,
                         )
                     
-                    # Filter: keep only hexagons outside forbidden AND eroded zones
+                    # Filter only structural forbidden zones. Erosion affects status, not membership.
                     _safe = []
                     _forbidden_hexes = []
-                    _eroded_hexes = []
                     for _hex in results['hexagons']:
                         _px, _py = _hex['center']
                         _lat, _lon = _px_to_gps(_px, _py)
@@ -5388,17 +5388,15 @@ def analyze_image(
                         _hex['_gps_lon'] = _lon
                         if not _forbidden_filter.is_safe_location(_lat, _lon):
                             _forbidden_hexes.append(_hex)
-                        elif not _eroded_filter.is_safe_location(_lat, _lon):
-                            _eroded_hexes.append(_hex)
                         else:
                             _safe.append(_hex)
                     
                     results['hexagons'] = _safe
                     results['hexagon_count'] = len(_safe)
                     results['_forbidden_filtered'] = len(_forbidden_hexes)
-                    results['_eroded_filtered'] = len(_eroded_hexes)
+                    results['_eroded_filtered'] = 0
                     results['_forbidden_hexagons'] = _forbidden_hexes
-                    results['_eroded_hexagons'] = _eroded_hexes
+                    results['_eroded_hexagons'] = []
                 
                 progress_bar.progress(75, text="🎨 Creating visualization...")
                 
@@ -5625,17 +5623,18 @@ def analyze_image(
             if map_image_gps is not None:
                 st.markdown("---")
                 st.markdown("### 🗺️ Geotagged Map View")
-                st.info("📍 Showing GPS markers for safe planting locations - each green point shows exact coordinates where mangroves can be planted")
+                st.info(
+                    "📍 Showing GPS markers for planting locations. Eroded zones remain "
+                    "visible; covered points are retained but marked Not Available for Planting."
+                )
                 
                 # Extract detection data for mapping
                 gsd = results['gsd_m_per_pixel']
                 canopy_polygons = results['canopy_polygons']
-                hexagons = results['hexagons']  # Already filtered by forbidden & eroded zones
+                hexagons = results['hexagons']  # Structural forbidden zones already filtered
                 width, height = results['image_size']
                 forbidden_filtered_count = results.get('_forbidden_filtered', 0)
-                eroded_filtered_count = results.get('_eroded_filtered', 0)
                 forbidden_hexagons = results.get('_forbidden_hexagons', [])
-                eroded_hexagons = results.get('_eroded_hexagons', [])
 
                 # ── AUTO-ALIGN: reuse cached ortho match ─────────────────
                 match_key = f"ortho_match_{uploaded_file.name}"
@@ -5707,16 +5706,14 @@ def analyze_image(
                     tooltip="📷 Image Location"
                 ).add_to(ortho_map)
                 
-                # ── Hexagons are already filtered by forbidden & eroded zones ──
+                # ── Hexagons are already filtered by structural forbidden zones ──
                 # (filtering was done before visualization so Visual Results
-                #  image also excludes forbidden/eroded zone hexagons)
+                #  image also excludes forbidden-zone hexagons)
                 safe_hexagons = hexagons  # Already safe — filtered earlier
 
                 _filter_msgs = []
                 if forbidden_filtered_count > 0:
                     _filter_msgs.append(f"🚫 {forbidden_filtered_count} in forbidden zones (towers/bridges/houses)")
-                if eroded_filtered_count > 0:
-                    _filter_msgs.append(f"🏜️ {eroded_filtered_count} in eroded zones")
                 if _filter_msgs:
                     st.warning(f"Planting points filtered out: {'; '.join(_filter_msgs)}. {len(safe_hexagons)} safe points remain.")
 
@@ -5749,7 +5746,7 @@ def analyze_image(
                             fillColor='orange',
                             fillOpacity=0.35,
                             weight=2,
-                            tooltip='🏜️ Eroded Zone (erosion area — not plantable)',
+                            tooltip='🏜️ Eroded Zone — covered points are not available for planting',
                         ).add_to(ez_group)
                     ez_group.add_to(ortho_map)
 
@@ -5791,31 +5788,17 @@ def analyze_image(
                         ).add_to(fz_pts)
                     fz_pts.add_to(ortho_map)
 
-                # Add ORANGE X markers for eroded-filtered hexagons
-                if eroded_hexagons:
-                    ez_pts = folium.FeatureGroup(name='Filtered Eroded Points', show=False)
-                    for eh in eroded_hexagons:
-                        lat = eh['_gps_lat']
-                        lon = eh['_gps_lon']
-                        folium.CircleMarker(
-                            location=[lat, lon],
-                            radius=4,
-                            color='#E65100',
-                            fillColor='#FF9800',
-                            fillOpacity=0.7,
-                            weight=2,
-                            tooltip='🏜️ Filtered (eroded zone)',
-                            popup=f"""🏜️ <b>Filtered Point</b><br>
-                            Reason: Inside eroded zone<br>
-                            GPS: {lat:.7f}°, {lon:.7f}°""",
-                        ).add_to(ez_pts)
-                    ez_pts.add_to(ortho_map)
-
-                # Add GREEN POINTS only for safe planting hexagons
+                # Keep every generated point; use orange for eroded-unavailable points.
                 planting_group = folium.FeatureGroup(name='Planting Zones', show=True)
                 for i, hexagon in enumerate(safe_hexagons):
                     lat = hexagon['_gps_lat']
                     lon = hexagon['_gps_lon']
+                    eroded_unavailable = not _eroded_filter.is_safe_location(lat, lon)
+                    hexagon['_inside_eroded_zone'] = eroded_unavailable
+                    hexagon['_eroded_unavailable'] = eroded_unavailable
+                    point_status = 'Not Available for Planting' if eroded_unavailable else 'Planned'
+                    point_color = '#E65100' if eroded_unavailable else '#1B5E20'
+                    point_fill = '#FF9800' if eroded_unavailable else '#4CAF50'
 
                     folium.CircleMarker(
                         location=[lat, lon],
@@ -5824,10 +5807,11 @@ def analyze_image(
                         GPS: {lat:.7f}°, {lon:.7f}°<br>
                         Pixel: ({int(hexagon['center'][0])}, {int(hexagon['center'][1])})<br>
                         Buffer: {hexagon.get('buffer_radius_m', 'N/A')}m<br>
-                        Area: {hexagon.get('area_m2', hexagon.get('area_sqm', 0)):.2f} m²""",
-                        tooltip=f"🌱 Point #{i+1}",
-                        color='#1B5E20',
-                        fillColor='#4CAF50',
+                        Area: {hexagon.get('area_m2', hexagon.get('area_sqm', 0)):.2f} m²<br>
+                        Status: <b>{point_status}</b>""",
+                        tooltip=f"🌱 Point #{i+1} — {point_status}",
+                        color=point_color,
+                        fillColor=point_fill,
                         fillOpacity=0.8,
                         weight=2
                     ).add_to(planting_group)
@@ -5865,7 +5849,12 @@ def analyze_image(
                         "Pixel X": int(px),
                         "Pixel Y": int(py),
                         "Buffer (m)": hexagon['buffer_radius_m'],
-                        "Area (m²)": round(hexagon['area_m2'], 2)
+                        "Area (m²)": round(hexagon['area_m2'], 2),
+                        "Status": (
+                            "Not Available for Planting"
+                            if hexagon.get('_eroded_unavailable')
+                            else "Planned"
+                        ),
                     })
                 
                 if coord_data:

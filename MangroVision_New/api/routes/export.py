@@ -20,6 +20,8 @@ class WaypointItem(BaseModel):
     buffer_m: Optional[float] = None
     area_m2: Optional[float] = None
     status: Optional[str] = "planned"
+    eroded_unavailable: bool = False
+    availability_reason: Optional[str] = None
 
 
 class ExportRequest(BaseModel):

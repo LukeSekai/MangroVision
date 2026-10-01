@@ -57,6 +57,13 @@
   padding: 18px 52px 12px 22px;
   border-bottom: 1px solid var(--border-light);
   background: linear-gradient(180deg, #ffffff, #f9fafb);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rs-header-logo {
+  flex-shrink: 0;
 }
 
 .rs-eyebrow {

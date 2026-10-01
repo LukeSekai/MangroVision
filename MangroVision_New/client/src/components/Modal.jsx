@@ -55,10 +55,24 @@ export default function Modal({
   busy = false,
   onConfirm,
   onCancel,
+  className = '',
+  // Optional override for the modal header icon. When provided, replaces the
+  // variant icon (question mark / warning triangle / etc) with arbitrary
+  // node — used by the welcome modal to show the MangroVision logo.
+  icon,
 }) {
   const cardRef = useRef(null);
   const previouslyFocusedRef = useRef(null);
   const confirmButtonRef = useRef(null);
+  const busyRef = useRef(busy);
+  const onCancelRef = useRef(onCancel);
+  const onConfirmRef = useRef(onConfirm);
+
+  useEffect(() => {
+    busyRef.current = busy;
+    onCancelRef.current = onCancel;
+    onConfirmRef.current = onConfirm;
+  }, [busy, onCancel, onConfirm]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -67,15 +81,17 @@ export default function Modal({
     confirmButtonRef.current?.focus();
 
     const handleKeyDown = (event) => {
-      if (busy) return;
-      if (event.key === 'Escape' && typeof onCancel === 'function') {
+      if (busyRef.current) return;
+      if (event.key === 'Escape' && typeof onCancelRef.current === 'function') {
         event.preventDefault();
-        onCancel();
+        onCancelRef.current();
         return;
       }
-      if (event.key === 'Enter' && typeof onConfirm === 'function' && event.target?.tagName !== 'TEXTAREA') {
+      // Focused controls must keep their native action (especially Cancel).
+      if (event.key === 'Enter' && typeof onConfirmRef.current === 'function' && event.target?.tagName !== 'TEXTAREA'
+          && !event.target?.closest?.('button, a, select')) {
         event.preventDefault();
-        onConfirm();
+        onConfirmRef.current();
         return;
       }
       if (event.key !== 'Tab') return;
@@ -110,20 +126,20 @@ export default function Modal({
         previous.focus();
       }
     };
-  }, [open, busy, onCancel, onConfirm]);
+  }, [open]);
 
   if (!open) return null;
 
   const confirmClass = VARIANT_BUTTON_CLASS[variant] || VARIANT_BUTTON_CLASS.default;
   const showCancel = typeof onCancel === 'function' && cancelLabel;
   const showConfirm = typeof onConfirm === 'function';
-  const variantIcon = VARIANT_ICONS[variant] || VARIANT_ICONS.default;
+  const variantIcon = icon ?? (VARIANT_ICONS[variant] || VARIANT_ICONS.default);
 
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onCancel}>
       <div
         ref={cardRef}
-        className={`modal-card modal-card-${variant}`}
+        className={`modal-card modal-card-${variant} ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="app-modal-title"

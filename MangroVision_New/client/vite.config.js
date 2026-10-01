@@ -7,7 +7,9 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
-      '/api': 'http://localhost:8000',
+      // Preserve the public/LAN host so the API can validate same-origin
+      // requests from phones. Vite's string shorthand rewrites it to localhost.
+      '/api': { target: 'http://localhost:8000', changeOrigin: false },
       '/tiles': 'http://localhost:8000',
     },
     allowedHosts: [

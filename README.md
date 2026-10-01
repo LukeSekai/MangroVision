@@ -1,81 +1,88 @@
 # MangroVision
 
-MangroVision is a Streamlit-based mangrove planting planner. It analyzes uploaded drone imagery, detects canopy danger zones, filters out forbidden and eroded areas, maps safe planting points onto the orthophoto, and exports field-ready coordinates.
+**Setting up on another laptop?** Start with the
+[step-by-step groupmate setup guide](docs/groupmate-setup.md). It lists what to
+clone, what must be copied separately, and how to check that the app runs.
 
-## Current Scope
+MangroVision is a FastAPI and React mangrove-planning system. It analyzes
+geotagged drone imagery, keeps eroded-area planting points visible but
+dynamically unavailable, manages planting assignments, and records aggregate
+organization monitoring visits for LGU staff.
 
-The repository has been trimmed to the files used by the active application flow:
+## Supported production application
 
-- `app.py` for the main Streamlit UI
-- `start_tile_server.py` plus `START_MANGROVISION.bat` and `STOP_MANGROVISION.bat` for local startup
-- `planting_database.py` for SQLite-backed analysis storage
-- `waypoint_export.py` for CSV, GPX, KML, and GeoJSON exports
-- `canopy_detection/` modules required by the app:
-  - `canopy_detector_hexagon.py`
-  - `detectree2_proper.py`
-  - `exif_extractor.py`
-  - `forbidden_zone_filter.py`
-  - `gsd_calculator.py`
-  - `ortho_matcher.py`
+Only these applications are supported as production writers:
 
-## Runtime Data Kept In Repo
+- `MangroVision_New/api`: FastAPI backend and the only database/storage client.
+- `MangroVision_New/client`: React frontend using credentialed HTTP-only cookie sessions.
 
-- `forbidden_zones.geojson` for forbidden-zone filtering
-- `eroded_zones.geojson` for user-managed erosion exclusions
-- `planting_zones.db` for saved analyses and planting points
-- `MAP/FINAL MAP/` for the map tiles used by the UI
-- `models/` for the AI weights used by detection
+The older Streamlit and standalone field applications remain historical tools;
+they are not permitted to write to the production database.
 
-## Run The App
+Production persistence uses PostgreSQL/PostGIS and private S3-compatible object
+storage. SQLite and mutable zone GeoJSON files are migration inputs only. See
+[Production database operations](docs/production-database.md) for local setup,
+migration, cutover, backup, restore, and Supabase deployment instructions.
 
-### First-time setup
+For a groupmate's laptop, follow the [clone and setup guide](docs/groupmate-setup.md).
+The current orthophoto GeoTIFF and preferred canopy checkpoint are shared
+separately; Git does not contain the image data, private credentials, or those
+two large files.
 
-Run:
+## Local development
 
-```powershell
-SETUP_ENV.bat
-```
+1. Copy `.env.example` to `.env` and replace every placeholder secret.
+2. Start Docker Desktop.
+3. Start PostgreSQL/PostGIS and MinIO:
 
-This creates the local `venv` and installs the Python packages from `requirements.txt`.
+   ```powershell
+   docker compose up -d
+   ```
 
-### One-click startup
+4. Install Python dependencies and upgrade the database:
 
-Run:
+   ```powershell
+   python -m pip install -r requirements.txt
+   alembic upgrade head
+   ```
 
-```powershell
-START_MANGROVISION.bat
-```
+5. Create the first administrator using explicit `BOOTSTRAP_ADMIN_*` values:
 
-This starts:
+   ```powershell
+   python scripts/bootstrap_admin.py
+   ```
 
-- the tile server on `http://localhost:8080`
-- the Streamlit UI on `http://localhost:8502`
+6. Install the frontend dependencies, then start the managed development server
+   from the repository root:
 
-### Manual startup
+   ```powershell
+   npm --prefix MangroVision_New/client ci
+   python MangroVision_New/start_dev.py
+   ```
 
-In two terminals from the repo root:
+   This starts FastAPI on port 8000 and React on port 5173. Running the launcher
+   again restarts this workspace's existing managed stack. Ctrl+C stops both
+   servers; on Windows, closing or terminating the launcher also removes its
+   child processes. To stop the stack from another terminal:
 
-```powershell
-venv\Scripts\python.exe start_tile_server.py
-```
+   ```powershell
+   python MangroVision_New/start_dev.py --stop
+   ```
 
-```powershell
-venv\Scripts\python.exe -m streamlit run app.py --server.port 8502
-```
+   Use the launcher for both services. Independently launched servers and other
+   programs occupying these ports are reported without being terminated.
 
-## Main User Flow
+Readiness is exposed at `/api/health/ready` and fails when PostgreSQL,
+Alembic, or private object storage is unavailable.
 
-1. Sign in to the Streamlit app.
-2. Upload a drone image.
-3. Run AI detection when detectree2 is available, otherwise use the HSV fallback.
-4. Run canopy detection and planting-point generation.
-5. Review planting points on the orthophoto map.
-6. Save results to the database or export them for field use.
+## Important behavior
 
-## Notes
-
-- The current app map points to `MAP/FINAL MAP`.
-- `MAP/FINAL MAP` is tracked in the repository so teammates can clone the repo and view the orthophoto map.
-- `venv/` is intentionally not tracked. The current local environment is about 1.3 GB and includes Windows-specific binaries, including `torch_cpu.dll` at about 253 MB, which will not fit in a normal GitHub push. Use `SETUP_ENV.bat` after cloning instead.
-- Auto-alignment in `ortho_matcher.py` still expects the configured WebODM orthophoto sources to exist on the local machine.
-- If the optional login background asset is missing, the app already falls back to an embedded gradient background.
+- Images without GPS or fully outside active `gis_coverage` zones are rejected
+  before analysis. Partial overlap requires explicit user confirmation.
+- Eroded zones never delete or hide planting points. Covered points display as
+  `Not Available for Planting`; removing the zone dynamically returns eligible
+  points to `Planned`.
+- Monitoring is recorded once per organization visit: alive/dead totals,
+  average height, overall health, and LGU actions. No photo is required.
+- Analysis images are private objects and are returned only through short-lived
+  signed URLs; image bytes are never stored in PostgreSQL.

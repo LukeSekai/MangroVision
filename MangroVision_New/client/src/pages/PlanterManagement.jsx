@@ -1,149 +1,130 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { availableOrganizationPoints } from '../utils/organizationAssignment';
 import { useMapStore } from '../stores/mapStore';
+import { useProcessingStore } from '../stores/processingStore';
+import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
+import SeedlingRecords from '../components/SeedlingRecords';
+import { getPlanterColor } from '../utils/planterColors';
 import './PlanterManagement.css';
-
-function EditPlanterDialog({ planter, form, onChange, onSave, onClose, busy, error }) {
-  const dialogRef = useRef(null);
-
-  useEffect(() => {
-    const el = dialogRef.current;
-    if (!el) return;
-    const firstInput = el.querySelector('input, select, textarea');
-    firstInput?.focus();
-
-    const handleKey = (e) => {
-      if (e.key === 'Escape' && !busy) { onClose(); return; }
-      if (e.key !== 'Tab') return;
-      const focusables = el.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
-      );
-      if (!focusables.length) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-    };
-    document.addEventListener('keydown', handleKey);
-    return () => document.removeEventListener('keydown', handleKey);
-  }, [busy, onClose]);
-
-  return (
-    <div className="planter-edit-backdrop" onMouseDown={busy ? undefined : onClose}>
-      <div
-        ref={dialogRef}
-        className="planter-edit-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="edit-planter-title"
-        onMouseDown={(e) => e.stopPropagation()}
-      >
-        <div className="planter-edit-header">
-          <h3 id="edit-planter-title" className="planter-edit-title">Edit {planter.full_name}</h3>
-          <button
-            type="button"
-            className="btn btn-ghost btn-icon"
-            onClick={onClose}
-            aria-label="Close edit dialog"
-            disabled={busy}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
-              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-            </svg>
-          </button>
-        </div>
-        <div className="form-group">
-          <label className="form-label">Full name</label>
-          <input className="form-input" type="text" value={form.full_name} onChange={(e) => onChange({ full_name: e.target.value })} disabled={busy} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Phone</label>
-          <input className="form-input" type="text" value={form.phone} onChange={(e) => onChange({ phone: e.target.value })} disabled={busy} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Base label</label>
-          <input className="form-input" type="text" value={form.base_label} onChange={(e) => onChange({ base_label: e.target.value })} disabled={busy} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Notes</label>
-          <textarea className="form-input" value={form.notes} onChange={(e) => onChange({ notes: e.target.value })} rows={2} disabled={busy} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Reset password (leave blank to keep current)</label>
-          <input className="form-input" type="password" value={form.password} onChange={(e) => onChange({ password: e.target.value })} autoComplete="new-password" disabled={busy} />
-        </div>
-        <div className="form-group">
-          <label className="form-label">Status</label>
-          <select className="form-select" value={form.status} onChange={(e) => onChange({ status: e.target.value })} disabled={busy}>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </div>
-        {error && <div className="assign-message assign-error">{error}</div>}
-        <div className="planter-edit-actions">
-          <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={busy}>Cancel</button>
-          <button className="btn btn-primary btn-sm" onClick={onSave} disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const API = import.meta.env.VITE_API_BASE || '';
 
 const STATUS_LABEL = {
   planned: 'Planned',
   assigned: 'Assigned',
+  pending: 'Pending',
   planted: 'Planted',
   completed: 'Completed',
   skipped: 'Skipped',
+  deleted: 'Deleted',
+  eroded_unavailable: 'Not Available for Planting',
 };
+
+const ASSIGNMENT_SPECIES_LABELS = {
+  bungalon: 'Bungalon',
+  rhizophora: 'Rhizophora',
+  'api-api': 'Api-Api',
+};
+
+function normalizeAssignmentSpecies(species) {
+  const key = String(species || '').trim().toLowerCase().replace(/_/g, '-');
+  if (key === 'api api' || key === 'apiapi') return 'api-api';
+  return ASSIGNMENT_SPECIES_LABELS[key] ? key : '';
+}
 
 export default function PlanterManagement() {
   const points = useMapStore((s) => s.points);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
-  const selectedPointId = useMapStore((s) => s.selectedPointId);
+  const fetchZones = useMapStore((s) => s.fetchZones);
+  const projectSites = useMapStore((s) => s.projectSites);
+  const setAssignmentSelection = useMapStore((s) => s.setAssignmentSelection);
+  const clearAssignmentSelection = useMapStore((s) => s.clearAssignmentSelection);
+  const setAssignmentScope = useMapStore((s) => s.setAssignmentScope);
+  const processing = useProcessingStore((s) => s.processing);
+  const processingStage = useProcessingStore((s) => s.stage);
+  const adminToken = useAuthStore((s) => s.token);
 
   const [planters, setPlanters] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [dashStats, setDashStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedPlanterId, setSelectedPlanterId] = useState(null);
+  const [resetSlot, setResetSlot] = useState(1);
+  const [deviceMessage, setDeviceMessage] = useState('');
+
+  // One unified assign form: one clicked point and many clicked points share
+  // the same selected-id list and batch endpoint.
+  const [assignPlanterId, setAssignPlanterId] = useState(null);
+  const [assignmentCount, setAssignmentCount] = useState(null);
+  const [assignProjectSiteChoice, setAssignProjectSiteId] = useState(null);
+  const [assignBusy, setAssignBusy] = useState(false);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
 
-  // Edit planter dialog state
-  const [editingPlanter, setEditingPlanter] = useState(null);
-  const [editForm, setEditForm] = useState({
-    full_name: '', phone: '', base_label: '', notes: '', password: '', status: 'active',
-  });
-  const [editBusy, setEditBusy] = useState(false);
-  const [editError, setEditError] = useState('');
-
-  // Deactivate confirmation modal state
-  const [deactivateTarget, setDeactivateTarget] = useState(null);
-  const [deactivateBusy, setDeactivateBusy] = useState(false);
-
-  // Activity report (full-screen overlay) — purely additive view, doesn't
-  // disturb the existing Dashboard / Roster / Assignments layout.
   const [reportOpen, setReportOpen] = useState(false);
+
+  const [shareLink, setShareLink] = useState(null);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [shareError, setShareError] = useState('');
+  const [shareCopied, setShareCopied] = useState('');
+  const shareCopiedTimerRef = useRef(null);
 
   // Archive assignment confirmation modal state
   const [archiveTarget, setArchiveTarget] = useState(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
 
-  // Reactivate busy tracking
-  const [reactivateBusyId, setReactivateBusyId] = useState(null);
-
   // Per-assignment point-status drill down
   const [assignmentPointsCache, setAssignmentPointsCache] = useState({});
+  const assignmentPointsRef = useRef({});
+  const loadSequence = useRef(0);
+  useEffect(() => { assignmentPointsRef.current = assignmentPointsCache; }, [assignmentPointsCache]);
   const [pointStatusBusyId, setPointStatusBusyId] = useState(null);
 
-  const loadData = async () => {
+  const showShareCopied = (message) => {
+    setShareCopied(message);
+    if (shareCopiedTimerRef.current) window.clearTimeout(shareCopiedTimerRef.current);
+    shareCopiedTimerRef.current = window.setTimeout(() => setShareCopied(''), 2200);
+  };
+
+  const loadShareStatus = useCallback(async ({ silent = false } = {}) => {
+    if (!silent) setShareError('');
+    if (!adminToken) {
+      if (!silent) setShareError('Sign in again to manage share links.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/share/field-link`);
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.detail || 'Could not check share link.');
+      setShareLink(payload);
+    } catch (err) {
+      console.error('Share link status failed:', err);
+      if (!silent) setShareError(err.message || 'Could not check share link.');
+    }
+  }, [adminToken]);
+
+  const copyTextToClipboard = async (text) => {
+    if (!text) throw new Error('No link to copy.');
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.top = '-9999px';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    if (!copied) throw new Error('Clipboard permission was blocked.');
+  };
+
+  const loadData = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
     try {
       const [pRes, dRes, aRes] = await Promise.all([
@@ -151,46 +132,207 @@ export default function PlanterManagement() {
         fetch(`${API}/api/planters/dashboard`),
         fetch(`${API}/api/assignments/?active_only=true`),
       ]);
-      setPlanters(await pRes.json());
-      setDashStats(await dRes.json());
-      setAssignments(await aRes.json());
+      if (![pRes, dRes, aRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
+      const [nextPlanters, nextStats, nextAssignments] = await Promise.all([pRes.json(), dRes.json(), aRes.json()]);
+      if (sequence !== loadSequence.current) return;
+      setPlanters(nextPlanters);
+      setDashStats(nextStats);
+      setAssignments(nextAssignments);
+      const openIds = Object.keys(assignmentPointsRef.current).filter((id) => assignmentPointsRef.current[id]);
+      await Promise.all(openIds.map(async (id) => {
+        const response = await fetch(`${API}/api/assignments/${id}/points`);
+        if (!response.ok) return;
+        const rows = await response.json();
+        if (sequence === loadSequence.current) setAssignmentPointsCache((current) => (
+          current[id] ? { ...current, [id]: rows } : current
+        ));
+      }));
     } catch (err) {
       console.error('Failed to load planter data:', err);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { loadData(); }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadData();
+      void loadShareStatus({ silent: true });
+    }, 0);
+    const refresh = () => { void loadData(); };
+    window.addEventListener('mv:data-changed', refresh);
+    return () => {
+      window.clearTimeout(timer);
+      loadSequence.current += 1;
+      window.removeEventListener('mv:data-changed', refresh);
+    };
+  }, [loadData, loadShareStatus]);
 
-  const selectedPoint = points.find((p) => p.id === selectedPointId);
+  useEffect(() => () => {
+    if (shareCopiedTimerRef.current) window.clearTimeout(shareCopiedTimerRef.current);
+  }, []);
+
+  // Drop assignment selection on unmount so a forgotten selection doesn't
+  // leak into other pages (the same map instance is shared).
+  useEffect(() => () => {
+    clearAssignmentSelection();
+    setAssignmentScope(null, null);
+  }, [clearAssignmentSelection, setAssignmentScope]);
+
   const activePlanters = planters.filter((p) => p.status === 'active');
-  const inactivePlanters = planters.filter((p) => p.status !== 'active');
+  const selectedAssignmentPlanter = activePlanters.find(
+    (planter) => Number(planter.id) === Number(assignPlanterId),
+  );
+  const organizationProjectSites = (projectSites?.features || []).filter((feature) => {
+    const ownerId = feature?.properties?.organization_id;
+    return selectedAssignmentPlanter?.organization_id != null
+      && Number(ownerId) === Number(selectedAssignmentPlanter.organization_id);
+  });
+  const defaultSiteId = organizationProjectSites[0]?.id ?? organizationProjectSites[0]?.properties?.id ?? null;
+  const assignProjectSiteId = organizationProjectSites.some((site) => Number(site.id ?? site.properties?.id) === Number(assignProjectSiteChoice))
+    ? assignProjectSiteChoice : defaultSiteId;
+  useEffect(() => {
+    setAssignmentScope(selectedAssignmentPlanter?.organization_id ?? null, assignProjectSiteId);
+  }, [assignProjectSiteId, selectedAssignmentPlanter?.organization_id, setAssignmentScope]);
+  const assignmentLocked = processing;
+  const shareFieldUrl = shareLink?.field_url || '';
+  const shareCloudflareActive = Boolean(shareLink?.active && shareLink?.field_url);
+
+  const scopeOrganizationId = selectedAssignmentPlanter?.organization_id == null ? null : Number(selectedAssignmentPlanter.organization_id);
+  const scopeProjectSiteId = assignProjectSiteId == null ? null : Number(assignProjectSiteId);
+  const availablePoints = useMemo(() => availableOrganizationPoints(points, scopeOrganizationId, scopeProjectSiteId),
+    [points, scopeOrganizationId, scopeProjectSiteId]);
+  const requestedCount = assignmentCount ?? availablePoints.length;
+  const validCount = Number.isInteger(requestedCount) && requestedCount > 0 && requestedCount <= availablePoints.length;
+  const pointIdsToAssign = useMemo(() => validCount ? availablePoints.slice(0, requestedCount).map((point) => point.id) : [],
+    [availablePoints, requestedCount, validCount]);
+  useEffect(() => { setAssignmentSelection(pointIdsToAssign); }, [pointIdsToAssign, setAssignmentSelection]);
+  const selectedPointIdSet = new Set(pointIdsToAssign.map((id) => Number(id)));
+  const selectedSpeciesKeys = Array.from(new Set(
+    points
+      .filter((point) => selectedPointIdSet.has(Number(point.id)))
+      .map((point) => normalizeAssignmentSpecies(point.species))
+      .filter(Boolean),
+  ));
+  const autoAssignSpecies = selectedSpeciesKeys.length === 1
+    ? ASSIGNMENT_SPECIES_LABELS[selectedSpeciesKeys[0]]
+    : '';
 
   const handleAssign = async () => {
-    if (!selectedPointId || !selectedPlanterId) return;
     setAssignError('');
     setAssignSuccess('');
+    if (assignmentLocked) {
+      setAssignError('Planting point assignment is locked while image processing is running.');
+      return;
+    }
+    if (!assignPlanterId) {
+      setAssignError('Pick an organization.');
+      return;
+    }
+    if (!assignProjectSiteId) {
+      setAssignError("Select a project site owned by the organization.");
+      return;
+    }
+    if (!pointIdsToAssign.length) {
+      setAssignError('Enter a point count within the available points for this site.');
+      return;
+    }
+    setAssignBusy(true);
     try {
-      const res = await fetch(`${API}/api/planters/assign-point`, {
+      const res = await fetch(`${API}/api/planters/${assignPlanterId}/assignments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          planter_id: selectedPlanterId,
-          planting_point_id: selectedPointId,
-          allow_reassign: false,
+          planting_point_ids: pointIdsToAssign,
+          species: autoAssignSpecies,
+          site_zone_id: assignProjectSiteId,
         }),
       });
+      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Assignment failed');
+        throw new Error(payload.detail || 'Assignment failed.');
       }
-      const data = await res.json();
-      setAssignSuccess(`Assigned to ${data.planter_name}`);
-      fetchPoints();
-      loadData();
+      const planter = activePlanters.find((p) => p.id === assignPlanterId);
+      setAssignSuccess(
+        `Assigned ${pointIdsToAssign.length} point${pointIdsToAssign.length === 1 ? '' : 's'} to ${planter?.organization_name || 'organization'}.`,
+      );
+      clearAssignmentSelection();
+      setAssignmentCount(null);
+      // Refresh zones too — each new assignment auto-generates a site zone
+      // polygon (convex hull of its points) that should appear on the map
+      // immediately without a manual page reload.
+      await Promise.all([fetchPoints(), fetchZones(), loadData()]);
     } catch (err) {
       setAssignError(err.message);
+    } finally {
+      setAssignBusy(false);
+    }
+  };
+
+  const handleGenerateCloudflareLink = async () => {
+    setShareBusy(true);
+    setShareError('');
+    setShareCopied('');
+    if (!adminToken) {
+      setShareError('Sign in again to manage share links.');
+      setShareBusy(false);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${API}/api/share/field-link/cloudflare`,
+        { method: 'POST' },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.detail || 'Could not generate Cloudflare link.');
+      setShareLink(payload);
+      if (payload.field_url) {
+        try {
+          await copyTextToClipboard(payload.field_url);
+          showShareCopied('Cloudflare link copied.');
+        } catch (copyError) {
+          console.warn('Clipboard copy failed:', copyError);
+          setShareError('Link generated, but clipboard permission was blocked.');
+        }
+      }
+    } catch (err) {
+      setShareError(err.message || 'Could not generate Cloudflare link.');
+    } finally {
+      setShareBusy(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    setShareError('');
+    try {
+      await copyTextToClipboard(shareFieldUrl);
+      showShareCopied('Link copied.');
+    } catch (err) {
+      setShareError(err.message || 'Could not copy link.');
+    }
+  };
+
+  const handleStopCloudflareLink = async () => {
+    setShareBusy(true);
+    setShareError('');
+    setShareCopied('');
+    if (!adminToken) {
+      setShareError('Sign in again to manage share links.');
+      setShareBusy(false);
+      return;
+    }
+    try {
+      const res = await fetch(
+        `${API}/api/share/field-link/stop`,
+        { method: 'POST' },
+      );
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(payload.detail || 'Could not stop Cloudflare link.');
+      setShareLink(payload);
+    } catch (err) {
+      setShareError(err.message || 'Could not stop Cloudflare link.');
+    } finally {
+      setShareBusy(false);
     }
   };
 
@@ -201,93 +343,11 @@ export default function PlanterManagement() {
       setArchiveTarget(null);
       loadData();
       fetchPoints();
+      fetchZones();
     } catch (err) {
       console.error('Archive failed:', err);
     } finally {
       setArchiveBusy(false);
-    }
-  };
-
-  const openEdit = (planter) => {
-    setEditingPlanter(planter);
-    setEditForm({
-      full_name: planter.full_name || '',
-      phone: planter.phone || '',
-      base_label: planter.base_label || '',
-      notes: planter.notes || '',
-      password: '',
-      status: planter.status || 'active',
-    });
-    setEditError('');
-  };
-
-  const handleEditSave = async () => {
-    if (!editingPlanter) return;
-    setEditBusy(true);
-    setEditError('');
-    try {
-      const payload = {
-        full_name: editForm.full_name,
-        phone: editForm.phone,
-        base_label: editForm.base_label,
-        notes: editForm.notes,
-        status: editForm.status,
-      };
-      if (editForm.password) payload.password = editForm.password;
-      const res = await fetch(`${API}/api/planters/${editingPlanter.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Update failed');
-      }
-      setEditingPlanter(null);
-      loadData();
-    } catch (err) {
-      setEditError(err.message);
-    } finally {
-      setEditBusy(false);
-    }
-  };
-
-  const handleDeactivate = (planter) => {
-    setDeactivateTarget(planter);
-  };
-
-  const confirmDeactivate = async () => {
-    if (!deactivateTarget) return;
-    setDeactivateBusy(true);
-    try {
-      await fetch(`${API}/api/planters/${deactivateTarget.id}`, { method: 'DELETE' });
-      setDeactivateTarget(null);
-      loadData();
-    } catch (err) {
-      console.error('Deactivate failed:', err);
-    } finally {
-      setDeactivateBusy(false);
-    }
-  };
-
-  const cancelDeactivate = () => {
-    if (deactivateBusy) return;
-    setDeactivateTarget(null);
-  };
-
-  const handleReactivate = async (planter) => {
-    setReactivateBusyId(planter.id);
-    try {
-      await fetch(`${API}/api/planters/${planter.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'active' }),
-      });
-      loadData();
-    } catch (err) {
-      console.error('Reactivate failed:', err);
-    } finally {
-      setReactivateBusyId(null);
     }
   };
 
@@ -330,7 +390,13 @@ export default function PlanterManagement() {
   };
 
   return (
-    <Panel title="Planter Management" subtitle={`${activePlanters.length} active planters`}>
+    <Panel title="Planter Management" subtitle={`${activePlanters.length} active organizations`}>
+      <button type="button" disabled={loading} onClick={() => {
+        window.dispatchEvent(new Event('mv:invalidate-reads'));
+        void loadData();
+        void fetchPoints();
+        void fetchZones();
+      }}>{loading ? 'Loading...' : 'Refresh data'}</button>
       {dashStats && (
         <PanelCard
           title="Dashboard"
@@ -340,7 +406,7 @@ export default function PlanterManagement() {
         >
           <div className="planter-stats-grid">
             <div className="stat-card">
-              <div className="stat-label">Active</div>
+              <div className="stat-label">Organizations</div>
               <div className="stat-value">{dashStats.active_planters}</div>
             </div>
             <div className="stat-card">
@@ -354,6 +420,10 @@ export default function PlanterManagement() {
             <div className="stat-card">
               <div className="stat-label">Completed</div>
               <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{dashStats.completed_assigned_points}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Skipped</div>
+              <div className="stat-value" style={{ color: '#6b7280' }}>{dashStats.skipped_assigned_points || 0}</div>
             </div>
           </div>
           <button
@@ -371,109 +441,231 @@ export default function PlanterManagement() {
         </PanelCard>
       )}
 
+      <SeedlingRecords
+        points={points}
+        projectSites={projectSites}
+        disabled={processing}
+        onSaved={() => Promise.all([fetchPoints(), fetchZones(), loadData()])}
+      />
+
       <PanelCard
-        title="Quick Assign (Single Point)"
+        title="Field Share Link"
+        defaultOpen={false}
+        icon={
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11 4.93" />
+            <path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 1 0 7.07 7.07L13 19.07" />
+          </svg>
+        }
+      >
+        <div className="share-card">
+          <div className="share-status-row">
+            <span
+              className={`share-status-dot ${shareCloudflareActive ? 'share-status-dot-active' : ''}`}
+              aria-hidden="true"
+            />
+            <span>{shareCloudflareActive ? 'Cloudflare active' : 'Cloudflare inactive'}</span>
+          </div>
+
+          <div className="share-link-box">
+            <input
+              className="share-link-input"
+              value={shareFieldUrl}
+              placeholder="Generate a Cloudflare link"
+              readOnly
+              aria-label="Field app share link"
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm btn-icon"
+              onClick={handleCopyShareLink}
+              disabled={!shareFieldUrl}
+              title="Copy field link"
+              aria-label="Copy field link"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+              </svg>
+            </button>
+          </div>
+
+          <div className="share-actions">
+            <button
+              type="button"
+              className="btn btn-primary btn-sm share-action-primary"
+              onClick={handleGenerateCloudflareLink}
+              disabled={shareBusy}
+            >
+              {shareBusy ? 'Working...' : 'Generate Cloudflare Link'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => loadShareStatus()}
+              disabled={shareBusy}
+            >
+              Check Status
+            </button>
+            {shareCloudflareActive && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={handleStopCloudflareLink}
+                disabled={shareBusy}
+              >
+                Stop Link
+              </button>
+            )}
+          </div>
+
+          {shareError && <div className="assign-message assign-error">{shareError}</div>}
+          {shareCopied && <div className="assign-message assign-success">{shareCopied}</div>}
+        </div>
+      </PanelCard>
+
+      <PanelCard
+        title="Quick Assign"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
         }
       >
-        {selectedPoint ? (
-          <div className="assign-card">
-            <div className="assign-point-info">
-              <span className="font-semibold">Point #{selectedPoint.point_num}</span>
-              <span className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-                {selectedPoint.image_name}
-              </span>
-            </div>
-            <div className="form-group" style={{ marginTop: 10 }}>
-              <label className="form-label">Assign to planter</label>
-              <select
-                className="form-select"
-                value={selectedPlanterId || ''}
-                onChange={(e) => setSelectedPlanterId(Number(e.target.value) || null)}
-              >
-                <option value="">Select a planter...</option>
-                {activePlanters.map((p) => (
-                  <option key={p.id} value={p.id}>{p.full_name}</option>
-                ))}
-              </select>
-            </div>
-            <button
-              className="btn btn-primary btn-sm"
-              style={{ marginTop: 8, width: '100%' }}
-              onClick={handleAssign}
-              disabled={!selectedPlanterId}
-            >
-              Assign Point
-            </button>
-            {assignError && <div className="assign-message assign-error">{assignError}</div>}
-            {assignSuccess && <div className="assign-message assign-success">{assignSuccess}</div>}
+        {assignmentLocked && (
+          <div className="assignment-lock-banner">
+            <strong>Assignment locked</strong>
+            <span>
+              Image processing is running{processingStage ? `: ${processingStage}` : ''}.
+            </span>
           </div>
-        ) : (
-          <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Click a planting point on the map to assign it to a planter.
-          </p>
         )}
-      </PanelCard>
+        <div className="assign-card">
+          <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
+            Select an organization and choose how many points to assign. Each participant receives staggered point locations forming zigzag strips, divided equally. Short strips at the site boundary continue into the next strip.
+          </p>
 
-      <PanelCard
-        title="Roster"
-        badge={planters.length}
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        }
-      >
-        <div className="planter-list">
-          {loading ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>Loading...</p>
-          ) : planters.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              No planters yet. They will appear here after they register through the /field mobile app.
-            </p>
-          ) : (
-            <>
+          <div className="form-group" style={{ marginTop: 10 }}>
+            <label className="form-label">Assign to organization</label>
+            <select
+              className="form-select"
+              value={assignPlanterId || ''}
+              onChange={(e) => {
+                const nextPlanterId = Number(e.target.value) || null;
+                const nextPlanter = activePlanters.find((planter) => Number(planter.id) === nextPlanterId);
+                setAssignPlanterId(nextPlanterId);
+                setAssignmentCount(null);
+                const site = (projectSites?.features || []).find((feature) => Number(feature.properties?.organization_id) === Number(nextPlanter?.organization_id));
+                const siteId = site?.id ?? site?.properties?.id ?? null;
+                setAssignProjectSiteId(siteId);
+                setResetSlot(1);
+                setDeviceMessage('');
+                clearAssignmentSelection();
+                setAssignmentScope(nextPlanter?.organization_id ?? null, siteId);
+              }}
+              disabled={assignmentLocked || assignBusy || loading}
+            >
+              <option value="">Select an organization...</option>
               {activePlanters.map((p) => (
-                /*
-                 * Roster row is now read-only. Edit and Deactivate actions
-                 * live in the Activity Report ("See Details" / "Deactivate"
-                 * per-planter card) so the roster panel stays focused on a
-                 * quick at-a-glance list.
-                 */
-                <div key={p.id} className="planter-row">
-                  <div className="planter-avatar">{p.full_name?.charAt(0)?.toUpperCase()}</div>
-                  <div className="planter-info">
-                    <span className="planter-name">{p.full_name}</span>
-                    <span className="planter-meta">
-                      {p.username ? `@${p.username} · ` : ''}{p.active_assignments || 0} assignments
-                    </span>
-                  </div>
-                </div>
+                <option key={p.id} value={p.id}>
+                  {p.organization_name}
+                </option>
               ))}
-              {inactivePlanters.length > 0 && (
-                <div className="planter-inactive-heading">Inactive</div>
-              )}
-              {inactivePlanters.map((p) => (
-                <div key={p.id} className="planter-row planter-row-inactive">
-                  <div className="planter-avatar">{p.full_name?.charAt(0)?.toUpperCase()}</div>
-                  <div className="planter-info">
-                    <span className="planter-name">{p.full_name}</span>
-                    <span className="planter-meta">Inactive</span>
-                  </div>
-                  <div className="planter-actions">
-                    <button
-                      className="btn btn-ghost btn-sm"
-                      onClick={() => handleReactivate(p)}
-                      disabled={reactivateBusyId === p.id}
-                    >
-                      {reactivateBusyId === p.id ? 'Reactivating…' : 'Reactivate'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </>
+            </select>
+            {selectedAssignmentPlanter?.organization_name && (
+              <span className="text-sm" style={{ color: 'var(--color-primary)', lineHeight: 1.4 }}>
+                <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
+                {selectedAssignmentPlanter.participant_count} participants · Shared organization account
+              </span>
+            )}
+          </div>
+
+          <div className="form-group" style={{ marginTop: 10 }}>
+            <label className="form-label">Project site</label>
+            <select
+              className="form-select"
+              value={assignProjectSiteId || ''}
+              onChange={(e) => {
+                const nextSiteId = Number(e.target.value) || null;
+                setAssignProjectSiteId(nextSiteId);
+                setAssignmentCount(null);
+                clearAssignmentSelection();
+                setAssignmentScope(selectedAssignmentPlanter?.organization_id ?? null, nextSiteId);
+              }}
+              disabled={assignmentLocked || assignBusy || !assignPlanterId || organizationProjectSites.length === 0}
+            >
+              <option value="">
+                {!assignPlanterId
+                  ? 'Select an organization first'
+                  : organizationProjectSites.length
+                    ? 'Select a project site'
+                    : 'No project site for this organization'}
+              </option>
+              {organizationProjectSites.map((feature) => {
+                const props = feature.properties || {};
+                const id = feature.id ?? props.id;
+                return <option key={id} value={id}>{props.name || `Project Site ${id}`}</option>;
+              })}
+            </select>
+            <span className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.4 }}>
+              The map automatically locates this organization's project site.
+            </span>
+          </div>
+
+          <div className="form-group" style={{ marginTop: 10 }}>
+            <label className="form-label" htmlFor="organization-point-count">Number of points to assign</label>
+            <input id="organization-point-count" className="form-input" type="number" min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked} />
+            <span className="text-sm">{availablePoints.length} available points in this project site.</span>
+            {!validCount && requestedCount > 0 && <span className="assign-error">Choose a whole number up to {availablePoints.length}.</span>}
+          </div>
+
+          {selectedAssignmentPlanter && (
+            <div className="assign-point-info" role="status">
+              <strong>{pointIdsToAssign.length} points / {selectedAssignmentPlanter.participant_count} participants</strong>
+              <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>
+              <span className="text-sm">All planted points count toward {selectedAssignmentPlanter.organization_name}.</span>
+            </div>
           )}
+
+          <button
+            className="btn btn-primary btn-sm"
+            style={{ marginTop: 8, width: '100%' }}
+            onClick={handleAssign}
+            disabled={
+              assignmentLocked
+              || assignBusy
+              || !assignPlanterId
+              || !assignProjectSiteId
+              || pointIdsToAssign.length === 0
+            }
+          >
+            {assignBusy
+              ? 'Assigning…'
+              : assignmentLocked
+                ? 'Assignment Locked'
+                : `Assign ${pointIdsToAssign.length || ''} Point${pointIdsToAssign.length === 1 ? '' : 's'}`.trim()}
+          </button>
+          {assignError && <div className="assign-message assign-error">{assignError}</div>}
+          {assignSuccess && <div className="assign-message assign-success">{assignSuccess}</div>}
         </div>
       </PanelCard>
+
+      {selectedAssignmentPlanter && (
+        <PanelCard title="Participant device recovery" defaultOpen={false}>
+          <p className="text-sm">If a participant changes phones, reset their slot, then sign in on the replacement phone. Their assigned points stay the same.</p>
+          <label className="form-label" htmlFor="participant-reset-slot">Participant number</label>
+          <input id="participant-reset-slot" className="form-input" type="number" min="1" max={selectedAssignmentPlanter.participant_count} value={resetSlot} onChange={(event) => setResetSlot(Number(event.target.value))} />
+          <button className="btn btn-secondary btn-sm" disabled={assignBusy || resetSlot < 1 || resetSlot > selectedAssignmentPlanter.participant_count || !Number.isInteger(resetSlot)} onClick={async () => {
+            setAssignBusy(true);
+            try {
+              const response = await fetch(`${API}/api/planters/${assignPlanterId}/participants/${resetSlot}/reset-device`, { method: 'POST' });
+              const result = await response.json();
+              if (!response.ok) throw new Error(result.detail || 'Could not reset device.');
+              setDeviceMessage(`Participant ${resetSlot} can now sign in on a replacement device.`);
+            } catch (error) { setDeviceMessage(error.message); }
+            finally { setAssignBusy(false); }
+          }}>Reset device slot</button>
+          {deviceMessage && <p role="status" className="text-sm">{deviceMessage}</p>}
+        </PanelCard>
+      )}
 
       <PanelCard
         title="Active Assignments"
@@ -500,6 +692,8 @@ export default function PlanterManagement() {
                       <span className="assignment-title">{a.title || `Assignment #${a.id}`}</span>
                       <span className="assignment-meta">
                         {a.planter_name} · {a.pending_points}/{a.total_points} pending
+                        {a.species ? ` · ${a.species}` : ''}
+                        {(a.project_site_name || a.site_name) ? ` · ${a.project_site_name || a.site_name}` : ''}
                       </span>
                     </button>
                     <button
@@ -520,25 +714,34 @@ export default function PlanterManagement() {
                       ) : (
                         expandedRows.map((row) => {
                           const busy = pointStatusBusyId === row.assignment_point_id;
+                          const lifecycleStatus = row.assignment_status || row.status;
+                          const isPlanted = lifecycleStatus === 'planted' || lifecycleStatus === 'completed';
+                          const isSkipped = lifecycleStatus === 'skipped';
+                          const isUnavailable = Boolean(row.eroded_unavailable) && !isPlanted && !isSkipped;
+                          const rowStatus = isUnavailable ? 'eroded_unavailable' : lifecycleStatus;
+                          const hasWarning = Boolean(row.survival_warning);
                           return (
                             <div key={row.assignment_point_id} className="assignment-point-row">
                               <div className="assignment-point-info">
                                 <span className="assignment-point-title">Point #{row.point_num}</span>
                                 <span className="assignment-point-meta">
-                                  {STATUS_LABEL[row.status] || row.status}
+                                  {STATUS_LABEL[rowStatus] || rowStatus}
+                                  {row.released_at ? ' · Location released for replacement' : ''}
+                                  {hasWarning ? ` - Warning: ${row.warning_severity || 'medium'}` : ''}
+                                  {isSkipped && row.skip_reason ? ` - ${row.skip_reason}` : ''}
                                 </span>
                               </div>
                               <div className="assignment-point-actions">
-                                {row.status !== 'planted' && row.status !== 'completed' && (
+                                {!row.released_at && !isPlanted && !isUnavailable && (
                                   <button
                                     className="btn btn-ghost btn-sm"
                                     disabled={busy}
-                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'planted')}
+                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'completed')}
                                   >
                                     Mark planted
                                   </button>
                                 )}
-                                {row.status !== 'skipped' && (
+                                {!row.released_at && !isSkipped && !isUnavailable && (
                                   <button
                                     className="btn btn-ghost btn-sm"
                                     disabled={busy}
@@ -547,14 +750,19 @@ export default function PlanterManagement() {
                                     Skip
                                   </button>
                                 )}
-                                {(row.status === 'planted' || row.status === 'skipped') && (
+                                {!row.released_at && (isPlanted || isSkipped) && (
                                   <button
                                     className="btn btn-ghost btn-sm"
                                     disabled={busy}
-                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'assigned')}
+                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'pending')}
                                   >
                                     Reset
                                   </button>
+                                )}
+                                {isUnavailable && (
+                                  <span className="text-sm" style={{ color: '#c2410c' }}>
+                                    Remove the eroded zone to return this point to Planned.
+                                  </span>
                                 )}
                               </div>
                             </div>
@@ -570,39 +778,10 @@ export default function PlanterManagement() {
         </div>
       </PanelCard>
 
-      {editingPlanter && (
-        <EditPlanterDialog
-          planter={editingPlanter}
-          form={editForm}
-          onChange={(updates) => setEditForm((f) => ({ ...f, ...updates }))}
-          onSave={handleEditSave}
-          onClose={() => { if (!editBusy) setEditingPlanter(null); }}
-          busy={editBusy}
-          error={editError}
-        />
-      )}
-
       <PlanterActivityReport
         open={reportOpen}
         onClose={() => setReportOpen(false)}
       />
-
-      <Modal
-        open={Boolean(deactivateTarget)}
-        title={`Deactivate ${deactivateTarget?.full_name || 'planter'}?`}
-        variant="danger"
-        confirmLabel="Deactivate"
-        cancelLabel="Cancel"
-        busy={deactivateBusy}
-        onConfirm={confirmDeactivate}
-        onCancel={cancelDeactivate}
-      >
-        <p>
-          {deactivateTarget?.full_name || 'This planter'} will no longer be able to sign in to
-          the field app until reactivated.
-        </p>
-        <p>Existing assignments and saved planting points are not affected.</p>
-      </Modal>
 
       <Modal
         open={Boolean(archiveTarget)}

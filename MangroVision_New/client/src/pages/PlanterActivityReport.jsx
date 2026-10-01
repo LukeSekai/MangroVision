@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import Modal from '../components/Modal';
+import { getPlanterColor } from '../utils/planterColors';
 import './PlanterActivityReport.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -10,17 +11,6 @@ const STATUS_LABEL = {
   completed: 'Completed',
   archived: 'Archived',
 };
-
-const AVATAR_PALETTE = [
-  '#16a34a', '#eab308', '#2563eb', '#9333ea', '#0891b2',
-  '#dc2626', '#0d9488', '#d97706', '#7c3aed', '#0369a1',
-];
-
-function avatarColorFor(name = '') {
-  let hash = 0;
-  for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
-}
 
 function initialsFor(name = '') {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -219,6 +209,19 @@ export default function PlanterActivityReport({ open, onClose }) {
     }
   };
 
+  const reactivateOrganization = async (planter) => {
+    setDeactivateBusy(true);
+    try {
+      const response = await fetch(`${API}/api/planters/${planter.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'active' }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || 'Could not reactivate organization.');
+      await refresh();
+    } catch (error) { setError(error.message); }
+    finally { setDeactivateBusy(false); }
+  };
+
   if (!open) return null;
 
   return (
@@ -233,7 +236,7 @@ export default function PlanterActivityReport({ open, onClose }) {
         <header className="par-header">
           <div>
             <div className="par-eyebrow">Admin Report</div>
-            <h2 id="par-title" className="par-title">Planter Activity</h2>
+            <h2 id="par-title" className="par-title">Organization Activity</h2>
           </div>
           <button
             type="button"
@@ -255,7 +258,7 @@ export default function PlanterActivityReport({ open, onClose }) {
           {!loading && !error && (
             <>
               <section className="par-summary">
-                <SummaryStat label="Active planters"   value={totals.activePlanters}   accent="green"  />
+                <SummaryStat label="Active organizations"   value={totals.activePlanters}   accent="green"  />
                 <SummaryStat label="Total assignments" value={totals.totalAssignments} accent="blue"   />
                 <SummaryStat label="Total points"      value={totals.totalPoints}      accent="slate"  />
                 <SummaryStat label="Planted"           value={totals.completedPoints}  accent="amber"  />
@@ -265,8 +268,8 @@ export default function PlanterActivityReport({ open, onClose }) {
 
               {planterRows.length === 0 ? (
                 <div className="par-status">
-                  No planters registered yet. Activity will appear here once
-                  planters are added and assigned points.
+                  No organization accounts registered yet. Activity will appear here once
+                  organizations register and receive points.
                 </div>
               ) : (
                 <>
@@ -276,6 +279,8 @@ export default function PlanterActivityReport({ open, onClose }) {
                         key={row.planter.id}
                         row={row}
                         onDeactivate={() => requestDeactivate(row.planter)}
+                        onReactivate={() => reactivateOrganization(row.planter)}
+                        busy={deactivateBusy}
                         onSeeDetails={() => setDetailsTarget(row)}
                       />
                     ))}
@@ -319,7 +324,7 @@ export default function PlanterActivityReport({ open, onClose }) {
 
       <Modal
         open={Boolean(detailsTarget)}
-        title={detailsTarget ? `${detailsTarget.planter.full_name} — Details` : 'Planter details'}
+        title={detailsTarget ? `${detailsTarget.planter.full_name} — Details` : 'Organization details'}
         variant="info"
         confirmLabel="Close"
         cancelLabel=""
@@ -330,7 +335,9 @@ export default function PlanterActivityReport({ open, onClose }) {
             <p>
               <strong>Base:</strong> {detailsTarget.planter.base_label || 'Not set'}<br />
               <strong>Phone:</strong> {detailsTarget.planter.phone || 'Not set'}<br />
-              <strong>Status:</strong> {detailsTarget.planter.status === 'active' ? 'Active' : 'Inactive'}
+              <strong>Status:</strong> {detailsTarget.planter.status === 'active' ? 'Active' : 'Inactive'}<br />
+              <strong>Shared username:</strong> {detailsTarget.planter.username}<br />
+              <strong>Participants:</strong> {detailsTarget.planter.participant_count}
             </p>
             <p>
               <strong>Assignments:</strong> {detailsTarget.assignments.length}
@@ -357,12 +364,12 @@ function SummaryStat({ label, value, accent }) {
   );
 }
 
-function PlanterReportCard({ row, onDeactivate, onSeeDetails }) {
+function PlanterReportCard({ row, onDeactivate, onReactivate, onSeeDetails, busy }) {
   const { planter, assignments, totalPoints, completedPoints } = row;
   const flavor = planterStatusFlavor(row);
   const completion = pct(completedPoints, totalPoints);
   const initials = initialsFor(planter.full_name);
-  const avatarColor = avatarColorFor(planter.full_name || `planter-${planter.id}`);
+  const avatarColor = getPlanterColor(planter.organization_id);
 
   const sorted = [...assignments].sort((a, b) => {
     const ad = a.assignment_date || a.created_at || '';
@@ -381,7 +388,7 @@ function PlanterReportCard({ row, onDeactivate, onSeeDetails }) {
         <div className="par-planter-identity">
           <div className="par-planter-name">{planter.full_name}</div>
           <div className="par-planter-meta">
-            {planter.base_label || `Planter #${planter.id}`}
+            {planter.base_label || `${planter.participant_count} participants`}
             {planter.phone ? ` · ${planter.phone}` : ''}
           </div>
         </div>
@@ -419,7 +426,10 @@ function PlanterReportCard({ row, onDeactivate, onSeeDetails }) {
                 <div key={a.id} className="par-items-row">
                   <div className="par-items-name">
                     <div className="par-items-title">{a.title || `Assignment #${a.id}`}</div>
-                    <div className="par-items-sub">{STATUS_LABEL[a.status] || a.status} · {formatDate(a.assignment_date)}</div>
+                    <div className="par-items-sub">
+                      {STATUS_LABEL[a.status] || a.status} · {formatDate(a.assignment_date)}
+                      {a.species ? ` · ${a.species}` : ''}
+                    </div>
                   </div>
                   <div className="par-items-qty">{a.total_points || 0}</div>
                   <div className="par-items-progress">
@@ -454,11 +464,11 @@ function PlanterReportCard({ row, onDeactivate, onSeeDetails }) {
           <button
             type="button"
             className="par-action par-action-secondary"
-            onClick={onDeactivate}
-            disabled={planter.status !== 'active'}
-            title={planter.status !== 'active' ? 'Already inactive' : 'Deactivate this planter'}
+            onClick={planter.status === 'active' ? onDeactivate : onReactivate}
+            disabled={busy}
+            title={planter.status === 'active' ? 'Deactivate this organization' : 'Reactivate this organization'}
           >
-            {planter.status === 'active' ? 'Deactivate' : 'Inactive'}
+            {planter.status === 'active' ? 'Deactivate' : 'Reactivate'}
           </button>
           <button
             type="button"
@@ -483,9 +493,9 @@ function Pagination({ page, totalPages, onChange, visibleCount, totalCount }) {
   const indices = Array.from({ length: totalPages }, (_, i) => i);
 
   return (
-    <nav className="par-pagination" aria-label="Planter pages">
+    <nav className="par-pagination" aria-label="Organization pages">
       <span className="par-pagination-info">
-        Showing <strong>{start}–{end}</strong> of <strong>{totalCount}</strong> planters
+        Showing <strong>{start}–{end}</strong> of <strong>{totalCount}</strong> organizations
       </span>
       <div className="par-pagination-controls">
         <button

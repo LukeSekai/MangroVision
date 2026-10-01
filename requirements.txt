@@ -39,6 +39,15 @@ fastapi>=0.104.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6
 
+# Production persistence (PostgreSQL/PostGIS + S3-compatible object storage)
+SQLAlchemy>=2.0.36,<3.0
+psycopg[binary]>=3.2.3,<4.0
+alembic>=1.14.0,<2.0
+GeoAlchemy2>=0.17.0,<1.0
+boto3>=1.35.0,<2.0
+argon2-cffi>=23.1.0,<24.0
+python-dotenv>=1.0.1,<2.0
+
 # Utilities (already installed but included for completeness)
 tqdm>=4.66.0
 typer>=0.9.0

@@ -2,12 +2,9 @@ import { create } from 'zustand';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
-// AbortController and the active stream Reader are held outside the React
-// state because they are not serializable and we never want them to trigger a
-// re-render. The store just exposes start / cancel actions and the
-// derived state for the UI.
+// The AbortController is held outside React state because it is not
+// serializable and should never trigger a re-render.
 let activeController = null;
-let activeReader = null;
 
 const initialState = {
   // True from the moment the user clicks Process until a result or error.
@@ -51,10 +48,9 @@ export const useProcessingStore = create((set, get) => ({
     if (activeController) {
       try {
         activeController.abort();
-      } catch (_err) { /* noop */ }
+      } catch { /* noop */ }
     }
     activeController = null;
-    activeReader = null;
     set({ ...initialState });
   },
 
@@ -64,10 +60,9 @@ export const useProcessingStore = create((set, get) => ({
     if (activeController) {
       try {
         activeController.abort();
-      } catch (_err) { /* noop */ }
+      } catch { /* noop */ }
     }
     activeController = null;
-    activeReader = null;
     set({ processing: false, stage: null, progress: 0 });
   },
 
@@ -95,7 +90,7 @@ export const useProcessingStore = create((set, get) => ({
     if (activeController) {
       try {
         activeController.abort();
-      } catch (_err) { /* noop */ }
+      } catch { /* noop */ }
     }
 
     const controller = new AbortController();
@@ -131,6 +126,13 @@ export const useProcessingStore = create((set, get) => ({
       formData.append('hexagon_size', String(params.hexagon_size));
       formData.append('ai_confidence', String(params.ai_confidence));
       formData.append('ai_runtime_tuning', JSON.stringify(params.ai_runtime_tuning || {}));
+      formData.append(
+        'allow_partial_map_overlap',
+        params.allow_partial_map_overlap ? 'true' : 'false',
+      );
+      if (params.species) {
+        formData.append('species', String(params.species));
+      }
 
       const response = await fetch(`${API}/api/analyses/process-stream`, {
         method: 'POST',
@@ -144,7 +146,6 @@ export const useProcessingStore = create((set, get) => ({
       }
 
       const reader = response.body.getReader();
-      activeReader = reader;
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       let finalPayload = null;
@@ -214,7 +215,6 @@ export const useProcessingStore = create((set, get) => ({
       }
     } finally {
       activeController = null;
-      activeReader = null;
     }
   },
 
@@ -246,6 +246,8 @@ export const useProcessingStore = create((set, get) => ({
         ...result,
         saved: true,
         analysis_id: payload.analysis_id,
+        source_image_name: result.source_image_name || result.uploaded_file_name,
+        uploaded_file_name: payload.analysis_name || 'Saved analysis',
         save_summary: {
           analysis_id: payload.analysis_id,
           new_points: payload.new_points,

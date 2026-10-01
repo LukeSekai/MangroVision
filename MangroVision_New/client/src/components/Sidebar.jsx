@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
+import { useProcessingStore } from '../stores/processingStore';
+import Logo from './Logo';
 import './Sidebar.css';
 
 const NAV_ITEMS = [
@@ -16,14 +18,36 @@ const NAV_ITEMS = [
     ),
   },
   {
-    to: '/points',
-    label: 'Delete Points',
+    to: '/dashboard',
+    label: 'Dashboard',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 6h18" />
-        <path d="M8 6V4h8v2" />
-        <path d="M19 6l-1 14H6L5 6" />
-        <circle cx="12" cy="12" r="1" />
+        <rect x="3" y="3" width="7" height="9" rx="1" />
+        <rect x="14" y="3" width="7" height="5" rx="1" />
+        <rect x="14" y="12" width="7" height="9" rx="1" />
+        <rect x="3" y="16" width="7" height="5" rx="1" />
+      </svg>
+    ),
+  },
+  {
+    to: '/scheduling',
+    label: 'Scheduling',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="5" width="18" height="16" rx="2" />
+        <line x1="16" y1="3" x2="16" y2="7" />
+        <line x1="8" y1="3" x2="8" y2="7" />
+        <line x1="3" y1="11" x2="21" y2="11" />
+        <path d="m9 16 2 2 4-4" />
+      </svg>
+    ),
+  },
+  {
+    to: '/monitoring',
+    label: 'Monitoring',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
       </svg>
     ),
   },
@@ -57,6 +81,15 @@ const NAV_ITEMS = [
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
         <circle cx="12" cy="10" r="3" />
+      </svg>
+    ),
+  },
+  {
+    to: '/activity',
+    label: 'Activity Logs',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 4h16v16H4zM8 9h8M8 13h8M8 17h5" />
       </svg>
     ),
   },
@@ -106,34 +139,40 @@ function SidebarClock() {
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
+  const processing = useProcessingStore((s) => s.processing);
 
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
         <div className="sidebar-logo">
-          <svg width="28" height="28" viewBox="0 0 32 32" fill="none" className="sidebar-logo-icon">
-            <rect width="32" height="32" rx="8" fill="var(--green-700)" />
-            <path d="M16 6c-3.3 0-6 2.7-6 6 0 1.7.7 3.2 1.8 4.3.5.5.8 1.1.8 1.7v1c0 1.1.9 2 2 2h2.8c1.1 0 2-.9 2-2v-1c0-.6.3-1.2.8-1.7C21.3 15.2 22 13.7 22 12c0-3.3-2.7-6-6-6z" fill="#fff" opacity="0.9"/>
-            <path d="M13 22h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" fill="#fff" opacity="0.6"/>
-          </svg>
+          <span className="sidebar-logo-chip" aria-hidden="true">
+            <Logo variant="icon" size={28} className="sidebar-logo-icon" />
+          </span>
           <span className="sidebar-brand-name">MangroVision</span>
         </div>
 
         <nav className="sidebar-nav">
-          {NAV_ITEMS.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) =>
-                `sidebar-nav-item ${isActive ? 'active' : ''}`
-              }
-              title={item.label}
-            >
-              {item.icon}
-              <span className="sidebar-nav-label">{item.label}</span>
-            </NavLink>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const locked = processing && item.to === '/zones';
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                aria-disabled={locked}
+                onClick={(event) => {
+                  if (locked) event.preventDefault();
+                }}
+                className={({ isActive }) =>
+                  `sidebar-nav-item ${isActive ? 'active' : ''} ${locked ? 'disabled' : ''}`
+                }
+                title={locked ? 'Zone Editor is locked while image processing is running' : item.label}
+              >
+                {item.icon}
+                <span className="sidebar-nav-label">{item.label}</span>
+              </NavLink>
+            );
+          })}
         </nav>
       </div>
 

@@ -7,6 +7,7 @@ __pycache__/
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 
@@ -16,6 +17,8 @@ ENV/
 # IDEs
 .idea/
 .vscode/
+.claude/settings.json
+.claude/settings.local.json
 *.swp
 *.swo
 *~
@@ -25,19 +28,53 @@ ENV/
 *.egg-info/
 dist/
 build/
+node_modules/
+.vite/
 
 # Unit test / coverage reports
 .coverage
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
 htmlcov/
 
+# Development tests are not part of the laptop runtime package.
+/tests/
+*.test.js
+*.test.mjs
+*.spec.js
+*.spec.mjs
+
 # Data and logs
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+backups/
+migration-manifests/
+MangroVision_New/temp_uploads/
 *.log
 planting_zones.db
+planting_zones.db-*
+MangroVision_New/monitoring_uploads/
+MangroVision_New/run_logs/
+MangroVision_New/.dev-server/
+supabase/.temp/
+run_logs/
+tmp/
+validation_outputs/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Model files and local ML artifacts
 models/
-MangroVision_New/try_model/
+# The selected canopy checkpoint is shared separately (see docs/groupmate-setup.md).
+MangroVision_New/try_model/*.pth
 *.pth
 *.pt
 *.ckpt
@@ -53,6 +90,9 @@ training_data/
 training_runs/
 training_runs_smoke/
 train_outputs/
+ANNOTATIONS FOR FIRST TRAINING/
+MangroVision_New/Practice_annotate.v1-1.coco-segmentation/
+forbidden_zone_final.qmd
 metrics.json
 *.pid
 
@@ -67,12 +107,16 @@ output_geojson/
 TestImages/
 *.jpg
 *.png
+# Keep the UI's shipped brand and login imagery visible to Git.
+!MangroVision_New/client/public/*.jpg
+!MangroVision_New/client/public/*.png
 !README_assets/*.png
 
-# MAP tiles (large orthophoto tiles)
+# Local orthophotos and generated tiles. Share MAP/FINAL/final_orthophoto.tif
+# separately; the API can render map tiles directly from that GeoTIFF.
 MAP/*/
-!MAP/FINAL MAP/
-!MAP/FINAL MAP/**
+*.tif
+*.tiff
 
 
 # Temporary and debug files
@@ -82,6 +126,7 @@ debug_*.py
 debug_*.jpg
 diagnose_*.py
 check_*.py
+!scripts/check_groupmate_setup.py
 test_*.jpg
 test_*.png
 temp_flight_log/
@@ -101,3 +146,4 @@ desktop.ini
 # Local experiment scripts that are not part of the UI app
 scripts/filter_to_*.py
 scripts/train_*.py
+wipe_planting_data.py

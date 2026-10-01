@@ -110,7 +110,7 @@
 
 .login-form-inner {
   width: 100%;
-  max-width: 320px;
+  max-width: 380px;
 }
 
 .login-form-header {
@@ -119,10 +119,16 @@
 
 .login-logo {
   margin-bottom: 20px;
+  display: block;
+  max-width: 100%;
+  /* No drop-shadow / recolor / rotation per brand asset rules. */
 }
 
-.login-logo svg {
-  filter: drop-shadow(0 2px 6px rgba(22, 101, 52, 0.2));
+/* Let the lockup scale down on narrow viewports without ever exceeding the
+   form column. Height fall-back keeps the aspect ratio intact. */
+.login-logo img {
+  max-width: 100%;
+  height: auto;
 }
 
 .login-title {

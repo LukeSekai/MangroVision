@@ -27,21 +27,27 @@ class ForbiddenZoneFilter:
     enforces a sensible minimum distance from man-made structures.
     """
 
-    def __init__(self, geojson_path: str, safety_buffer_m: float = 0.0):
-        self.geojson_path = Path(geojson_path)
+    def __init__(
+        self,
+        geojson_path: str | None = None,
+        safety_buffer_m: float = 0.0,
+        geojson_data: dict | None = None,
+    ):
+        self.geojson_path = Path(geojson_path) if geojson_path else None
         self.safety_buffer_m = float(max(0.0, safety_buffer_m))
         self.forbidden_polygons = []
         self.buffered_polygons = []
         self.zone_count = 0
 
-        if not self.geojson_path.exists():
+        if geojson_data is None and (self.geojson_path is None or not self.geojson_path.exists()):
             print(f"Warning: Forbidden zones file not found: {geojson_path}")
             print("   All locations will be marked as safe.")
             return
 
         try:
-            with open(self.geojson_path, 'r', encoding='utf-8') as f:
-                geojson_data = json.load(f)
+            if geojson_data is None:
+                with open(self.geojson_path, 'r', encoding='utf-8') as f:
+                    geojson_data = json.load(f)
 
             if 'features' not in geojson_data:
                 print(f"Warning: No features found in {geojson_path}")
@@ -73,7 +79,7 @@ class ForbiddenZoneFilter:
             )
             print(
                 f"Loaded {self.zone_count} forbidden zones from "
-                f"{self.geojson_path.name}{buffer_note}"
+                f"{self.geojson_path.name if self.geojson_path else 'PostGIS'}{buffer_note}"
             )
         except Exception as e:
             print(f"Error loading forbidden zones: {e}")
@@ -85,4 +91,4 @@ class ForbiddenZoneFilter:
             return True
 
         point = Point(longitude, latitude)
-        return not any(zone.contains(point) for zone in self.buffered_polygons)
+        return not any(zone.covers(point) for zone in self.buffered_polygons)

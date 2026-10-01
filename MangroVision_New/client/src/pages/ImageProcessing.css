@@ -73,6 +73,105 @@
   max-width: 240px;
 }
 
+.image-location-card {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--border-medium);
+  border-left-width: 4px;
+  border-radius: var(--radius-md);
+  background: #f8fafc;
+  color: var(--text-secondary);
+}
+
+.image-location-card.is-inside {
+  border-color: #86efac;
+  border-left-color: #16a34a;
+  background: #f0fdf4;
+}
+
+.image-location-card.is-partial,
+.image-location-card.is-checking {
+  border-color: #fde68a;
+  border-left-color: #d97706;
+  background: #fffbeb;
+}
+
+.image-location-card.is-outside,
+.image-location-card.is-no_gps,
+.image-location-card.is-error {
+  border-color: #fecaca;
+  border-left-color: #dc2626;
+  background: #fef2f2;
+}
+
+.image-location-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.image-location-head > span {
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.image-location-head > strong {
+  color: var(--text-primary);
+  font-size: 0.72rem;
+}
+
+.image-location-card > p {
+  margin-top: 7px;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.image-location-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 9px;
+}
+
+.image-location-details > span {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.image-location-details small,
+.image-location-details strong {
+  display: block;
+}
+
+.image-location-details small {
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: 0.58rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.image-location-details strong {
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
+.image-location-modal-coordinates {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
 .config-list {
   display: flex;
   flex-direction: column;
@@ -116,6 +215,20 @@
   margin: 0 12px 8px;
   box-shadow: var(--shadow-xs);
   animation: slideIn 250ms var(--ease-out);
+}
+
+.progress-brand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+  /* Pulse the WRAPPER opacity, not the image — keeps the mark untouched
+     per brand rules while still signalling "active processing". */
+  animation: progress-brand-pulse 1800ms ease-in-out infinite;
+}
+
+@keyframes progress-brand-pulse {
+  0%, 100% { opacity: 0.85; }
+  50%      { opacity: 1; }
 }
 
 .progress-header {

@@ -1,0 +1,10 @@
+.seedling-intro { margin: 0 0 12px; color: #557064; font-size: 13px; line-height: 1.45; }
+.seedling-form { display: flex; flex-direction: column; gap: 10px; }
+.seedling-form > label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 700; color: #315841; }
+.seedling-form input:not([type='checkbox']), .seedling-form select, .seedling-form textarea { width: 100%; padding: 8px; border: 1px solid #bfd2c4; border-radius: 8px; background: white; color: #183b28; }
+.seedling-form textarea { min-height: 64px; resize: vertical; }
+.seedling-point-list { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow: auto; border: 1px solid #d9e5dc; border-radius: 8px; padding: 8px; }
+.seedling-point-list label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #244a34; }
+.seedling-point-list input { flex: none; }
+.seedling-form .seedling-confirm { display: flex; flex-direction: row; align-items: flex-start; font-weight: 500; }
+.seedling-error { color: #aa2525; font-size: 12px; }.seedling-success { color: #176a3d; font-size: 12px; }

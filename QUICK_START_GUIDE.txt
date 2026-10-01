@@ -1,42 +1,19 @@
-===============================================================
-MANGROVISION QUICK START
-===============================================================
+MANGROVISION QUICK START (CURRENT FASTAPI + REACT APP)
 
-FIRST-TIME SETUP
-1. Double-click `SETUP_ENV.bat`
-2. Wait for the virtual environment and dependencies to finish installing
+For a fresh clone on another laptop, follow docs/groupmate-setup.md first.
+The orthophoto GeoTIFF, canopy checkpoint, and private .env settings do not
+come from Git. The old START_MANGROVISION.bat starts the historical Streamlit
+application and is not the current workspace.
 
-START
-1. Double-click `START_MANGROVISION.bat`
-2. Wait for the tile server and Streamlit app to start
-3. Open `http://localhost:8502` if the browser does not open automatically
+After completing setup, run from the repository root in PowerShell:
 
-MANUAL START
-1. Terminal 1:
-   `venv\Scripts\python.exe start_tile_server.py`
-2. Terminal 2:
-   `venv\Scripts\python.exe -m streamlit run app.py --server.port 8502`
+  .\venv\Scripts\python.exe scripts/check_groupmate_setup.py
+  .\venv\Scripts\python.exe MangroVision_New/start_dev.py
 
-STOP
-1. Double-click `STOP_MANGROVISION.bat`
-2. Or press `Ctrl+C` in the tile-server and Streamlit terminals
+Open http://localhost:5173. To check database and storage readiness:
 
-PORTS
-- Tile server: `8080`
-- Streamlit UI: `8502`
+  .\venv\Scripts\python.exe scripts/check_groupmate_setup.py --online
 
-FILES THAT MATTER
-- `app.py`
-- `start_tile_server.py`
-- `planting_database.py`
-- `waypoint_export.py`
-- `canopy_detection/`
-- `forbidden_zones.geojson`
-- `eroded_zones.geojson`
-- `planting_zones.db`
-- `MAP/FINAL MAP`
-- `models/`
+Stop with Ctrl+C or:
 
-SHARING NOTES
-- `MAP/FINAL MAP` is included in the repository for the shared map view
-- `venv/` is not included; each teammate should run `SETUP_ENV.bat` after cloning
+  .\venv\Scripts\python.exe MangroVision_New/start_dev.py --stop

@@ -278,6 +278,8 @@ def generate_geojson(
                 "buffer_m": wp.get("buffer_m"),
                 "area_m2": wp.get("area_m2"),
                 "status": wp.get("status", "planned"),
+                "eroded_unavailable": bool(wp.get("eroded_unavailable", False)),
+                "availability_reason": wp.get("availability_reason"),
             },
         }
         features.append(feature)
@@ -333,6 +335,9 @@ def hexagons_to_waypoints(
         if lat is None or lon is None:
             continue
 
+        eroded_unavailable = bool(
+            h.get("_eroded_unavailable", h.get("eroded_unavailable", False))
+        )
         waypoints.append({
             "lat": float(lat),
             "lon": float(lon),
@@ -340,7 +345,11 @@ def hexagons_to_waypoints(
             "point_num": h.get("point_num", i),
             "buffer_m": h.get("buffer_radius_m") or h.get("buffer_m"),
             "area_m2": h.get("area_m2") or h.get("area_sqm", 0),
-            "status": h.get("status", "planned"),
+            "status": "eroded_unavailable" if eroded_unavailable else h.get("status", "planned"),
+            "eroded_unavailable": eroded_unavailable,
+            "availability_reason": (
+                "Inside an eroded zone" if eroded_unavailable else None
+            ),
         })
 
     return waypoints

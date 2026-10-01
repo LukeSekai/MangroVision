@@ -2,3 +2,253 @@
   width: 100%;
   height: 100%;
 }
+
+/* Keep the basemap picker at the upper left, away from the right-hand panels. */
+.left-basemap-container .leaflet-top.leaflet-left .leaflet-control-layers {
+  margin-top: 16px;
+  margin-left: 16px;
+}
+
+/* Monitoring has a back link in the same corner. */
+.monitoring-map-container .leaflet-top.leaflet-left .leaflet-control-layers {
+  margin-top: 60px;
+}
+
+.map-container.is-brushing,
+.map-container.is-brushing .leaflet-interactive { cursor: crosshair; }
+.replanting-brush {
+  display: none;
+  position: absolute;
+  z-index: 650;
+  pointer-events: none;
+  border: 2px solid #7c3aed;
+  border-radius: 50%;
+  background: rgba(124, 58, 237, 0.12);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+.replanting-brush.is-deselect { border-color: #dc2626; background: rgba(220, 38, 38, 0.1); }
+
+/* ── Zone hover tooltips ────────────────────────────────────────────
+   Per-polygon labels for forbidden / eroded zones so admins know what
+   each dashed polygon represents without reading the legend. */
+.zone-tooltip {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+}
+
+.zone-tooltip::before {
+  display: none;
+}
+
+.zone-tooltip-inner {
+  min-width: 140px;
+  max-width: 240px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border-radius: 8px;
+  border-left: 3px solid #94a3b8;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.zone-tooltip-forbidden .zone-tooltip-inner {
+  border-left-color: #dc2626;
+}
+
+.zone-tooltip-eroded .zone-tooltip-inner {
+  border-left-color: #ea580c;
+}
+
+.zone-tooltip-warning .zone-tooltip-inner {
+  border-left-color: #f59e0b;
+}
+
+.zone-tooltip-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.zone-tooltip-detail {
+  font-size: 11px;
+  color: #475569;
+  line-height: 1.35;
+}
+
+/* ── Bottom-left zone legend control ─────────────────────────────── */
+.map-zone-legend {
+  background: rgba(255, 255, 255, 0.94);
+  padding: 8px 10px;
+  border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #0f172a;
+  margin-bottom: 6px;
+  pointer-events: auto;
+}
+
+.map-zone-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 1px 0;
+}
+
+.map-zone-legend-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1.5px dashed transparent;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.map-zone-legend-swatch-forbidden {
+  border-color: #dc2626;
+  background: rgba(220, 38, 38, 0.18);
+}
+
+.map-zone-legend-swatch-site {
+  border-color: #64748b;
+  background: rgba(100, 116, 139, 0.14);
+}
+
+.map-zone-legend-swatch-project {
+  background: rgba(14, 165, 233, 0.08);
+  border: 2px dashed #0284c7;
+}
+
+.map-zone-legend-swatch-eroded {
+  border-color: #ea580c;
+  background: rgba(234, 88, 12, 0.18);
+}
+
+.map-zone-legend-swatch-warning {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.18);
+}
+
+.map-zone-legend-label {
+  font-weight: 600;
+}
+
+/* ── Site-zone (plantable area) hover tooltips ──────────────────────
+   Polygon color is set per-feature in JS based on survival rate, so
+   the tooltip just lays out the name + alive/dead/total numbers. */
+.site-zone-tooltip {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+}
+
+.site-zone-tooltip::before {
+  display: none;
+}
+
+.site-zone-tooltip-inner {
+  min-width: 160px;
+  max-width: 260px;
+  padding: 8px 10px;
+  background: #ffffff;
+  border-radius: 8px;
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+.site-zone-tooltip-title {
+  font-size: 12px;
+  font-weight: 800;
+  color: #0f172a;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+
+.site-zone-tooltip-stat {
+  font-size: 12px;
+  color: #0f172a;
+  line-height: 1.4;
+}
+
+.site-zone-tooltip-stat strong {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.site-zone-tooltip-meta {
+  display: block;
+  font-size: 10px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.site-zone-tooltip-empty {
+  color: #64748b;
+  font-style: italic;
+}
+
+.point-status-tooltip {
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+}
+
+.point-status-tooltip::before {
+  display: none;
+}
+
+.point-status-tooltip-inner {
+  min-width: 128px;
+  max-width: 240px;
+  padding: 8px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  color: #0f172a;
+  font-family: var(--font-sans);
+  line-height: 1.25;
+}
+
+.point-status-tooltip-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
+.point-status-tooltip-status {
+  margin-top: 5px;
+  padding-left: 7px;
+  border-left: 3px solid #16a34a;
+  font-size: 0.6875rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.point-status-tooltip-detail {
+  margin-top: 5px;
+  color: #475569;
+  font-size: 0.6875rem;
+  white-space: normal;
+}
+
+.point-status-tooltip-selected {
+  color: #991b1b;
+  font-weight: 700;
+}
+
+.point-status-tooltip-warning {
+  color: #92400e;
+  font-weight: 700;
+}

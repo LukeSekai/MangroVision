@@ -1,16 +1,65 @@
-import { useState, useRef, useEffect } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import './Panel.css';
+
+const PanelAccordionContext = createContext(null);
 
 /**
  * Floating side panel with hide/show toggle and collapsible sections.
  */
-export function Panel({ title, subtitle, children, defaultHidden = false }) {
+export function Panel({
+  title,
+  subtitle,
+  children,
+  defaultHidden = false,
+  accordion = true,
+  initialOpenKeys = [],
+  className = '',
+  toggleClassName = '',
+}) {
   const [hidden, setHidden] = useState(defaultHidden);
+  const [openKeys, setOpenKeys] = useState(() => (
+    Array.isArray(initialOpenKeys) ? initialOpenKeys : []
+  ));
+
+  const registerCard = useCallback((key, defaultOpen) => {
+    if (!defaultOpen) return;
+    setOpenKeys((currentKeys) => {
+      if (currentKeys.length > 0) return currentKeys;
+      return [key];
+    });
+  }, []);
+
+  const setCardOpen = useCallback((key, nextOpen) => {
+    setOpenKeys((currentKeys) => {
+      if (nextOpen) return [key];
+      return currentKeys.filter((openKey) => openKey !== key);
+    });
+  }, []);
+
+  const accordionContext = useMemo(() => (
+    accordion
+      ? {
+          openKeys,
+          registerCard,
+          setCardOpen,
+          isCardOpen: (key) => openKeys.includes(key),
+        }
+      : null
+  ), [accordion, openKeys, registerCard, setCardOpen]);
 
   return (
     <>
       <button
-        className={`panel-toggle ${hidden ? 'panel-toggle-hidden' : ''}`}
+        className={`panel-toggle ${toggleClassName} ${hidden ? 'panel-toggle-hidden' : ''}`.trim()}
         onClick={() => setHidden((h) => !h)}
         title={hidden ? 'Show panel' : 'Hide panel'}
       >
@@ -30,16 +79,18 @@ export function Panel({ title, subtitle, children, defaultHidden = false }) {
         <span>{hidden ? 'Show' : 'Hide'}</span>
       </button>
 
-      <div className={`floating-panel ${hidden ? 'floating-panel-hidden' : ''}`}>
+      <div className={`floating-panel ${className} ${hidden ? 'floating-panel-hidden' : ''}`.trim()}>
         <div className="floating-panel-header">
           <div>
             <h2 className="floating-panel-title">{title}</h2>
             {subtitle && <span className="floating-panel-subtitle">{subtitle}</span>}
           </div>
         </div>
-        <div className="floating-panel-body">
-          {children}
-        </div>
+        <PanelAccordionContext.Provider value={accordionContext}>
+          <div className="floating-panel-body">
+            {children}
+          </div>
+        </PanelAccordionContext.Provider>
       </div>
     </>
   );
@@ -48,12 +99,52 @@ export function Panel({ title, subtitle, children, defaultHidden = false }) {
 /**
  * Collapsible card section inside a Panel — with smooth height animation.
  */
-export function PanelCard({ icon, title, badge, children, defaultOpen = true }) {
-  const [open, setOpen] = useState(defaultOpen);
+export function PanelCard({
+  icon,
+  title,
+  badge,
+  children,
+  defaultOpen = true,
+  open: controlledOpen,
+  onOpenChange,
+  panelKey,
+  className = '',
+}) {
+  const generatedKey = useId();
+  const cardKey = panelKey || generatedKey;
+  const accordionContext = useContext(PanelAccordionContext);
+  const registerPanelCard = accordionContext?.registerCard;
+  const setPanelCardOpen = accordionContext?.setCardOpen;
+  const isPanelCardOpen = accordionContext?.isCardOpen;
+  const isControlled = controlledOpen !== undefined;
+  const usesPanelAccordion = Boolean(accordionContext) && !isControlled;
+  const [internalOpen, setInternalOpen] = useState(defaultOpen);
+  const open = isControlled
+    ? Boolean(controlledOpen)
+    : usesPanelAccordion
+      ? isPanelCardOpen(cardKey)
+      : internalOpen;
+  const initialOpen = open;
   const bodyRef = useRef(null);
-  const [height, setHeight] = useState(defaultOpen ? 'auto' : '0px');
-  const [overflow, setOverflow] = useState(defaultOpen ? 'visible' : 'hidden');
+  const [height, setHeight] = useState(initialOpen ? 'auto' : '0px');
+  const [overflow, setOverflow] = useState(initialOpen ? 'visible' : 'hidden');
   const isFirstRender = useRef(true);
+
+  const toggleOpen = () => {
+    const nextOpen = !open;
+    if (usesPanelAccordion) {
+      setPanelCardOpen(cardKey, nextOpen);
+    } else if (!isControlled) {
+      setInternalOpen(nextOpen);
+    }
+    onOpenChange?.(nextOpen);
+  };
+
+  useEffect(() => {
+    if (usesPanelAccordion) {
+      registerPanelCard(cardKey, defaultOpen);
+    }
+  }, [cardKey, defaultOpen, registerPanelCard, usesPanelAccordion]);
 
   useEffect(() => {
     if (isFirstRender.current) {
@@ -89,8 +180,8 @@ export function PanelCard({ icon, title, badge, children, defaultOpen = true }) 
   }, [open]);
 
   return (
-    <div className={`panel-card ${open ? 'panel-card-open' : ''}`}>
-      <button className="panel-card-header" onClick={() => setOpen((o) => !o)}>
+    <div className={`panel-card ${className} ${open ? 'panel-card-open' : ''}`.trim()}>
+      <button className="panel-card-header" onClick={toggleOpen}>
         <div className="panel-card-header-left">
           {icon && <span className="panel-card-icon">{icon}</span>}
           <span className="panel-card-title">{title}</span>

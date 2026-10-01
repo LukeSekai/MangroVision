@@ -2,24 +2,31 @@
 
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import JSONResponse
+from api.routes.monitoring import _require_lgu_user
+from pydantic import BaseModel, Field
+from mangrovision_db.organization_accounts import reset_participant_device
 
+from api.runtime_state import is_processing_active
 from planting_database import (
     _get_connection,
     _hash_password,
-    assign_planting_point_to_planter,
     create_planter,
     create_planter_assignment,
-    delete_planting_points,
+    get_mortality_detail_table,
+    get_mortality_stats,
+    reset_planting_point_to_planned,
     get_planter,
     get_planter_dashboard_stats,
     get_planter_field_points,
     list_planter_assignment_map_points,
     list_planters,
+    mark_planting_point_dead,
+    restore_planting_point_to_planted,
 )
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(_require_lgu_user)])
 
 
 class AssignPointRequest(BaseModel):
@@ -30,7 +37,9 @@ class AssignPointRequest(BaseModel):
 
 
 class CreatePlanterRequest(BaseModel):
-    full_name: str
+    full_name: str = "Organization account"
+    organization_id: int
+    participant_count: int = Field(default=1, ge=1, le=10000)
     username: str
     password: str
     phone: str = ""
@@ -59,10 +68,21 @@ class CreateAssignmentRequest(BaseModel):
     assignment_date: str = ""
     travel_mode: str = "walking"
     notes: str = ""
+    species: str = ""
+    site_zone_id: Optional[int] = None
 
 
-class DeleteMapPointsRequest(BaseModel):
-    point_ids: List[int]
+class MarkDeadRequest(BaseModel):
+    reason_category: str
+    notes: str = ""
+
+
+def _raise_if_processing_active():
+    if is_processing_active():
+        raise HTTPException(
+            status_code=409,
+            detail="Planting point assignment is locked while image processing is running.",
+        )
 
 
 @router.get("/")
@@ -75,27 +95,56 @@ def dashboard_stats():
     return get_planter_dashboard_stats()
 
 
-@router.get("/map-points")
-def map_points():
-    return list_planter_assignment_map_points()
+@router.get("/mortality-stats")
+def mortality_stats():
+    return get_mortality_stats()
 
 
-@router.delete("/map-points")
-def delete_map_points(body: DeleteMapPointsRequest):
+@router.get("/mortality-detail")
+def mortality_detail():
+    """Per-zone (per-assignment) detailed table for the Monitoring overlay."""
+    return {"zones": get_mortality_detail_table()}
+
+
+@router.patch("/map-points/{point_id}/death")
+def mark_point_dead(point_id: int, body: MarkDeadRequest):
     try:
-        return delete_planting_points(body.point_ids)
+        return mark_planting_point_dead(
+            point_id=point_id,
+            reason_category=body.reason_category,
+            notes=body.notes,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@router.post("/map-points/{point_id}/restore")
+def restore_point_to_planted(point_id: int):
+    try:
+        return restore_planting_point_to_planted(point_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.post("/map-points/{point_id}/reset-to-planned")
+def reset_point_to_planned(point_id: int):
+    try:
+        return reset_planting_point_to_planned(point_id)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/map-points")
+def map_points():
+    # The domain adapter already normalizes dates, decimals and JSON values.
+    # Avoid FastAPI recursively normalizing every field of thousands of points
+    # again; JSONResponse retains the same JSON number precision and nulls.
+    return JSONResponse(list_planter_assignment_map_points())
+
+
 @router.post("/assign-point")
 def assign_point(body: AssignPointRequest):
-    return assign_planting_point_to_planter(
-        planter_id=body.planter_id,
-        planting_point_id=body.planting_point_id,
-        allow_reassign=body.allow_reassign,
-        travel_mode=body.travel_mode,
-    )
+    raise HTTPException(status_code=410, detail="Individual assignment has been removed. Assign a batch to the organization.")
 
 
 # MIGRATED FROM app.py planter management tab (create form)
@@ -112,6 +161,8 @@ def create_planter_endpoint(body: CreatePlanterRequest):
             base_lon=body.base_lon,
             notes=body.notes,
             status=body.status,
+            organization_id=body.organization_id,
+            participant_count=body.participant_count,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -133,8 +184,10 @@ def update_planter_endpoint(planter_id: int, body: UpdatePlanterRequest):
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
 
+    if planter.get("merged_into_planter_id") is not None:
+        raise HTTPException(status_code=409, detail="This legacy account was merged into its organization login.")
     updates: list[tuple[str, object]] = []
-    if body.full_name is not None:
+    if body.full_name is not None and planter.get("organization_id") is None:
         full_name = body.full_name.strip()
         if not full_name:
             raise HTTPException(status_code=400, detail="Planter name cannot be empty.")
@@ -189,7 +242,10 @@ def deactivate_planter_endpoint(planter_id: int, hard: bool = False):
 
 # MIGRATED FROM app.py batch assignment flow (create_planter_assignment)
 @router.post("/{planter_id}/assignments")
-def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest):
+def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest,
+                               user: dict = Depends(_require_lgu_user)):
+    """Divide selected point locations into balanced participant zigzag strips."""
+    _raise_if_processing_active()
     planter = get_planter(planter_id)
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
@@ -197,11 +253,13 @@ def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest):
         assignment_id = create_planter_assignment(
             planter_id=planter_id,
             planting_point_ids=body.planting_point_ids,
-            assigned_by_user_id=body.assigned_by_user_id,
+            assigned_by_user_id=int(user["id"]),
             title=body.title,
             assignment_date=body.assignment_date,
             travel_mode=body.travel_mode,
             notes=body.notes,
+            species=body.species,
+            site_zone_id=body.site_zone_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -215,3 +273,12 @@ def field_points(planter_id: int):
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
     return get_planter_field_points(planter_id)
+
+
+@router.post("/{planter_id}/participants/{slot}/reset-device")
+def reset_device(planter_id: int, slot: int):
+    try:
+        reset_participant_device(planter_id, slot)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"status": "reset", "slot": slot}

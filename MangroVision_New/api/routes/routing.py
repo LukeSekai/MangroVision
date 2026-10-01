@@ -9,7 +9,9 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from api.site_access import access_for_destination, distance_m, inside_area, path_distance, remaining_access_path
 
 router = APIRouter()
 
@@ -28,10 +30,10 @@ def _load_google_routes_api_key() -> str:
 
 
 class RouteRequest(BaseModel):
-    origin_lat: float
-    origin_lon: float
-    dest_lat: float
-    dest_lon: float
+    origin_lat: float = Field(ge=-90, le=90)
+    origin_lon: float = Field(ge=-180, le=180)
+    dest_lat: float = Field(ge=-90, le=90)
+    dest_lon: float = Field(ge=-180, le=180)
     travel_mode: Optional[str] = "walking"
 
 
@@ -111,9 +113,8 @@ def _decode_polyline(encoded: str) -> list[list[float]]:
     return coordinates
 
 
-@router.post("/compute")
-def compute_route(body: RouteRequest):
-    """Return polyline + distance + duration for a point-to-point route."""
+def _google_route(origin, destination, travel_mode):
+    """Choose the shortest valid walking route returned by the provider."""
     api_key = _load_google_routes_api_key()
     if not api_key:
         raise HTTPException(
@@ -125,21 +126,22 @@ def compute_route(body: RouteRequest):
         "origin": {
             "location": {
                 "latLng": {
-                    "latitude": body.origin_lat,
-                    "longitude": body.origin_lon,
+                    "latitude": origin[0],
+                    "longitude": origin[1],
                 }
             }
         },
         "destination": {
             "location": {
                 "latLng": {
-                    "latitude": body.dest_lat,
-                    "longitude": body.dest_lon,
+                    "latitude": destination[0],
+                    "longitude": destination[1],
                 }
             }
         },
-        "travelMode": _travel_mode_to_google(body.travel_mode or "walking"),
-        "computeAlternativeRoutes": False,
+        "travelMode": _travel_mode_to_google(travel_mode),
+        "computeAlternativeRoutes": True,
+        "polylineQuality": "HIGH_QUALITY",
         "languageCode": "en-US",
         "units": "METRIC",
     }
@@ -159,27 +161,73 @@ def compute_route(body: RouteRequest):
         with urlopen(http_request, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as err:
-        detail = err.read().decode("utf-8", errors="ignore")
-        raise HTTPException(status_code=502, detail=f"Google Routes API error ({err.code}): {detail or err.reason}") from err
+        raise HTTPException(status_code=502, detail=f"Walking directions are unavailable (provider status {err.code}). Please retry.") from err
     except URLError as err:
         raise HTTPException(status_code=502, detail=f"Google Routes API connection error: {err.reason}") from err
 
-    route = (payload.get("routes") or [None])[0]
-    if not route:
+    candidates = []
+    for route in payload.get('routes') or []:
+        encoded = ((route.get('polyline') or {}).get('encodedPolyline') or '').strip()
+        try:
+            polyline = _decode_polyline(encoded)
+        except (IndexError, ValueError):
+            continue
+        if len(polyline) < 2:
+            continue
+        # Reject snapping to a different road instead of drawing a bridge over
+        # the unmapped gap. In particular this prevents the eastern pond detour.
+        if distance_m(polyline[-1], destination) > 20 or distance_m(polyline[0], origin) > 30:
+            continue
+        meters = route.get('distanceMeters')
+        if not isinstance(meters, (int, float)) or meters < 0:
+            continue
+        candidates.append((meters, _parse_duration_seconds(route.get('duration')), polyline))
+    if not candidates:
         raise HTTPException(status_code=404, detail="No route found between those points.")
+    return min(candidates, key=lambda item: (item[0], item[1] if item[1] is not None else float('inf')))
 
-    encoded = ((route.get("polyline") or {}).get("encodedPolyline") or "").strip()
-    if not encoded:
-        raise HTTPException(status_code=404, detail="Route returned no polyline.")
 
-    distance_m = route.get("distanceMeters")
-    duration_s = _parse_duration_seconds(route.get("duration"))
-
+@router.post('/compute')
+def compute_route(body: RouteRequest):
+    origin, destination = [body.origin_lat, body.origin_lon], [body.dest_lat, body.dest_lon]
+    mode = (body.travel_mode or 'walking').lower()
+    site = access_for_destination(destination)
+    note = None
+    entrance = None
+    if site:
+        if mode != 'walking':
+            raise HTTPException(status_code=422, detail='The mangrove access road is configured for walking navigation.')
+        path = site['access_path']
+        entrance = path[-1]
+        if inside_area(origin, site['site_area']):
+            # Do not send someone already planting back out onto public roads,
+            # or draw an unverified straight route through mangroves/water.
+            return {
+                'polyline': [], 'target': destination, 'entrance': entrance,
+                'distance_m': None, 'duration_s': None,
+                'distance_label': f'{_format_distance(distance_m(origin, destination))} to point (straight-line)',
+                'duration_label': 'Follow planting order', 'travel_mode': mode,
+                'route_source': 'within_site',
+                'navigation_note': 'You are inside the site. Follow the LGU-marked planting lanes in zigzag order; internal walking paths are not mapped.',
+            }
+        local_path = remaining_access_path(origin, path)
+        if local_path is not None:
+            polyline = local_path
+            meters = path_distance(polyline)
+            seconds = meters / 1.2
+        else:
+            meters, seconds, polyline = _google_route(origin, path[0], mode)
+            access_meters = distance_m(polyline[-1], path[0]) + path_distance(path)
+            polyline = [*polyline, *path]
+            meters += access_meters
+            seconds = seconds + access_meters/1.2 if seconds is not None else None
+        note = f'Follow the white road to the entrance. Your point is {_format_distance(distance_m(entrance, destination))} beyond it (straight-line); use the LGU-marked planting lanes inside.'
+    else:
+        meters, seconds, polyline = _google_route(origin, destination, mode)
     return {
-        "polyline": _decode_polyline(encoded),
-        "distance_m": distance_m,
-        "duration_s": duration_s,
-        "distance_label": _format_distance(distance_m),
-        "duration_label": _format_duration(duration_s),
-        "travel_mode": (body.travel_mode or "walking").lower(),
+        'polyline': polyline, 'target': destination, 'entrance': entrance,
+        'distance_m': meters, 'duration_s': seconds,
+        'distance_label': _format_distance(meters), 'duration_label': _format_duration(seconds),
+        'travel_mode': mode, 'route_source': 'site_entrance' if site else 'google_routes',
+        'navigation_note': note,
     }

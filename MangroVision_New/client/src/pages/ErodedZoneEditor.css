@@ -4,10 +4,216 @@
   gap: 2px;
 }
 
+.zone-lock-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  border: 1px solid #fed7aa;
+  border-radius: var(--radius-md);
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 0.8125rem;
+  line-height: 1.35;
+}
+
+.zone-lock-banner strong {
+  color: #7c2d12;
+}
+
 .zone-actions {
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+/* Segmented control for the three editable zone types.
+   Looks like a segmented control; each option carries the kind's color
+   swatch so the choice maps directly to what the polygon will look like. */
+.zone-kind-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
+  background: var(--surface-muted);
+  padding: 4px;
+  border-radius: var(--radius-md);
+}
+
+.project-site-owner-first {
+  margin-bottom: 10px;
+}
+
+.project-site-owner-help {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+@media (max-width: 430px) {
+  .zone-kind-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.zone-kind-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.zone-kind-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.zone-kind-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.zone-kind-btn-active {
+  background: var(--surface-base);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
+}
+
+.zone-kind-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.site-zone-row {
+  /* Slightly more breathing room so the two-line "X% survival · Y/Z alive"
+     meta doesn't crowd the delete button. */
+  padding: 8px 8px;
+}
+
+/* ── Env context modal body ─────────────────────────────────────────
+   Three short stat cells (temperature / rainfall / wind) plus a
+   disclaimer line so the adviser can see at a glance that we're
+   showing CONTEXT, not a predictive risk score. */
+.warning-zone-row {
+  padding: 8px 8px;
+}
+
+.warning-severity {
+  flex-shrink: 0;
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 0.625rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.warning-severity-low {
+  color: #365314;
+  background: #ecfccb;
+}
+
+.warning-severity-medium {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.warning-severity-high {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.env-context-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  text-align: left;
+}
+
+.env-context-disclaimer {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 0;
+  line-height: 1.45;
+}
+
+.env-context-grid {
+  /* 2x2 grid keeps each cell readable when modal is at typical width;
+     auto-fits on narrow viewports via the media query below. */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.env-context-cell-empty {
+  font-style: italic;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.env-context-cell {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  padding: 10px 10px 8px;
+  background: var(--surface-base);
+  min-width: 0;
+}
+
+.env-context-cell-label {
+  font-size: 0.625rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.env-context-cell-value {
+  font-size: 1rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  margin-top: 2px;
+}
+
+.env-context-cell-meta {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.35;
+}
+
+.env-context-source {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  margin: 0;
+  font-style: italic;
+}
+
+.env-context-error {
+  color: #991b1b;
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 540px) {
+  .env-context-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .zone-row {
@@ -65,6 +271,35 @@
   font-size: 0.8125rem;
   font-weight: 600;
   color: #9a3412;
+}
+
+.zone-covered-count {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 9px 11px;
+  border: 1px solid #bae6fd;
+  border-radius: var(--radius-md);
+  color: #075985;
+  background: #f0f9ff;
+}
+
+.zone-covered-count strong {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.zone-covered-count span {
+  font-size: 0.75rem;
+  font-weight: 650;
+}
+
+.zone-covered-count.is-ready {
+  margin: 0 0 10px;
+  border-color: #bbf7d0;
+  color: #166534;
+  background: #f0fdf4;
 }
 
 .zone-first-vertex {

@@ -1,0 +1,3 @@
+[functions.monitoring-reminders]
+# The function authenticates the Supabase Cron request with a private job token.
+verify_jwt = false

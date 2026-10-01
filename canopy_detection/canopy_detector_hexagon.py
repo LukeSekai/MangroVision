@@ -14,6 +14,32 @@ import math
 
 from gsd_calculator import GSDCalculator
 
+
+_AVAILABLE_HEX_BUFFER_COLOR = (144, 238, 144)
+_AVAILABLE_HEX_CORE_COLOR = (0, 128, 0)
+_AVAILABLE_HEX_BORDER_COLOR = (0, 255, 0)
+_ERODED_HEX_BUFFER_COLOR = (80, 190, 255)
+_ERODED_HEX_CORE_COLOR = (0, 140, 255)
+_ERODED_HEX_BORDER_COLOR = (0, 80, 255)
+
+
+def _hexagon_render_colors(hex_info: Dict) -> Tuple[tuple, tuple, tuple]:
+    """Return orange colors for a point currently blocked by erosion."""
+    if bool(
+        hex_info.get("_eroded_unavailable")
+        or hex_info.get("_inside_eroded_zone")
+    ):
+        return (
+            _ERODED_HEX_BUFFER_COLOR,
+            _ERODED_HEX_CORE_COLOR,
+            _ERODED_HEX_BORDER_COLOR,
+        )
+    return (
+        _AVAILABLE_HEX_BUFFER_COLOR,
+        _AVAILABLE_HEX_CORE_COLOR,
+        _AVAILABLE_HEX_BORDER_COLOR,
+    )
+
 # Optional: Try to import the official detectree2 backend
 try:
     from detectree2_proper import ProperDetectree2Detector
@@ -33,7 +59,8 @@ class HexagonDetector:
                  drone_model: str = 'GENERIC_4K',
                  ai_confidence: float = 0.87,
                  detection_mode: str = 'ai',
-                 camera_info: Optional[Dict] = None):
+                 camera_info: Optional[Dict] = None,
+                 gsd_override: Optional[float] = None):
         """
         Initialize the detector.
 
@@ -59,9 +86,17 @@ class HexagonDetector:
         self.ai_confidence = float(ai_confidence)
         self.detection_mode = detection_mode
         self.camera_info = camera_info or {}
+        self.gsd_override = (
+            float(gsd_override)
+            if gsd_override is not None
+            and math.isfinite(float(gsd_override))
+            and float(gsd_override) > 0
+            else None
+        )
         self.gsd = None
         self.image_shape = None
         self.ai_detector = None
+        self._seedling_mask = None
 
         if detection_mode == 'ai' and DETECTREE2_AVAILABLE:
             print("Initializing MangroVision with AI detection system...")
@@ -86,13 +121,19 @@ class HexagonDetector:
 
     def calculate_gsd(self, image_width: int, image_height: int):
         """Calculate Ground Sample Distance for the image"""
-        self.gsd, specs = GSDCalculator.calculate_gsd_from_metadata(
+        calculated_gsd, specs = GSDCalculator.calculate_gsd_from_metadata(
             altitude_m=self.altitude_m,
             camera_info=self.camera_info,
             drone_model=self.drone_model,
             image_width_px=image_width,
             image_height_px=image_height,
         )
+        self.gsd = calculated_gsd
+        if self.gsd_override is not None:
+            specs = dict(specs)
+            specs['nominal_gsd_m_per_pixel'] = float(calculated_gsd)
+            specs['source'] = 'orthophoto_vegetation_calibration'
+            self.gsd = float(self.gsd_override)
         # Store as (height, width) to match numpy convention
         self.image_shape = (image_height, image_width)
         self.gsd_specs = specs
@@ -139,6 +180,7 @@ class HexagonDetector:
             Tuple of (List of Shapely Polygon objects, binary canopy mask)
         """
         self._ai_metadata = {}
+        self._seedling_mask = np.zeros(image.shape[:2], dtype=np.uint8)
 
         if self.detection_mode == 'ai' and self.ai_detector is not None:
             print("Running AI-only detection...")
@@ -151,17 +193,26 @@ class HexagonDetector:
                 if isinstance(ai_result, (list, tuple)):
                     if len(ai_result) >= 4:
                         canopy_polygons, canopy_mask, metadata = ai_result[0], ai_result[1], ai_result[2]
+                        candidate_seedling_mask = ai_result[3]
                     elif len(ai_result) == 3:
                         canopy_polygons, canopy_mask, metadata = ai_result
+                        candidate_seedling_mask = None
                     else:
                         canopy_polygons, canopy_mask = ai_result[0], ai_result[1]
                         metadata = {}
+                        candidate_seedling_mask = None
                 else:
                     raise ValueError(f"Unexpected AI result type: {type(ai_result)}")
                 self._ai_metadata = metadata
+                if (
+                    isinstance(candidate_seedling_mask, np.ndarray)
+                    and candidate_seedling_mask.shape == image.shape[:2]
+                ):
+                    self._seedling_mask = ((candidate_seedling_mask > 0).astype(np.uint8) * 255)
             except Exception as e:
                 print(f"   AI detection failed: {e}")
                 print("   Falling back to HSV detection")
+                self._seedling_mask = np.zeros(image.shape[:2], dtype=np.uint8)
                 return self._detect_hsv(image)
 
             total_canopy_pixels = np.count_nonzero(canopy_mask)
@@ -290,55 +341,106 @@ class HexagonDetector:
 
         return canopy_polygons
 
-    def create_danger_zones(self, canopy_polygons: List[Polygon], canopy_mask: np.ndarray, buffer_m: float = 1.0) -> Tuple[Polygon, np.ndarray]:
+    def create_danger_zones(
+        self,
+        canopy_polygons: List[Polygon],
+        canopy_mask: np.ndarray,
+        buffer_m: float = 2.0,
+        extra_mask: Optional[np.ndarray] = None,
+        extra_buffer_m: float = 0.0,
+    ) -> Tuple[Polygon, np.ndarray]:
         """
-        Create danger zones (canopies + 1m buffer) with proper masking
+        Create danger zones (canopies + configurable buffer) with proper masking
         CLIPS to image boundaries to prevent overflow
-        
+
         Args:
             canopy_polygons: List of canopy polygons
             canopy_mask: Binary mask of canopy areas
-            buffer_m: Buffer distance in meters (default 1.0m)
-            
+            buffer_m: Buffer distance in meters (default 2.0m)
+            extra_mask: Optional isolated seedling mask used only for safety
+                buffering; it does not alter the mature-canopy mask.
+            extra_buffer_m: Safety radius for ``extra_mask``. It is separate
+                from the mature-canopy radius so tiny markers do not create a
+                full-size canopy danger field.
+
         Returns:
             Tuple of (unified danger zone polygon, danger zone mask)
         """
         h, w = self.image_shape
         danger_mask = np.zeros((h, w), dtype=np.uint8)
-        
-        if not canopy_polygons:
-            return Polygon(), danger_mask
-        
+
         # Create image boundary polygon for clipping
         image_boundary = Polygon([(0, 0), (w, 0), (w, h), (0, h)])
-        
+
         # Convert buffer distance to pixels
-        buffer_pixels = buffer_m / self.gsd
+        # Keep seedling safety distance independent from the mature-canopy
+        # buffer. Applying 2 m to hundreds of tiny markers merges them into a
+        # continuous red field.
+        buffer_pixels = max(0.0, float(buffer_m)) / self.gsd
+        extra_buffer_pixels = max(0.0, float(extra_buffer_m)) / self.gsd
         print(f"   Buffer calculation: {buffer_m}m Ã· {self.gsd:.5f}m/px = {buffer_pixels:.1f} pixels")
-        
-        # Create buffers around each canopy (includes canopy + buffer)
-        buffered = [poly.buffer(buffer_pixels) for poly in canopy_polygons]
-        
-        # Merge all buffers
-        danger_zone = unary_union(buffered)
-        
-        # CLIP to image boundaries - this is crucial!
-        danger_zone = danger_zone.intersection(image_boundary)
-        
-        # Create danger zone mask
-        if isinstance(danger_zone, Polygon):
-            if danger_zone.exterior:
-                pts = np.array(danger_zone.exterior.coords, dtype=np.int32)
-                cv2.fillPoly(danger_mask, [pts], 255)
-        elif isinstance(danger_zone, MultiPolygon):
-            for poly in danger_zone.geoms:
-                if poly.exterior:
-                    pts = np.array(poly.exterior.coords, dtype=np.int32)
+
+        # Every canopy shown in the purple overlay must contribute to the red
+        # danger buffer. Earlier versions skipped sub-0.1 m² polygons; that
+        # made the preview look like "detected canopy with no safety zone" and
+        # could leave refill candidates too close to visible vegetation.
+        if isinstance(canopy_mask, np.ndarray) and canopy_mask.shape == danger_mask.shape:
+            canopy_pixels = canopy_mask > 0
+            seedling_pixels = (
+                extra_mask > 0
+                if isinstance(extra_mask, np.ndarray) and extra_mask.shape == danger_mask.shape
+                else np.zeros_like(canopy_pixels)
+            )
+            if not np.any(canopy_pixels) and not np.any(seedling_pixels):
+                return Polygon(), danger_mask
+            if np.any(canopy_pixels):
+                distance_from_canopy = cv2.distanceTransform(
+                    (~canopy_pixels).astype(np.uint8),
+                    cv2.DIST_L2,
+                    5,
+                )
+                danger_mask[(distance_from_canopy <= buffer_pixels) | canopy_pixels] = 255
+            if np.any(seedling_pixels):
+                if extra_buffer_pixels > 0:
+                    distance_from_seedlings = cv2.distanceTransform(
+                        (~seedling_pixels).astype(np.uint8),
+                        cv2.DIST_L2,
+                        5,
+                    )
+                    danger_mask[
+                        (distance_from_seedlings <= extra_buffer_pixels) | seedling_pixels
+                    ] = 255
+                else:
+                    # Keep exact marker pixels unavailable without painting a
+                    # mature-style halo around every tiny candidate.
+                    danger_mask[seedling_pixels] = 255
+            danger_polygons = self.mask_to_polygons(danger_mask, min_area_m2=0.0)
+            danger_zone = unary_union(danger_polygons) if danger_polygons else Polygon()
+            danger_zone = danger_zone.intersection(image_boundary)
+        else:
+            valid_canopy_polys = [
+                poly for poly in canopy_polygons
+                if poly is not None and not poly.is_empty
+            ]
+            if not valid_canopy_polys:
+                return Polygon(), danger_mask
+
+            buffered = [poly.buffer(buffer_pixels) for poly in valid_canopy_polys]
+            danger_zone = unary_union(buffered).intersection(image_boundary)
+
+            if isinstance(danger_zone, Polygon):
+                if danger_zone.exterior:
+                    pts = np.array(danger_zone.exterior.coords, dtype=np.int32)
                     cv2.fillPoly(danger_mask, [pts], 255)
+            elif isinstance(danger_zone, MultiPolygon):
+                for poly in danger_zone.geoms:
+                    if poly.exterior:
+                        pts = np.array(poly.exterior.coords, dtype=np.int32)
+                        cv2.fillPoly(danger_mask, [pts], 255)
         
         danger_area_pixels = np.count_nonzero(danger_mask)
         danger_area_m2 = danger_area_pixels * (self.gsd ** 2)
-        print(f"âœ“ Created 1.0m danger buffer zones ({danger_area_m2:.2f} mÂ2)")
+        print(f"Created {buffer_m:.1f}m danger buffer zones ({danger_area_m2:.2f} m^2)")
         return danger_zone, danger_mask
     
     def identify_plantable_zones(self, danger_zone: Polygon) -> Polygon:
@@ -362,17 +464,24 @@ class HexagonDetector:
     
     def create_hexagon(self, center_x: float, center_y: float, radius_pixels: float) -> Polygon:
         """
-        Create a hexagon polygon
-        
+        Create a flat-top hexagon polygon.
+
+        Flat-top orientation (vertices at 0°, 60°, 120°, ... — left and right
+        are single vertices, top and bottom are horizontal edges) tessellates
+        without gaps in a column-based layout, which gives the dense uniform
+        planting grid we want (horizontal rows of flat-topped hexes).
+
         Args:
             center_x: X coordinate of center
             center_y: Y coordinate of center
-            radius_pixels: Radius in pixels
-            
+            radius_pixels: Circumradius in pixels (center to vertex)
+
         Returns:
             Hexagon polygon
         """
-        angles = [i * np.pi / 3 for i in range(6)]  # 6 points, 60Â° apart
+        # Start at 0° so the left and right of the hex are points (flat-top)
+        # and the top/bottom edges are horizontal — perfect for edge-share columns.
+        angles = [i * np.pi / 3 for i in range(6)]
         points = [
             (center_x + radius_pixels * np.cos(angle),
              center_y + radius_pixels * np.sin(angle))
@@ -392,7 +501,7 @@ class HexagonDetector:
         Generate maximized hexagonal planting zones
         Core-safe mode:
         - Planting core (dark green) must stay fully out of danger zones
-        - Buffer may partially overlap danger zones (visual warning in orange)
+        - Buffer may overlap danger zones (visual warning in orange)
         - Neighbor buffers do not overlap (0.0m)
 
         Args:
@@ -400,7 +509,7 @@ class HexagonDetector:
             hexagon_size_m: Hexagon buffer size in meters (default 1.0m)
             maximize_coverage: Try to fit hexagons in all available spaces
             danger_mask: Optional raster danger mask used to enforce core safety
-            canopy_mask: Optional canopy mask; combined with danger mask for display-consistent core safety
+            canopy_mask: Optional canopy mask retained for API compatibility
 
         Returns:
             List of hexagon dictionaries with geometry and metadata
@@ -443,7 +552,7 @@ class HexagonDetector:
         
         Rules:
           - Dark green CORE must be fully outside danger zone
-          - Light green BUFFER should mostly stay in plantable zone (>=70%)
+          - Light green BUFFER is a spacing/visual guide, not an exclusion test
           - Neighbor buffers can overlap up to configured max_overlap_m
           - Hexagons follow a perfect tessellation grid (no gaps between neighbors)
         
@@ -471,14 +580,14 @@ class HexagonDetector:
         maxx += buffer_radius_pixels
         maxy += buffer_radius_pixels
 
-        # Raster-space guard: enforce core safety against the exact displayed danger mask.
+        # Raster-space guard: enforce core safety against the cleaned danger mask.
+        # Do not OR the raw canopy mask back in here: tiny AI specks that were
+        # intentionally excluded from danger buffers would otherwise punch
+        # one-cell holes into otherwise plantable 1 m lattices.
         danger_distance_map = None
         if isinstance(danger_mask, np.ndarray) and danger_mask.ndim == 2:
             try:
-                combined_danger = danger_mask.copy()
-                if isinstance(canopy_mask, np.ndarray) and canopy_mask.ndim == 2 and canopy_mask.shape == danger_mask.shape:
-                    combined_danger = cv2.bitwise_or(combined_danger, canopy_mask)
-                safe_pixels = (combined_danger == 0).astype(np.uint8)
+                safe_pixels = (danger_mask == 0).astype(np.uint8)
                 danger_distance_map = cv2.distanceTransform(safe_pixels, cv2.DIST_L2, 5)
             except Exception:
                 danger_distance_map = None
@@ -491,14 +600,18 @@ class HexagonDetector:
             'accepted': 0
         }
         
-        # CORNER-TOUCH HEXAGON GRID
-        # For flat-top hexagons with circumradius R:
-        #   - Same-row horizontal spacing = 2 * R
-        #   - Vertical row spacing = âˆš3 * R
-        #   - Odd rows shift right by 1 * R
-        # This matches the separated layout shown in the preferred screenshot.
+        # EDGE-SHARE HEXAGON GRID (flat-top, column-based)
+        # For flat-top hexagons with circumradius R, the gap-free tessellation
+        # uses:
+        #   - Column horizontal spacing  = 1.5 * R
+        #   - Same-column vertical spacing = sqrt(3) * R
+        #   - Odd columns shift down by sqrt(3)/2 * R
+        # Every neighbor pair is exactly sqrt(3)*R apart (nearest-neighbour
+        # distance is identical to the pointy-top variant), and the hex buffers
+        # share edges instead of leaving triangular corner-touch gaps. To hit a
+        # species' target planting distance T, set hexagon_size = T / sqrt(3).
         R = buffer_radius_pixels
-        h_spacing = 2.0 * R
+        h_spacing = 1.5 * R
         v_spacing = np.sqrt(3) * R
         
         # â”€â”€ Phase 1: Try multiple grid offsets, keep best â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -700,17 +813,9 @@ class HexagonDetector:
         if plantable_zone.intersects(hexagon_core):
             core_ratio = hexagon_core.intersection(plantable_zone).area / max(hexagon_core.area, 1e-9)
 
-        buffer_safe_ratio = 0.0
-        if plantable_zone.intersects(hexagon_buffer):
-            buffer_safe_ratio = hexagon_buffer.intersection(plantable_zone).area / max(hexagon_buffer.area, 1e-9)
-
         if core_ratio < 0.99:
             if placement_stats is not None:
                 placement_stats['core_ratio_fail'] = placement_stats.get('core_ratio_fail', 0) + 1
-            return None
-        if buffer_safe_ratio < 0.70:
-            if placement_stats is not None:
-                placement_stats['buffer_ratio_fail'] = placement_stats.get('buffer_ratio_fail', 0) + 1
             return None
 
         if placement_stats is not None:
@@ -745,15 +850,17 @@ class HexagonDetector:
         Returns list of valid hexagons.
         """
         hexagons = []
-        row = 0
-        y = start_y
-        
-        while y <= max_y:
-            # Corner-touch offset: odd rows shift right by one radius.
-            x_offset = R if row % 2 == 1 else 0.0
-            x = start_x + x_offset
-            
-            while x <= max_x:
+        col = 0
+        x = start_x
+
+        while x <= max_x:
+            # Edge-share offset: odd columns shift down by half the within-column
+            # spacing (sqrt(3)/2 * R), so each hex slots into the gap between
+            # its two diagonal neighbours in the column to its left/right.
+            y_offset = v_spacing * 0.5 if col % 2 == 1 else 0.0
+            y = start_y + y_offset
+
+            while y <= max_y:
                 hex_dict = self._evaluate_hex_candidate(
                     plantable_zone,
                     x,
@@ -765,18 +872,18 @@ class HexagonDetector:
                 )
                 if hex_dict is not None:
                     hexagons.append(hex_dict)
-                
-                x += h_spacing
-            
-            y += v_spacing
-            row += 1
-        
+
+                y += v_spacing
+
+            x += h_spacing
+            col += 1
+
         return hexagons
     
     def process_image(
         self, 
         image_path: str,
-        canopy_buffer_m: float = 1.0,
+        canopy_buffer_m: float = 2.0,
         hexagon_size_m: float = 1.0,
         progress_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ) -> Dict:
@@ -852,8 +959,29 @@ class HexagonDetector:
         else:
             canopy_mask = np.zeros_like(canopy_mask)
 
-        # Step 2: Create danger zones (canopy + 1m buffer) with mask
-        danger_zone, danger_mask = self.create_danger_zones(canopy_polygons, canopy_mask, canopy_buffer_m)
+        # Seedling candidates remain a separate evidence layer, but accepted
+        # seedlings are still existing mangroves and must exclude planting
+        # points. By default they inherit the user-selected canopy safety
+        # radius. A numeric runtime override can deliberately use a smaller
+        # seedling-specific radius (or zero) without altering mature polygons.
+        seedling_buffer_m = float(canopy_buffer_m)
+        if self.ai_detector is not None:
+            configured_seedling_buffer = getattr(
+                self.ai_detector,
+                "runtime_tuning",
+                {},
+            ).get("seedling_buffer_m")
+            if configured_seedling_buffer is not None:
+                seedling_buffer_m = max(0.0, float(configured_seedling_buffer))
+
+        # Step 2: Create danger zones (canopy + configured buffer) with mask
+        danger_zone, danger_mask = self.create_danger_zones(
+            canopy_polygons,
+            canopy_mask,
+            canopy_buffer_m,
+            extra_mask=self._seedling_mask,
+            extra_buffer_m=seedling_buffer_m,
+        )
         
         # Step 3: Identify plantable zones (avoid canopy buffers)
         # Note: Man-made structures (towers, bridges, houses) are filtered
@@ -883,6 +1011,7 @@ class HexagonDetector:
             'gsd_specs': getattr(self, 'gsd_specs', {}),
             'altitude_m': self.altitude_m,
             'canopy_buffer_m': canopy_buffer_m,
+            'seedling_buffer_m': seedling_buffer_m,
             'hexagon_size_m': hexagon_size_m,
             'total_area_m2': total_area_m2,
             'coverage_m': (w * self.gsd, h * self.gsd),
@@ -894,6 +1023,7 @@ class HexagonDetector:
             'hexagon_count': len(hexagons),
             'canopy_polygons': canopy_polygons,
             'canopy_mask': canopy_mask,
+            'seedling_mask': self._seedling_mask,
             'danger_zone': danger_zone,
             'danger_mask': danger_mask,
             'plantable_zone': plantable_zone,
@@ -915,9 +1045,9 @@ class HexagonDetector:
         Create visualization with proper color separation:
         - Teal/Cyan: Bungalon Canopy (AI-classified)
         - Purple: Other canopy areas (Mangrove-Canopy / HSV detected)
-        - Red: 1m danger buffer zones around canopies
-        - Light green: 1m hexagon buffers (safe planting zone)
-        - Dark green: Hexagon cores (exact planting points)
+        - Red: configured danger buffer zones around canopies
+        - Light/dark green: currently available planting markers
+        - Light/dark orange: planting markers unavailable due to erosion
         
         Note: Man-made structures (towers, bridges, houses) are filtered
         via the forbidden-zone GeoJSON in the Streamlit app instead.
@@ -938,6 +1068,21 @@ class HexagonDetector:
         # Create masks for each layer
         canopy_mask = results['canopy_mask']
         danger_mask = results['danger_mask']
+        seedling_mask = results.get('seedling_mask')
+        hex_buffer_color = _AVAILABLE_HEX_BUFFER_COLOR
+        hex_core_color = _AVAILABLE_HEX_CORE_COLOR
+        eroded_buffer_color = _ERODED_HEX_BUFFER_COLOR
+        eroded_core_color = _ERODED_HEX_CORE_COLOR
+        eroded_count = sum(
+            1
+            for hex_info in results['hexagons']
+            if bool(
+                hex_info.get('_eroded_unavailable')
+                or hex_info.get('_inside_eroded_zone')
+            )
+        )
+        available_count = max(0, len(results['hexagons']) - eroded_count)
+        planting_label = "AVAILABLE:" if eroded_count else "PLANTING:"
         
         # Get per-class masks from AI metadata
         ai_metadata = results.get('ai_metadata', {})
@@ -951,22 +1096,30 @@ class HexagonDetector:
         if isinstance(other_canopy_mask, np.ndarray) and other_canopy_mask.shape == canopy_mask.shape:
             other_canopy_mask = cv2.bitwise_and(other_canopy_mask, canopy_mask)
         
-        # Create hexagon buffer mask. Drawn at 50% of the actual buffer
-        # radius (still hexagonal, matching system semantics) so the map
-        # doesn't get cluttered. Real 1 m planting spacing is unchanged.
+        # Create hexagon buffer mask. Each hex is shrunk by HEX_VISUAL_SHRINK
+        # around its center for the trihex-tile look — adjacent hexes leave
+        # small triangular negative spaces between their corners instead of
+        # edge-sharing. Pure rendering choice: placement geometry, lattice
+        # spacing, and biological planting distance are all unchanged
+        # (see _place_hexagons_of_size for the lattice math).
+        HEX_VISUAL_SHRINK = 0.88
         hexagon_buffer_mask = np.zeros((h, w), dtype=np.uint8)
+        eroded_hexagon_buffer_mask = np.zeros((h, w), dtype=np.uint8)
         for hex_info in results['hexagons']:
-            cx, cy = hex_info['center']
             full_hex = hex_info['buffer']
-            # Scale the hex polygon by 0.5 around its own centre.
-            scaled_pts = np.array(
-                [
-                    [cx + 0.5 * (px - cx), cy + 0.5 * (py - cy)]
-                    for px, py in full_hex.exterior.coords
-                ],
-                dtype=np.int32,
+            cx, cy = hex_info['center']
+            raw_coords = np.array(full_hex.exterior.coords)
+            shrunk = (raw_coords - (cx, cy)) * HEX_VISUAL_SHRINK + (cx, cy)
+            pts = shrunk.astype(np.int32)
+            target_mask = (
+                eroded_hexagon_buffer_mask
+                if bool(
+                    hex_info.get('_eroded_unavailable')
+                    or hex_info.get('_inside_eroded_zone')
+                )
+                else hexagon_buffer_mask
             )
-            cv2.fillPoly(hexagon_buffer_mask, [scaled_pts], 255)
+            cv2.fillPoly(target_mask, [pts], 255)
         
         # Calculate buffer zones (danger buffer minus canopy)
         buffer_only_mask = np.zeros_like(canopy_mask)
@@ -975,7 +1128,8 @@ class HexagonDetector:
         
         # Layer 1: Draw hexagon buffers in LIGHT GREEN. Keep this below canopy
         # and danger layers so dense planting grids do not hide detections.
-        overlay[hexagon_buffer_mask > 0] = (144, 238, 144)  # Light green for safe buffer
+        overlay[hexagon_buffer_mask > 0] = hex_buffer_color
+        overlay[eroded_hexagon_buffer_mask > 0] = eroded_buffer_color
 
         # Layer 2: Draw canopy areas with class-specific coloring
         if bungalon_mask is not None and other_canopy_mask is not None:
@@ -998,6 +1152,17 @@ class HexagonDetector:
         # Layer 3: Draw danger buffer zones in RED
         overlay[buffer_only_mask > 0] = (0, 0, 255)  # Red for danger buffer
 
+        danger_contours, _ = cv2.findContours(danger_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if danger_contours:
+            cv2.drawContours(overlay, danger_contours, -1, (0, 0, 255), 3)
+
+        # Hybrid seedling candidates are rendered separately from mature
+        # canopy geometry but use the same violet color for a uniform
+        # vegetation overlay. They are drawn after the danger layer so the
+        # reviewer can still see the exact candidate behind the safety buffer.
+        if isinstance(seedling_mask, np.ndarray) and seedling_mask.shape == canopy_mask.shape:
+            overlay[seedling_mask > 0] = (128, 0, 128)  # violet/purple in BGR
+
         # Layer 4.5: Overlap warning (buffer intersects danger zone)
         overlap_mask = cv2.bitwise_and(hexagon_buffer_mask, danger_mask)
         overlay[overlap_mask > 0] = (0, 165, 255)  # Orange warning
@@ -1006,9 +1171,10 @@ class HexagonDetector:
         for hex_info in results['hexagons']:
             hexagon_core = hex_info['core']
             pts = np.array(hexagon_core.exterior.coords, dtype=np.int32)
-            cv2.fillPoly(overlay, [pts], (0, 128, 0))  # Dark green for planting point
+            _, point_core_color, point_border_color = _hexagon_render_colors(hex_info)
+            cv2.fillPoly(overlay, [pts], point_core_color)
             # Add bright border to make it visible
-            cv2.polylines(overlay, [pts], True, (0, 255, 0), 2)  # Bright green border
+            cv2.polylines(overlay, [pts], True, point_border_color, 2)
         
         # Blend with original image
         result_img = cv2.addWeighted(image, 0.4, overlay, 0.6, 0)
@@ -1022,16 +1188,21 @@ class HexagonDetector:
                 ("BUNGALON CANOPY:", (255, 255, 0), f"{bungalon_count} detected"),
                 ("OTHER CANOPY:", (128, 0, 128), f"{results['canopy_count'] - bungalon_count} detected"),
                 ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m\u00b2"),
-                ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
+                (planting_label, hex_core_color, f"{available_count if eroded_count else results['hexagon_count']} hexagons"),
                 ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m\u00b2")
             ]
         else:
             legend_items = [
                 ("CANOPIES:", (128, 0, 128), f"{results['canopy_count']} detected"),
                 ("DANGER BUFFER:", (0, 0, 255), f"{results['danger_area_m2']:.1f} m\u00b2"),
-                ("PLANTING:", (0, 128, 0), f"{results['hexagon_count']} hexagons"),
+                (planting_label, hex_core_color, f"{available_count if eroded_count else results['hexagon_count']} hexagons"),
                 ("PLANTABLE AREA:", (0, 255, 0), f"{results['plantable_area_m2']:.1f} m\u00b2")
             ]
+        if eroded_count:
+            legend_items.insert(
+                -1,
+                ("ERODED / UNAVAILABLE:", eroded_core_color, f"{eroded_count} hexagons"),
+            )
         
         for label, color, value in legend_items:
             # Draw color box

@@ -1,6 +1,7 @@
 """Assignment endpoints."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException, Depends
+from api.routes.monitoring import _require_lgu_user
 from planting_database import (
     list_planter_assignments,
     get_assignment_points,
@@ -11,11 +12,12 @@ from planting_database import (
 from pydantic import BaseModel
 from typing import Optional
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(_require_lgu_user)])
 
 
 class UpdateStatusBody(BaseModel):
     status: str
+    skip_reason: Optional[str] = None
 
 
 @router.get("/")
@@ -29,8 +31,12 @@ def get_points(assignment_id: int):
 
 
 @router.patch("/points/{point_id}/status")
-def update_status(point_id: int, body: UpdateStatusBody):
-    update_assignment_point_status(point_id, body.status)
+def update_status(point_id: int, body: UpdateStatusBody, user: dict = Depends(_require_lgu_user)):
+    try:
+        update_assignment_point_status(point_id, body.status, body.skip_reason,
+                                       actor_user_id=int(user["id"]))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     return {"status": "updated"}
 
 
@@ -42,5 +48,8 @@ def archive(assignment_id: int):
 
 @router.delete("/{assignment_id}")
 def delete(assignment_id: int):
-    delete_planter_assignment(assignment_id)
+    try:
+        delete_planter_assignment(assignment_id)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     return {"status": "deleted"}

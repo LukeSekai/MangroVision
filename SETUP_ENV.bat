@@ -53,7 +53,9 @@ if errorlevel 1 (
 
 echo.
 echo ================================================
-echo   Setup complete. You can now run START_MANGROVISION.bat
+echo   Core Python packages are installed.
+echo   For the current FastAPI/React app, follow docs\groupmate-setup.md
+echo   to add the orthophoto, model, frontend packages, and private .env.
 echo ================================================
 echo.
 pause

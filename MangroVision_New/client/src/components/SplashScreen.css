@@ -1,0 +1,72 @@
+/* Brand splash. Lives above everything (z-index above modals) so the user
+   sees the mark immediately on first entry, no matter what the underlying
+   route would have rendered. */
+
+.mv-splash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  background:
+    radial-gradient(circle at 25% 20%, rgba(20, 184, 166, 0.18), transparent 55%),
+    radial-gradient(circle at 80% 75%, rgba(34, 197, 94, 0.18), transparent 55%),
+    linear-gradient(180deg, #f8fafc 0%, #ecfdf5 100%);
+  opacity: 1;
+  transition: opacity 320ms ease-out;
+}
+
+.mv-splash-fade {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mv-splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  max-width: 90%;
+  text-align: center;
+  /* Subtle scale-in so the mark feels active, not static. The image itself
+     is not transformed (brand rule); only the wrapper animates. */
+  animation: mv-splash-rise 480ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes mv-splash-rise {
+  0% { transform: translateY(8px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+.mv-splash-tagline {
+  font-size: 0.875rem;
+  color: #475569;
+  letter-spacing: 0.01em;
+  max-width: 320px;
+  line-height: 1.45;
+}
+
+.mv-splash-bar {
+  width: 160px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(22, 101, 52, 0.12);
+  overflow: hidden;
+  position: relative;
+}
+
+.mv-splash-bar-fill {
+  position: absolute;
+  inset: 0 60% 0 0;
+  background: linear-gradient(90deg, #166534, #14b8a6);
+  border-radius: inherit;
+  animation: mv-splash-bar-slide 1200ms ease-in-out infinite;
+}
+
+@keyframes mv-splash-bar-slide {
+  0%   { left: -40%; right: 100%; }
+  60%  { left: 100%; right: -40%; }
+  100% { left: 100%; right: -40%; }
+}

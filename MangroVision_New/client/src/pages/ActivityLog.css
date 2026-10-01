@@ -1,0 +1,51 @@
+.activity-log-page {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  padding: 26px clamp(18px, 3vw, 38px) 56px;
+  background:
+    radial-gradient(circle at 4% -8%, rgba(22, 163, 74, 0.12), transparent 28rem),
+    linear-gradient(180deg, #f6fbf7 0%, var(--gray-50) 44%, #f7f9f8 100%);
+  color: var(--text-primary);
+  scrollbar-width: thin;
+}
+
+.activity-log-page * { min-width: 0; }
+
+.activity-log-header {
+  width: min(1680px, 100%);
+  margin: 0 auto 20px;
+}
+
+.activity-log-eyebrow {
+  color: var(--green-700);
+  font-size: 0.6875rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.activity-log-header h1 {
+  margin-top: 5px;
+  color: var(--green-900);
+  font-size: clamp(1.55rem, 2.2vw, 2rem);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+.activity-log-header p {
+  max-width: 760px;
+  margin-top: 7px;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.activity-log-page > .activity-feed {
+  width: min(1680px, 100%);
+  margin-inline: auto;
+}
+
+@media (max-width: 680px) {
+  .activity-log-page { padding: 20px 12px 46px; }
+}

@@ -225,6 +225,7 @@ html, body, #root {
 .badge-inactive { background: var(--gray-100); color: var(--gray-500); }
 .badge-forbidden { background: #fee2e2; color: #991b1b; }
 .badge-eroded { background: #ffedd5; color: #9a3412; }
+.badge-deleted { background: #fee2e2; color: #991b1b; }
 
 /* ================================================================
    Stat card

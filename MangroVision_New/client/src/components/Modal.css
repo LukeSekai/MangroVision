@@ -42,7 +42,7 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 5000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -64,6 +64,28 @@
     0 8px 16px -8px rgba(15, 23, 42, 0.18);
   overflow: hidden;
   animation: modal-pop-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.modal-card.modal-card-wide {
+  width: min(880px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+
+.modal-card-wide .modal-body {
+  max-width: none;
+  text-align: left;
+}
+
+@media (max-width: 620px) {
+  .modal-backdrop {
+    align-items: flex-start;
+    padding: 10px;
+  }
+
+  .modal-card.modal-card-wide {
+    max-height: calc(100vh - 20px);
+  }
 }
 
 .modal-close {

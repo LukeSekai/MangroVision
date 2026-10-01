@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
+import Logo from './Logo';
 import './LoginScreen.css';
 
 export default function LoginScreen() {
@@ -42,11 +43,7 @@ export default function LoginScreen() {
           <div className="login-form-inner">
             <div className="login-form-header">
               <div className="login-logo">
-                <svg width="36" height="36" viewBox="0 0 32 32" fill="none">
-                  <rect width="32" height="32" rx="8" fill="var(--green-700)" />
-                  <path d="M16 6c-3.3 0-6 2.7-6 6 0 1.7.7 3.2 1.8 4.3.5.5.8 1.1.8 1.7v1c0 1.1.9 2 2 2h2.8c1.1 0 2-.9 2-2v-1c0-.6.3-1.2.8-1.7C21.3 15.2 22 13.7 22 12c0-3.3-2.7-6-6-6z" fill="#fff" opacity="0.9"/>
-                  <path d="M13 22h6v2a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-2z" fill="#fff" opacity="0.6"/>
-                </svg>
+                <Logo variant="lockup" size={120} alt="MangroVision" />
               </div>
               <h1 className="login-title">Sign In</h1>
               <p className="login-subtitle">Welcome back! Enter your credentials to continue.</p>
@@ -91,7 +88,7 @@ export default function LoginScreen() {
             </form>
 
             <p className="login-footer">
-              Default credentials: admin / admin123
+              Use the account provisioned by your administrator.
             </p>
           </div>
         </div>

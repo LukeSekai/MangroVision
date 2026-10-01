@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { TILESET_PATH } from '../config/mapTiles';
 import Modal from '../components/Modal';
+import Logo from '../components/Logo';
+import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import './ResultsOverlay.css';
 
 // Per-format metadata for the confirmation/success modals. Keeping it inline
 // next to the consumer so the labels and descriptions stay close to the
 // buttons that trigger them.
 const EXPORT_FORMAT_META = {
-  png: {
-    label: 'Visualization PNG',
-    extension: 'png',
+  jpeg: {
+    label: 'Visualization JPEG',
+    extension: 'jpg',
     description: 'Annotated drone image with detected canopies, danger buffers, and planting points.',
   },
   json: {
@@ -123,6 +125,11 @@ function fmt(value, digits = 1) {
   return Number(value).toFixed(digits);
 }
 
+function fmtCount(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  return Number(value).toLocaleString();
+}
+
 function formatProcessingTime(seconds) {
   if (seconds === null || seconds === undefined || Number.isNaN(Number(seconds))) return '—';
   const value = Number(seconds);
@@ -233,10 +240,10 @@ export default function ResultsOverlay({
   const metadata = result.metadata || {};
   const mapInfo = result.map || {};
   const warnings = result.messages?.warnings || [];
-  const infos = result.messages?.info || [];
   const overlaps = result.overlaps?.analyses || [];
   const coordinateRows = mapInfo.coordinates || [];
-  const canopyAreaM2 = metrics.canopy_area_m2 ?? 0;
+  const canopyAreaM2 = metrics.canopy_area_m2;
+  const canopyAreaHa = Number.isFinite(Number(canopyAreaM2)) ? Number(canopyAreaM2) / 10000 : null;
   const exportsDisabled = !result.exports?.waypoints?.length;
   const baseName = (result.uploaded_file_name || 'mangrovision').replace(/\.[^/.]+$/, '');
 
@@ -266,10 +273,10 @@ export default function ResultsOverlay({
     setBusyExport(format);
     setExportError('');
     try {
-      if (format === 'png') {
-        const dataUrl = result.images?.visualization_data_url;
+      if (format === 'jpeg') {
+        const dataUrl = result.images?.visualization_image_url;
         if (!dataUrl) throw new Error('Visualization image is not available.');
-        downloadDataUrl(dataUrl, `${baseName}_visualization.png`);
+        downloadDataUrl(dataUrl, `${baseName}_visualization.jpg`);
       } else if (format === 'json') {
         const payload = result.exports?.json_results;
         if (!payload) throw new Error('JSON results payload is not available.');
@@ -293,16 +300,41 @@ export default function ResultsOverlay({
 
   const closeCompletedExportModal = () => setCompletedExportFormat(null);
 
-  const matchSuccess = mapInfo.match?.success;
-  const matchConfidence = mapInfo.match?.confidence;
+  const hasMatchInfo = mapInfo.match && typeof mapInfo.match.success === 'boolean';
+  const matchSuccess = hasMatchInfo && mapInfo.match.success;
+  const matchConfidence = hasMatchInfo ? mapInfo.match?.confidence : null;
+  const vegetationHeadingRefined = [
+    'vegetation_heading_metric_anchor',
+    'vegetation_heading_scale_metric_anchor',
+  ].includes(mapInfo.match?.projection_rotation_source);
+  const vegetationScaleRefined = mapInfo.match?.projection_rotation_source
+    === 'vegetation_scale_metric_anchor';
+  const vegetationAlignmentRefined = vegetationHeadingRefined || vegetationScaleRefined;
+  const edgeHeadingRefined = mapInfo.match?.projection_rotation_source
+    === 'exif_heading_metric_edge_alignment';
   const safePointCount = (mapInfo.safe_points_geojson?.features || []).length;
-  const forbiddenFilteredCount = metrics.forbidden_filtered_count ?? 0;
-  const erodedFilteredCount = metrics.eroded_filtered_count ?? 0;
-  const orthophotoCanopyFilteredCount = metrics.orthophoto_canopy_filtered_count ?? 0;
-  const clippedOutsideCount = metrics.clipped_outside_orthophoto ?? 0;
-  const duplicateFilteredCount = metrics.duplicate_filtered_count ?? 0;
+  const forbiddenFilteredCount = metrics.forbidden_filtered_count;
+  const erodedFilteredCount = metrics.eroded_filtered_count;
+  const postSnapDangerFilteredCount = metrics.post_snap_danger_filtered_count;
+  const orthophotoCanopyFilteredCount = metrics.orthophoto_canopy_filtered_count;
+  const clippedOutsideCount = metrics.outside_map_filtered_count
+    ?? metrics.clipped_outside_orthophoto;
+  const duplicateFilteredCount = metrics.duplicate_filtered_count;
+  const spacingFilteredCount = metrics.spacing_filtered_count;
+  const closeOrDuplicateFilteredCount =
+    spacingFilteredCount !== null && spacingFilteredCount !== undefined
+      ? Number(spacingFilteredCount || 0) + Number(duplicateFilteredCount || 0)
+      : duplicateFilteredCount;
   const displayedHeading = metadata.detected_heading ?? metadata.camera_heading;
-  const displayedHeadingSource = matchSuccess ? 'Auto-aligned orthophoto' : metadata.heading_source;
+  const displayedHeadingSource = matchSuccess
+    ? vegetationScaleRefined
+      ? 'DJI EXIF heading with vegetation-calibrated footprint'
+      : vegetationHeadingRefined
+      ? 'Vegetation-refined orthophoto alignment'
+      : edgeHeadingRefined
+      ? 'DJI EXIF heading with orthophoto edge correction'
+      : 'Auto-aligned orthophoto'
+    : metadata.heading_source;
   const visibleTileset = TILESET_PATH
     ? TILESET_PATH.split('/').map((segment) => decodeURIComponent(segment)).join('/')
     : '';
@@ -324,6 +356,7 @@ export default function ResultsOverlay({
         </button>
 
         <header className="rs-header">
+          <Logo variant="icon" size={32} className="rs-header-logo" alt="MangroVision" />
           <div>
             <div className="rs-eyebrow">Analysis Complete</div>
             <h2 className="rs-title">{result.uploaded_file_name || 'Drone Image'}</h2>
@@ -334,11 +367,12 @@ export default function ResultsOverlay({
           <section className="rs-image-col">
             <div className="rs-image-card">
               <div className="rs-image-label">Detection Overlay</div>
-              {result.images?.visualization_data_url ? (
+              {result.images?.visualization_preview_url || result.images?.visualization_image_url ? (
                 <img
-                  src={result.images.visualization_data_url}
+                  src={result.images.visualization_preview_url || result.images.visualization_image_url}
                   alt="Detected canopy visualization"
                   className="rs-image"
+                  decoding="async"
                 />
               ) : (
                 <div className="rs-image-placeholder">
@@ -349,7 +383,7 @@ export default function ResultsOverlay({
             <div className="rs-image-card">
               <div className="rs-image-label">Original Image</div>
               {/*
-                Prefer the backend's original_data_url over the browser-side
+                Prefer the backend's private original image URL over the browser-side
                 FileReader preview because OpenCV (backend) ignores EXIF
                 Orientation while the browser respects it. Mixing the two
                 in adjacent panels makes the AI overlay look "shifted"
@@ -359,11 +393,13 @@ export default function ResultsOverlay({
                 preview is kept only as a last-resort fallback for the
                 pre-result loading state.
               */}
-              {result.images?.original_data_url || originalPreview ? (
+              {result.images?.original_preview_url || result.images?.original_image_url || originalPreview ? (
                 <img
-                  src={result.images?.original_data_url || originalPreview}
+                  src={result.images?.original_preview_url || result.images?.original_image_url || originalPreview}
                   alt="Original drone input"
                   className="rs-image"
+                  loading="lazy"
+                  decoding="async"
                 />
               ) : (
                 <div className="rs-image-placeholder">
@@ -372,11 +408,22 @@ export default function ResultsOverlay({
               )}
             </div>
             <p className="rs-image-caption">
-              Legend: purple canopy, red danger buffer, light green planting buffer, orange overlap warning, dark green planting core.
+              Legend: purple canopy, red danger buffer, green available planting hexagons, orange eroded/unavailable planting hexagons.
             </p>
           </section>
 
           <section className="rs-metrics-col">
+            {result.map?.available && hasEstimatedAlignment(result.map.match) && (
+              <div className="warning-badges rs-full">
+                <div className="warning-badge">
+                  <span className="warning-badge-icon">{ICON_WARN}</span>
+                  <span className="warning-badge-text">
+                    Map alignment is approximate. The photo boundary is projected from GPS/camera alignment;
+                    orthophoto stitching seams are not the uploaded photo's edges.
+                  </span>
+                </div>
+              </div>
+            )}
             {warnings.length > 0 && (
               <div className="warning-badges rs-full">
                 {warnings.map((warning, index) => (
@@ -391,15 +438,12 @@ export default function ResultsOverlay({
             <div className="metric-card metric-card-primary">
               <div className="metric-card-title">Coverage</div>
               <div className="metric-grid metric-grid-primary">
-                <MetricItem icon={ICON_AREA} label="Total Mangrove Area" primary>
+                <MetricItem icon={ICON_AREA} label="Detected Canopy Area" primary>
                   {fmt(canopyAreaM2, 1)} m²
-                  <span className="metric-value-sub">({fmt(canopyAreaM2 / 10000, 3)} ha)</span>
+                  <span className="metric-value-sub">({fmt(canopyAreaHa, 3)} ha)</span>
                 </MetricItem>
                 <MetricItem icon={ICON_PERCENT} label="Canopy Coverage" primary>
                   {fmt(metrics.canopy_coverage_pct, 2)}%
-                </MetricItem>
-                <MetricItem icon={ICON_TREE} label="Canopy Components" primary>
-                  {metrics.canopy_count ?? 0}
                 </MetricItem>
               </div>
             </div>
@@ -435,15 +479,34 @@ export default function ResultsOverlay({
                   {metrics.ai_instance_count ?? metrics.canopy_count ?? 0}
                 </MetricItem>
                 <MetricItem icon={ICON_PIN} label="Ortho Match">
-                  {matchSuccess
-                    ? `${Math.round((matchConfidence || 0) * 100)}%`
-                    : 'Fallback'}
+                  {hasMatchInfo && matchSuccess
+                    ? `${vegetationAlignmentRefined ? 'Vegetation ' : ''}${Math.round((matchConfidence || 0) * 100)}%`
+                    : hasMatchInfo ? 'Fallback' : '—'}
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Below Conf.">
-                  {metrics.ai_below_confidence_detections ?? 0}
+                  {fmtCount(metrics.ai_below_confidence_detections)}
+                </MetricItem>
+                <MetricItem icon={ICON_LEAF} label="Rescued">
+                  {fmtCount(metrics.ai_rescued_low_confidence_detections)}
+                </MetricItem>
+                <MetricItem icon={ICON_LEAF} label="Seedlings Added">
+                  {fmtCount(metrics.ai_seedling_supplement_count)}
+                </MetricItem>
+                <MetricItem icon={ICON_LEAF} label="Micro Seedlings">
+                  {fmtCount(metrics.ai_seedling_micro_supplement_count)}
+                </MetricItem>
+                <MetricItem icon={ICON_WARN} label="Class Filtered">
+                  {fmtCount(metrics.ai_rejected_non_canopy_class_detections)}
+                </MetricItem>
+                <MetricItem icon={ICON_WARN} label="Water Filtered">
+                  {fmtCount(
+                    (metrics.ai_rejected_low_saturation_detections || 0)
+                    + (metrics.ai_rejected_low_saturation_components || 0)
+                    + (metrics.ai_seedling_water_context_rejected_count || 0)
+                  )}
                 </MetricItem>
                 <MetricItem icon={ICON_AREA} label="Max Filtered">
-                  {metrics.ai_rejected_too_large_detections ?? 0}
+                  {fmtCount(metrics.ai_rejected_too_large_detections)}
                 </MetricItem>
               </div>
             </div>
@@ -452,7 +515,7 @@ export default function ResultsOverlay({
               <div className="metric-card-title">Processing</div>
               <div className="metric-grid">
                 <MetricItem icon={ICON_GRID} label="Tiles Analyzed">
-                  {metrics.tile_count ?? 0}
+                  {fmtCount(metrics.tile_count)}
                 </MetricItem>
                 <MetricItem icon={ICON_CLOCK} label="Run Time">
                   {formatProcessingTime(metrics.processing_time_sec)}
@@ -491,15 +554,6 @@ export default function ResultsOverlay({
                   )}
                 </MetricItem>
               </div>
-              {infos.length > 0 && (
-                <div className="message-stack">
-                  {infos.map((info, index) => (
-                    <div key={`ov-info-${index}`} className="analysis-message analysis-info">
-                      {info}
-                    </div>
-                  ))}
-                </div>
-              )}
               {overlaps.length > 0 && (
                 <div className="analysis-sublist">
                   <div className="analysis-subtitle">Overlapping Prior Analyses</div>
@@ -516,31 +570,52 @@ export default function ResultsOverlay({
             <div className="metric-card">
               <div className="metric-card-title">Geotagged Map Review</div>
               <div className="metric-grid">
-                <MetricItem icon={ICON_PIN} label="Safe Points">
+                <MetricItem icon={ICON_PIN} label="Geotagged Points">
                   {safePointCount}
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Forbidden Filtered">
-                  {forbiddenFilteredCount}
+                  {fmtCount(forbiddenFilteredCount)}
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Eroded Filtered">
-                  {erodedFilteredCount}
+                  {fmtCount(erodedFilteredCount)}
+                </MetricItem>
+                <MetricItem icon={ICON_WARN} label="Danger Recheck">
+                  {fmtCount(postSnapDangerFilteredCount)}
                 </MetricItem>
                 <MetricItem icon={ICON_WARN} label="Canopy Recheck">
-                  {orthophotoCanopyFilteredCount}
+                  {fmtCount(orthophotoCanopyFilteredCount)}
                 </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Clipped Outside">
-                  {clippedOutsideCount}
+                <MetricItem icon={ICON_WARN} label="Outside Map Filtered">
+                  {fmtCount(clippedOutsideCount)}
                 </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Duplicates Skipped">
-                  {duplicateFilteredCount}
+                <MetricItem icon={ICON_WARN} label="Too Close / Duplicates">
+                  {fmtCount(closeOrDuplicateFilteredCount)}
                 </MetricItem>
                 <MetricItem icon={ICON_TARGET} label="Alignment">
                   {matchSuccess
-                    ? `Auto (${Math.round((matchConfidence || 0) * 100)}%)`
-                    : 'Heading fallback'}
+                    ? vegetationAlignmentRefined
+                      ? `GPS + vegetation (${Math.round((matchConfidence || 0) * 100)}%)`
+                      : edgeHeadingRefined
+                      ? `GPS + edges (${Math.round((matchConfidence || 0) * 100)}%)`
+                      : `Auto (${Math.round((matchConfidence || 0) * 100)}%)`
+                    : hasMatchInfo ? 'Heading fallback' : 'Not stored'}
                   {matchSuccess && (
                     <span className="metric-value-sub">
                       {mapInfo.match?.ortho_name || 'Matched orthophoto'}
+                      {vegetationHeadingRefined
+                        && mapInfo.match?.vegetation_heading_correction_deg !== undefined
+                        && mapInfo.match?.vegetation_heading_correction_deg !== null
+                        ? ` · heading correction ${fmt(mapInfo.match.vegetation_heading_correction_deg, 1)}°`
+                        : ''}
+                      {edgeHeadingRefined
+                        && mapInfo.match?.edge_heading_correction_deg !== undefined
+                        && mapInfo.match?.edge_heading_correction_deg !== null
+                        ? ` · heading correction ${fmt(mapInfo.match.edge_heading_correction_deg, 1)}°`
+                        : ''}
+                      {mapInfo.match?.vegetation_gsd_scale_factor !== undefined
+                        && mapInfo.match?.vegetation_gsd_scale_factor !== null
+                        ? ` · footprint ${fmt(mapInfo.match.vegetation_gsd_scale_factor * 100, 0)}% of altitude estimate`
+                        : ''}
                       {mapInfo.match?.center_drift_m !== undefined && mapInfo.match?.center_drift_m !== null
                         ? ` · drift ${fmt(mapInfo.match.center_drift_m, 2)} m`
                         : ''}
@@ -562,10 +637,10 @@ export default function ResultsOverlay({
                   <button
                     type="button"
                     className="btn btn-secondary btn-sm"
-                    onClick={() => requestExport('png')}
-                    disabled={!result.images?.visualization_data_url || Boolean(busyExport)}
+                    onClick={() => requestExport('jpeg')}
+                    disabled={!result.images?.visualization_image_url || Boolean(busyExport)}
                   >
-                    Visualization PNG
+                    Visualization JPEG
                   </button>
                   <button
                     type="button"
@@ -665,7 +740,7 @@ export default function ResultsOverlay({
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
-                    Saved ✓ — this analysis is now in Map Analytics.
+                    Saved - this analysis is now in Image Processing history.
                   </div>
                 ) : (
                   <>

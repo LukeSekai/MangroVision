@@ -100,11 +100,25 @@
 
 .floating-panel-body {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-medium) transparent;
   padding: 0 12px 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.floating-panel-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.floating-panel-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-medium);
 }
 
 /* Individual card sections */
@@ -195,4 +209,29 @@
 
 .panel-card-body {
   padding: 0 14px 14px;
+  max-height: min(52vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-medium) transparent;
+}
+
+.panel-card-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel-card-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border-medium);
+}
+
+.panel-card-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (max-height: 700px) {
+  .panel-card-body {
+    max-height: 46vh;
+  }
 }

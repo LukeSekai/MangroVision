@@ -19,6 +19,65 @@ import rasterio
 from pathlib import Path
 from typing import Optional, Tuple, Dict, List
 
+try:
+    from .registration import select_registration
+except ImportError:
+    from registration import select_registration
+
+_MAX_MATCH_RESIZE_DIM = 8000
+_MAX_MATCH_RESIZE_PIXELS = 36_000_000
+
+
+def _spatial_support_metrics(
+    points: np.ndarray,
+    width: int,
+    height: int,
+    grid_size: int = 4,
+) -> Dict[str, float]:
+    """Summarize how broadly feature inliers cover their source image.
+
+    A large absolute inlier count can still be unsafe when every match comes
+    from one small repetitive structure. These normalized metrics let the
+    coordinate-selection layer distinguish broad visual support from a
+    localized cluster without depending on a particular image or site.
+    """
+    metrics = {
+        "hull_ratio": 0.0,
+        "span_x_ratio": 0.0,
+        "span_y_ratio": 0.0,
+        "grid_cells": 0.0,
+    }
+    if width <= 0 or height <= 0 or grid_size <= 0:
+        return metrics
+
+    normalized = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    finite = np.all(np.isfinite(normalized), axis=1)
+    normalized = normalized[finite]
+    if normalized.size == 0:
+        return metrics
+
+    span_x = float(np.ptp(normalized[:, 0])) if len(normalized) > 1 else 0.0
+    span_y = float(np.ptp(normalized[:, 1])) if len(normalized) > 1 else 0.0
+    hull_area = 0.0
+    if len(normalized) >= 3:
+        hull_area = float(cv2.contourArea(cv2.convexHull(normalized)))
+
+    cell_x = np.floor(normalized[:, 0] * grid_size / float(width)).astype(int)
+    cell_y = np.floor(normalized[:, 1] * grid_size / float(height)).astype(int)
+    cell_x = np.clip(cell_x, 0, grid_size - 1)
+    cell_y = np.clip(cell_y, 0, grid_size - 1)
+    occupied_cells = len(set(zip(cell_x.tolist(), cell_y.tolist())))
+
+    metrics.update(
+        {
+            "hull_ratio": hull_area / float(width * height),
+            "span_x_ratio": span_x / float(width),
+            "span_y_ratio": span_y / float(height),
+            "grid_cells": float(occupied_cells),
+        }
+    )
+    return metrics
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Multi-Orthophoto Registry
 # Each entry: (name, path, origin_x, origin_y, gsd_x, gsd_y, width, height)
@@ -27,7 +86,7 @@ from typing import Optional, Tuple, Dict, List
 
 _DESKTOP = Path.home() / "Desktop"
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
-_DEFAULT_ACTIVE_ORTHO_PATH = _DESKTOP / "WebODM" / "Practice_final_cut.tif"
+_DEFAULT_ACTIVE_ORTHO_PATH = _PROJECT_ROOT / "MAP" / "FINAL" / "final_orthophoto.tif"
 
 _ORTHO_REGISTRY_SEEDS = [
     {
@@ -94,8 +153,15 @@ _ENTRY_TRANSFORMERS: Dict[str, Tuple[pyproj.Transformer, pyproj.Transformer]] = 
 
 ORTHO_ORIGIN_X = 0.0
 ORTHO_ORIGIN_Y = 0.0
+# ``ORTHO_GSD_X/Y`` are the GeoTIFF transform units per pixel.  They are
+# degrees/pixel for a geographic GeoTIFF and metres/pixel for a projected one,
+# so they must only be used for pixel <-> CRS-coordinate conversion.
 ORTHO_GSD_X = 0.0
 ORTHO_GSD_Y = 0.0
+# Physical pixel sizes are kept separately.  Visual matching and distance
+# checks always operate in metres, regardless of the source GeoTIFF CRS.
+ORTHO_GSD_M_X = 0.0
+ORTHO_GSD_M_Y = 0.0
 ORTHO_GSD = 0.0
 ORTHO_PATH = _LEGACY_PATH
 ORTHO_CRS = "EPSG:32651"
@@ -121,6 +187,11 @@ def _read_env_file_value(key: str) -> Optional[str]:
     for env_path in (
         _PROJECT_ROOT / "MangroVision_New" / ".env.local",
         _PROJECT_ROOT / "MangroVision_New" / ".env",
+        # Frontend env file — kept so the backend bounds fallback can read the
+        # active tile-pyramid name (VITE_TILESET_PATH) without a duplicate setting.
+        _PROJECT_ROOT / "MangroVision_New" / "client" / ".env.development",
+        _PROJECT_ROOT / "MangroVision_New" / "client" / ".env.local",
+        _PROJECT_ROOT / "MangroVision_New" / "client" / ".env",
     ):
         if not env_path.exists():
             continue
@@ -135,6 +206,114 @@ def _read_env_file_value(key: str) -> Optional[str]:
         except Exception:
             continue
     return None
+
+
+# Cache for the active tile pyramid's lat/lon bounding box. The pyramid only
+# changes when the user re-tiles their orthophoto, so reading it once per
+# process is fine.
+_TILE_PYRAMID_BOUNDS: Optional[Tuple[float, float, float, float]] = None
+_TILE_PYRAMID_BOUNDS_KEY: Optional[str] = None
+
+
+def _active_tileset_name() -> str:
+    """Resolve the displayed tile pyramid directory name.
+
+    Reads VITE_TILESET_PATH from the frontend env files so the backend bounds
+    check always matches whatever tile layer the React app is showing. Falls
+    back to the same default the frontend uses.
+    """
+    name = (
+        os.getenv("MANGROVISION_TILESET_PATH")
+        or _read_env_file_value("MANGROVISION_TILESET_PATH")
+        or _read_env_file_value("VITE_TILESET_PATH")
+        or "FINAL"
+    )
+    return name.strip()
+
+
+def _tile_to_latlon(x: int, y: int, z: int) -> Tuple[float, float]:
+    """Convert a slippy-map tile corner (x, y) at zoom z to its NW lat/lon."""
+    import math
+    n = 2.0 ** z
+    lon = x / n * 360.0 - 180.0
+    lat_rad = math.atan(math.sinh(math.pi * (1.0 - 2.0 * y / n)))
+    lat = math.degrees(lat_rad)
+    return lat, lon
+
+
+def _active_tileset_bounds_latlon() -> Optional[Tuple[float, float, float, float]]:
+    """Return (south, west, north, east) lat/lon bounds of the active tile pyramid.
+
+    Used as a fallback in is_inside_any_orthophoto so newly uploaded drone
+    images inside the displayed map area always pass the bounds check, even
+    if the source GeoTIFF is missing or covers a slightly different region.
+    Returns None if the pyramid can't be located (caller treats this as
+    'no fallback available' and relies on the GeoTIFF registry alone).
+    """
+    global _TILE_PYRAMID_BOUNDS, _TILE_PYRAMID_BOUNDS_KEY
+
+    tileset_name = _active_tileset_name()
+    map_root = _PROJECT_ROOT / "MAP" / tileset_name
+    cache_key = str(map_root).lower()
+    if _TILE_PYRAMID_BOUNDS_KEY == cache_key:
+        return _TILE_PYRAMID_BOUNDS
+
+    if not map_root.exists():
+        _TILE_PYRAMID_BOUNDS = None
+        _TILE_PYRAMID_BOUNDS_KEY = cache_key
+        return None
+
+    # Pick the deepest zoom for the tightest bounds (lower zooms over-cover).
+    try:
+        zoom_dirs = [int(d.name) for d in map_root.iterdir() if d.is_dir() and d.name.isdigit()]
+    except OSError:
+        zoom_dirs = []
+    if not zoom_dirs:
+        _TILE_PYRAMID_BOUNDS = None
+        _TILE_PYRAMID_BOUNDS_KEY = cache_key
+        return None
+
+    max_zoom = max(zoom_dirs)
+    zoom_root = map_root / str(max_zoom)
+    try:
+        x_dirs = sorted(int(d.name) for d in zoom_root.iterdir() if d.is_dir() and d.name.isdigit())
+    except OSError:
+        x_dirs = []
+    if not x_dirs:
+        _TILE_PYRAMID_BOUNDS = None
+        _TILE_PYRAMID_BOUNDS_KEY = cache_key
+        return None
+
+    x_min, x_max = x_dirs[0], x_dirs[-1]
+    y_values: list[int] = []
+    # Sampling the first/last few x columns keeps this fast for big pyramids
+    # while still capturing the full y range — slippy tile coverage is dense
+    # within a column so y_min/y_max are the same across columns in practice.
+    for x_dir_name in x_dirs[:3] + x_dirs[-3:]:
+        x_dir = zoom_root / str(x_dir_name)
+        try:
+            for entry in x_dir.iterdir():
+                stem = entry.stem
+                if stem.isdigit():
+                    y_values.append(int(stem))
+        except OSError:
+            continue
+    if not y_values:
+        _TILE_PYRAMID_BOUNDS = None
+        _TILE_PYRAMID_BOUNDS_KEY = cache_key
+        return None
+
+    y_min, y_max = min(y_values), max(y_values)
+    nw_lat, nw_lon = _tile_to_latlon(x_min, y_min, max_zoom)
+    se_lat, se_lon = _tile_to_latlon(x_max + 1, y_max + 1, max_zoom)
+    bounds = (se_lat, nw_lon, nw_lat, se_lon)  # south, west, north, east
+    print(
+        f"[OrthoMatcher] Tile pyramid bounds ('{tileset_name}' @ z{max_zoom}): "
+        f"S={bounds[0]:.6f} W={bounds[1]:.6f} N={bounds[2]:.6f} E={bounds[3]:.6f}"
+    )
+    _TILE_PYRAMID_BOUNDS = bounds
+    _TILE_PYRAMID_BOUNDS_KEY = cache_key
+    return bounds
 
 
 def _resolve_configured_path(raw_path: str) -> Path:
@@ -169,7 +348,7 @@ def _configured_ortho_seed() -> Optional[dict]:
         return {"name": name, "path": path}
 
     if _DEFAULT_ACTIVE_ORTHO_PATH.exists():
-        return {"name": "Practice_final_cut", "path": _DEFAULT_ACTIVE_ORTHO_PATH}
+        return {"name": "FINAL", "path": _DEFAULT_ACTIVE_ORTHO_PATH}
 
     return None
 
@@ -187,6 +366,53 @@ def _read_orthophoto_bgr(path: Path) -> np.ndarray:
     if rgb.dtype != np.uint8:
         rgb = np.clip(rgb, 0, 255).astype(np.uint8)
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+
+
+def _metric_pixel_size(
+    transform,
+    crs,
+    width: int,
+    height: int,
+) -> Tuple[float, float]:
+    """Return the GeoTIFF's physical x/y pixel size in metres.
+
+    Raster transforms are expressed in the dataset CRS.  For EPSG:4326 that
+    means a value such as ``4.5e-7`` is degrees/pixel (about 5 cm here), not
+    metres/pixel.  Treating it as metres made the matcher request an
+    85-million-pixel drone resize and forced every analysis onto the much less
+    accurate heading-only fallback.
+
+    Measuring one pixel geodesically at the raster centre works for both
+    geographic and projected CRSs and also accounts for longitude shrinkage at
+    the site's latitude.
+    """
+    if crs is None or width <= 0 or height <= 0:
+        raise ValueError("A valid CRS and raster dimensions are required")
+
+    center_col = float(width) * 0.5
+    center_row = float(height) * 0.5
+    center_x, center_y = transform * (center_col, center_row)
+    east_x, east_y = transform * (center_col + 1.0, center_row)
+    south_x, south_y = transform * (center_col, center_row + 1.0)
+
+    to_wgs84 = pyproj.Transformer.from_crs(crs, "EPSG:4326", always_xy=True)
+    center_lon, center_lat = to_wgs84.transform(center_x, center_y)
+    east_lon, east_lat = to_wgs84.transform(east_x, east_y)
+    south_lon, south_lat = to_wgs84.transform(south_x, south_y)
+
+    geod = pyproj.Geod(ellps="WGS84")
+    _, _, gsd_m_x = geod.inv(center_lon, center_lat, east_lon, east_lat)
+    _, _, gsd_m_y = geod.inv(center_lon, center_lat, south_lon, south_lat)
+    gsd_m_x = abs(float(gsd_m_x))
+    gsd_m_y = abs(float(gsd_m_y))
+    if not (
+        np.isfinite(gsd_m_x)
+        and np.isfinite(gsd_m_y)
+        and gsd_m_x > 0
+        and gsd_m_y > 0
+    ):
+        raise ValueError("Could not derive a physical orthophoto pixel size")
+    return gsd_m_x, gsd_m_y
 
 
 def _read_ortho_metadata(seed: dict) -> Optional[dict]:
@@ -214,6 +440,13 @@ def _read_ortho_metadata(seed: dict) -> Optional[dict]:
             if abs(transform.b) > 1e-9 or abs(transform.d) > 1e-9:
                 raise ValueError("rotated orthophoto transforms are not supported")
 
+            gsd_m_x, gsd_m_y = _metric_pixel_size(
+                transform,
+                dataset.crs,
+                int(dataset.width),
+                int(dataset.height),
+            )
+
             return {
                 "name": seed["name"],
                 "path": path,
@@ -221,6 +454,8 @@ def _read_ortho_metadata(seed: dict) -> Optional[dict]:
                 "origin_y": float(transform.f),
                 "gsd_x": abs(float(transform.a)),
                 "gsd_y": abs(float(transform.e)),
+                "gsd_m_x": gsd_m_x,
+                "gsd_m_y": gsd_m_y,
                 "width": int(dataset.width),
                 "height": int(dataset.height),
                 "crs": dataset.crs.to_string(),
@@ -395,11 +630,41 @@ def _ortho_bounds_utm(entry: dict) -> Tuple[float, float, float, float]:
     return west, east, south, north
 
 
+def is_inside_supported_map_bounds(lat: float, lon: float) -> bool:
+    """Fast boundary-only check against the GIS map displayed by the client.
+
+    The active tile pyramid is authoritative when available. Unlike
+    ``is_inside_any_orthophoto``, this function never decodes a full GeoTIFF,
+    making it suitable for checking an image footprint immediately on upload.
+    """
+    tile_bounds = _active_tileset_bounds_latlon()
+    if tile_bounds is not None:
+        south, west, north, east = tile_bounds
+        return bool(south <= lat <= north and west <= lon <= east)
+
+    for entry in _get_ortho_registry():
+        try:
+            to_entry_crs, _ = _get_entry_transformers(entry)
+            entry_x, entry_y = to_entry_crs.transform(lon, lat)
+            west, east, south, north = _ortho_bounds_utm(entry)
+            if west <= entry_x <= east and south <= entry_y <= north:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def is_inside_any_orthophoto(lat: float, lon: float) -> bool:
     """
     Check if a GPS coordinate falls inside ANY registered orthophoto
     AND has actual imagery (non-black pixel).  WebODM orthophotos have
     irregular boundaries — NoData regions are (0,0,0) black pixels.
+
+    Tile-pyramid fallback: if no registered GeoTIFF accepts the point but the
+    point IS inside the currently-displayed map tile pyramid, accept it. This
+    decouples the bounds gate from any specific GeoTIFF so swapping the tile
+    layer (TRIAL MAP → VERY NEW etc.) doesn't reject drone images that the
+    user can clearly see on the map.
     """
     for entry in _get_ortho_registry():
         to_entry_crs, _ = _get_entry_transformers(entry)
@@ -435,6 +700,13 @@ def is_inside_any_orthophoto(lat: float, lon: float) -> bool:
             else:
                 # File missing → accept rectangle check
                 return True
+
+    tile_bounds = _active_tileset_bounds_latlon()
+    if tile_bounds is not None:
+        south, west, north, east = tile_bounds
+        if south <= lat <= north and west <= lon <= east:
+            return True
+
     return False
 
 
@@ -552,11 +824,42 @@ def _match_single_ortho(
 
     # ── Step 1: Find drone centre in orthophoto pixel space ──────────────────
     cx_o, cy_o = gps_to_ortho_pixel(center_lat, center_lon)
+    if ORTHO_GSD <= 0 or not np.isfinite(drone_gsd) or drone_gsd <= 0:
+        return {"success": False, "inliers": 0, "confidence": 0, "error": "Invalid GSD for orthophoto matching"}
 
     # ── Step 2: Calculate drone footprint in ortho pixels ────────────────────
     scale = drone_gsd / ORTHO_GSD              # drone pixel → ortho pixel
-    half_w_o = int(dw * scale / 2 * margin_factor)
-    half_h_o = int(dh * scale / 2 * margin_factor)
+    target_w_float = dw * scale
+    target_h_float = dh * scale
+    if (
+        not np.isfinite(scale)
+        or scale <= 0
+        or not np.isfinite(target_w_float)
+        or not np.isfinite(target_h_float)
+    ):
+        return {"success": False, "inliers": 0, "confidence": 0, "error": "Invalid drone/orthophoto scale"}
+
+    resize_w = int(round(target_w_float))
+    resize_h = int(round(target_h_float))
+    if resize_w < 32 or resize_h < 32:
+        return {"success": False, "inliers": 0, "confidence": 0, "error": "Drone footprint too small for orthophoto matching"}
+    if (
+        resize_w > _MAX_MATCH_RESIZE_DIM
+        or resize_h > _MAX_MATCH_RESIZE_DIM
+        or (resize_w * resize_h) > _MAX_MATCH_RESIZE_PIXELS
+    ):
+        return {
+            "success": False,
+            "inliers": 0,
+            "confidence": 0,
+            "error": (
+                "Drone/orthophoto scale is too large for visual matching "
+                f"({resize_w}x{resize_h}px resize requested)"
+            ),
+        }
+
+    half_w_o = int(resize_w / 2 * margin_factor)
+    half_h_o = int(resize_h / 2 * margin_factor)
 
     x1 = max(0, int(cx_o - half_w_o))
     y1 = max(0, int(cy_o - half_h_o))
@@ -571,7 +874,7 @@ def _match_single_ortho(
     # ── Step 3a: Resize drone image to ortho patch scale ─────────────────────
     drone_small = cv2.resize(
         drone_image,
-        (int(dw * scale), int(dh * scale)),
+        (resize_w, resize_h),
         interpolation=cv2.INTER_LINEAR
     )
 
@@ -665,7 +968,10 @@ def _match_single_ortho(
     #                                            <inverse>
     #   drone_crop  --[H_crop]--> ortho_patch   --[T_patch]--> full_ortho
     #
-    S_drone = np.array([[scale, 0, 0], [0, scale, 0], [0, 0, 1]], dtype=np.float64)
+    S_drone = np.array(
+        [[resize_w / dw, 0, 0], [0, resize_h / dh, 0], [0, 0, 1]],
+        dtype=np.float64,
+    )
 
     # Translation: drone_small → drone_crop (subtract crop offset)
     ox, oy = crop_offset
@@ -676,8 +982,64 @@ def _match_single_ortho(
 
     # Final: full_drone → drone_crop → ortho_patch → full_ortho
     H_to_ortho = T_patch @ H_crop @ T_crop_inv @ S_drone
+    full_source = cv2.perspectiveTransform(src_pts, np.linalg.inv(T_crop_inv @ S_drone))
+    full_target = cv2.perspectiveTransform(dst_pts, T_patch)
+    validated_h, registration_diagnostics = select_registration(
+        full_source, full_target, dw, dh, scale,
+    )
 
     # ── Step 8: Sanity check — corners must spread out, not collapse ─────────
+    # Build a constrained visual transform from the same matches. A full
+    # projective homography can bend a drone photo to fit local SIFT features,
+    # which looks convincing in one corner but misaligns the footprint elsewhere
+    # on a north-up orthophoto. estimateAffinePartial2D keeps only translation,
+    # rotation, and uniform scale; that is safer for map coordinates/overlays.
+    similarity_H_to_ortho = None
+    similarity_inliers = 0
+    similarity_confidence = 0.0
+    similarity_source_hull_ratio = 0.0
+    similarity_source_span_x_ratio = 0.0
+    similarity_source_span_y_ratio = 0.0
+    similarity_source_grid_cells = 0
+    try:
+        src_2d = src_pts.reshape(-1, 2)
+        dst_2d = dst_pts.reshape(-1, 2)
+        A_crop, A_mask = cv2.estimateAffinePartial2D(
+            src_2d,
+            dst_2d,
+            method=cv2.RANSAC,
+            ransacReprojThreshold=5.0,
+            maxIters=3000,
+            confidence=0.995,
+            refineIters=10,
+        )
+        if A_crop is not None:
+            similarity_inliers = int(A_mask.sum()) if A_mask is not None else 0
+            similarity_confidence = similarity_inliers / len(good) if good else 0.0
+            if A_mask is not None and similarity_inliers > 0:
+                similarity_src_inliers = src_2d[A_mask.reshape(-1).astype(bool)]
+                source_support = _spatial_support_metrics(
+                    similarity_src_inliers,
+                    width=int(drone_crop.shape[1]),
+                    height=int(drone_crop.shape[0]),
+                )
+                similarity_source_hull_ratio = float(source_support["hull_ratio"])
+                similarity_source_span_x_ratio = float(source_support["span_x_ratio"])
+                similarity_source_span_y_ratio = float(source_support["span_y_ratio"])
+                similarity_source_grid_cells = int(source_support["grid_cells"])
+            if similarity_inliers >= 10:
+                A3 = np.array(
+                    [
+                        [A_crop[0, 0], A_crop[0, 1], A_crop[0, 2]],
+                        [A_crop[1, 0], A_crop[1, 1], A_crop[1, 2]],
+                        [0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float64,
+                )
+                similarity_H_to_ortho = T_patch @ A3 @ T_crop_inv @ S_drone
+    except cv2.error:
+        similarity_H_to_ortho = None
+
     corners_drone = np.float32([
         [[0, 0]], [[dw, 0]], [[0, dh]], [[dw, dh]]
     ])
@@ -702,8 +1064,8 @@ def _match_single_ortho(
     )[0, 0]
     center_dx_px = float(center_mapped[0] - cx_o)
     center_dy_px = float(center_mapped[1] - cy_o)
-    center_offset_east_m = center_dx_px * ORTHO_GSD_X
-    center_offset_north_m = -center_dy_px * ORTHO_GSD_Y
+    center_offset_east_m = center_dx_px * ORTHO_GSD_M_X
+    center_offset_north_m = -center_dy_px * ORTHO_GSD_M_Y
     center_dist = np.hypot(center_dx_px, center_dy_px)
     center_dist_m = center_dist * ORTHO_GSD
     footprint_max_px = max(dw * scale, dh * scale)
@@ -738,6 +1100,15 @@ def _match_single_ortho(
     return {
         "success": True,
         "H": H_to_ortho,
+        "validated_H": validated_h,
+        **registration_diagnostics,
+        "similarity_H": similarity_H_to_ortho,
+        "similarity_inliers": similarity_inliers,
+        "similarity_confidence": similarity_confidence,
+        "similarity_source_hull_ratio": similarity_source_hull_ratio,
+        "similarity_source_span_x_ratio": similarity_source_span_x_ratio,
+        "similarity_source_span_y_ratio": similarity_source_span_y_ratio,
+        "similarity_source_grid_cells": similarity_source_grid_cells,
         "heading": heading_deg,
         "confidence": confidence,
         "inliers": inlier_count,
@@ -857,13 +1228,16 @@ def match_drone_to_ortho(
 
 def _activate_ortho(entry: dict):
     """Set the global ORTHO_* variables to use a specific ortho entry."""
-    global ORTHO_ORIGIN_X, ORTHO_ORIGIN_Y, ORTHO_GSD_X, ORTHO_GSD_Y, ORTHO_GSD, ORTHO_PATH, ORTHO_CRS
+    global ORTHO_ORIGIN_X, ORTHO_ORIGIN_Y, ORTHO_GSD_X, ORTHO_GSD_Y
+    global ORTHO_GSD_M_X, ORTHO_GSD_M_Y, ORTHO_GSD, ORTHO_PATH, ORTHO_CRS
     global _ACTIVE_ORTHO_ENTRY, _to_ortho_crs, _from_ortho_crs
     ORTHO_ORIGIN_X = entry["origin_x"]
     ORTHO_ORIGIN_Y = entry["origin_y"]
     ORTHO_GSD_X    = entry["gsd_x"]
     ORTHO_GSD_Y    = entry["gsd_y"]
-    ORTHO_GSD      = (ORTHO_GSD_X + ORTHO_GSD_Y) / 2.0
+    ORTHO_GSD_M_X  = float(entry.get("gsd_m_x", ORTHO_GSD_X))
+    ORTHO_GSD_M_Y  = float(entry.get("gsd_m_y", ORTHO_GSD_Y))
+    ORTHO_GSD      = (ORTHO_GSD_M_X + ORTHO_GSD_M_Y) / 2.0
     ORTHO_PATH     = entry["path"]
     ORTHO_CRS      = entry["crs"]
     _ACTIVE_ORTHO_ENTRY = entry

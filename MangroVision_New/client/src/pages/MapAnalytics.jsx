@@ -2,12 +2,11 @@ import { useEffect, useState } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
 import Modal from '../components/Modal';
-import ResultsOverlay from './ResultsOverlay';
-import './ResultsOverlay.css';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
+const INITIAL_OPEN_CARDS = ['overview', 'legend'];
 
 function downloadBlob(blob, fileName) {
   const url = window.URL.createObjectURL(blob);
@@ -29,97 +28,53 @@ export default function MapAnalytics() {
   const toggleLayer = useMapStore((s) => s.toggleLayer);
 
   const [busyExport, setBusyExport] = useState('');
-  const [deleteError, setDeleteError] = useState('');
   const [exportError, setExportError] = useState('');
-  const [selectedAnalysis, setSelectedAnalysis] = useState(null);
-  const [loadingAnalysisId, setLoadingAnalysisId] = useState(null);
-  const [analysisLoadError, setAnalysisLoadError] = useState('');
-  const [pendingDeleteId, setPendingDeleteId] = useState(null);
-  const [deleteBusy, setDeleteBusy] = useState(false);
-
-  // Two-step "Export Saved Points" flow — confirmation modal asks before
-  // running the export, success modal acknowledges after the download completes.
   const [pendingExportFormat, setPendingExportFormat] = useState(null);
   const [completedExportFormat, setCompletedExportFormat] = useState(null);
+  const [openCards, setOpenCards] = useState(() => INITIAL_OPEN_CARDS);
 
   useEffect(() => {
     fetchStats();
     fetchPoints();
   }, [fetchPoints, fetchStats]);
 
-  const analyses = stats?.analyses || [];
   const allSavedPoints = stats?.points || [];
+  const activeMapPoints = points;
 
-  const planned = points.filter((point) => !point.assigned_planter_name && point.planting_status !== 'planted').length;
-  const assigned = points.filter((point) => point.assigned_planter_name && point.assignment_status !== 'completed').length;
-  const completed = points.filter((point) => point.assignment_status === 'completed' || point.planting_status === 'planted').length;
+  const skipped = activeMapPoints.filter((point) => (
+    point.assignment_status === 'skipped' || point.planting_status === 'skipped'
+  )).length;
+  const planned = activeMapPoints.filter((point) => (
+    !point.assigned_planter_name
+    && !point.eroded_unavailable
+    && !point.inside_eroded_zone
+    && point.planting_status !== 'planted'
+    && point.planting_status !== 'skipped'
+    && point.assignment_status !== 'skipped'
+  )).length;
+  const assigned = activeMapPoints.filter((point) => (
+    point.assigned_planter_name
+    && point.assignment_status !== 'completed'
+    && point.assignment_status !== 'skipped'
+    && point.planting_status !== 'skipped'
+  )).length;
+  const completed = activeMapPoints.filter((point) => (
+    point.assignment_status === 'completed' || point.planting_status === 'planted'
+  )).length;
 
-  const handleDeleteAnalysis = async (analysisId) => {
-    setDeleteError('');
-    setDeleteBusy(true);
-    try {
-      const response = await fetch(`${API}/api/analyses/${analysisId}`, { method: 'DELETE' });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Delete failed');
-      }
-      setPendingDeleteId(null);
-      fetchStats();
-      fetchPoints();
-    } catch (error) {
-      setDeleteError(error.message || 'Delete failed');
-    } finally {
-      setDeleteBusy(false);
-    }
-  };
-
-  const pendingDeleteAnalysis = analyses.find((a) => a.id === pendingDeleteId);
-
-  const handleOpenAnalysis = async (analysisId) => {
-    if (loadingAnalysisId) return;
-    setLoadingAnalysisId(analysisId);
-    setAnalysisLoadError('');
-    try {
-      const response = await fetch(`${API}/api/analyses/${analysisId}`);
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Could not load analysis');
-      }
-      const detail = await response.json();
-      setSelectedAnalysis(detail);
-    } catch (error) {
-      setAnalysisLoadError(error.message || 'Could not load analysis');
-    } finally {
-      setLoadingAnalysisId(null);
-    }
-  };
-
-  const handleExportSelected = async (format) => {
-    if (!selectedAnalysis?.exports?.waypoints?.length) return;
-    const response = await fetch(`${API}/api/export/${format}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        waypoints: selectedAnalysis.exports.waypoints,
-        image_name: selectedAnalysis.uploaded_file_name,
-        detection_mode: selectedAnalysis.detection_mode,
-      }),
-    });
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}));
-      throw new Error(payload.detail || `Could not export ${format.toUpperCase()}`);
-    }
-    const blob = await response.blob();
-    downloadBlob(blob, `mangrovision_${selectedAnalysis.uploaded_file_name}.${format}`);
-  };
-
-  // Wrapped in a request → confirm → perform → success flow so users get a
-  // confirmation modal before the bulk export runs and an explicit success
-  // modal when the file lands.
   const requestSavedPointsExport = (format) => {
     if (!allSavedPoints.length || busyExport) return;
     setExportError('');
     setPendingExportFormat(format);
+  };
+
+  const handleCardOpenChange = (cardId, nextOpen) => {
+    setOpenCards((currentOpenCards) => {
+      if (nextOpen) {
+        return [cardId];
+      }
+      return currentOpenCards.filter((id) => id !== cardId);
+    });
   };
 
   const cancelSavedPointsExport = () => {
@@ -171,6 +126,8 @@ export default function MapAnalytics() {
     <Panel title="Map Analytics" subtitle={`${allSavedPoints.length} saved planting points`}>
       <PanelCard
         title="Overview"
+        open={openCards.includes('overview')}
+        onOpenChange={(nextOpen) => handleCardOpenChange('overview', nextOpen)}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -182,16 +139,18 @@ export default function MapAnalytics() {
       >
         <div className="stats-grid">
           <div className="stat-card"><div className="stat-label">Analyses</div><div className="stat-value">{stats?.total_analyses ?? '-'}</div></div>
-          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{stats?.total_mapped_points ?? allSavedPoints.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{stats?.total_mapped_points ?? activeMapPoints.length}</div></div>
           <div className="stat-card"><div className="stat-label">Planned</div><div className="stat-value" style={{ color: 'var(--color-planned)' }}>{planned}</div></div>
           <div className="stat-card"><div className="stat-label">Assigned</div><div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{assigned}</div></div>
           <div className="stat-card"><div className="stat-label">Completed</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{completed}</div></div>
-          <div className="stat-card"><div className="stat-label">Active Planters</div><div className="stat-value">{stats?.active_planters ?? '-'}</div></div>
+          <div className="stat-card"><div className="stat-label">Skipped</div><div className="stat-value" style={{ color: '#6b7280' }}>{skipped}</div></div>
         </div>
       </PanelCard>
 
       <PanelCard
         title="Legend"
+        open={openCards.includes('legend')}
+        onOpenChange={(nextOpen) => handleCardOpenChange('legend', nextOpen)}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
@@ -202,16 +161,24 @@ export default function MapAnalytics() {
       >
         <div className="legend-list">
           <div className="legend-item"><span className="legend-dot" style={{ background: '#16a34a' }} /><span>Planned</span></div>
+          <div className="legend-item"><span className="legend-dot" style={{ background: '#db2777' }} /><span>Rhizophora</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#2563eb' }} /><span>Assigned</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#d97706' }} /><span>Planted</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#059669' }} /><span>Completed</span></div>
+          <div className="legend-item"><span className="legend-dot" style={{ background: '#9ca3af' }} /><span>Skipped</span></div>
+          <div className="legend-item"><span className="legend-dot" style={{ background: '#7f1d1d' }} /><span>Dead (review in Monitoring)</span></div>
+          <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#16a34a', background: 'rgba(22, 163, 74, 0.16)' }} /><span>Coverage Zone</span></div>
+          <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#0284c7', background: 'rgba(14, 165, 233, 0.08)' }} /><span>Project Site</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#dc2626' }} /><span>Forbidden Zone</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#ea580c' }} /><span>Eroded Zone</span></div>
+          <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#f59e0b' }} /><span>Warning Zone</span></div>
         </div>
       </PanelCard>
 
       <PanelCard
         title="Layers"
+        open={openCards.includes('layers')}
+        onOpenChange={(nextOpen) => handleCardOpenChange('layers', nextOpen)}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -230,6 +197,14 @@ export default function MapAnalytics() {
             <span>Orthophoto Overlay</span>
           </label>
           <label className="layer-toggle">
+            <input type="checkbox" checked={layerVisibility.siteZones} onChange={() => toggleLayer('siteZones')} />
+            <span>Assignment Zones</span>
+          </label>
+          <label className="layer-toggle">
+            <input type="checkbox" checked={layerVisibility.projectSites} onChange={() => toggleLayer('projectSites')} />
+            <span>Project Sites</span>
+          </label>
+          <label className="layer-toggle">
             <input type="checkbox" checked={layerVisibility.forbidden} onChange={() => toggleLayer('forbidden')} />
             <span>Forbidden Zones</span>
           </label>
@@ -237,11 +212,17 @@ export default function MapAnalytics() {
             <input type="checkbox" checked={layerVisibility.eroded} onChange={() => toggleLayer('eroded')} />
             <span>Eroded Zones</span>
           </label>
+          <label className="layer-toggle">
+            <input type="checkbox" checked={layerVisibility.warnings} onChange={() => toggleLayer('warnings')} />
+            <span>Warning Zones</span>
+          </label>
         </div>
       </PanelCard>
 
       <PanelCard
         title="Coverage"
+        open={openCards.includes('coverage')}
+        onOpenChange={(nextOpen) => handleCardOpenChange('coverage', nextOpen)}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
@@ -252,90 +233,16 @@ export default function MapAnalytics() {
       >
         <div className="info-rows">
           <div className="info-row"><span className="info-label">Total area analyzed</span><span className="info-value">{stats?.total_coverage_m2 ? `${(stats.total_coverage_m2 / 10000).toFixed(2)} ha` : '-'}</span></div>
-          <div className="info-row"><span className="info-label">Plantable area</span><span className="info-value">{stats?.total_plantable_m2 ? `${stats.total_plantable_m2.toFixed(1)} m²` : '-'}</span></div>
-          <div className="info-row"><span className="info-label">Danger area</span><span className="info-value">{stats?.total_danger_m2 ? `${stats.total_danger_m2.toFixed(1)} m²` : '-'}</span></div>
-          <div className="info-row"><span className="info-label">Canopies detected</span><span className="info-value">{stats?.total_canopies ?? '-'}</span></div>
-        </div>
-      </PanelCard>
-
-      <PanelCard
-        title="Analysis History"
-        badge={analyses.length}
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M3 3v5h5" />
-            <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
-            <path d="M12 7v5l3 3" />
-          </svg>
-        }
-        defaultOpen={false}
-      >
-        {deleteError && <div className="analytics-error">{deleteError}</div>}
-        {analysisLoadError && <div className="analytics-error">{analysisLoadError}</div>}
-        <div className="analytics-history-list">
-          {analyses.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No saved analyses yet.</p>
-          ) : (
-            analyses.map((analysis) => {
-              const isLoading = loadingAnalysisId === analysis.id;
-              return (
-                <div
-                  key={analysis.id}
-                  className={`analytics-history-item analytics-history-clickable ${isLoading ? 'analytics-history-loading' : ''}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpenAnalysis(analysis.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      handleOpenAnalysis(analysis.id);
-                    }
-                  }}
-                  aria-label={`Open summary for ${analysis.image_name}`}
-                >
-                  <div className="analytics-history-main">
-                    <div className="analytics-history-title">{analysis.image_name}</div>
-                    <div className="analytics-history-meta">
-                      {analysis.analyzed_at?.slice(0, 10)} · {analysis.hexagon_count} pts · {analysis.plantable_area_m2?.toFixed(1)} m²
-                    </div>
-                  </div>
-                  <span className="analytics-history-hint" aria-hidden="true">
-                    {isLoading ? (
-                      'Loading…'
-                    ) : (
-                      <>
-                        View Details
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                          <polyline points="12 5 19 12 12 19" />
-                        </svg>
-                      </>
-                    )}
-                  </span>
-                  <button
-                    className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setPendingDeleteId(analysis.id);
-                    }}
-                    title={`Delete ${analysis.image_name}`}
-                    aria-label={`Delete analysis ${analysis.image_name}`}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                </div>
-              );
-            })
-          )}
+          <div className="info-row"><span className="info-label">Plantable area</span><span className="info-value">{stats?.total_plantable_m2 ? `${stats.total_plantable_m2.toFixed(1)} m2` : '-'}</span></div>
+          <div className="info-row"><span className="info-label">Danger area</span><span className="info-value">{stats?.total_danger_m2 ? `${stats.total_danger_m2.toFixed(1)} m2` : '-'}</span></div>
         </div>
       </PanelCard>
 
       <PanelCard
         title="Export Saved Points"
         badge={allSavedPoints.length}
+        open={openCards.includes('export')}
+        onOpenChange={(nextOpen) => handleCardOpenChange('export', nextOpen)}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -354,36 +261,11 @@ export default function MapAnalytics() {
               onClick={() => requestSavedPointsExport(fmt)}
               disabled={!allSavedPoints.length || Boolean(busyExport)}
             >
-              {busyExport === fmt ? 'Exporting…' : fmt.toUpperCase()}
+              {busyExport === fmt ? 'Exporting...' : fmt.toUpperCase()}
             </button>
           ))}
         </div>
       </PanelCard>
-
-      <ResultsOverlay
-        open={Boolean(selectedAnalysis)}
-        result={selectedAnalysis}
-        originalPreview={null}
-        saving={false}
-        saved
-        saveError=""
-        onClose={() => setSelectedAnalysis(null)}
-        onSave={() => {}}
-        onExport={handleExportSelected}
-      />
-
-      <Modal
-        open={Boolean(pendingDeleteId)}
-        title={`Delete "${pendingDeleteAnalysis?.image_name || 'this analysis'}"?`}
-        variant="danger"
-        confirmLabel="Delete analysis"
-        cancelLabel="Cancel"
-        busy={deleteBusy}
-        onConfirm={() => handleDeleteAnalysis(pendingDeleteId)}
-        onCancel={() => { if (!deleteBusy) setPendingDeleteId(null); }}
-      >
-        <p>This permanently removes the analysis and all its saved planting points from the database. This action cannot be undone.</p>
-      </Modal>
 
       <Modal
         open={Boolean(pendingExportFormat)}
@@ -400,7 +282,7 @@ export default function MapAnalytics() {
           {' '}across all analyses will be bundled into a single
           {' '}<strong>.{pendingExportFormat || 'file'}</strong> download.
         </p>
-        <p>The file will be saved to your browser's downloads folder.</p>
+        <p>The file will be saved to your browser downloads folder.</p>
         {exportError && (
           <p style={{ color: '#dc2626', marginTop: 8 }}>{exportError}</p>
         )}

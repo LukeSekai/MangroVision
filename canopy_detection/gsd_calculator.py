@@ -45,14 +45,17 @@ class GSDCalculator:
             'image_width_px': 3840,
             'image_height_px': 2160,
         },
-        # DJI FC7703 4K camera. The camera reports a 4 mm physical focal
-        # length and 24 mm 35 mm-equivalent focal length on 4000px-wide stills.
+        # DJI FC7703 16:9 still frame. Use the physical active sensor width
+        # with the file's physical focal length. Reconstructing width from the
+        # 24 mm-equivalent *diagonal* treats a cropped 16:9 frame as if its
+        # whole-sensor diagonal were active and overstates ground coverage.
         'DJI_FC7703': {
             'sensor_width_mm': 6.3,
             'sensor_height_mm': 3.54,
-            'focal_length_mm': 4.0,
+            'focal_length_mm': 4.49,
             'image_width_px': 4000,
             'image_height_px': 2250,
+            'prefer_physical_sensor_width': True,
         },
     }
 
@@ -89,9 +92,10 @@ class GSDCalculator:
     ):
         """Return `(gsd, specs)` using EXIF camera geometry when available.
 
-        EXIF focal length plus 35 mm-equivalent focal length lets us estimate
-        the active sensor width for the actual still frame. If those tags are
-        missing, fall back to the known drone preset.
+        Prefer a known camera's physical active sensor width together with the
+        file's physical focal length. For unknown cameras, EXIF focal length
+        plus 35 mm-equivalent focal length estimates the active sensor width.
+        If neither path is available, fall back to the drone preset.
         """
         camera_info = camera_info or {}
         focal_mm = camera_info.get('focal_length_mm')
@@ -101,14 +105,43 @@ class GSDCalculator:
 
         try:
             focal_mm = float(focal_mm)
-            focal_35mm = float(focal_35mm)
-            width_px = int(width_px)
-            height_px = int(height_px) if height_px else None
         except (TypeError, ValueError):
             focal_mm = None
+        try:
+            focal_35mm = float(focal_35mm)
+        except (TypeError, ValueError):
             focal_35mm = None
+        try:
+            width_px = int(width_px)
+        except (TypeError, ValueError):
             width_px = None
+        try:
+            height_px = int(height_px) if height_px else None
+        except (TypeError, ValueError):
             height_px = None
+
+        preset = GSDCalculator.COMMON_DRONES.get(drone_model)
+        if (
+            focal_mm
+            and width_px
+            and preset
+            and preset.get('prefer_physical_sensor_width')
+        ):
+            sensor_width_mm = float(preset['sensor_width_mm'])
+            gsd = GSDCalculator.calculate_gsd(
+                altitude_m=altitude_m,
+                sensor_width_mm=sensor_width_mm,
+                focal_length_mm=focal_mm,
+                image_width_px=width_px,
+            )
+            return gsd, {
+                'sensor_width_mm': sensor_width_mm,
+                'focal_length_mm': focal_mm,
+                'focal_length_35mm': focal_35mm,
+                'image_width_px': width_px,
+                'image_height_px': height_px,
+                'source': 'exif_focal_known_sensor',
+            }
 
         if focal_mm and focal_35mm and width_px:
             # 35 mm-equivalent focal length is based on the 35 mm diagonal.

@@ -1,4 +1,6 @@
 import { create } from 'zustand';
+import { savedAnalysisMapContext } from '../utils/analysisMapContext';
+import { paintReplantingSelection } from '../utils/replantingBrush';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const MAP_VIEW_STORAGE_KEY = 'mv_admin_map_view';
@@ -48,12 +50,23 @@ export const useMapStore = create((set, get) => ({
   },
 
   // Stats
+  resetWorkspaceData: () => set({
+    stats: null, points: [], loadingStats: false, loadingPoints: false,
+    forbiddenZones: null, erodedZones: null, siteZones: null,
+    projectSites: null, siteZoneMortality: null, warningZones: null,
+    selectedPointId: null, assignmentSelectedPointIds: [],
+    assignmentOrganizationId: null, assignmentProjectSiteId: null,
+    monitoringOrganizationId: null,
+    replantingSelectedPointIds: [], replantingSelectionMode: 'click',
+    monitoringSelectedPointId: null, currentAnalysis: null,
+  }),
   stats: null,
   loadingStats: false,
-  fetchStats: async () => {
+  fetchStats: async ({ force = false } = {}) => {
     set({ loadingStats: true });
     try {
-      const res = await fetch(`${API}/api/analyses/stats`);
+      const res = await fetch(`${API}/api/analyses/stats`, { cache: force ? 'reload' : 'default' });
+      if (!res.ok) throw new Error(`Could not load statistics (${res.status}).`);
       const data = await res.json();
       set({ stats: data, loadingStats: false });
     } catch (err) {
@@ -65,10 +78,11 @@ export const useMapStore = create((set, get) => ({
   // Map points (all planting points with assignment info)
   points: [],
   loadingPoints: false,
-  fetchPoints: async () => {
+  fetchPoints: async ({ force = false } = {}) => {
     set({ loadingPoints: true });
     try {
-      const res = await fetch(`${API}/api/planters/map-points`);
+      const res = await fetch(`${API}/api/planters/map-points`, { cache: force ? 'reload' : 'default' });
+      if (!res.ok) throw new Error(`Could not load map points (${res.status}).`);
       const data = await res.json();
       set({ points: data, loadingPoints: false });
     } catch (err) {
@@ -76,54 +90,58 @@ export const useMapStore = create((set, get) => ({
       set({ loadingPoints: false });
     }
   },
-  deletePoints: async (pointIds) => {
-    const ids = [...new Set((pointIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id)))];
-    if (!ids.length) throw new Error('Select at least one planting point.');
-
-    const res = await fetch(`${API}/api/planters/map-points`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ point_ids: ids }),
-    });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error(payload.detail || 'Point deletion failed');
-    }
-
-    const deletedIds = new Set((payload.deleted_point_ids || []).map((id) => Number(id)));
-    set((state) => ({
-      points: state.points.filter((point) => !deletedIds.has(Number(point.id))),
-      selectedPointId: deletedIds.has(Number(state.selectedPointId)) ? null : state.selectedPointId,
-      deletionSelectedPointIds: state.deletionSelectedPointIds
-        .map(Number)
-        .filter((id) => !deletedIds.has(id)),
-      stats: state.stats
-        ? {
-            ...state.stats,
-            points: (state.stats.points || []).filter((point) => !deletedIds.has(Number(point.id))),
-            total_mapped_points: Math.max(
-              0,
-              (state.stats.total_mapped_points ?? state.points.length) - deletedIds.size,
-            ),
-          }
-        : state.stats,
-    }));
-    return payload;
-  },
-
   // Zones
   forbiddenZones: null,
   erodedZones: null,
-  fetchZones: async () => {
+  // Site zones — auto-derived from planter assignments by the backend
+  // (one zone per assignment, polygon = convex hull of its points). Used
+  // for per-assignment survival tracking on the map. There is no manual
+  // draw flow anymore — assignments ARE the zones.
+  siteZones: null,
+  projectSites: null,
+  siteZoneMortality: null,
+  warningZones: null,
+  fetchZones: async ({ force = false } = {}) => {
+    const paths = [
+      '/api/zones/forbidden',
+      '/api/zones/eroded',
+      '/api/zones/sites',
+      '/api/zones/sites/mortality',
+      '/api/zones/warnings',
+      '/api/project-sites',
+    ];
+    const results = await Promise.allSettled(paths.map(async (path) => {
+      const response = await fetch(`${API}${path}`, { cache: force ? 'reload' : 'default' });
+      if (!response.ok) throw new Error(`${path} returned ${response.status}`);
+      return response.json();
+    }));
+    results.forEach((result, index) => {
+      if (result.status === 'rejected') {
+        console.error(`Failed to fetch ${paths[index]}:`, result.reason);
+      }
+    });
+    set((state) => {
+      const value = (index) => (
+        results[index].status === 'fulfilled' ? results[index].value : undefined
+      );
+      const mortality = value(3);
+      return {
+        forbiddenZones: value(0) ?? state.forbiddenZones,
+        erodedZones: value(1) ?? state.erodedZones,
+        siteZones: value(2) ?? state.siteZones,
+        siteZoneMortality: mortality ? (mortality.zones || []) : state.siteZoneMortality,
+        warningZones: value(4) ?? state.warningZones,
+        projectSites: value(5) ?? state.projectSites,
+      };
+    });
+  },
+  fetchSiteZoneMortality: async () => {
     try {
-      const [fRes, eRes] = await Promise.all([
-        fetch(`${API}/api/zones/forbidden`),
-        fetch(`${API}/api/zones/eroded`),
-      ]);
-      const [forbidden, eroded] = await Promise.all([fRes.json(), eRes.json()]);
-      set({ forbiddenZones: forbidden, erodedZones: eroded });
+      const res = await fetch(`${API}/api/zones/sites/mortality`);
+      const data = await res.json();
+      set({ siteZoneMortality: data?.zones || [] });
     } catch (err) {
-      console.error('Failed to fetch zones:', err);
+      console.error('Failed to fetch site zone mortality:', err);
     }
   },
 
@@ -131,51 +149,156 @@ export const useMapStore = create((set, get) => ({
   selectedPointId: null,
   setSelectedPoint: (id) => set({ selectedPointId: id }),
 
-  // Delete Points selection. This lives in the shared map store so the
-  // delete workflow can use the already-mounted main map instead of creating
-  // a second Leaflet instance that reloads tiles on navigation.
-  deletionSelectedPointIds: [],
-  toggleDeletionPoint: (id) => {
+  // Map Analytics death filter and reviewed release of planting locations.
+  showDeadPointsOnly: false,
+  setShowDeadPointsOnly: (value) => set({ showDeadPointsOnly: value }),
+  monitoringOrganizationId: null,
+  setMonitoringOrganizationId: (value) => set({
+    monitoringOrganizationId: value == null || value === '' ? null : Number(value),
+    replantingSelectedPointIds: [],
+  }),
+  replantingSelectedPointIds: [],
+  replantingSelectionMode: 'click',
+  setReplantingSelectionMode: (mode) => set({ replantingSelectionMode: mode }),
+  paintReplantingPoints: (ids, mode) => set((state) => {
+    const eligible = new Set(state.points.filter((point) => point.death_at).map((point) => point.id));
+    const selection = paintReplantingSelection(state.replantingSelectedPointIds, ids.filter((id) => eligible.has(id)), mode);
+    return selection === state.replantingSelectedPointIds ? state : { replantingSelectedPointIds: selection };
+  }),
+  toggleReplantingPoint: (id) => set((state) => ({
+    replantingSelectedPointIds: state.replantingSelectedPointIds.includes(id)
+      ? state.replantingSelectedPointIds.filter((pointId) => pointId !== id)
+      : state.replantingSelectedPointIds.length < 500 ? [...state.replantingSelectedPointIds, id] : state.replantingSelectedPointIds,
+  })),
+  clearReplantingSelection: () => set({ replantingSelectedPointIds: [] }),
+
+  // Planter Management batch assignment selection. Lives in the shared map
+  // store so MapView can highlight selected points and toggle them on click.
+  // One selected point and many selected points use the same flow.
+  assignmentSelectedPointIds: [],
+  assignmentOrganizationId: null,
+  assignmentProjectSiteId: null,
+  setAssignmentScope: (organizationId = null, projectSiteId = null) => set({
+    assignmentOrganizationId: organizationId == null ? null : Number(organizationId),
+    assignmentProjectSiteId: projectSiteId == null ? null : Number(projectSiteId),
+  }),
+  toggleAssignmentPoint: (id) => {
     const numericId = Number(id);
     if (!Number.isFinite(numericId)) return;
     set((state) => {
-      const selected = new Set(state.deletionSelectedPointIds.map(Number));
+      const selected = new Set(state.assignmentSelectedPointIds.map(Number));
       if (selected.has(numericId)) selected.delete(numericId);
       else selected.add(numericId);
-      return { deletionSelectedPointIds: [...selected] };
+      return { assignmentSelectedPointIds: [...selected] };
     });
   },
-  addDeletionPoints: (ids) => {
-    const nextIds = (ids || []).map(Number).filter(Number.isFinite);
-    if (!nextIds.length) return;
-    set((state) => {
-      const selected = new Set(state.deletionSelectedPointIds.map(Number));
-      nextIds.forEach((id) => selected.add(id));
-      return { deletionSelectedPointIds: [...selected] };
+  clearAssignmentSelection: () => set({ assignmentSelectedPointIds: [] }),
+  setAssignmentSelection: (ids) => set({ assignmentSelectedPointIds: ids }),
+
+  // Monitoring: which planted/dead point the user clicked. The Monitoring page
+  // listens for this to open its "mark dead / restore" modal so the click flow
+  // on /monitoring stays distinct from /points and the default selectedPoint.
+  monitoringSelectedPointId: null,
+  setMonitoringSelectedPoint: (id) => {
+    const numericId = id == null ? null : Number(id);
+    set({ monitoringSelectedPointId: Number.isFinite(numericId) ? numericId : null });
+  },
+  clearMonitoringSelectedPoint: () => set({ monitoringSelectedPointId: null }),
+
+  markPointDead: async (pointId, reasonCategory, notes) => {
+    const numericId = Number(pointId);
+    if (!Number.isFinite(numericId)) throw new Error('Invalid point id.');
+    const res = await fetch(`${API}/api/planters/map-points/${numericId}/death`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reason_category: reasonCategory,
+        notes: notes || '',
+      }),
     });
-  },
-  removeDeletionPoint: (id) => {
-    const numericId = Number(id);
-    if (!Number.isFinite(numericId)) return;
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.detail || 'Could not mark point dead.');
     set((state) => ({
-      deletionSelectedPointIds: state.deletionSelectedPointIds
-        .map(Number)
-        .filter((selectedId) => selectedId !== numericId),
+      points: state.points.map((point) => {
+        if (Number(point.id) !== numericId) return point;
+        return {
+          ...point,
+          death_at: payload.death_at,
+          death_reason: payload.death_reason,
+          death_reason_category: payload.death_reason_category,
+          death_notes: payload.death_notes,
+        };
+      }),
     }));
-  },
-  clearDeletionSelection: () => set({ deletionSelectedPointIds: [] }),
-  pruneDeletionSelection: (validIds) => {
-    const valid = new Set((validIds || []).map(Number).filter(Number.isFinite));
-    set((state) => ({
-      deletionSelectedPointIds: state.deletionSelectedPointIds
-        .map(Number)
-        .filter((selectedId) => valid.has(selectedId)),
-    }));
+    return payload;
   },
 
-  // Current unsaved processing preview
+  restorePointToPlanted: async (pointId) => {
+    const numericId = Number(pointId);
+    if (!Number.isFinite(numericId)) throw new Error('Invalid point id.');
+    const res = await fetch(`${API}/api/planters/map-points/${numericId}/restore`, {
+      method: 'POST',
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.detail || 'Could not restore point.');
+    set((state) => ({
+      points: state.points.map((point) => {
+        if (Number(point.id) !== numericId) return point;
+        return {
+          ...point,
+          death_at: null,
+          death_reason: null,
+          death_reason_category: null,
+          death_notes: null,
+        };
+      }),
+    }));
+    return payload;
+  },
+
+  resetPointToPlanned: async (pointId) => {
+    const numericId = Number(pointId);
+    if (!Number.isFinite(numericId)) throw new Error('Invalid point id.');
+    const res = await fetch(`${API}/api/planters/map-points/${numericId}/reset-to-planned`, {
+      method: 'POST',
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(payload.detail || 'Could not reset point to planned.');
+    set((state) => ({
+      points: state.points.map((point) => {
+        if (Number(point.id) !== numericId) return point;
+        // Release the assignment fields too — without this the marker keeps
+        // ranking as 'completed' (yellow) because assignment_status wins
+        // over planting_status in MapView.getPointDisplayStatus.
+        return {
+          ...point,
+          planting_status: 'planned',
+          planted_at: null,
+          planted_date: null,
+          death_at: null,
+          death_reason: null,
+          death_reason_category: null,
+          death_notes: null,
+          assigned_planter_id: null,
+          assigned_planter_name: null,
+          assignment_id: null,
+          assignment_point_id: null,
+          assignment_status: null,
+          assignment_title: null,
+          assignment_date: null,
+          sequence_num: null,
+        };
+      }),
+    }));
+    return payload;
+  },
+
+  // Current processing preview or the selected saved photo's boundary.
   currentAnalysis: null,
   setCurrentAnalysis: (analysis) => set({ currentAnalysis: analysis }),
+  setSavedAnalysisBoundary: (analysis, options) => set({
+    currentAnalysis: savedAnalysisMapContext(analysis, options),
+  }),
   clearCurrentAnalysis: () => set({ currentAnalysis: null }),
 
   // Optimistic append of a just-saved analysis to every view that reads from
@@ -191,12 +314,16 @@ export const useMapStore = create((set, get) => ({
     const coords = result.map?.coordinates || [];
     const imageName = result.uploaded_file_name || 'Saved Analysis';
     const nowIso = new Date().toISOString();
+    const pointSpecies = result.parameters?.species || null;
+    const plantingDistanceM = result.parameters?.planting_distance_m ?? null;
 
     const newAnalysisEntry = {
       id: analysisId,
       image_name: imageName,
       analyzed_at: nowIso,
-      hexagon_count: metrics.safe_hexagon_count ?? metrics.hexagon_count ?? coords.length,
+      // History stores every retained geotagged point. The safe count is a
+      // separate, dynamic metric that excludes erosion-unavailable points.
+      hexagon_count: metrics.hexagon_count ?? coords.length,
       plantable_area_m2: metrics.plantable_area_m2 ?? 0,
     };
 
@@ -211,8 +338,23 @@ export const useMapStore = create((set, get) => ({
       area_m2: row.area_m2 ?? null,
       status: 'planned',
       planting_status: 'planned',
+      species: pointSpecies,
+      planting_distance_m: plantingDistanceM,
+      planted_at: null,
+      planted_date: null,
       assigned_planter_name: null,
       assignment_status: null,
+      inside_eroded_zone: Boolean(row.eroded_unavailable),
+      erosion_advisory: Boolean(row.eroded_unavailable),
+      eroded_unavailable: Boolean(row.eroded_unavailable),
+      availability_status: row.availability_status || 'available',
+      availability_reason: row.eroded_unavailable ? 'Inside an eroded zone' : null,
+      survival_warning: false,
+      warning_zone_ids: [],
+      warning_zone_names: [],
+      warning_reasons: [],
+      warning_severity: null,
+      warning_summary: null,
     }));
 
     const prevStats = state.stats || {};
@@ -257,12 +399,23 @@ export const useMapStore = create((set, get) => ({
   layerVisibility: {
     points: true,
     orthophoto: true,
+    siteZones: true,
+    projectSites: true,
     forbidden: true,
     eroded: true,
+    warnings: true,
   },
   toggleLayer: (layerName) => {
     const current = get().layerVisibility;
     set({ layerVisibility: { ...current, [layerName]: !current[layerName] } });
+  },
+  showLayers: (layerNames = []) => {
+    const current = get().layerVisibility;
+    const next = { ...current };
+    layerNames.forEach((layerName) => {
+      if (Object.prototype.hasOwnProperty.call(next, layerName)) next[layerName] = true;
+    });
+    set({ layerVisibility: next });
   },
 
   // Active panel mode
