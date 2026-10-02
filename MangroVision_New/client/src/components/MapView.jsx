@@ -570,7 +570,7 @@ export default function MapView() {
     const displayPoints = filterMapPoints(scopedPoints, {
       includeDead: isAnalyticsMode || isMonitoringMapMode,
       deadOnly: isMonitoringMapMode && showDeadPointsOnly,
-    });
+    }).filter((point) => point.inside_visible_map !== false);
     const assignmentScopeKey = isPlanterMode
       ? `${assignmentOrganizationId ?? ''}:${assignmentProjectSiteId ?? ''}`
       : '';
@@ -1180,7 +1180,8 @@ export default function MapView() {
         .addTo(processingFilteredLayer);
     });
 
-    if (centerFeature?.geometry?.coordinates) {
+    if (centerFeature?.geometry?.coordinates
+      && (!centerFeature.properties?.outside_map_bounds || currentAnalysis.preflight)) {
       const [lon, lat] = centerFeature.geometry.coordinates;
       const props = centerFeature.properties || {};
       L.marker([lat, lon])
@@ -1217,7 +1218,8 @@ export default function MapView() {
       }
     });
 
-    if (centerFeature?.geometry?.coordinates) {
+    if (centerFeature?.geometry?.coordinates
+      && (!centerFeature.properties?.outside_map_bounds || currentAnalysis.preflight)) {
       const [lon, lat] = centerFeature.geometry.coordinates;
       previewLatLngs.push([lat, lon]);
     }
@@ -1269,30 +1271,29 @@ export default function MapView() {
     });
   }, [isMonitoringMapMode, monitoringOrganizationId, projectSites, showLayers]);
 
-  // Dashboard project-site links include a stable site id in the URL. Once
-  // the GeoJSON is available, show the relevant map layers and move directly
-  // to that site's boundary so its planting points are immediately visible.
+  // Dashboard links frame the site's actual planting points. Risk links frame
+  // just its risk points, with the site boundary as a no-points fallback.
   useEffect(() => {
     const map = mapRef.current;
-    const features = projectSites?.features;
-    const projectSiteId = new URLSearchParams(location.search).get('project_site_id');
+    const params = new URLSearchParams(location.search);
+    const projectSiteId = params.get('project_site_id');
+    const focusTarget = params.get('focus');
 
     if (!projectSiteId) {
       layersRef.current.projectSiteLayer?.setStyle(PROJECT_SITE_STYLE);
       focusedProjectSiteRef.current = '';
       return;
     }
-    if (!map || !Array.isArray(features)) return;
+    if (!map) return;
 
-    const focusKey = `${location.key}:${projectSiteId}`;
-    if (focusedProjectSiteRef.current === focusKey) return;
-
-    const feature = features.find((candidate) => (
+    const fallback = location.state?.mapFocusSite;
+    const feature = projectSites?.features?.find((candidate) => (
       String(candidate?.id ?? candidate?.properties?.id ?? '') === String(projectSiteId)
-    ));
+    )) || (String(fallback?.id ?? '') === String(projectSiteId)
+      ? { id: fallback.id, geometry: fallback.geometry, properties: fallback }
+      : null);
     if (!feature) return;
 
-    showLayers(['points', 'projectSites']);
     layersRef.current.projectSiteLayer?.eachLayer((siteLayer) => {
       const layerSiteId = siteLayer.feature?.id ?? siteLayer.feature?.properties?.id;
       const isFocused = String(layerSiteId ?? '') === String(projectSiteId);
@@ -1300,38 +1301,53 @@ export default function MapView() {
       if (isFocused && typeof siteLayer.bringToFront === 'function') siteLayer.bringToFront();
     });
 
-    let focused = false;
-    if (feature.geometry) {
-      try {
-        const bounds = L.geoJSON(feature).getBounds();
-        if (bounds.isValid()) {
-          const rightPadding = map.getSize().x >= 900 ? 420 : 36;
-          skipNextSyncRef.current = true;
-          map.fitBounds(bounds, {
-            paddingTopLeft: [72, 72],
-            paddingBottomRight: [rightPadding, 72],
-            maxZoom: 20,
-            animate: true,
-          });
-          focused = true;
-        }
-      } catch {
-        // Fall through to the stored centroid when a boundary is malformed.
-      }
-    }
+    const sitePoints = spacedPoints.filter((point) => (
+      point.inside_visible_map !== false
+      && String(point.source_project_site_id ?? '') === String(projectSiteId)
+      && Number.isFinite(Number(point.latitude))
+      && Number.isFinite(Number(point.longitude))
+    ));
+    const riskPoints = focusTarget === 'risk_areas'
+      ? sitePoints.filter((point) => point.survival_warning)
+      : [];
+    const targetPoints = riskPoints.length ? riskPoints : sitePoints;
+    const focusKey = `${location.key}:${projectSiteId}:${focusTarget || 'site'}:${targetPoints.length ? 'points' : 'boundary'}`;
+    if (focusedProjectSiteRef.current === focusKey) return;
 
-    if (!focused) {
+    showLayers(focusTarget === 'risk_areas'
+      ? ['points', 'projectSites', 'warnings']
+      : ['points', 'projectSites']);
+
+    const frame = window.requestAnimationFrame(() => {
+      map.invalidateSize({ pan: false });
+      let bounds = null;
+      if (targetPoints.length) {
+        bounds = L.latLngBounds(targetPoints.map((point) => [Number(point.latitude), Number(point.longitude)]));
+      } else if (feature.geometry) {
+        try { bounds = L.geoJSON(feature).getBounds(); } catch { /* Use the stored centroid below. */ }
+      }
+      if (bounds?.isValid()) {
+        const rightPadding = map.getSize().x >= 900 ? 420 : 36;
+        map.fitBounds(bounds, {
+          paddingTopLeft: [72, 72],
+          paddingBottomRight: [rightPadding, 72],
+          maxZoom: 21,
+          animate: false,
+        });
+        focusedProjectSiteRef.current = focusKey;
+        return;
+      }
+
       const latitude = Number(feature.properties?.centroid_lat);
       const longitude = Number(feature.properties?.centroid_lon);
       if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
-        skipNextSyncRef.current = true;
-        map.setView([latitude, longitude], 19, { animate: true });
-        focused = true;
+        map.setView([latitude, longitude], 20, { animate: false });
+        focusedProjectSiteRef.current = focusKey;
       }
-    }
+    });
 
-    if (focused) focusedProjectSiteRef.current = focusKey;
-  }, [location.key, location.search, projectSites, showLayers]);
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.key, location.search, location.state, projectSites, showLayers, spacedPoints]);
 
   // The Project Sites dashboard can open the map directly from the risk-area
   // chart. Show the warning and planting-point layers, then frame every mapped
@@ -1340,7 +1356,7 @@ export default function MapView() {
     const map = mapRef.current;
     const focusTarget = new URLSearchParams(location.search).get('focus');
 
-    if (focusTarget !== 'risk_areas') {
+    if (focusTarget !== 'risk_areas' || new URLSearchParams(location.search).has('project_site_id')) {
       focusedRiskAreasRef.current = '';
       return;
     }

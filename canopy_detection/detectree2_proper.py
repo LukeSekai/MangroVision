@@ -15,10 +15,10 @@ import geopandas as gpd
 
 try:
     from .seedling_detector import SeedlingDetector, SeedlingDetectorConfig
-    from .seedling_leaf_evidence import recover_yellow_leaf_clusters
+    from .seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts
 except ImportError:  # The legacy applications import this file as a top-level module.
     from seedling_detector import SeedlingDetector, SeedlingDetectorConfig
-    from seedling_leaf_evidence import recover_yellow_leaf_clusters
+    from seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts
 
 # Official detectree2 imports
 from detectree2.models.train import setup_cfg
@@ -1886,6 +1886,16 @@ class ProperDetectree2Detector:
             )
             accepted_entries.extend(recovered)
 
+        # Run after all recovery paths; shadow fragments must not re-enter via
+        # cluster rescue or borrow leaf evidence from the rest of the image.
+        accepted_entries, ground_metadata = filter_seedling_ground_artifacts(
+            image, accepted_entries, gsd,
+        )
+        cluster_rescue_count = sum(bool(entry.get("cluster_rescue")) for entry in accepted_entries)
+        yellow_metadata["seedling_yellow_recovery_count"] = sum(
+            bool(entry.get("yellow_recovery")) for entry in accepted_entries
+        )
+
         supplement_mask = np.zeros_like(base_mask)
         marker_radius_px = max(2, int(round(marker_radius_m / gsd)))
         for entry in accepted_entries:
@@ -1908,6 +1918,7 @@ class ProperDetectree2Detector:
             "seedling_low_leaf_evidence_rejected_count": low_leaf_rejected_count,
             "seedling_shadow_mud_rejected_count": shadow_mud_rejected_count,
             **yellow_metadata,
+            **ground_metadata,
             "seedling_rejected_existing": int(rejected_existing),
             "seedling_rejected_shape": int(rejected_shape),
             "seedling_rejected_color": int(rejected_color),

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
@@ -61,6 +62,7 @@ export default function ImageProcessing() {
   const [locationCheckError, setLocationCheckError] = useState('');
   const [locationBlockModalOpen, setLocationBlockModalOpen] = useState(false);
   const [partialConfirmOpen, setPartialConfirmOpen] = useState(false);
+  const [partialApproved, setPartialApproved] = useState(false);
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
   const [loadingAnalysisId, setLoadingAnalysisId] = useState(null);
   const [analysisLoadError, setAnalysisLoadError] = useState('');
@@ -92,19 +94,10 @@ export default function ImageProcessing() {
   const [configOpen, setConfigOpen] = useState(true);
   const [historyOpen, setHistoryOpen] = useState(false);
 
-  const handleHistoryOpenChange = (next) => {
-    setHistoryOpen(next);
-    if (next) {
-      setUploadOpen(false);
-      setConfigOpen(false);
-    }
-  };
-
   const handleUploadOpenChange = (next) => {
     setUploadOpen(next);
     if (next) {
       setConfigOpen(true);
-      setHistoryOpen(false);
     }
   };
 
@@ -128,6 +121,7 @@ export default function ImageProcessing() {
     setLocationCheckError('');
     setLocationBlockModalOpen(false);
     setPartialConfirmOpen(false);
+    setPartialApproved(false);
 
     try {
       const formData = new FormData();
@@ -147,6 +141,7 @@ export default function ImageProcessing() {
       setLocationBlockModalOpen(
         payload.status === 'outside' || payload.status === 'no_gps',
       );
+      setPartialConfirmOpen(payload.status === 'partial');
       if (payload.can_process && payload.map?.available) {
         setCurrentAnalysis({
           preflight: true,
@@ -205,13 +200,20 @@ export default function ImageProcessing() {
     setLocationCheckError('');
     setLocationBlockModalOpen(false);
     setPartialConfirmOpen(false);
+    setPartialApproved(false);
     clearCurrentAnalysis();
     resetProcessing();
+    setUploadOpen(true);
+    setConfigOpen(true);
     if (fileRef.current) fileRef.current.value = '';
   };
 
   const requestClear = () => {
     if (!file && !result && !preview) return;
+    if (result?.saved) {
+      handleClear();
+      return;
+    }
     setClearModalOpen(true);
   };
 
@@ -247,11 +249,11 @@ export default function ImageProcessing() {
 
   const handleProcess = () => {
     if (!file || processing || locationChecking || !locationCheck?.can_process) return;
-    if (locationCheck.status === 'partial') {
+    if (locationCheck.status === 'partial' && !partialApproved) {
       setPartialConfirmOpen(true);
       return;
     }
-    startConfirmedProcess(false);
+    startConfirmedProcess(locationCheck.status === 'partial');
   };
 
   const handleSaveToDatabase = async () => {
@@ -281,6 +283,7 @@ export default function ImageProcessing() {
         throw new Error(payload.detail || 'Could not load analysis');
       }
       const detail = await response.json();
+      setHistoryOpen(false);
       setSelectedAnalysis(detail);
       setSavedAnalysisBoundary(detail);
     } catch (openError) {
@@ -303,6 +306,7 @@ export default function ImageProcessing() {
       setPendingDeleteId(null);
       await Promise.all([fetchStats(), fetchPoints()]);
       clearCurrentAnalysis();
+      setHistoryOpen(true);
     } catch (deleteAnalysisError) {
       setDeleteError(deleteAnalysisError.message || 'Delete failed');
     } finally {
@@ -377,9 +381,9 @@ export default function ImageProcessing() {
           onChange={handleFileSelect}
           className="file-input"
           id="image-upload"
-          disabled={processing}
+          disabled={processing || Boolean(result)}
         />
-        <label htmlFor="image-upload" className={`upload-area ${processing ? 'upload-disabled' : ''}`}>
+        <label htmlFor="image-upload" className={`upload-area ${processing || result ? 'upload-disabled' : ''}`}>
           {preview ? (
             <img src={preview} alt="Preview" className="upload-preview" />
           ) : (
@@ -412,7 +416,7 @@ export default function ImageProcessing() {
                 {locationChecking && 'Checking...'}
                 {!locationChecking && locationCheck?.status === 'inside' && 'Inside map'}
                 {!locationChecking && locationCheck?.status === 'partial' && 'Partial coverage'}
-                {!locationChecking && locationCheck?.status === 'outside' && 'Outside map'}
+                {!locationChecking && locationCheck?.status === 'outside' && 'Invalid · Outside map'}
                 {!locationChecking && locationCheck?.status === 'no_gps' && 'GPS missing'}
                 {!locationChecking && !locationCheck && 'Check failed'}
               </strong>
@@ -492,7 +496,7 @@ export default function ImageProcessing() {
               step="0.1"
               value={canopyBuffer}
               onChange={(event) => setCanopyBuffer(Number(event.target.value))}
-              disabled={processing}
+              disabled={processing || Boolean(result)}
             />
           </div>
           <div className="config-row config-row-input">
@@ -502,7 +506,7 @@ export default function ImageProcessing() {
               className="form-input config-input"
               value={species}
               onChange={(event) => setSpecies(event.target.value)}
-              disabled={processing}
+              disabled={processing || Boolean(result)}
             >
               <option value="bungalon">Bungalon — 1 m spacing</option>
               <option value="rhizophora">Rhizophora — 2 m spacing</option>
@@ -533,7 +537,7 @@ export default function ImageProcessing() {
         </div>
       )}
 
-      {!processing && (
+      {!processing && !result && (
         <div className="process-action">
           <button
             className="btn btn-primary btn-lg"
@@ -543,7 +547,7 @@ export default function ImageProcessing() {
           >
             {locationChecking
               ? 'Checking Image Location...'
-              : locationCheck?.status === 'partial'
+              : locationCheck?.status === 'partial' && !partialApproved
                 ? 'Review Partial Coverage'
                 : 'Run Analysis'}
           </button>
@@ -577,19 +581,45 @@ export default function ImageProcessing() {
         </div>
       )}
 
-      <PanelCard
-        title="Analysis History"
-        badge={analyses.length}
+      <div className="process-action">
+        <button
+          type="button"
+          className="btn btn-secondary btn-lg analysis-history-trigger"
+          onClick={() => {
+            setAnalysisLoadError('');
+            setDeleteError('');
+            setHistoryOpen(true);
+            fetchStats({ force: true });
+          }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M3 3v5h5" />
+            <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
+            <path d="M12 7v5l3 3" />
+          </svg>
+          <span>View Image Analysis History</span>
+          <span className="analysis-history-count">{analyses.length}</span>
+        </button>
+      </div>
+
+      {createPortal(<Modal
         open={historyOpen}
-        onOpenChange={handleHistoryOpenChange}
+        title="Image Analysis History"
+        variant="info"
+        className="analysis-history-modal"
+        cancelLabel="Close"
+        onCancel={() => setHistoryOpen(false)}
         icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M3 3v5h5" />
             <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
             <path d="M12 7v5l3 3" />
           </svg>
         }
       >
+        <p className="analysis-history-intro">
+          {analyses.length} saved {analyses.length === 1 ? 'analysis' : 'analyses'}
+        </p>
         {deleteError && <div className="analytics-error">{deleteError}</div>}
         {analysisLoadError && <div className="analytics-error">{analysisLoadError}</div>}
         <div className="analytics-history-list">
@@ -601,45 +631,36 @@ export default function ImageProcessing() {
               return (
                 <div
                   key={analysis.id}
-                  className={`analytics-history-item analytics-history-clickable ${isLoading ? 'analytics-history-loading' : ''}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => handleOpenAnalysis(analysis.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      handleOpenAnalysis(analysis.id);
-                    }
-                  }}
-                  aria-label={`Open summary for ${analysis.image_name}`}
+                  className={`analytics-history-item ${isLoading ? 'analytics-history-loading' : ''}`}
                 >
-                  <div className="analytics-history-main">
-                    <div className="analytics-history-title">{analysis.image_name}</div>
-                    <div className="analytics-history-meta">
-                      {analysis.analyzed_at?.slice(0, 10)} - {analysis.hexagon_count} pts - {analysis.plantable_area_m2?.toFixed(1)} m2
-                    </div>
-                  </div>
-                  <span className="analytics-history-hint" aria-hidden="true">
-                    {isLoading ? (
-                      'Loading...'
-                    ) : (
-                      <>
-                        View Details
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                          <polyline points="12 5 19 12 12 19" />
-                        </svg>
-                      </>
-                    )}
-                  </span>
                   <button
+                    type="button"
+                    className="analysis-history-open"
+                    onClick={() => handleOpenAnalysis(analysis.id)}
+                    disabled={Boolean(loadingAnalysisId)}
+                    aria-label={`Open summary for ${analysis.image_name}`}
+                  >
+                    <span className="analytics-history-main">
+                      <span className="analytics-history-title">{analysis.image_name}</span>
+                      <span className="analytics-history-meta">
+                        {analysis.analyzed_at?.slice(0, 10)} - {analysis.hexagon_count} pts - {analysis.plantable_area_m2?.toFixed(1)} m2
+                      </span>
+                    </span>
+                    <span className="analytics-history-hint" aria-hidden="true">
+                      {isLoading ? 'Loading...' : 'View details'}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
                     className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
                     onClick={(event) => {
                       event.stopPropagation();
+                      setHistoryOpen(false);
                       setPendingDeleteId(analysis.id);
                     }}
                     title={`Delete ${analysis.image_name}`}
                     aria-label={`Delete analysis ${analysis.image_name}`}
+                    disabled={Boolean(loadingAnalysisId) || deleteBusy}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="3 6 5 6 21 6" />
@@ -651,21 +672,24 @@ export default function ImageProcessing() {
             })
           )}
         </div>
-      </PanelCard>
+      </Modal>, document.body)}
 
       <Modal
         open={partialConfirmOpen}
         title="Part of this image is outside the map"
         variant="warning"
-        confirmLabel="Continue Processing"
+        confirmLabel="Use Mapped Portion"
         cancelLabel="Cancel"
-        onConfirm={() => startConfirmedProcess(true)}
+        onConfirm={() => {
+          setPartialApproved(true);
+          setPartialConfirmOpen(false);
+        }}
         onCancel={() => setPartialConfirmOpen(false)}
       >
         <p>
           Only about {locationCheck?.estimated_inside_pct ?? 0}% of the estimated image footprint
           is inside the supported GIS map. Continue only if you want MangroVision to analyze the
-          image and keep results that can be mapped safely.
+          image. Only the mapped portion and its planting points will appear on the map.
         </p>
         <p className="image-location-modal-coordinates">
           Image center: {Number(locationCheck?.latitude).toFixed(6)}, {' '}
@@ -676,7 +700,7 @@ export default function ImageProcessing() {
       <Modal
         open={locationBlockModalOpen}
         title={locationCheck?.status === 'outside'
-          ? 'Image is outside map bounds'
+          ? 'Invalid image: outside map bounds'
           : 'Image GPS location is required'}
         variant="warning"
         confirmLabel="OK"
@@ -685,8 +709,7 @@ export default function ImageProcessing() {
         {locationCheck?.status === 'outside' ? (
           <>
             <p>
-              This image&apos;s GPS coordinates are outside the supported map area.
-              It cannot be analyzed.
+              This image does not overlap the visible map area. It cannot be analyzed.
             </p>
             <p className="image-location-modal-coordinates">
               Image location: {Number(locationCheck?.latitude).toFixed(6)}, {' '}
@@ -736,9 +759,15 @@ export default function ImageProcessing() {
         cancelLabel="Cancel"
         busy={deleteBusy}
         onConfirm={() => handleDeleteAnalysis(pendingDeleteId)}
-        onCancel={() => { if (!deleteBusy) setPendingDeleteId(null); }}
+        onCancel={() => {
+          if (deleteBusy) return;
+          setPendingDeleteId(null);
+          setDeleteError('');
+          setHistoryOpen(true);
+        }}
       >
         <p>This permanently removes the analysis and all its saved planting points from the database. This action cannot be undone.</p>
+        {deleteError && <div className="analytics-error" role="alert">{deleteError}</div>}
       </Modal>
 
       <ResultsOverlay

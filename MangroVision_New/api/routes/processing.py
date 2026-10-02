@@ -23,7 +23,7 @@ import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from shapely.geometry import Point, shape
+from shapely.geometry import Point, mapping, shape
 from shapely.ops import unary_union
 
 from api.runtime_state import processing_job
@@ -54,7 +54,11 @@ from ortho_matcher import (
     is_inside_supported_map_bounds,
     match_drone_to_ortho,
 )
+from canopy_detection.orthophoto_coverage import (
+    overlay_visibility_mask, point_visibility_flags, visible_gis_coverage,
+)
 from planting_database import (
+    OutsideVisibleMapError,
     count_nearby_points,
     find_overlapping_analyses,
     get_analysis_by_id,
@@ -65,7 +69,6 @@ from planting_database import (
 from mangrovision_db.config import get_settings
 from mangrovision_db.storage import signed_download_url, upload_analysis_data_urls
 from mangrovision_db.zones import (
-    classify_gis_footprint,
     feature_collection,
     project_site_context,
     zone_revision_fingerprint,
@@ -150,32 +153,29 @@ def _load_zone_filters() -> tuple[ForbiddenZoneFilter, ForbiddenZoneFilter]:
 
 
 def _load_gis_coverage_geometry() -> Any:
-    """Load the authoritative plantable map envelope from PostGIS.
+    """Intersect the GIS zone with pixels actually visible on the map."""
+    return visible_gis_coverage(
+        ortho_matcher._ensure_active_ortho(),
+        feature_collection("gis_coverage").get("features", []),
+    )
 
-    Image-level preflight rejects an upload whose center is outside this
-    envelope. Planting points are checked separately because an image can
-    straddle the edge even when its center is valid.
-    """
-    geometries = []
-    for feature in feature_collection("gis_coverage").get("features", []):
-        raw_geometry = feature.get("geometry") or {}
-        if raw_geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+
+def _visible_map_point_features(collection: Any, coverage: Any) -> Any:
+    """Keep map preview markers over visible orthophoto pixels only."""
+    if not isinstance(collection, dict):
+        return collection
+    kept = []
+    for feature in collection.get("features") or []:
+        geometry = feature.get("geometry") or {}
+        coordinates = geometry.get("coordinates") or []
+        if geometry.get("type") != "Point" or len(coordinates) < 2:
             continue
         try:
-            geometry = shape(raw_geometry)
-            if not geometry.is_valid:
-                geometry = geometry.buffer(0)
-            if not geometry.is_empty:
-                geometries.append(geometry)
-        except Exception:
+            if coverage.covers(Point(float(coordinates[0]), float(coordinates[1]))):
+                kept.append(feature)
+        except (TypeError, ValueError):
             continue
-
-    if not geometries:
-        raise RuntimeError("No valid active GIS coverage polygon is configured.")
-    coverage = unary_union(geometries)
-    if coverage.is_empty:
-        raise RuntimeError("The active GIS coverage polygon is empty.")
-    return coverage
+    return {**collection, "features": kept}
 
 
 def _set_processing_cache(analysis_key: str, payload: dict[str, Any]) -> None:
@@ -625,31 +625,13 @@ def _match_quality_warning(match_result: Optional[dict[str, Any]]) -> Optional[s
 
 
 _OUTSIDE_GIS_MAP_DETAIL = (
-    "This image is outside the supported GIS map area. Analysis was not started. "
+    "Invalid image: its footprint is outside the visible GIS map area. Analysis was not started. "
     "Upload a geotagged image captured within the mapped project area."
 )
 _GIS_MAP_CHECK_FAILED_DETAIL = (
     "The GIS map boundary could not be verified, so analysis was not started. "
     "Please check the configured map data and try again."
 )
-
-
-def _require_location_inside_gis_map(latitude: float, longitude: float) -> None:
-    """Stop before detection unless a geotagged image belongs to the GIS map."""
-    try:
-        boundary = classify_gis_footprint(
-            None,
-            latitude=latitude,
-            longitude=longitude,
-        )
-    except Exception as error:
-        raise HTTPException(
-            status_code=503,
-            detail=_GIS_MAP_CHECK_FAILED_DETAIL,
-        ) from error
-
-    if boundary["status"] != "inside":
-        raise HTTPException(status_code=422, detail=_OUTSIDE_GIS_MAP_DETAIL)
 
 
 def _display_homography_for_match(
@@ -1073,18 +1055,21 @@ def _classify_footprint_against_gis(
     footprint: Optional[dict[str, Any]],
     latitude: float,
     longitude: float,
+    coverage: Optional[Any] = None,
 ) -> dict[str, Any]:
-    """Classify estimated image coverage as inside, partial, or outside.
-
-    Sampling the complete oriented footprint, rather than checking only its GPS
-    centre, catches images that cross an irregular orthophoto or tile boundary.
-    """
+    """Classify the complete image against the visible GIS map."""
     try:
-        return classify_gis_footprint(
-            footprint,
-            latitude=latitude,
-            longitude=longitude,
-        )
+        if coverage is None:
+            coverage = _load_gis_coverage_geometry()
+        requested = shape(footprint) if footprint else Point(longitude, latitude)
+        if coverage.covers(requested):
+            status, percentage = "inside", 100.
+        elif footprint and coverage.intersection(requested).area > 0:
+            status = "partial" if footprint else "inside"
+            percentage = 100. * coverage.intersection(requested).area / requested.area
+        else:
+            status, percentage = "outside", 0.
+        return {"status": status, "estimated_inside_pct": round(max(0., min(100., percentage)), 1)}
     except Exception as error:
         raise HTTPException(status_code=503, detail=_GIS_MAP_CHECK_FAILED_DETAIL) from error
 
@@ -1140,44 +1125,6 @@ def _build_image_location_preflight(
             "requires_confirmation": False,
             "message": _NO_GPS_DETAIL,
             "map": {"available": False, "location_status": "no_gps"},
-        }
-
-    # The image GPS coordinate is the authoritative go/no-go check. Do this
-    # before GSD calculation, orthophoto matching, or detector initialization
-    # so an outside image cannot start analysis merely because an estimated
-    # footprint happens to cross the map boundary.
-    center_boundary = _classify_footprint_against_gis(None, latitude, longitude)
-    if center_boundary.get("status") != "inside":
-        try:
-            location_label = ortho_matcher._active_tileset_name().replace("_", " ")
-        except Exception:
-            location_label = "Mapped GIS area"
-        center_feature = _image_center_feature(
-            latitude,
-            longitude,
-            {
-                "name": "Selected Image Center",
-                "location_label": location_label,
-                "preflight": True,
-                "outside_map_bounds": True,
-            },
-        )
-        return {
-            **center_boundary,
-            "status": "outside",
-            "can_process": False,
-            "requires_confirmation": False,
-            "message": _OUTSIDE_GIS_MAP_DETAIL,
-            "latitude": latitude,
-            "longitude": longitude,
-            "location_label": location_label,
-            "project_sites": [],
-            "map": {
-                "available": True,
-                "location_status": "outside",
-                "image_center_feature": center_feature,
-                "analysis_footprint": None,
-            },
         }
 
     camera_info = metadata.get("camera") or {}
@@ -1243,6 +1190,7 @@ def _build_image_location_preflight(
             "altitude_m": round(resolved_altitude, 2),
             "heading": round(heading, 2),
             "preflight": True,
+            "outside_map_bounds": not _load_gis_coverage_geometry().covers(Point(longitude, latitude)),
         },
     )
     return {
@@ -1374,6 +1322,9 @@ def _calibrate_preflight_footprint(
             "heading": round(refined_heading, 2),
             "preflight": True,
             "footprint_calibrated": True,
+            "outside_map_bounds": not _load_gis_coverage_geometry().covers(
+                Point(float(longitude), float(latitude))
+            ),
         },
     )
     nominal_coverage = preflight.get("coverage_m")
@@ -2828,8 +2779,14 @@ def _build_georeferenced_overlay(
     except Exception:
         return None
 
+    try:
+        visible = overlay_visibility_mask(
+            ortho_matcher._ensure_active_ortho(), min_x, min_y, out_w, out_h, warp_w, warp_h,
+        )
+    except Exception:
+        return None  # Never draw an unverified overlay beyond the map edge.
     overlay_bgra = cv2.cvtColor(warped, cv2.COLOR_BGR2BGRA)
-    overlay_bgra[:, :, 3] = alpha
+    overlay_bgra[:, :, 3] = cv2.bitwise_and(alpha, visible)
 
     north_lat, west_lon = ortho_pixel_to_gps(min_x, min_y)
     south_lat, east_lon = ortho_pixel_to_gps(max_x, max_y)
@@ -3687,8 +3644,23 @@ def _execute_canopy_workflow(
             f"Spacing locked to {SPECIES_SPACING_M[canonical_species]:.1f} m for {canonical_species}."
         )
 
-    _emit(progress_cb, "Checking AI availability", 2)
-    # MIGRATED FROM app.py: main lines 4703-4710
+    _emit(progress_cb, "Checking image location against the map", 2)
+    # MIGRATED FROM app.py: analyze_image lines 5038-5121
+    metadata = ExifExtractor.extract_all_metadata(str(temp_path))
+    location_preflight = _build_image_location_preflight(metadata, altitude, drone_model)
+    if location_preflight.get("can_process"):
+        # Keep the map preview, metre-based detector geometry, and persisted
+        # footprint on the same calibrated coordinate model.
+        location_preflight = _calibrate_preflight_footprint(
+            temp_path,
+            location_preflight,
+        )
+    _enforce_image_location_preflight(
+        location_preflight,
+        allow_partial_map_overlap=allow_partial_map_overlap,
+    )
+
+    _emit(progress_cb, "Checking AI availability", 8)
     try:
         from detectree2_proper import ProperDetectree2Detector  # noqa: F401
 
@@ -3710,21 +3682,6 @@ def _execute_canopy_workflow(
         ai_runtime_tuning_dict = {}
         warning_messages.append("Invalid ai_runtime_tuning payload was ignored.")
 
-    _emit(progress_cb, "Reading EXIF metadata", 6)
-    # MIGRATED FROM app.py: analyze_image lines 5038-5121
-    metadata = ExifExtractor.extract_all_metadata(str(temp_path))
-    location_preflight = _build_image_location_preflight(metadata, altitude, drone_model)
-    if location_preflight.get("can_process"):
-        # Keep the map preview, metre-based detector geometry, and persisted
-        # footprint on the same calibrated coordinate model.
-        location_preflight = _calibrate_preflight_footprint(
-            temp_path,
-            location_preflight,
-        )
-    _enforce_image_location_preflight(
-        location_preflight,
-        allow_partial_map_overlap=allow_partial_map_overlap,
-    )
     image_gps = None
     image_center_lat = None
     image_center_lon = None
@@ -4981,6 +4938,23 @@ def _execute_canopy_workflow(
             f"{len(final_outside_map_conflicts)} additional planting point(s) were removed by the final map-boundary safety check."
         )
 
+    # The overview polygon used for fast preflight is sub-metre resolution.
+    # Check source pixels here as well, so tiny transparent holes and the
+    # exact edge cannot reach previews, exports, or the save cache.
+    if safe_hexagons:
+        exact_flags = point_visibility_flags(
+            ortho_matcher._ensure_active_ortho(),
+            gis_coverage_geometry,
+            [(item.get("_gps_lat"), item.get("_gps_lon")) for item in safe_hexagons],
+        )
+        exact_outside_count = len(safe_hexagons) - sum(exact_flags)
+        safe_hexagons = [item for item, visible in zip(safe_hexagons, exact_flags) if visible]
+        if exact_outside_count:
+            clipped_outside_orthophoto += exact_outside_count
+            info_messages.append(
+                f"{exact_outside_count} planting point(s) were removed at the exact visible-map edge."
+            )
+
     # Aligned points reaching this stage have already passed the orthophoto
     # bounds check above. Heading-fallback points intentionally skip that
     # unreliable raster lookup, and final lattice-refill points are checked in
@@ -5150,6 +5124,11 @@ def _execute_canopy_workflow(
         footprint_quality = "estimated_oriented_rectangle" if analysis_footprint else "missing"
     results["footprint_geojson"] = analysis_footprint
     results["footprint_quality"] = footprint_quality
+    visible_footprint = None
+    if analysis_footprint:
+        clipped_footprint = gis_coverage_geometry.intersection(shape(analysis_footprint))
+        if clipped_footprint.geom_type in {"Polygon", "MultiPolygon"} and not clipped_footprint.is_empty:
+            visible_footprint = mapping(clipped_footprint)
 
     json_results = {
         "canopy_count": results["canopy_count"],
@@ -5338,6 +5317,9 @@ def _execute_canopy_workflow(
             "ai_seedling_linked_rejected_shape": int(
                 ai_meta.get("seedling_linked_rejected_shape", 0) or 0
             ),
+            "ai_seedling_ground_artifact_rejected_count": int(
+                ai_meta.get("seedling_ground_artifact_rejected_count", 0) or 0
+            ),
             "ai_seedling_water_context_candidate_count": int(
                 ai_meta.get("seedling_water_context_candidate_count", 0) or 0
             ),
@@ -5413,16 +5395,16 @@ def _execute_canopy_workflow(
             "location_status": location_preflight.get("status"),
             "match": _sanitize_match_result(match_result),
             "image_center_feature": image_center_feature,
-            "analysis_footprint": analysis_footprint,
+            "analysis_footprint": visible_footprint,
             "analysis_footprint_quality": results["footprint_quality"],
             "analysis_overlay": analysis_overlay,
-            "safe_points_geojson": safe_points_geojson,
-            "forbidden_filtered_geojson": forbidden_filtered_geojson,
-            "eroded_filtered_geojson": eroded_filtered_geojson,
-            "post_snap_danger_filtered_geojson": post_snap_danger_filtered_geojson,
-            "image_edge_filtered_geojson": image_edge_filtered_geojson,
-            "orthophoto_canopy_filtered_geojson": orthophoto_canopy_filtered_geojson,
-            "spacing_filtered_geojson": spacing_filtered_geojson,
+            "safe_points_geojson": _visible_map_point_features(safe_points_geojson, gis_coverage_geometry),
+            "forbidden_filtered_geojson": _visible_map_point_features(forbidden_filtered_geojson, gis_coverage_geometry),
+            "eroded_filtered_geojson": _visible_map_point_features(eroded_filtered_geojson, gis_coverage_geometry),
+            "post_snap_danger_filtered_geojson": _visible_map_point_features(post_snap_danger_filtered_geojson, gis_coverage_geometry),
+            "image_edge_filtered_geojson": _visible_map_point_features(image_edge_filtered_geojson, gis_coverage_geometry),
+            "orthophoto_canopy_filtered_geojson": _visible_map_point_features(orthophoto_canopy_filtered_geojson, gis_coverage_geometry),
+            "spacing_filtered_geojson": _visible_map_point_features(spacing_filtered_geojson, gis_coverage_geometry),
             "coordinates": coordinate_rows,
         },
         "exports": {
@@ -5670,6 +5652,8 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
             user_id=int(user["id"]),
             stored_assets=cached_payload.get("stored_assets") or [],
         )
+    except OutsideVisibleMapError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except Exception as error:
         _pop_processing_cache(body.analysis_key)
         raise HTTPException(status_code=500, detail=f"Could not save analysis: {error}") from error

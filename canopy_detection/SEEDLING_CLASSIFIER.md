@@ -42,6 +42,27 @@ The detector searches for `models/seedling_classifier/best.pt`. Override it with
 
 If hybrid mode cannot load its checkpoint, it reports `fallback_legacy` and preserves existing behavior.
 
+The legacy/fallback supplement checks accepted candidates against nearby ground
+after all color and cluster recovery steps. Weak green fragments in stick shadows
+or mud are rejected when they lack local leaf evidence. Bright yellow leaves and
+strong green leaves can protect shaded parts of the same seedling. The diagnostic
+`seedling_ground_artifact_rejected_count` records these rejections. This is a
+conservative color/contrast filter, not a trained wood classifier; validation on
+annotated images from other flights is still needed to measure overall accuracy.
+
+Regression check on `OOGT6807.JPG` (4000 x 2250, EXIF GSD 0.00782238 m/px):
+the selected canopy model with `fallback_legacy` produced 133 seedling markers
+before this gate and 124 after it. All six lower-left stick/mud markers were
+removed; six manually checked visible leaf locations were retained. These are
+targeted regression observations, not a precision/recall benchmark. Existing
+saved overlays are not recalculated; process the image again to apply the gate.
+
+Run the model-independent regression cases with:
+
+```powershell
+python -m unittest discover -s canopy_detection/tests -v
+```
+
 ## Benchmark
 
 Use the same image set and annotate seedling centers plus optional `area_m2` values:

@@ -64,6 +64,7 @@ export default function Modal({
   const cardRef = useRef(null);
   const previouslyFocusedRef = useRef(null);
   const confirmButtonRef = useRef(null);
+  const cancelButtonRef = useRef(null);
   const busyRef = useRef(busy);
   const onCancelRef = useRef(onCancel);
   const onConfirmRef = useRef(onConfirm);
@@ -78,7 +79,7 @@ export default function Modal({
     if (!open) return undefined;
 
     previouslyFocusedRef.current = document.activeElement;
-    confirmButtonRef.current?.focus();
+    (confirmButtonRef.current || cancelButtonRef.current || cardRef.current)?.focus();
 
     const handleKeyDown = (event) => {
       if (busyRef.current) return;
@@ -141,6 +142,7 @@ export default function Modal({
         ref={cardRef}
         className={`modal-card modal-card-${variant} ${className}`.trim()}
         role="dialog"
+        tabIndex={-1}
         aria-modal="true"
         aria-labelledby="app-modal-title"
         aria-describedby="app-modal-body"
@@ -174,6 +176,7 @@ export default function Modal({
         <div className={`modal-actions${showCancel && showConfirm ? ' modal-actions-split' : ''}`}>
           {showCancel && (
             <button
+              ref={cancelButtonRef}
               type="button"
               className="btn btn-secondary modal-action-btn"
               onClick={onCancel}

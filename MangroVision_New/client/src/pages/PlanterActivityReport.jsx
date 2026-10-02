@@ -67,6 +67,7 @@ export default function PlanterActivityReport({ open, onClose }) {
   const [detailsTarget, setDetailsTarget] = useState(null);
 
   const refresh = async () => {
+    setPage(0);
     setLoading(true);
     setError('');
     try {
@@ -84,10 +85,9 @@ export default function PlanterActivityReport({ open, onClose }) {
   };
 
   useEffect(() => {
-    if (!open) return;
-    setPage(0);
-    refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (!open) return undefined;
+    const timer = window.setTimeout(() => { void refresh(); }, 0);
+    return () => window.clearTimeout(timer);
   }, [open]);
 
   useEffect(() => {

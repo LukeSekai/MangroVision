@@ -3,6 +3,63 @@ import cv2
 import numpy as np
 
 
+def filter_seedling_ground_artifacts(image, entries, gsd):
+    """Reject weak green mud/shadow speckles after candidate recovery.
+
+    A dark stick shadow can satisfy the color detector's local mean contrast
+    because that mean includes the shadow itself. Compare with a median ground
+    ring instead. Only weak, low-contrast vegetation is rejected; nearby bright
+    leaf pixels protect small/shaded parts of a real seedling. Distances are in
+    metres, independent of image resolution and candidate grouping strategy.
+    """
+    if not entries:
+        return [], {"seedling_ground_artifact_rejected_count": 0}
+    hue, sat, val = cv2.split(cv2.cvtColor(image, cv2.COLOR_BGR2HSV))
+    b, g, r = cv2.split(image.astype(np.float32))
+    exg = 2 * g - r - b
+    chroma = (g - np.maximum(r, b)) / np.maximum(g + r + b, 1)
+    vegetation = ((hue >= 16) & (hue <= 72) & (sat >= 28)
+                  & (val >= 40) & (exg >= 10) & (chroma >= .012))
+    radius = max(3, int(np.ceil(.40 / gsd)))
+    retained = []
+    rejected_centers = []
+    height, width = image.shape[:2]
+    for entry in entries:
+        cx, cy = entry["center"]
+        x, y = int(round(cx)), int(round(cy))
+        x0, x1 = max(0, x-radius), min(width, x+radius+1)
+        y0, y1 = max(0, y-radius), min(height, y+radius+1)
+        yy, xx = np.ogrid[y0:y1, x0:x1]
+        distance_m2 = ((xx-cx)**2 + (yy-cy)**2) * gsd**2
+        obj = (distance_m2 <= .10**2) & vegetation[y0:y1, x0:x1]
+        ring = (distance_m2 >= .16**2) & (distance_m2 <= .40**2)
+        if not np.any(obj) or np.count_nonzero(ring) < 24:
+            retained.append(entry)
+            continue
+        patch_sat, patch_val = sat[y0:y1, x0:x1], val[y0:y1, x0:x1]
+        patch_exg, patch_chroma = exg[y0:y1, x0:x1], chroma[y0:y1, x0:x1]
+        ground_val = float(np.median(patch_val[ring]))
+        value_gain = float(np.mean(patch_val[obj])) - ground_val
+        sat_gain = float(np.mean(patch_sat[obj])) - float(np.median(patch_sat[ring]))
+        exg_gain = float(np.mean(patch_exg[obj])) - float(np.median(patch_exg[ring]))
+        weak_color = np.mean(patch_exg[obj]) < 35 and np.mean(patch_chroma[obj]) < .03
+        ground_like = value_gain < -8 or (sat_gain < 18 and exg_gain < 12)
+        # Yellow leaves can have red almost equal to green, so they must not
+        # inherit the green-chroma threshold used to sample weak candidates.
+        nearby_leaf = ((distance_m2 <= .25**2)
+                       & (hue[y0:y1, x0:x1] >= 23) & (hue[y0:y1, x0:x1] <= 72)
+                       & (patch_sat >= 55) & (patch_exg >= 35)
+                       & ((patch_val >= ground_val+8) | (patch_chroma >= .04)))
+        if weak_color and ground_like and np.count_nonzero(nearby_leaf) < 2:
+            rejected_centers.append([float(cx), float(cy)])
+        else:
+            retained.append(entry)
+    return retained, {
+        "seedling_ground_artifact_rejected_count": len(rejected_centers),
+        "seedling_ground_artifact_rejected_centers": rejected_centers,
+    }
+
+
 def _principal_aspect(mask):
     y, x = np.nonzero(mask)
     if len(x) < 3:

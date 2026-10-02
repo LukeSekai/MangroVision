@@ -33,6 +33,10 @@ from mangrovision_db.storage import (
 )
 from mangrovision_db.zones import normalize_polygon
 
+
+class OutsideVisibleMapError(ValueError):
+    """A planting point would be stored outside the active visible map."""
+
 try:
     from shapely.geometry import Point, shape
 except Exception:  # pragma: no cover - keeps DB import usable if geospatial deps are absent.
@@ -2271,6 +2275,29 @@ def save_analysis(
     stored_assets: Optional[List[StoredAsset]] = None,
 ) -> Tuple[int, int, int]:
     """Persist one analysis without placing image bytes in PostgreSQL."""
+    # Last guard before any storage upload, same-image replacement, or insert.
+    # A stale preview made before a map/zone update must be reprocessed.
+    if hexagons:
+        from canopy_detection import ortho_matcher
+        from canopy_detection.orthophoto_coverage import (
+            point_visibility_flags, visible_gis_coverage,
+        )
+        from mangrovision_db.zones import feature_collection
+
+        active_ortho = ortho_matcher._ensure_active_ortho()
+        coverage = visible_gis_coverage(
+            active_ortho, feature_collection("gis_coverage").get("features", []),
+        )
+        visible_flags = point_visibility_flags(
+            active_ortho, coverage,
+            [(item.get("_gps_lat"), item.get("_gps_lon")) for item in hexagons],
+        )
+        invalid_count = len(hexagons) - sum(visible_flags)
+        if invalid_count:
+            raise OutsideVisibleMapError(
+                f"{invalid_count} planting point(s) fall outside the visible map. "
+                "Run the analysis again before saving."
+            )
     stored_assets = list(stored_assets or upload_analysis_data_urls(original_image, visualization_image))
     conn = _get_connection()
     try:
@@ -9939,7 +9966,7 @@ def get_dashboard_sites(
                         output["planted" if point["point_status"] == "planted" else "planned"] += 1
                         warning_exposed_ids.add(int(point["id"]))
         warning_exposure = sorted(
-            (row for row in warning_buckets.values() if row["count"] > 0),
+            warning_buckets.values(),
             key=lambda row: (-_WARNING_SEVERITY_RANK.get(row["severity"], 0), -row["count"], row["label"]),
         )
         warning_points_by_site: dict[int, dict[str, int]] = {}

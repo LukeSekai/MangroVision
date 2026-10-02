@@ -2,6 +2,7 @@
    Hide the floating Panel toggle (the "Hide / Show" pill on the right) so
    it doesn't sit on top of the modal backdrop. */
 body.par-open .panel-toggle { display: none !important; }
+body.par-open .content-layer { z-index: 30; }
 
 @keyframes par-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
@@ -20,13 +21,13 @@ body.par-open .panel-toggle { display: none !important; }
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 28px;
+  padding: 72px 24px 20px;
   animation: par-fade-in 180ms ease-out;
 }
 
 .par-card {
-  width: min(1180px, 100%);
-  max-height: calc(100vh - 56px);
+  width: min(1060px, 100%);
+  max-height: calc(100dvh - 92px);
   background: #f8fafc;
   border-radius: 20px;
   box-shadow:
@@ -608,8 +609,8 @@ body.par-open .panel-toggle { display: none !important; }
 /* ── Mobile breakpoint ──────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
-  .par-card    { width: 100%; max-height: calc(100vh - 24px); border-radius: 16px; }
-  .par-backdrop{ padding: 12px; }
+  .par-card    { width: 100%; max-height: calc(100dvh - 76px); border-radius: 16px; }
+  .par-backdrop{ padding: 64px 12px 12px; }
   .par-header  { padding: 18px 20px 14px; }
   .par-body    { padding: 18px 20px 22px; }
   .par-summary { grid-template-columns: repeat(2, 1fr); }

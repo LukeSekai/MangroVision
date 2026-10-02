@@ -1235,6 +1235,7 @@ function SitesTab({ data, notices, noticesError }) {
           title="Planting points inside risk areas"
           subtitle="Planting locations grouped by the type of risk. The table also shows the risk level."
           data={warnings}
+          className="dash-card-full dash-risk-card"
           footer={projectSitesWithRisk.length ? (
             <div className="dash-risk-site-list" aria-label="Project sites with planting points inside risk areas">
               <div className="dash-risk-site-list-head">
@@ -1252,7 +1253,8 @@ function SitesTab({ data, notices, noticesError }) {
                     </div>
                     <Link
                       className="dash-table-map-link"
-                      to={`/?project_site_id=${encodeURIComponent(site.id)}`}
+                      to={`/?project_site_id=${encodeURIComponent(site.id)}&focus=risk_areas`}
+                      state={{ mapFocusSite: site }}
                       aria-label={`View ${site.name || `Site ${site.id}`} risk areas on the map`}
                     >
                       View on map
@@ -1265,6 +1267,7 @@ function SitesTab({ data, notices, noticesError }) {
           chartLabel="Stacked bars of planned and planted points exposed to mapped warning types"
           xLabel="Risk area type"
           yLabel="Number of planting points"
+          height={320}
           columns={[
             { key: 'name', label: 'Warning' },
             { key: 'severity', label: 'Risk level', render: (row) => <span className={`dash-status is-${String(row.severity || 'neutral').toLowerCase()}`}>{row.severity || 'Not set'}</span> },
@@ -1281,8 +1284,8 @@ function SitesTab({ data, notices, noticesError }) {
               <YAxis allowDecimals={false} width={44} />
               <Tooltip formatter={(value, name) => [formatCount(value), name]} />
               <Legend verticalAlign="top" height={34} />
-              <Bar dataKey="planned" name="Planned points" stackId="warning" fill={COLORS.assigned} />
-              <Bar dataKey="planted" name="Planted points" stackId="warning" fill={COLORS.planted} radius={[4, 4, 0, 0]} />
+              <Bar dataKey="planned" name="Planned points" stackId="warning" fill={COLORS.assigned} maxBarSize={120} />
+              <Bar dataKey="planted" name="Planted points" stackId="warning" fill={COLORS.planted} maxBarSize={120} radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -1300,7 +1303,8 @@ function SitesTab({ data, notices, noticesError }) {
                 render: (row) => (
                   <Link
                     className="dash-table-map-link"
-                    to={`/?project_site_id=${encodeURIComponent(row.id)}`}
+                    to={`/?project_site_id=${encodeURIComponent(row.id)}&focus=site_points`}
+                    state={{ mapFocusSite: row }}
                     aria-label={`View planting points for ${row.name || `Site ${row.id}`} on the map`}
                   >
                     View points

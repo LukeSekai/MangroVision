@@ -4,6 +4,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import JSONResponse
+from shapely.geometry import Point
+from shapely.prepared import prep
 from api.routes.monitoring import _require_lgu_user
 from pydantic import BaseModel, Field
 from mangrovision_db.organization_accounts import reset_participant_device
@@ -139,7 +141,20 @@ def map_points():
     # The domain adapter already normalizes dates, decimals and JSON values.
     # Avoid FastAPI recursively normalizing every field of thousands of points
     # again; JSONResponse retains the same JSON number precision and nulls.
-    return JSONResponse(list_planter_assignment_map_points())
+    points = list_planter_assignment_map_points()
+    # Preserve historical records in the API and database. The map hides
+    # coordinates outside the same visible footprint used for new analyses.
+    from api.routes.processing import _load_gis_coverage_geometry
+
+    visible_map = prep(_load_gis_coverage_geometry())
+    for point in points:
+        try:
+            point["inside_visible_map"] = visible_map.covers(
+                Point(float(point["longitude"]), float(point["latitude"]))
+            )
+        except (KeyError, TypeError, ValueError):
+            point["inside_visible_map"] = False
+    return JSONResponse(points)
 
 
 @router.post("/assign-point")
