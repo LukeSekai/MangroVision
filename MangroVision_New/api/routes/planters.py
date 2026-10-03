@@ -164,7 +164,7 @@ def assign_point(body: AssignPointRequest):
 
 # MIGRATED FROM app.py planter management tab (create form)
 @router.post("/")
-def create_planter_endpoint(body: CreatePlanterRequest):
+def create_planter_endpoint(body: CreatePlanterRequest, user: dict = Depends(_require_lgu_user)):
     try:
         planter_id = create_planter(
             full_name=body.full_name,
@@ -178,6 +178,7 @@ def create_planter_endpoint(body: CreatePlanterRequest):
             status=body.status,
             organization_id=body.organization_id,
             participant_count=body.participant_count,
+            created_by_user_id=int(user["id"]),
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

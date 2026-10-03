@@ -15,10 +15,10 @@ import geopandas as gpd
 
 try:
     from .seedling_detector import SeedlingDetector, SeedlingDetectorConfig
-    from .seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts
+    from .seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
 except ImportError:  # The legacy applications import this file as a top-level module.
     from seedling_detector import SeedlingDetector, SeedlingDetectorConfig
-    from seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts
+    from seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
 
 # Official detectree2 imports
 from detectree2.models.train import setup_cfg
@@ -2393,6 +2393,19 @@ class ProperDetectree2Detector:
         # its accepted markers separately so canopy morphology and water
         # filtering cannot erase tiny candidates drawn over mud.
         base_instance_mask = self._polygons_to_mask(final_polygons, (h, w))
+        validated_instance_mask, canopy_ground_metadata = filter_small_canopy_ground_artifacts(
+            image, base_instance_mask, gsd_used,
+        )
+        if canopy_ground_metadata["canopy_ground_artifact_rejected_count"]:
+            rejected_regions = self._mask_to_polygons(
+                cv2.subtract(base_instance_mask, validated_instance_mask), 0.0,
+            )
+            # Preserve overlapping model instances and their counts when
+            # removing an unrelated ground component.
+            final_polygons = [polygon for polygon in final_polygons if not any(
+                region.covers(polygon.representative_point()) for region in rejected_regions
+            )]
+        base_instance_mask = validated_instance_mask
         instance_mask = base_instance_mask
         seedling_mask = np.zeros_like(base_instance_mask)
         seedling_metadata: Dict[str, Any]
@@ -2542,6 +2555,7 @@ class ProperDetectree2Detector:
             'detection_method': 'detectree2_official'
         }
         metadata.update(merge_metadata)
+        metadata.update(canopy_ground_metadata)
         metadata.update(component_filter_metadata)
         metadata.update(seedling_metadata)
          

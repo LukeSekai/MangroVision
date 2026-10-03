@@ -14,7 +14,7 @@
 .workspace-header {
   position: absolute;
   inset: 0 0 auto 0;
-  height: 52px;
+  height: var(--workspace-header-height);
   z-index: 25;
   display: flex;
   align-items: center;
@@ -30,14 +30,14 @@
 /* Map fills the entire main area as a background layer */
 .map-layer {
   position: absolute;
-  inset: 52px 0 0;
+  inset: var(--workspace-header-height) 0 0;
   z-index: 0;
 }
 
 /* Content floats above the map */
 .content-layer {
   position: absolute;
-  inset: 52px 0 0;
+  inset: var(--workspace-header-height) 0 0;
   z-index: 1;
   pointer-events: none;
 }

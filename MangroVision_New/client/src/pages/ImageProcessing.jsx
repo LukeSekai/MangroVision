@@ -48,6 +48,7 @@ export default function ImageProcessing() {
   const saveError = useProcessingStore((s) => s.saveError);
   const overlayOpen = useProcessingStore((s) => s.overlayOpen);
   const previewUrl = useProcessingStore((s) => s.previewUrl);
+  const resultPreviewUrl = useProcessingStore((s) => s.resultPreviewUrl);
   const storedFileName = useProcessingStore((s) => s.fileName);
   const startProcess = useProcessingStore((s) => s.startProcess);
   const saveCurrentAnalysis = useProcessingStore((s) => s.saveCurrentAnalysis);
@@ -55,6 +56,7 @@ export default function ImageProcessing() {
   const setOverlayOpen = useProcessingStore((s) => s.setOverlayOpen);
 
   const fileRef = useRef(null);
+  const pendingUploadRef = useRef(null);
   const preflightRequestRef = useRef(0);
   const [file, setFile] = useState(null);
   const [locationCheck, setLocationCheck] = useState(null);
@@ -167,18 +169,18 @@ export default function ImageProcessing() {
     }
   };
 
-  const handleFileSelect = (event) => {
-    const selectedFile = event.target.files?.[0];
-    if (!selectedFile) return;
-
+  const selectImage = (selectedFile) => {
+    resetProcessing();
     // Local file blob is needed to actually start the upload. Store gets the
     // preview URL via a quick FileReader pass inside startProcess.
     setFile(selectedFile);
     clearCurrentAnalysis();
     inspectSelectedImage(selectedFile);
+    const requestId = preflightRequestRef.current;
 
     const reader = new FileReader();
     reader.onload = (loadEvent) => {
+      if (preflightRequestRef.current !== requestId) return;
       // Pre-populate the preview in the store so it's visible immediately
       // (the same image is sent again on Process, no extra cost).
       useProcessingStore.setState({
@@ -192,7 +194,18 @@ export default function ImageProcessing() {
     reader.readAsDataURL(selectedFile);
   };
 
-  const handleClear = () => {
+  const handleFileSelect = (event) => {
+    const selectedFile = event.target.files?.[0];
+    if (!selectedFile || processing || saving) return;
+    if (result && !result.saved) {
+      pendingUploadRef.current = selectedFile;
+      setClearModalOpen(true);
+      return;
+    }
+    selectImage(selectedFile);
+  };
+
+  const clearUploadFields = () => {
     preflightRequestRef.current += 1;
     setFile(null);
     setLocationCheck(null);
@@ -201,11 +214,15 @@ export default function ImageProcessing() {
     setLocationBlockModalOpen(false);
     setPartialConfirmOpen(false);
     setPartialApproved(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleClear = () => {
+    clearUploadFields();
     clearCurrentAnalysis();
     resetProcessing();
     setUploadOpen(true);
     setConfigOpen(true);
-    if (fileRef.current) fileRef.current.value = '';
   };
 
   const requestClear = () => {
@@ -218,8 +235,11 @@ export default function ImageProcessing() {
   };
 
   const confirmClear = () => {
+    const nextFile = pendingUploadRef.current;
+    pendingUploadRef.current = null;
     handleClear();
     setClearModalOpen(false);
+    if (nextFile) selectImage(nextFile);
   };
 
   const startConfirmedProcess = (allowPartialMapOverlap = false) => {
@@ -241,6 +261,10 @@ export default function ImageProcessing() {
     }).then(() => {
       // After processing settles, see if the result wants to live on the map.
       const finalResult = useProcessingStore.getState().result;
+      if (finalResult) {
+        clearUploadFields();
+        setUploadOpen(true);
+      }
       if (finalResult?.map?.available) {
         setCurrentAnalysis(finalResult);
       }
@@ -381,9 +405,9 @@ export default function ImageProcessing() {
           onChange={handleFileSelect}
           className="file-input"
           id="image-upload"
-          disabled={processing || Boolean(result)}
+          disabled={processing || saving}
         />
-        <label htmlFor="image-upload" className={`upload-area ${processing || result ? 'upload-disabled' : ''}`}>
+        <label htmlFor="image-upload" className={`upload-area ${processing || saving ? 'upload-disabled' : ''}`}>
           {preview ? (
             <img src={preview} alt="Preview" className="upload-preview" />
           ) : (
@@ -412,55 +436,27 @@ export default function ImageProcessing() {
           >
             <div className="image-location-head">
               <span>GIS location</span>
-              <strong>
-                {locationChecking && 'Checking...'}
-                {!locationChecking && locationCheck?.status === 'inside' && 'Inside map'}
-                {!locationChecking && locationCheck?.status === 'partial' && 'Partial coverage'}
-                {!locationChecking && locationCheck?.status === 'outside' && 'Invalid · Outside map'}
-                {!locationChecking && locationCheck?.status === 'no_gps' && 'GPS missing'}
-                {!locationChecking && !locationCheck && 'Check failed'}
-              </strong>
+              <strong>Image GPS (EXIF)</strong>
             </div>
             {locationChecking && (
-              <p>Reading GPS metadata and locating the image footprint on the map...</p>
+              <p>Checking image location...</p>
             )}
             {!locationChecking && locationCheckError && <p>{locationCheckError}</p>}
             {!locationChecking && locationCheck && (
               <>
-                <p>{locationCheck.message}</p>
-                {Number.isFinite(Number(locationCheck.latitude))
+                {locationCheck.status === 'no_gps' && <p>No GPS coordinates found in this image.</p>}
+                {locationCheck.latitude != null && locationCheck.longitude != null
+                  && Number.isFinite(Number(locationCheck.latitude))
                   && Number.isFinite(Number(locationCheck.longitude)) && (
                     <div className="image-location-details">
                       <span>
-                        <small>Map area</small>
-                        <strong>{locationCheck.location_label || 'Mapped GIS area'}</strong>
+                        <small>Latitude</small>
+                        <strong>{Number(locationCheck.latitude).toFixed(6)}</strong>
                       </span>
                       <span>
-                        <small>Exact center</small>
-                        <strong>
-                          {Number(locationCheck.latitude).toFixed(6)}, {' '}
-                          {Number(locationCheck.longitude).toFixed(6)}
-                        </strong>
+                        <small>Longitude</small>
+                        <strong>{Number(locationCheck.longitude).toFixed(6)}</strong>
                       </span>
-                      {Array.isArray(locationCheck.coverage_m) && (
-                        <span>
-                          <small>
-                            {locationCheck.footprint_calibrated
-                              ? 'Calibrated coverage'
-                              : 'Estimated coverage'}
-                          </small>
-                          <strong>
-                            {Number(locationCheck.coverage_m[0]).toFixed(1)} m × {' '}
-                            {Number(locationCheck.coverage_m[1]).toFixed(1)} m
-                          </strong>
-                        </span>
-                      )}
-                      {locationCheck.status === 'partial' && (
-                        <span>
-                          <small>Estimated inside map</small>
-                          <strong>{locationCheck.estimated_inside_pct}%</strong>
-                        </span>
-                      )}
                     </div>
                   )}
               </>
@@ -496,7 +492,7 @@ export default function ImageProcessing() {
               step="0.1"
               value={canopyBuffer}
               onChange={(event) => setCanopyBuffer(Number(event.target.value))}
-              disabled={processing || Boolean(result)}
+              disabled={processing || saving}
             />
           </div>
           <div className="config-row config-row-input">
@@ -506,7 +502,7 @@ export default function ImageProcessing() {
               className="form-input config-input"
               value={species}
               onChange={(event) => setSpecies(event.target.value)}
-              disabled={processing || Boolean(result)}
+              disabled={processing || saving}
             >
               <option value="bungalon">Bungalon — 1 m spacing</option>
               <option value="rhizophora">Rhizophora — 2 m spacing</option>
@@ -564,19 +560,6 @@ export default function ImageProcessing() {
             onClick={() => setOverlayOpen(true)}
           >
             Show Summary
-          </button>
-        </div>
-      )}
-
-      {result && (
-        <div className="process-action">
-          <button
-            type="button"
-            className="btn btn-secondary btn-lg"
-            style={{ width: '100%' }}
-            onClick={requestClear}
-          >
-            Process Another Image
           </button>
         </div>
       )}
@@ -730,10 +713,14 @@ export default function ImageProcessing() {
         variant="danger"
         confirmLabel={result ? 'Discard analysis' : 'Remove image'}
         onConfirm={confirmClear}
-        onCancel={() => setClearModalOpen(false)}
+        onCancel={() => {
+          if (pendingUploadRef.current && fileRef.current) fileRef.current.value = '';
+          pendingUploadRef.current = null;
+          setClearModalOpen(false);
+        }}
       >
         {result ? (
-          <p>This clears the current preview from the workspace. Saved analyses stay in the database.</p>
+          <p>This discards the unsaved analysis so you can select a new image. Saved analyses stay in the database.</p>
         ) : (
           <p>This removes the selected image from the upload panel.</p>
         )}
@@ -773,7 +760,7 @@ export default function ImageProcessing() {
       <ResultsOverlay
         open={overlayOpen && Boolean(result)}
         result={result}
-        originalPreview={preview}
+        originalPreview={resultPreviewUrl}
         saving={saving}
         saved={Boolean(result?.saved)}
         saveError={saveError}

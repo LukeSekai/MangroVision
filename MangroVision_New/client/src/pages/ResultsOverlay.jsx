@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { TILESET_PATH } from '../config/mapTiles';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
@@ -339,7 +340,7 @@ export default function ResultsOverlay({
     ? TILESET_PATH.split('/').map((segment) => decodeURIComponent(segment)).join('/')
     : '';
 
-  return (
+  return createPortal(
     <div
       className={`rs-backdrop ${closing ? 'rs-closing' : ''}`}
       role="dialog"
@@ -805,6 +806,7 @@ export default function ResultsOverlay({
           {' '}file has been saved to your downloads folder.
         </p>
       </Modal>
-    </div>
+    </div>,
+    document.body,
   );
 }

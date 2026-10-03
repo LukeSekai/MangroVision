@@ -26,6 +26,7 @@ from mangrovision_db.storage import storage_ready
 
 from api import map_tiles
 from api.security import SessionSecurityMiddleware
+from api.activity_audit import ActivityAuditMiddleware
 from api.read_compression import WorkspaceReadCompression
 from api.routes import (
     analyses,
@@ -78,6 +79,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(WorkspaceReadCompression)
+app.add_middleware(ActivityAuditMiddleware)
 app.add_middleware(SessionSecurityMiddleware)
 
 # Mount API routes

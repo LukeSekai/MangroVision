@@ -19,6 +19,20 @@ def _fit_once(kind: str, source: np.ndarray, target: np.ndarray) -> Any:
         matrix, _ = cv2.findHomography(
             source, target, cv2.RANSAC, 3.0, maxIters=10000, confidence=0.999,
         )
+        # Refit the consensus using the same residual limit used by validation.
+        # A minimal RANSAC sample can bias far corners even when nearby creek
+        # landmarks agree. Training and held-out fits are refined independently;
+        # validation points never participate in the training fit.
+        for _ in range(3):
+            if matrix is None:
+                break
+            inliers = np.linalg.norm(_project(source, matrix) - target, axis=1) <= 5.0
+            if np.count_nonzero(inliers) < 8:
+                break
+            refined, _ = cv2.findHomography(source[inliers], target[inliers], 0)
+            if refined is None:
+                break
+            matrix = refined
         return matrix
     fit = cv2.estimateAffine2D if kind == "affine" else cv2.estimateAffinePartial2D
     matrix, _ = fit(

@@ -149,7 +149,8 @@ def server_commands():
         raise RuntimeError("Node/Vite is unavailable. Install the client dependencies with npm install.")
     return [
         ([sys.executable, "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0",
-          "--port", str(API_PORT), "--reload", "--reload-dir", str(API_DIR)], ROOT),
+          "--port", str(API_PORT), "--reload", "--reload-dir", str(API_DIR),
+          "--reload-dir", str(ROOT.parent / "canopy_detection")], ROOT),
         ([node, str(vite), "--port", str(FRONTEND_PORT), "--strictPort"], CLIENT_DIR),
     ]
 

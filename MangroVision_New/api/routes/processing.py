@@ -6,6 +6,7 @@ import hashlib
 import inspect
 import io
 import json
+import logging
 import math
 import os
 import queue as queue_module
@@ -22,6 +23,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from shapely.geometry import Point, mapping, shape
 from shapely.ops import unary_union
@@ -57,16 +59,18 @@ from ortho_matcher import (
 from canopy_detection.orthophoto_coverage import (
     overlay_visibility_mask, point_visibility_flags, visible_gis_coverage,
 )
+from canopy_detection.perspective_matching import match_perspective_patch
 from planting_database import (
     OutsideVisibleMapError,
     count_nearby_points,
     find_overlapping_analyses,
     get_analysis_by_id,
-    get_saved_species_point_locations,
+    filter_new_planting_hexagons,
     get_user_by_session_token,
     save_analysis,
 )
 from mangrovision_db.config import get_settings
+from mangrovision_db.activity import record_activity
 from mangrovision_db.storage import signed_download_url, upload_analysis_data_urls
 from mangrovision_db.zones import (
     feature_collection,
@@ -76,6 +80,27 @@ from mangrovision_db.zones import (
 from waypoint_export import generate_geojson, hexagons_to_waypoints
 
 router = APIRouter()
+_activity_logger = logging.getLogger(__name__)
+
+
+def _record_processed_image(user_id: int, image_name: str, payload: dict) -> None:
+    """Log a completed analysis preview, including streamed processing."""
+    safe_name = " ".join(Path(image_name).name.split())[:120] or "uploaded image"
+    try:
+        record_activity(
+            action="analysis.processed",
+            actor_type="staff",
+            actor_user_id=int(user_id),
+            summary=f"Processed image {safe_name}.",
+            details={
+                "image_name": safe_name,
+                "planting_points": len(payload.get("map", {}).get("coordinates") or []),
+            },
+        )
+    except Exception:
+        # The analysis has completed; preserve the result so retrying cannot
+        # accidentally create a second expensive processing job.
+        _activity_logger.exception("Could not record completed image processing activity")
 
 
 def _require_lgu_user() -> dict:
@@ -208,11 +233,8 @@ def _file_sha256(path: Path) -> str:
 
 
 def _set_preflight_alignment_cache(file_digest: str, match: dict[str, Any]) -> None:
-    cached = {
-        key: copy.deepcopy(value)
-        for key, value in match.items()
-        if key not in {"H", "raw_H", "similarity_H", "projective_H", "validated_H"}
-    }
+    # Preserve the measured transform, including perspective, for processing.
+    cached = copy.deepcopy(match)
     _PREFLIGHT_ALIGNMENT_CACHE[file_digest] = cached
     _PREFLIGHT_ALIGNMENT_CACHE.move_to_end(file_digest)
     while len(_PREFLIGHT_ALIGNMENT_CACHE) > _PREFLIGHT_ALIGNMENT_CACHE_LIMIT:
@@ -225,6 +247,52 @@ def _get_preflight_alignment_cache(file_digest: str) -> Optional[dict[str, Any]]
         return None
     _PREFLIGHT_ALIGNMENT_CACHE.move_to_end(file_digest)
     return copy.deepcopy(cached)
+
+
+def _get_image_alignment(temp_path, image, latitude, longitude, gsd, heading):
+    """Resolve once per image/camera/map configuration, for preview and processing."""
+    registry = ortho_matcher._get_ortho_registry()
+    maps = []
+    for entry in registry:
+        path = Path(entry['path'])
+        stat = path.stat() if path.exists() else None
+        maps.append((str(path), stat.st_size if stat else None, stat.st_mtime_ns if stat else None))
+    context = (_file_sha256(temp_path), float(latitude), float(longitude),
+               float(gsd), float(heading) % 360., sorted(maps),
+               ortho_matcher._active_tileset_name(), _USE_SIFT_MATCHING)
+    key = hashlib.sha256(json.dumps(context).encode()).hexdigest()
+    cached = _get_preflight_alignment_cache(key)
+    if cached is not None:
+        active_path = cached.get('_alignment_ortho_path')
+        for entry in registry:
+            if str(entry['path']) == active_path:
+                ortho_matcher._activate_ortho(entry)
+                break
+        return cached
+    result = _match_drone_to_ortho_robust(
+        drone_image=image, center_lat=latitude, center_lon=longitude,
+        drone_gsd=gsd, camera_heading=float(heading) % 360.,
+    )
+    result['_alignment_ortho_path'] = str(ortho_matcher.ORTHO_PATH)
+    _set_preflight_alignment_cache(key, result)
+    return result
+
+
+def _projected_image_footprint(image_shape, homography):
+    """Project the same four image corners for the initial and rendered views."""
+    height, width = image_shape[:2]
+    corners = np.float64([[[0, 0]], [[width, 0]], [[width, height]], [[0, height]]])
+    projected = cv2.perspectiveTransform(corners, homography).reshape(-1, 2)
+    if not np.all(np.isfinite(projected)):
+        return None
+    ring = []
+    for x, y in projected:
+        lat, lon = ortho_pixel_to_gps(float(x), float(y))
+        if not (math.isfinite(lat) and math.isfinite(lon)):
+            return None
+        ring.append([float(lon), float(lat)])
+    ring.append(list(ring[0]))
+    return {"type": "Polygon", "coordinates": [ring]}
 
 
 def _analysis_storage_prefix(analysis_key: str) -> str:
@@ -377,15 +445,6 @@ _IMAGE_EDGE_MIN_CLEARANCE_M = 1.0
 # (h_spacing = 1.5*R between columns, v_spacing = sqrt(3)*R within column).
 _FINAL_POINT_SPACING_FACTOR = math.sqrt(3.0)
 _FINAL_DUPLICATE_SPACING_RATIO = 0.92
-_CROSS_SPECIES_MIN_SPACING_M = 2.0
-
-
-def _local_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    ref_lat = (float(lat1) + float(lat2)) / 2.0
-    m_per_deg_lon = _M_PER_DEG_LAT * max(0.2, math.cos(math.radians(ref_lat)))
-    d_lat_m = (float(lat1) - float(lat2)) * _M_PER_DEG_LAT
-    d_lon_m = (float(lon1) - float(lon2)) * m_per_deg_lon
-    return math.sqrt((d_lat_m * d_lat_m) + (d_lon_m * d_lon_m))
 
 
 def _normalize_species_key(species: Optional[str]) -> Optional[str]:
@@ -393,122 +452,24 @@ def _normalize_species_key(species: Optional[str]) -> Optional[str]:
     return key if key in SPECIES_SPACING_M else None
 
 
-def _species_spacing_m(species: Optional[str], fallback: Any = None) -> Optional[float]:
-    try:
-        if fallback is not None:
-            value = float(fallback)
-            if value > 0:
-                return value
-    except (TypeError, ValueError):
-        pass
-    key = _normalize_species_key(species)
-    return SPECIES_SPACING_M.get(key) if key else None
-
-
-def _cross_species_threshold_m(
-    current_species: Optional[str],
-    current_spacing_m: Optional[float],
-    existing_species: Optional[str],
-    existing_spacing_m: Optional[float],
-) -> Optional[float]:
-    current_key = _normalize_species_key(current_species)
-    existing_key = _normalize_species_key(existing_species)
-    if current_key is None or existing_key is None or current_key == existing_key:
-        return None
-
-    distances = [
-        distance
-        for distance in (current_spacing_m, existing_spacing_m)
-        if distance is not None and distance > 0
-    ]
-    return max(_CROSS_SPECIES_MIN_SPACING_M, max(distances) if distances else 0.0)
-
-
 def _thin_hexagons_against_saved_species_points(
     hexagons: list[dict[str, Any]],
     species: Optional[str],
     spacing_m: Optional[float],
+    hexagon_size_m: Optional[float] = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Remove preview/export candidates that violate saved cross-species spacing."""
-    species_key = _normalize_species_key(species)
-    if species_key is None or not hexagons:
-        return list(hexagons), []
-
-    gps_hexagons = [
-        hexagon
-        for hexagon in hexagons
-        if hexagon.get("_gps_lat") is not None and hexagon.get("_gps_lon") is not None
-    ]
-    if not gps_hexagons:
-        return list(hexagons), []
-
-    current_spacing_m = _species_spacing_m(species_key, spacing_m)
-    max_spacing_m = max(_CROSS_SPECIES_MIN_SPACING_M, current_spacing_m or 0.0)
-    for other_species, other_spacing in SPECIES_SPACING_M.items():
-        if other_species != species_key:
-            max_spacing_m = max(max_spacing_m, other_spacing)
-    bbox_pad_deg = (max_spacing_m / _M_PER_DEG_LAT) * 2.0
-    lats = [float(hexagon["_gps_lat"]) for hexagon in gps_hexagons]
-    lons = [float(hexagon["_gps_lon"]) for hexagon in gps_hexagons]
-
+    """Apply the database's same-/cross-species rules before any output is built."""
     try:
-        saved_points = get_saved_species_point_locations(
-            min(lats) - bbox_pad_deg,
-            max(lats) + bbox_pad_deg,
-            min(lons) - bbox_pad_deg,
-            max(lons) + bbox_pad_deg,
-        )
-    except Exception:
-        return list(hexagons), []
-
-    conflicting_saved_points = []
-    for saved in saved_points:
-        saved_species = _normalize_species_key(saved.get("species"))
-        if saved_species is None or saved_species == species_key:
-            continue
-        conflicting_saved_points.append(
-            {
-                "latitude": float(saved["latitude"]),
-                "longitude": float(saved["longitude"]),
-                "species": saved_species,
-                "spacing_m": _species_spacing_m(
-                    saved_species,
-                    saved.get("planting_distance_m"),
-                ),
-            }
-        )
-    if not conflicting_saved_points:
-        return list(hexagons), []
-
-    kept: list[dict[str, Any]] = []
-    filtered: list[dict[str, Any]] = []
-    for hexagon in hexagons:
-        lat = hexagon.get("_gps_lat")
-        lon = hexagon.get("_gps_lon")
-        if lat is None or lon is None:
-            kept.append(hexagon)
-            continue
-
-        too_close = False
-        for saved in conflicting_saved_points:
-            threshold_m = _cross_species_threshold_m(
-                species_key,
-                current_spacing_m,
-                saved["species"],
-                saved["spacing_m"],
-            )
-            if threshold_m is None:
-                continue
-            if _local_distance_m(lat, lon, saved["latitude"], saved["longitude"]) < threshold_m:
-                too_close = True
-                break
-
-        if too_close:
-            filtered.append(hexagon)
-        else:
-            kept.append(hexagon)
-
-    return kept, filtered
+        return filter_new_planting_hexagons(hexagons, {
+            "species": species,
+            "planting_distance_m": spacing_m,
+            "hexagon_size_m": hexagon_size_m,
+        })
+    except Exception as error:
+        raise HTTPException(
+            status_code=503,
+            detail="Could not check existing planting points. Please retry the analysis before saving.",
+        ) from error
 
 
 def _thin_hexagons_by_gps_spacing(
@@ -912,6 +873,7 @@ def _sanitize_match_result(match_result: Optional[dict[str, Any]]) -> Optional[d
         "confidence": _json_float(match_result.get("confidence")),
         "inliers": _json_int(match_result.get("inliers")),
         "total_matches": _json_int(match_result.get("total_matches")),
+        "perspective_retry_used": bool(match_result.get("perspective_retry_used", False)),
         "similarity_confidence": _json_float(match_result.get("similarity_confidence")),
         "similarity_inliers": _json_int(match_result.get("similarity_inliers")),
         "similarity_source_hull_ratio": _json_float(match_result.get("similarity_source_hull_ratio")),
@@ -1203,10 +1165,10 @@ def _build_image_location_preflight(
         "location_label": site_context["location_label"],
         "project_sites": site_context["project_sites"],
         "altitude_m": round(resolved_altitude, 2),
-        "heading_deg": round(heading, 2),
+        "heading_deg": heading,
         "image_width_px": image_width or None,
         "image_height_px": image_height or None,
-        "gsd_m_per_pixel": round(float(gsd_m), 8) if gsd_m is not None else None,
+        "gsd_m_per_pixel": float(gsd_m) if gsd_m is not None else None,
         "gsd_source": gsd_specs.get("source"),
         "coverage_m": [round(value, 2) for value in coverage_m] if coverage_m else None,
         "footprint_calibrated": (
@@ -1246,49 +1208,32 @@ def _calibrate_preflight_footprint(
     image = cv2.imread(str(temp_path))
     if not isinstance(image, np.ndarray):
         return preflight
-    file_digest: Optional[str] = None
-    calibration: Optional[dict[str, Any]] = None
-    try:
-        file_digest = _file_sha256(temp_path)
-        cached = _get_preflight_alignment_cache(file_digest)
-        if (
-            cached
-            and cached.get("success")
-            and cached.get("projection_rotation_source")
-            == "vegetation_scale_metric_anchor"
-        ):
-            calibration = cached
-    except Exception:
-        file_digest = None
-
-    if calibration is None:
-        calibration = _refine_failed_match_with_vegetation_scale(
-            {
-                "success": False,
-                "error": "Feature matching is deferred until full processing.",
-            },
-            image,
-            float(latitude),
-            float(longitude),
-            float(nominal_gsd),
-            float(heading),
+    calibration = _get_image_alignment(
+        temp_path, image, latitude, longitude, nominal_gsd, heading,
+    )
+    transform = _display_homography_for_match(calibration)
+    if transform is None:
+        transform = _build_metric_centered_homography(
+            image, latitude, longitude, nominal_gsd, heading,
         )
-    if not calibration.get("success"):
+    if transform is None:
         return preflight
-
-    refined_gsd = _safe_float(calibration.get("refined_gsd_m_per_pixel"))
+    footprint = _projected_image_footprint(image.shape, transform)
+    if footprint is None:
+        return preflight
+    refined_gsd = _safe_float(calibration.get("refined_gsd_m_per_pixel")) or nominal_gsd
     refined_heading = _safe_float(calibration.get("heading"))
-    if refined_gsd is None or refined_gsd <= 0 or refined_heading is None:
-        return preflight
-
+    if refined_heading is None:
+        refined_heading = heading
     image_height, image_width = image.shape[:2]
     coverage_m = [image_width * refined_gsd, image_height * refined_gsd]
-    footprint = _estimated_analysis_footprint(
-        float(latitude),
-        float(longitude),
-        coverage_m,
-        refined_heading,
+    calibrated = bool(calibration.get("success"))
+    footprint_quality = (
+        "matched_image_corners" if calibrated and not calibration.get("projection_rebuilt")
+        else "metric_projected_image_corners"
     )
+    clipped = _load_gis_coverage_geometry().intersection(shape(footprint))
+    visible_footprint = mapping(clipped) if not clipped.is_empty and clipped.geom_type in {"Polygon", "MultiPolygon"} else footprint
     boundary = _classify_footprint_against_gis(
         footprint,
         float(latitude),
@@ -1297,7 +1242,7 @@ def _calibrate_preflight_footprint(
     status = boundary["status"]
     if status == "inside":
         message = (
-            "The calibrated image footprint is inside the supported GIS map."
+            "The projected image footprint is inside the supported GIS map."
         )
     elif status == "partial":
         message = _PARTIAL_GIS_MAP_DETAIL
@@ -1321,7 +1266,7 @@ def _calibrate_preflight_footprint(
             "altitude_m": preflight.get("altitude_m"),
             "heading": round(refined_heading, 2),
             "preflight": True,
-            "footprint_calibrated": True,
+            "footprint_calibrated": calibrated,
             "outside_map_bounds": not _load_gis_coverage_geometry().covers(
                 Point(float(longitude), float(latitude))
             ),
@@ -1346,24 +1291,20 @@ def _calibrate_preflight_footprint(
                 float(calibration.get("vegetation_gsd_scale_factor") or 1.0),
                 4,
             ),
-            "footprint_calibrated": True,
-            "footprint_calibration_method": "vegetation_scale",
+            "footprint_calibrated": calibrated,
+            "footprint_calibration_method": calibration.get("projection_rotation_source") or "camera_metadata",
             "alignment": _sanitize_match_result(calibration),
             **boundary,
             "map": {
                 "available": True,
                 "location_status": status,
                 "image_center_feature": center_feature,
-                "analysis_footprint": footprint,
+                "analysis_footprint": visible_footprint,
+                "analysis_footprint_quality": footprint_quality,
                 "match": _sanitize_match_result(calibration),
             },
         }
     )
-    if file_digest is not None:
-        try:
-            _set_preflight_alignment_cache(file_digest, calibration)
-        except Exception:
-            pass
     return preflight
 
 
@@ -2633,6 +2574,45 @@ def _refine_failed_match_with_edge_translation(
     return refined
 
 
+def _retry_perspective_registration(drone_image, center_lat, center_lon, drone_gsd, camera_heading):
+    """Try structural landmarks before falling back to a rectangular GPS footprint."""
+    if camera_heading is None:
+        return None
+    entry = ortho_matcher.select_orthophoto(center_lat, center_lon)
+    ortho = ortho_matcher.load_orthophoto()
+    if entry is None or ortho is None:
+        return None
+    nominal_h = _build_metric_centered_homography(
+        drone_image, center_lat, center_lon, drone_gsd, camera_heading,
+    )
+    if nominal_h is None:
+        return None
+    height, width = drone_image.shape[:2]
+    scale = drone_gsd / ortho_matcher.ORTHO_GSD
+    radius = max(width, height) * scale
+    cx, cy = gps_to_ortho_pixel(center_lat, center_lon)
+    x0, y0 = max(0, int(cx-radius)), max(0, int(cy-radius))
+    x1, y1 = min(ortho.shape[1], int(cx+radius)), min(ortho.shape[0], int(cy+radius))
+    matrix, diagnostics = match_perspective_patch(
+        drone_image, ortho[y0:y1, x0:x1], np.float64([x0, y0]),
+        nominal_h, scale, ortho_matcher.ORTHO_GSD,
+    )
+    if matrix is None:
+        return None
+    center = _homography_center_diagnostics(matrix, drone_image, center_lat, center_lon)
+    if center.get('center_drift_m') is None or center['center_drift_m'] > 5.0:
+        return None
+    inliers = diagnostics['registration_inliers']
+    result = {
+        **diagnostics, 'success': True, 'H': matrix, 'validated_H': matrix,
+        'inliers': inliers, 'total_matches': diagnostics['perspective_retry_matches'],
+        'confidence': inliers / max(1, diagnostics['perspective_retry_matches']),
+        'ortho_name': entry['name'], 'ortho_path': str(entry['path']),
+        'perspective_retry_used': True,
+    }
+    return _post_process_match(result, drone_image, center_lat, center_lon, camera_heading, drone_gsd)
+
+
 def _match_drone_to_ortho_robust(
     drone_image: np.ndarray,
     center_lat: float,
@@ -2688,6 +2668,12 @@ def _match_drone_to_ortho_robust(
             retry, drone_image, center_lat, center_lon, camera_heading, drone_gsd
         )
     retry["first_error"] = result.get("error")
+    perspective_retry = _retry_perspective_registration(
+        drone_image, center_lat, center_lon, drone_gsd, camera_heading,
+    )
+    if perspective_retry is not None:
+        perspective_retry['first_error'] = result.get('error')
+        return perspective_retry
     vegetation_refined = _refine_failed_match_with_vegetation_scale(
         retry,
         drone_image,
@@ -2791,18 +2777,7 @@ def _build_georeferenced_overlay(
     north_lat, west_lon = ortho_pixel_to_gps(min_x, min_y)
     south_lat, east_lon = ortho_pixel_to_gps(max_x, max_y)
 
-    footprint_ring = []
-    try:
-        for corner_x, corner_y in ortho_corners:
-            corner_lat, corner_lon = ortho_pixel_to_gps(float(corner_x), float(corner_y))
-            if not (math.isfinite(float(corner_lat)) and math.isfinite(float(corner_lon))):
-                footprint_ring = []
-                break
-            footprint_ring.append([float(corner_lon), float(corner_lat)])
-        if footprint_ring:
-            footprint_ring.append(list(footprint_ring[0]))
-    except Exception:
-        footprint_ring = []
+    footprint = _projected_image_footprint(image.shape, homography)
 
     return {
         "image_data_url": _encode_image_data_url(overlay_bgra, ".png"),
@@ -2811,10 +2786,7 @@ def _build_georeferenced_overlay(
             [float(north_lat), float(east_lon)],
         ],
         "opacity": 0.72,
-        "footprint_geojson": (
-            {"type": "Polygon", "coordinates": [footprint_ring]}
-            if len(footprint_ring) == 5 else None
-        ),
+        "footprint_geojson": footprint,
     }
 
 
@@ -3768,15 +3740,9 @@ def _execute_canopy_workflow(
                 image_height_px=early_height,
             )
             _emit(progress_cb, "Calibrating image footprint to orthophoto", 10)
-            # Preflight caches only a coarse GPS-centred footprint, not the
-            # measured visual transform. Reconstructing H from that cache used
-            # to skip SIFT and discard the ground-landmark alignment entirely.
-            precomputed_match_result = _match_drone_to_ortho_robust(
-                drone_image=early_match_image,
-                center_lat=image_center_lat,
-                center_lon=image_center_lon,
-                drone_gsd=float(nominal_gsd),
-                camera_heading=camera_heading,
+            precomputed_match_result = _get_image_alignment(
+                temp_path, early_match_image, image_center_lat, image_center_lon,
+                float(nominal_gsd), camera_heading,
             )
             refined_gsd = _safe_float(
                 precomputed_match_result.get("refined_gsd_m_per_pixel")
@@ -4881,17 +4847,18 @@ def _execute_canopy_workflow(
                 f"{final_lattice_refill_added} final safe planting gaps were filled on the 1 m shared lattice."
             )
 
-    if canonical_species and safe_hexagons:
+    if safe_hexagons:
         safe_hexagons, saved_species_filtered = _thin_hexagons_against_saved_species_points(
             safe_hexagons,
             canonical_species,
-            SPECIES_SPACING_M[canonical_species],
+            SPECIES_SPACING_M.get(canonical_species),
+            float(hexagon_size),
         )
         if saved_species_filtered:
             spacing_filtered_hexagons.extend(saved_species_filtered)
             spacing_filtered_count = len(spacing_filtered_hexagons)
             info_messages.append(
-                f"{len(saved_species_filtered)} planting points were removed because they were within 2 m of saved points from another species."
+                f"{len(saved_species_filtered)} planting points were excluded because they overlap or are too close to existing planting locations."
             )
 
     # Final fail-safe: every downstream output (preview, coordinates, export,
@@ -5320,6 +5287,9 @@ def _execute_canopy_workflow(
             "ai_seedling_ground_artifact_rejected_count": int(
                 ai_meta.get("seedling_ground_artifact_rejected_count", 0) or 0
             ),
+            "ai_canopy_ground_artifact_rejected_count": int(
+                ai_meta.get("canopy_ground_artifact_rejected_count", 0) or 0
+            ),
             "ai_seedling_water_context_candidate_count": int(
                 ai_meta.get("seedling_water_context_candidate_count", 0) or 0
             ),
@@ -5485,7 +5455,8 @@ async def preflight_image_location(
         metadata = ExifExtractor.extract_all_metadata(str(temp_path))
         result = _build_image_location_preflight(metadata, clean_altitude, drone_model)
         if result.get("can_process"):
-            result = _calibrate_preflight_footprint(temp_path, result)
+            with processing_job():
+                result = await run_in_threadpool(_calibrate_preflight_footprint, temp_path, result)
         result["uploaded_file_name"] = uploaded_name
         return result
     except HTTPException:
@@ -5514,11 +5485,11 @@ async def process_image(
     allow_partial_map_overlap: bool = Form(False),
 ):
     """Run the canopy-analysis workflow and return the full JSON response."""
-    _require_lgu_user()
+    user = _require_lgu_user()
     temp_path, uploaded_name = await _save_upload_to_temp(image)
     try:
         with processing_job():
-            return _execute_canopy_workflow(
+            payload = _execute_canopy_workflow(
                 temp_path=temp_path,
                 uploaded_name=uploaded_name,
                 altitude=altitude,
@@ -5531,6 +5502,8 @@ async def process_image(
                 species=species,
                 allow_partial_map_overlap=allow_partial_map_overlap,
             )
+        _record_processed_image(int(user["id"]), uploaded_name, payload)
+        return payload
     except HTTPException:
         raise
     except Exception as error:
@@ -5561,7 +5534,7 @@ async def process_image_stream(
       * {"type": "error",    "detail": str}             — terminal failure
     The stream closes after the terminal event.
     """
-    _require_lgu_user()
+    user = _require_lgu_user()
     temp_path, uploaded_name = await _save_upload_to_temp(image)
     events: queue_module.Queue = queue_module.Queue()
 
@@ -5585,6 +5558,7 @@ async def process_image_stream(
                     species=species,
                     allow_partial_map_overlap=allow_partial_map_overlap,
                 )
+            _record_processed_image(int(user["id"]), uploaded_name, payload)
             events.put({"type": "result", "payload": payload})
         except HTTPException as error:
             events.put({
@@ -5640,6 +5614,20 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
         raise HTTPException(
             status_code=400,
             detail="This analysis has no GPS center, so it cannot be saved to the database.",
+        )
+
+    # A different analysis may have been saved while this preview was open.
+    # Do not save an overlay/export that advertises points the database will skip.
+    _, newly_conflicting = _thin_hexagons_against_saved_species_points(
+        cached_payload["safe_hexagons"],
+        cached_payload["results"].get("species"),
+        cached_payload["results"].get("planting_distance_m"),
+        cached_payload["results"].get("hexagon_size_m"),
+    )
+    if newly_conflicting:
+        raise HTTPException(
+            status_code=409,
+            detail="Planting locations have changed since this preview. Run the analysis again to update its overlay and available points before saving.",
         )
 
     try:

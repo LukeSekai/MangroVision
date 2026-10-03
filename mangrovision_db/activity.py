@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import json
+from contextvars import ContextVar
 from typing import Any
 
 from .compat import get_connection
+
+
+# A mutable counter survives FastAPI's sync endpoint thread boundary. The API
+# uses it to avoid a second, generic entry when a workflow already wrote a
+# more useful activity row in its own transaction.
+request_activity_count: ContextVar[list[int] | None] = ContextVar(
+    "request_activity_count", default=None,
+)
 
 
 def append_activity(
@@ -34,6 +43,22 @@ def append_activity(
         organization_id, project_site_id, planting_point_id, planting_event_id,
         summary, json.dumps(details or {}, separators=(",", ":")),
     ))
+    counter = request_activity_count.get()
+    if counter is not None:
+        counter[0] += 1
+
+
+def record_activity(**fields: Any) -> None:
+    """Append one standalone activity entry when no domain transaction exists."""
+    conn = get_connection()
+    try:
+        append_activity(conn, **fields)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def list_activity(*, organization_id: int | None = None, before_id: int | None = None,

@@ -226,7 +226,6 @@ export default function MapView() {
   const replantingSelectionMode = useMapStore((s) => s.replantingSelectionMode);
   const isAnalyticsMode = location.pathname === '/';
   const isMonitoringMapMode = location.pathname === '/monitoring/map';
-  const hasLeftBasemapControl = isAnalyticsMode || isMonitoringMapMode;
   // On /planters the admin needs to see WHO owns each assigned point at a
   // glance, so we colour assigned points by organization instead of the single
   // "assigned = blue" used everywhere else (Map Analytics, Delete Points, …).
@@ -298,7 +297,7 @@ export default function MapView() {
         OpenStreetMap: osm,
       },
       { 'Drone Orthomosaic': orthophoto },
-      { position: 'topright', collapsed: true }
+      { position: 'topleft', collapsed: true }
     ).addTo(map);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
@@ -505,12 +504,6 @@ export default function MapView() {
       useMapStore.getState().setMapInstance(null);
     };
   }, []);
-
-  // Keep the basemap switcher clear of the right-hand panels on both map views,
-  // including when navigating without remounting the shared map.
-  useEffect(() => {
-    layersRef.current.baseLayerControl?.setPosition(hasLeftBasemapControl ? 'topleft' : 'topright');
-  }, [hasLeftBasemapControl]);
 
   // When the store's view changes, bring this map to the same view. The skip
   // ref + a rough equality check below prevent feedback loops with the
@@ -1384,5 +1377,5 @@ export default function MapView() {
     }
   }, [location.key, location.search, showLayers, warningZones]);
 
-  return <div ref={containerRef} className={`map-container${hasLeftBasemapControl ? ' left-basemap-container' : ''}${isMonitoringMapMode ? ' monitoring-map-container' : ''}`} />;
+  return <div ref={containerRef} className={`map-container${isMonitoringMapMode ? ' monitoring-map-container' : ''}`} />;
 }

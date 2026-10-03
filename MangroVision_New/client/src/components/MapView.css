@@ -3,8 +3,8 @@
   height: 100%;
 }
 
-/* Keep the basemap picker at the upper left, away from the right-hand panels. */
-.left-basemap-container .leaflet-top.leaflet-left .leaflet-control-layers {
+/* Keep the basemap picker at the upper left on every shared map view. */
+.map-container .leaflet-top.leaflet-left .leaflet-control-layers {
   margin-top: 16px;
   margin-left: 16px;
 }

@@ -1,12 +1,13 @@
 .rs-backdrop {
+  --rs-gutter: 24px;
   position: fixed;
-  inset: 0;
+  inset: var(--workspace-header-height, 52px) 0 0;
   background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
-  padding: 24px;
+  padding: var(--rs-gutter);
   animation: rsBackdropIn 220ms var(--ease-out);
 }
 
@@ -28,7 +29,8 @@
   position: relative;
   background: #ffffff;
   width: min(1200px, 100%);
-  max-height: 92vh;
+  max-height: calc(100vh - var(--workspace-header-height, 52px) - 2 * var(--rs-gutter));
+  max-height: calc(100dvh - var(--workspace-header-height, 52px) - 2 * var(--rs-gutter));
   border-radius: 16px;
   box-shadow: 0 24px 64px rgba(15, 23, 42, 0.45);
   overflow: hidden;
@@ -54,6 +56,7 @@
 }
 
 .rs-header {
+  flex-shrink: 0;
   padding: 18px 52px 12px 22px;
   border-bottom: 1px solid var(--border-light);
   background: linear-gradient(180deg, #ffffff, #f9fafb);
@@ -109,6 +112,7 @@
 }
 
 .rs-layout {
+  min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.25fr);
   gap: 18px;
@@ -281,7 +285,7 @@
 
 @media (max-width: 640px) {
   .rs-backdrop {
-    padding: 12px;
+    --rs-gutter: 12px;
   }
 
   .rs-layout {

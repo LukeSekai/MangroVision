@@ -1255,13 +1255,31 @@ def _create_session(subject_type: str, subject_id: int, participant_slot: Option
     )
 
     conn = _get_connection()
-    conn.execute("""
-        INSERT INTO auth_sessions (
-            subject_type, subject_id, token_hash, created_at, expires_at, last_seen_at, participant_slot
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (subject_type, int(subject_id), token_hash, now, now + lifetime, now, participant_slot))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("""
+            INSERT INTO auth_sessions (
+                subject_type, subject_id, token_hash, created_at, expires_at, last_seen_at, participant_slot
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (subject_type, int(subject_id), token_hash, now, now + lifetime, now, participant_slot))
+        organization_id = None
+        if subject_type == "planter":
+            planter = conn.execute("SELECT organization_id FROM planters WHERE id = ?", (int(subject_id),)).fetchone()
+            organization_id = planter["organization_id"] if planter else None
+        append_activity(
+            conn, action="auth.signed_in",
+            actor_type="staff" if subject_type == "user" else "planter",
+            actor_user_id=int(subject_id) if subject_type == "user" else None,
+            actor_planter_id=int(subject_id) if subject_type == "planter" else None,
+            participant_slot=participant_slot,
+            organization_id=organization_id,
+            summary="LGU staff signed in." if subject_type == "user" else "Organization participant signed in.",
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
     return token
 
 
@@ -1327,19 +1345,39 @@ def _revoke_session(subject_type: str, token: str) -> None:
         return
 
     conn = _get_connection()
-    conn.execute("""
-        UPDATE auth_sessions
-        SET revoked_at = ?
-        WHERE subject_type = ?
-          AND token_hash = ?
-          AND revoked_at IS NULL
-    """, (
-        datetime.now(timezone.utc),
-        subject_type,
-        _hash_session_token(token),
-    ))
-    conn.commit()
-    conn.close()
+    try:
+        revoked = conn.execute("""
+            UPDATE auth_sessions
+            SET revoked_at = ?
+            WHERE subject_type = ?
+              AND token_hash = ?
+              AND revoked_at IS NULL
+            RETURNING subject_id, participant_slot
+        """, (
+            datetime.now(timezone.utc),
+            subject_type,
+            _hash_session_token(token),
+        )).fetchone()
+        if revoked:
+            organization_id = None
+            if subject_type == "planter":
+                planter = conn.execute("SELECT organization_id FROM planters WHERE id = ?", (revoked["subject_id"],)).fetchone()
+                organization_id = planter["organization_id"] if planter else None
+            append_activity(
+                conn, action="auth.signed_out",
+                actor_type="staff" if subject_type == "user" else "planter",
+                actor_user_id=revoked["subject_id"] if subject_type == "user" else None,
+                actor_planter_id=revoked["subject_id"] if subject_type == "planter" else None,
+                participant_slot=revoked["participant_slot"],
+                organization_id=organization_id,
+                summary="LGU staff signed out." if subject_type == "user" else "Organization participant signed out.",
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def get_user_by_name(full_name: str) -> Optional[dict]:
@@ -1749,6 +1787,54 @@ def _existing_species_spacing_index(
             row['planting_distance_m'],
         )
     return index
+
+
+def _planting_spacing_indexes(conn, hexagons: list, results: dict):
+    """Use identical saved-point bounds and thresholds for preview and save."""
+    species = _normalize_species_key(results.get('species'))
+    spacing = _species_spacing_m(species, results.get('planting_distance_m'))
+    dedup_radius = _dedup_radius_for_results(results)
+    cross_radius = max(_CROSS_SPECIES_MIN_SPACING_M, spacing or 0.0)
+    coordinates = [(h.get('_gps_lat'), h.get('_gps_lon')) for h in hexagons
+                   if h.get('_gps_lat') is not None and h.get('_gps_lon') is not None]
+    if not coordinates:
+        return _NearbyPointIndex(dedup_radius, 0.0), _SpeciesSpacingIndex(cross_radius, 0.0)
+    lats, lons = zip(*coordinates)
+    pad = (max(dedup_radius, cross_radius) / _M_PER_DEG_LAT) * 2.0
+    bounds = (min(lats)-pad, max(lats)+pad, min(lons)-pad, max(lons)+pad)
+    return (
+        _existing_point_index(conn, *bounds, dedup_radius),
+        _existing_species_spacing_index(conn, *bounds, cross_radius),
+    )
+
+
+def filter_new_planting_hexagons(hexagons: list, results: dict) -> tuple[list, list]:
+    """Return only points save would accept, before rendering/exporting a preview.
+
+    Includes planned and planted locations, regardless of species. Database
+    failures propagate so an unchecked preview cannot advertise occupied spots.
+    This is read-only; no planting records or analyses are changed.
+    """
+    if not hexagons:
+        return [], []
+    conn = _get_connection()
+    try:
+        nearby, species_index = _planting_spacing_indexes(conn, hexagons, results)
+    finally:
+        conn.close()
+    species = _normalize_species_key(results.get('species'))
+    spacing = _species_spacing_m(species, results.get('planting_distance_m'))
+    kept, filtered = [], []
+    for hexagon in hexagons:
+        lat, lon = hexagon.get('_gps_lat'), hexagon.get('_gps_lon')
+        if lat is not None and lon is not None:
+            if nearby.has_neighbor(lat, lon) or species_index.has_conflict(lat, lon, species, spacing):
+                filtered.append(hexagon)
+                continue
+            nearby.add(lat, lon)
+            species_index.add(lat, lon, species, spacing)
+        kept.append(hexagon)
+    return kept, filtered
 
 
 def _local_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -2503,35 +2589,7 @@ def _save_analysis_with_connection(
         _analysis_species,
         results.get('planting_distance_m'),
     )
-    _cross_species_radius_m = max(
-        _CROSS_SPECIES_MIN_SPACING_M,
-        _analysis_spacing_m or 0.0,
-    )
-    if hexagons:
-        _all_lats = [h.get('_gps_lat', 0) for h in hexagons]
-        _all_lons = [h.get('_gps_lon', 0) for h in hexagons]
-        _dedup_radius_m = _dedup_radius_for_results(results)
-        _bbox_pad_deg = (max(_dedup_radius_m, _cross_species_radius_m) / _M_PER_DEG_LAT) * 2.0
-        _existing = _existing_point_index(
-            conn,
-            min(_all_lats) - _bbox_pad_deg,
-            max(_all_lats) + _bbox_pad_deg,
-            min(_all_lons) - _bbox_pad_deg,
-            max(_all_lons) + _bbox_pad_deg,
-            _dedup_radius_m,
-        )
-        _existing_species_spacing = _existing_species_spacing_index(
-            conn,
-            min(_all_lats) - _bbox_pad_deg,
-            max(_all_lats) + _bbox_pad_deg,
-            min(_all_lons) - _bbox_pad_deg,
-            max(_all_lons) + _bbox_pad_deg,
-            _cross_species_radius_m,
-        )
-    else:
-        _dedup_radius_m = _dedup_radius_for_results(results)
-        _existing = _NearbyPointIndex(_dedup_radius_m, 0.0)
-        _existing_species_spacing = _SpeciesSpacingIndex(_cross_species_radius_m, 0.0)
+    _existing, _existing_species_spacing = _planting_spacing_indexes(conn, hexagons, results)
 
     new_count = 0
     skipped = 0
@@ -3625,6 +3683,7 @@ def create_planter(
     status: str = "active",
     organization_id: Optional[int] = None,
     participant_count: int = 1,
+    created_by_user_id: Optional[int] = None,
 ) -> int:
     """Create a planter record and return the new id."""
     full_name = full_name.strip()
@@ -3689,6 +3748,15 @@ def create_planter(
         ))
         planter_id = cur.lastrowid
         conn.execute("INSERT INTO organization_participants(planter_id, slot) SELECT ?, generate_series(1, ?)", (planter_id, participant_count))
+        append_activity(
+            conn, action="organization_account.created",
+            actor_type="staff" if created_by_user_id is not None else "planter",
+            actor_user_id=created_by_user_id,
+            actor_planter_id=planter_id if created_by_user_id is None else None,
+            organization_id=clean_organization_id,
+            summary=f"Created the organization account for {full_name}.",
+            details={"planter_id": planter_id, "participant_count": participant_count},
+        )
         conn.commit()
         return planter_id
     finally:

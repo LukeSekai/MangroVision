@@ -32,6 +32,8 @@ const initialState = {
   // been streamed to the backend.
   fileName: '',
   previewUrl: '',
+  // Keep the original available in the summary after clearing the upload.
+  resultPreviewUrl: '',
 
   // Toggle for whether the result overlay should auto-open on the
   // ImageProcessing page once processing completes.
@@ -43,7 +45,7 @@ export const useProcessingStore = create((set, get) => ({
 
   setOverlayOpen: (open) => set({ overlayOpen: Boolean(open) }),
 
-  // Reset back to a clean slate. Used by "Process Another Image" / "Clear".
+  // Reset back to a clean slate when clearing or selecting a new image.
   reset: () => {
     if (activeController) {
       try {
@@ -114,6 +116,7 @@ export const useProcessingStore = create((set, get) => ({
       saveError: '',
       fileName: file.name || 'drone_image.jpg',
       previewUrl,
+      resultPreviewUrl: '',
       overlayOpen: false,
     });
 
@@ -199,6 +202,9 @@ export const useProcessingStore = create((set, get) => ({
         stage: 'Complete!',
         progress: 100,
         result: finalPayload,
+        fileName: '',
+        previewUrl: '',
+        resultPreviewUrl: previewUrl,
         overlayOpen: true,
       });
     } catch (processError) {
