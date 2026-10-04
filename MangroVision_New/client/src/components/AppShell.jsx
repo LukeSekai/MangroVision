@@ -12,7 +12,7 @@ import './AppShell.css';
 
 export default function AppShell({ children }) {
   const { pathname } = useLocation();
-  const showMap = pathname !== '/monitoring' && pathname !== '/dashboard';
+  const showMap = !['/monitoring', '/dashboard', '/account', '/reports'].includes(pathname);
   const user = useAuthStore((s) => s.user);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
 

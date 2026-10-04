@@ -93,6 +93,16 @@ const NAV_ITEMS = [
       </svg>
     ),
   },
+  {
+    to: '/reports',
+    label: 'Reports',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+        <path d="M14 2v6h6M8 13h8M8 17h5" />
+      </svg>
+    ),
+  },
 ];
 
 function SidebarClock() {
@@ -178,12 +188,12 @@ export default function Sidebar() {
 
       <div className="sidebar-bottom">
         <SidebarClock />
-        <div className="sidebar-user" title={user?.full_name}>
+        <NavLink to="/account" className="sidebar-user" title="Account settings" aria-label="Account settings">
           <div className="sidebar-avatar">
             {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
           </div>
           <span className="sidebar-user-name">{user?.full_name}</span>
-        </div>
+        </NavLink>
         <button className="sidebar-nav-item" onClick={logout} title="Sign out">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

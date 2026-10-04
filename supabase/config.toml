@@ -1,3 +1,8 @@
 [functions.monitoring-reminders]
 # The function authenticates the Supabase Cron request with a private job token.
 verify_jwt = false
+
+[functions.staff-verification]
+# This private backend sender authenticates before database access, then
+# verifies and claims an existing staff challenge. It accepts no recipient.
+verify_jwt = false

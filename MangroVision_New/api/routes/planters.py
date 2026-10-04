@@ -16,6 +16,7 @@ from planting_database import (
     _hash_password,
     create_planter,
     create_planter_assignment,
+    create_organization_assignment,
     get_mortality_detail_table,
     get_mortality_stats,
     reset_planting_point_to_planned,
@@ -77,6 +78,22 @@ class CreateAssignmentRequest(BaseModel):
 class MarkDeadRequest(BaseModel):
     reason_category: str
     notes: str = ""
+
+
+@router.post("/organizations/{organization_id}/assignments")
+def create_organization_assignment_endpoint(organization_id: int, body: CreateAssignmentRequest,
+                                           user: dict = Depends(_require_lgu_user)):
+    _raise_if_processing_active()
+    try:
+        assignment_id = create_organization_assignment(
+            organization_id, body.planting_point_ids,
+            assigned_by_user_id=int(user["id"]), title=body.title,
+            assignment_date=body.assignment_date, travel_mode=body.travel_mode,
+            notes=body.notes, species=body.species, site_zone_id=body.site_zone_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"assignment_id": assignment_id}
 
 
 def _raise_if_processing_active():

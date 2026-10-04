@@ -108,6 +108,7 @@ export function PanelCard({
   open: controlledOpen,
   onOpenChange,
   panelKey,
+  headerRef,
   className = '',
 }) {
   const generatedKey = useId();
@@ -181,7 +182,7 @@ export function PanelCard({
 
   return (
     <div className={`panel-card ${className} ${open ? 'panel-card-open' : ''}`.trim()}>
-      <button className="panel-card-header" onClick={toggleOpen}>
+      <button ref={headerRef} className="panel-card-header" aria-expanded={open} onClick={toggleOpen}>
         <div className="panel-card-header-left">
           {icon && <span className="panel-card-icon">{icon}</span>}
           <span className="panel-card-title">{title}</span>

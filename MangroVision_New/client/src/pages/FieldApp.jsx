@@ -1,5 +1,6 @@
 import { getPlanterColor } from '../utils/planterColors';
 import { zigzagPoints } from '../utils/organizationAssignment';
+import { googleMapsDirectionsUrl, navigationSegments, pointGuidance } from '../utils/fieldNavigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -21,6 +22,7 @@ L.Icon.Default.mergeOptions({
 });
 
 const STATUS_LABEL = {
+  pending: 'Pending',
   planned: 'Planned',
   assigned: 'Assigned',
   planted: 'Planted',
@@ -50,7 +52,7 @@ const FINAL_ASSIGNMENT_STATUSES = new Set(['planted', 'completed', 'skipped']);
 
 function canMarkPointCompleted(point) {
   return Boolean(point)
-    && !point.eroded_unavailable
+    && !point.eroded_unavailable && !point.inside_eroded_zone
     && !COMPLETED_ASSIGNMENT_STATUSES.has(point.assignment_status);
 }
 
@@ -77,21 +79,14 @@ function parseProjectSiteGeometry(value) {
 }
 
 const getFieldPointRadius = (zoom) => {
-  if (zoom >= 22) return 3.5;
-  if (zoom >= 21) return 2.4;
-  if (zoom >= 20) return 1.6;
-  if (zoom >= 19) return 1.05;
-  if (zoom >= 18) return 0.8;
-  if (zoom >= 17) return 0.65;
-  return 0.55;
+  if (zoom >= 23) return 8;
+  if (zoom >= 22) return 6;
+  if (zoom >= 21) return 5;
+  return 4;
 };
 
 const getFieldPointWeight = (zoom) => {
-  if (zoom >= 22) return 1.1;
-  if (zoom >= 21) return 0.75;
-  if (zoom >= 20) return 0.45;
-  if (zoom >= 19) return 0.2;
-  return 0;
+  return zoom >= 22 ? 2 : 1.5;
 };
 
 function getCurrentLocation(options = {}) {
@@ -101,14 +96,14 @@ function getCurrentLocation(options = {}) {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve([pos.coords.latitude, pos.coords.longitude]),
+      (pos) => resolve({ coordinates: [pos.coords.latitude, pos.coords.longitude], accuracy: pos.coords.accuracy }),
       (err) => reject(new Error(err.message || 'Could not get your location.')),
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000, ...options },
     );
   });
 }
 
-async function fetchRoute(origin, dest, travelMode = 'walking') {
+async function fetchRoute(origin, dest, travelMode = 'walking', accuracy = null) {
   const response = await fetch(`${API_BASE}/api/routing/compute`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -118,6 +113,7 @@ async function fetchRoute(origin, dest, travelMode = 'walking') {
       dest_lat: dest[0],
       dest_lon: dest[1],
       travel_mode: travelMode,
+      origin_accuracy_m: Number.isFinite(accuracy) ? accuracy : null,
     }),
   });
   if (!response.ok) {
@@ -348,6 +344,8 @@ function PointsMap({
   onSelect,
   route,
   userLocation,
+  locationAccuracy,
+  focusRequest,
   completionSelectedIds = [],
 }) {
   const containerRef = useRef(null);
@@ -356,8 +354,11 @@ function PointsMap({
   const zoneLayerRef = useRef(null);
   const markersRef = useRef(new Map());
   const routeLayerRef = useRef(null);
+  const fittedRouteRef = useRef(null);
   const userMarkerRef = useRef(null);
   const hasFitBoundsRef = useRef(false);
+  const hasFitPointsRef = useRef(false);
+  const lastFocusRef = useRef(null);
 
   useEffect(() => {
     if (mapRef.current || !containerRef.current) return;
@@ -365,11 +366,13 @@ function PointsMap({
       center: [10.78, 122.6253],
       zoom: 17,
       maxZoom: 24,
-      zoomControl: true,
+      zoomControl: false,
       attributionControl: true,
     });
 
     map.attributionControl.setPrefix(false);
+    L.control.zoom({ position: 'bottomleft' }).addTo(map);
+    L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
     map.createPane('orthophotoPane');
     map.getPane('orthophotoPane').style.zIndex = 250;
 
@@ -386,6 +389,7 @@ function PointsMap({
     mapRef.current = map;
     zoneLayerRef.current = L.layerGroup().addTo(map);
     layerRef.current = L.layerGroup().addTo(map);
+    const markers = markersRef.current;
 
     map.on('zoomend', () => {
       const zoom = map.getZoom();
@@ -393,17 +397,21 @@ function PointsMap({
       const weight = getFieldPointWeight(zoom);
       markersRef.current.forEach((marker) => {
         const hasWarning = Boolean(marker.options.mgWarning);
-        marker.setRadius(radius);
-        marker.setStyle({ weight: hasWarning ? Math.max(weight, 1.2) : weight });
+        const highlighted = marker.options.mgSelected || marker.options.mgCompletionSelected;
+        marker.setRadius(highlighted ? radius + 2 : radius);
+        marker.setStyle({ weight: hasWarning || highlighted ? Math.max(weight, 2) : weight });
       });
     });
 
+    const resizeObserver = new ResizeObserver(() => map.invalidateSize({ pan: false }));
+    resizeObserver.observe(containerRef.current);
     return () => {
+      resizeObserver.disconnect();
       map.remove();
       mapRef.current = null;
       layerRef.current = null;
       zoneLayerRef.current = null;
-      markersRef.current.clear();
+      markers.clear();
     };
   }, []);
 
@@ -463,21 +471,24 @@ function PointsMap({
       marker.on('click', () => onSelect(point.assignment_point_id));
       marker.bindTooltip(`Step ${point.visit_order || point.sequence_num} · Point #${point.point_num}`);
       marker.addTo(layer);
+      // A generous invisible hit area makes small planting locations easier to tap.
+      L.circleMarker([point.latitude, point.longitude], {
+        radius: 14, stroke: false, fillOpacity: 0,
+      }).on('click', () => onSelect(point.assignment_point_id)).addTo(layer);
       markersRef.current.set(point.assignment_point_id, marker);
     });
 
-    if (!hasFitBoundsRef.current && validPoints.length > 0) {
+    if (!hasFitPointsRef.current && validPoints.length > 0) {
       if (validPoints.length === 1) {
-        // Single point: center on it at a comfortable zoom that stays
-        // inside the orthophoto's native resolution (so it doesn't go
-        // pixelated on first load).
+        // Field work starts at the actual assigned location, at planting scale.
         const only = validPoints[0];
-        map.setView([only.latitude, only.longitude], 19, { animate: false });
+        map.setView([only.latitude, only.longitude], 23, { animate: false });
       } else {
         const bounds = L.latLngBounds(validPoints.map((p) => [p.latitude, p.longitude]));
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 19 });
+        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 23 });
       }
       hasFitBoundsRef.current = true;
+      hasFitPointsRef.current = true;
     } else if (!hasFitBoundsRef.current && siteBoundaries.length > 0) {
       const bounds = L.featureGroup(siteBoundaries).getBounds();
       if (bounds.isValid()) {
@@ -492,16 +503,17 @@ function PointsMap({
       const map = mapRef.current;
       const zoom = map?.getZoom() ?? 17;
       const isCompletionSelected = Boolean(marker.options.mgCompletionSelected);
+      marker.options.mgSelected = id === selectedId;
       marker.setStyle({
         weight: id === selectedId || isCompletionSelected ? Math.max(1.2, getFieldPointWeight(zoom) + 0.8) : getFieldPointWeight(zoom),
         color: id === selectedId ? '#dc2626' : (isCompletionSelected ? '#4c1d95' : '#0f172a'),
       });
-      marker.setRadius(id === selectedId || isCompletionSelected ? getFieldPointRadius(zoom) + 0.7 : getFieldPointRadius(zoom));
+      marker.setRadius(id === selectedId || isCompletionSelected ? getFieldPointRadius(zoom) + 2 : getFieldPointRadius(zoom));
     });
     const selected = points.find((p) => p.assignment_point_id === selectedId);
     const map = mapRef.current;
     if (selected && map) {
-      map.panTo([selected.latitude, selected.longitude]);
+      map.setView([selected.latitude, selected.longitude], Math.max(map.getZoom(), 22));
     }
   }, [selectedId, points]);
 
@@ -510,69 +522,133 @@ function PointsMap({
     if (!map) return;
 
     if (routeLayerRef.current) {
+      routeLayerRef.current.eachLayer(layer => layer.unbindTooltip?.());
       routeLayerRef.current.remove();
       routeLayerRef.current = null;
     }
 
     if (route && (route.polyline?.length >= 2 || route.target)) {
       const routeGroup = L.layerGroup().addTo(map);
-      // Main routed path — royal blue for high-contrast visibility against
-      // the satellite/orthophoto basemap. Solid line.
-      const line = L.polyline(route.polyline || [], {
-        color: '#4169e1',
-        weight: 4,
-        opacity: 0.95,
-        lineCap: 'round',
-        lineJoin: 'round',
-      }).addTo(routeGroup);
-      let bounds = line.getBounds();
+      const segments = navigationSegments(route, userLocation || route.origin, locationAccuracy);
+      const bounds = L.latLngBounds([]);
+      segments.forEach((segment) => {
+        const isGuidance = segment.kind === 'guidance';
+        const line = L.polyline(segment.polyline, {
+          color: isGuidance ? '#ea580c' : '#4169e1', weight: 4, opacity: 0.95,
+          dashArray: isGuidance ? '8 8' : null, lineCap: 'round', lineJoin: 'round',
+        }).bindTooltip(isGuidance ? 'Direct guidance — walking path not mapped' : 'Mapped road').addTo(routeGroup);
+        bounds.extend(line.getBounds());
+      });
 
-      if (route.entrance && route.route_source !== 'within_site') {
-        L.marker(route.entrance).bindTooltip('White-road entrance', { permanent: true })
-          .addTo(routeGroup);
+      if (route.entrance && segments.some(segment => segment.kind === 'road')) {
+        L.circleMarker(route.entrance, { radius: 6, color: '#475569', fillColor: '#fff', fillOpacity: 1 })
+          .bindTooltip('Site entrance').addTo(routeGroup);
         bounds.extend(route.entrance);
+      }
+      if (route.access_start && segments.some(segment => segment.kind === 'road')) {
+        L.circleMarker(route.access_start, { radius: 8, color: '#15803d', fillOpacity: 0.8 })
+          .bindTooltip('Access road starts here').addTo(routeGroup);
+        bounds.extend(route.access_start);
       }
       if (route.target) {
         L.circleMarker(route.target, { radius: 8, color: '#f97316', fillOpacity: 0.2 })
-          .bindTooltip('Selected planting point').addTo(routeGroup);
+          .bindTooltip(`Point #${route.pointNum}`, { permanent: true }).addTo(routeGroup);
         bounds.extend(route.target);
       }
+      if (userLocation || route.origin) bounds.extend(userLocation || route.origin);
 
       routeLayerRef.current = routeGroup;
-      if (bounds.isValid()) map.fitBounds(bounds, { padding: [60, 60], maxZoom: 20 });
+      if (bounds.isValid() && fittedRouteRef.current !== route) {
+        fittedRouteRef.current = route;
+        const bannerHeight = containerRef.current?.parentElement?.querySelector('.field-route-banner')?.offsetHeight || 0;
+        map.fitBounds(bounds, { paddingTopLeft: [60, 30],
+          paddingBottomRight: [30, Math.min(bannerHeight + 30, map.getSize().y * 0.55)], maxZoom: 23 });
+      }
     }
-  }, [route]);
+  }, [route, userLocation, locationAccuracy]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    if (userMarkerRef.current) {
-      userMarkerRef.current.remove();
+    if (!userLocation) {
+      userMarkerRef.current?.marker.unbindTooltip();
+      userMarkerRef.current?.group.remove();
       userMarkerRef.current = null;
+      return;
     }
-
-    if (userLocation) {
+    if (!userMarkerRef.current) {
+      const group = L.layerGroup().addTo(map);
+      const accuracyCircle = L.circle(userLocation, { radius: 0, color: '#2563eb',
+        weight: 1, fillOpacity: 0.08, interactive: false }).addTo(group);
       const marker = L.circleMarker(userLocation, {
         radius: 7,
         color: '#ffffff',
         weight: 2,
         fillColor: '#2563eb',
         fillOpacity: 1,
-      }).addTo(map);
-      userMarkerRef.current = marker;
+      }).addTo(group);
+      userMarkerRef.current = { group, marker, accuracyCircle, navigating: null };
     }
-  }, [userLocation]);
+    const current = userMarkerRef.current;
+    current.marker.setLatLng(userLocation);
+    current.accuracyCircle.setLatLng(userLocation).setRadius(Number.isFinite(locationAccuracy) ? locationAccuracy : 0);
+    if (current.navigating !== Boolean(route)) {
+      current.marker.unbindTooltip().bindTooltip('You are here', { permanent: Boolean(route), direction: 'top' });
+      current.navigating = Boolean(route);
+    }
+  }, [userLocation, locationAccuracy, route]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !focusRequest || lastFocusRef.current === focusRequest) return;
+    lastFocusRef.current = focusRequest;
+    if (focusRequest.kind === 'location' && userLocation) {
+      map.setView(userLocation, 20);
+    } else if (focusRequest.kind === 'points') {
+      const locations = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
+      if (locations.length) {
+        map.fitBounds(L.latLngBounds(locations.map((p) => [p.latitude, p.longitude])), { padding: [40, 40], maxZoom: 23 });
+      } else if (projectSites.length) {
+        const bounds = L.geoJSON(projectSites).getBounds();
+        if (bounds.isValid()) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 20 });
+      }
+    }
+    // A focus request is an explicit button action, not a live GPS-follow mode.
+  }, [focusRequest, userLocation, points, projectSites]);
 
   return <div ref={containerRef} className="field-map" />;
 }
 
-function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, actionError, routeBusy }) {
+function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, actionError, routeBusy, routeError }) {
   const [view, setView] = useState('actions');
+  const dialogRef = useRef(null);
 
   useEffect(() => {
-    if (open) setView('actions');
-  }, [open, point?.assignment_point_id]);
+    if (!open) return;
+    const previousFocus = document.activeElement;
+    dialogRef.current?.focus();
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') onClose();
+      if (event.key !== 'Tab') return;
+      const controls = dialogRef.current?.querySelectorAll('button:not([disabled])');
+      if (!controls?.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open, onClose]);
 
   const status = point?.assignment_status;
   const isPlanted = status === 'planted' || status === 'completed';
@@ -596,8 +672,11 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
         aria-hidden={!open}
       />
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         className={`field-overlay ${open ? 'field-overlay-open' : ''}`}
         role="dialog"
+        aria-modal={open}
         aria-hidden={!open}
         aria-label={point ? `Point ${point.point_num} actions` : 'Point actions'}
       >
@@ -622,36 +701,15 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
               </span>
             </div>
             <div className="field-overlay-actions">
-              <button
-                type="button"
-                className="field-btn field-btn-secondary"
-                onClick={() => setView('details')}
-              >
-                View Details
-              </button>
-              <button
-                type="button"
-                className="field-btn field-btn-secondary"
-                onClick={() => onNavigate(point)}
-                disabled={routeBusy || isUnavailable}
-              >
-                {routeBusy ? 'Routing…' : 'Show In-App Route'}
-              </button>
-              <button
-                type="button"
-                className="field-btn field-btn-primary"
-                onClick={() => onMark(point, 'completed')}
-                disabled={busy || isFinal || isUnavailable}
-              >
+              <button type="button" className="field-btn field-btn-primary" onClick={() => onMark(point, 'completed')} disabled={busy || isFinal || isUnavailable}>
                 {isPlanted ? 'Already Planted' : busy ? 'Saving…' : 'Mark as Planted'}
               </button>
-              <button
-                type="button"
-                className="field-btn field-btn-skip"
-                onClick={() => onMark(point, 'skipped')}
-                disabled={busy || isFinal || isUnavailable}
-              >
-                {isSkipped ? 'Skipped' : busy ? 'Saving...' : 'Skip Point'}
+              <button type="button" className="field-btn field-btn-secondary field-btn-route" onClick={() => onNavigate(point)} disabled={routeBusy || isUnavailable}>
+                {routeBusy ? 'Finding route…' : 'Navigate to this point'}
+              </button>
+              <button type="button" className="field-btn field-btn-outline" onClick={() => setView('details')}>View Details</button>
+              <button type="button" className="field-btn field-btn-skip" onClick={() => onMark(point, 'skipped')} disabled={busy || isFinal || isUnavailable}>
+                {isSkipped ? 'Skipped' : busy ? 'Saving…' : 'Skip Point'}
               </button>
             </div>
             {isUnavailable && (
@@ -665,6 +723,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
               </div>
             )}
             {actionError && <div className="field-error">{actionError}</div>}
+            {routeError && <div className="field-error" role="alert">{routeError}</div>}
           </div>
         )}
 
@@ -748,16 +807,22 @@ export default function FieldApp() {
 
   const [points, setPoints] = useState([]);
   const [projectSites, setProjectSites] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
   const [markBusy, setMarkBusy] = useState(false);
   const [markError, setMarkError] = useState('');
-  const [hintDismissed, setHintDismissed] = useState(false);
   const [route, setRoute] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
+  const [locationAccuracy, setLocationAccuracy] = useState(null);
+  const [locationBusy, setLocationBusy] = useState(false);
+  const [locationError, setLocationError] = useState('');
+  const [focusRequest, setFocusRequest] = useState(null);
+  const [pointListOpen, setPointListOpen] = useState(false);
+  const [pointFilter, setPointFilter] = useState('all');
   const [routeBusy, setRouteBusy] = useState(false);
   const [routeError, setRouteError] = useState('');
+  const [navigationLocationError, setNavigationLocationError] = useState('');
   const [welcomeOpen, setWelcomeOpen] = useState(false);
   // 'register' = first-time sign-up → greet with "Welcome".
   // 'login'    = returning planter   → greet with "Welcome back".
@@ -780,18 +845,14 @@ export default function FieldApp() {
 
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
-  const [fabMenuOpen, setFabMenuOpen] = useState(false);
   const avatarMenuRef = useRef(null);
-  const fabMenuRef = useRef(null);
+  const reloadSequence = useRef(0);
 
   useEffect(() => {
-    if (!avatarMenuOpen && !fabMenuOpen) return undefined;
+    if (!avatarMenuOpen) return undefined;
     const handlePointerDown = (event) => {
       if (avatarMenuOpen && avatarMenuRef.current && !avatarMenuRef.current.contains(event.target)) {
         setAvatarMenuOpen(false);
-      }
-      if (fabMenuOpen && fabMenuRef.current && !fabMenuRef.current.contains(event.target)) {
-        setFabMenuOpen(false);
       }
     };
     document.addEventListener('mousedown', handlePointerDown);
@@ -800,10 +861,9 @@ export default function FieldApp() {
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('touchstart', handlePointerDown);
     };
-  }, [avatarMenuOpen, fabMenuOpen]);
+  }, [avatarMenuOpen]);
 
   const handleSelect = useCallback((id) => {
-    setHintDismissed(true);
     if (markAllChooseMode) {
       const point = points.find((p) => p.assignment_point_id === id);
       if (!canMarkPointCompleted(point)) {
@@ -821,6 +881,8 @@ export default function FieldApp() {
       });
       return;
     }
+    setPointListOpen(false);
+    setRouteError('');
     setSelectedId(id);
   }, [markAllChooseMode, points]);
 
@@ -828,9 +890,6 @@ export default function FieldApp() {
     setSelectedId(null);
     setMarkError('');
   }, []);
-
-  const planterBaseLat = planter?.base_lat;
-  const planterBaseLon = planter?.base_lon;
 
   const handleStartNavigation = useCallback(async (point) => {
     setRouteError('');
@@ -845,37 +904,58 @@ export default function FieldApp() {
       return;
     }
     setRouteBusy(true);
+    setRoute(null);
     try {
-      let origin;
+      let location;
       try {
-        origin = await getCurrentLocation();
+        location = await getCurrentLocation({ maximumAge: 0 });
       } catch (locationError) {
-        const baseLat = Number(planterBaseLat);
-        const baseLon = Number(planterBaseLon);
-        const hasConfiguredBase = planterBaseLat !== null && planterBaseLat !== undefined
-          && planterBaseLat !== '' && planterBaseLon !== null
-          && planterBaseLon !== undefined && planterBaseLon !== '';
-        if (hasConfiguredBase && Number.isFinite(baseLat) && Number.isFinite(baseLon)) {
-          origin = [baseLat, baseLon];
-        } else {
-          throw new Error(
-            `${locationError.message || 'Could not get your location.'} Allow location access or ask the LGU to configure your base location.`,
-          );
-        }
+        throw new Error(`${locationError.message || 'Could not get your GPS position.'} Allow location access to navigate from where you are now.`);
       }
+      const origin = location.coordinates;
+      const accuracy = location.accuracy;
       setUserLocation(origin);
-      const data = await fetchRoute(origin, [latitude, longitude], 'walking');
-      setRoute(data);
+      setLocationAccuracy(accuracy);
+      const data = await fetchRoute(origin, [latitude, longitude], 'walking', accuracy);
+      setNavigationLocationError('');
+      setRoute({ ...data, origin, pointNum: point.point_num });
       setSelectedId(null);
     } catch (error) {
-      // Navigation remains inside MangroVision. Never hand planter location
-      // data to a third-party navigation page as an implicit fallback.
+      // Never silently replace denied/unavailable GPS with an organization
+      // base or the access road. Navigation starts at this participant's fix.
       setRoute(null);
-      setRouteError(error.message || 'Could not display the in-app route.');
+      setRouteError(error.message || 'Could not display navigation. Please retry.');
     } finally {
       setRouteBusy(false);
     }
-  }, [planterBaseLat, planterBaseLon]);
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !route || !navigator.geolocation) return undefined;
+    const watch = navigator.geolocation.watchPosition((position) => {
+      setUserLocation([position.coords.latitude, position.coords.longitude]);
+      setLocationAccuracy(position.coords.accuracy);
+      setNavigationLocationError('');
+    }, () => {
+      setNavigationLocationError('GPS updates paused. Enable location access to update your distance.');
+    }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
+    return () => navigator.geolocation.clearWatch(watch);
+  }, [route, isAuthenticated]);
+
+  const handleLocate = async () => {
+    setLocationBusy(true);
+    setLocationError('');
+    try {
+      const location = await getCurrentLocation({ maximumAge: 0 });
+      setUserLocation(location.coordinates);
+      setLocationAccuracy(location.accuracy);
+      setFocusRequest({ kind: 'location' });
+    } catch (error) {
+      setLocationError(error.message || 'Could not find your location. Enable location access and try again.');
+    } finally {
+      setLocationBusy(false);
+    }
+  };
 
   const handleClearRoute = useCallback(() => {
     setRoute(null);
@@ -888,21 +968,27 @@ export default function FieldApp() {
 
   const reload = useCallback(async () => {
     if (!isAuthenticated) return;
+    const sequence = ++reloadSequence.current;
     setLoading(true);
     setLoadError('');
     try {
       const workspace = await fetchFieldPoints();
+      if (sequence !== reloadSequence.current) return;
       setPoints(zigzagPoints(workspace.points).map((point, index) => ({ ...point, visit_order: index + 1 })));
       setProjectSites(workspace.projectSites);
     } catch (error) {
-      setLoadError(error.message || 'Could not load points');
+      if (sequence === reloadSequence.current) setLoadError(error.message || 'Could not load points');
     } finally {
-      setLoading(false);
+      if (sequence === reloadSequence.current) setLoading(false);
     }
   }, [isAuthenticated, fetchFieldPoints]);
 
   useEffect(() => {
-    reload();
+    const timer = window.setTimeout(() => { void reload(); }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      reloadSequence.current += 1;
+    };
   }, [reload]);
 
   useEffect(() => {
@@ -911,8 +997,11 @@ export default function FieldApp() {
       // "Welcome back". Default to 'login' if the flag is missing so an
       // unknown state still produces the safer "Welcome back" greeting.
       const kind = sessionStorage.getItem('mv_field_welcome_kind') || 'login';
-      setWelcomeKind(kind === 'register' ? 'register' : 'login');
-      setWelcomeOpen(true);
+      const timer = window.setTimeout(() => {
+        setWelcomeKind(kind === 'register' ? 'register' : 'login');
+        setWelcomeOpen(true);
+      }, 0);
+      return () => window.clearTimeout(timer);
     }
   }, [isAuthenticated, planter?.id]);
 
@@ -938,6 +1027,16 @@ export default function FieldApp() {
   const pending = points.filter((p) => !FINAL_ASSIGNMENT_STATUSES.has(p.assignment_status)).length;
   const plantedCount = points.filter((p) => COMPLETED_ASSIGNMENT_STATUSES.has(p.assignment_status)).length;
   const skippedCount = points.filter((p) => p.assignment_status === 'skipped').length;
+  const unavailableCount = points.filter((p) => getFieldPointStatus(p) === 'eroded_unavailable').length;
+  const nextPoint = points.find(canNavigateNextPoint);
+  const progress = assignedCount ? Math.round(plantedCount / assignedCount * 100) : 0;
+  const visibleListPoints = points.filter((point) => {
+    if (pointFilter === 'all') return true;
+    const status = getFieldPointStatus(point);
+    if (pointFilter === 'pending') return canNavigateNextPoint(point);
+    if (pointFilter === 'planted') return COMPLETED_ASSIGNMENT_STATUSES.has(status);
+    return status === pointFilter;
+  });
   const assignedZones = projectSites.map((feature) => ({
     id: feature.id ?? feature.properties?.id,
     name: feature.properties?.name || 'Organization zone',
@@ -1012,8 +1111,9 @@ export default function FieldApp() {
     }
     setRoute(null);
     setMarkAllChooseMode(true);
+    setPointListOpen(true);
+    setPointFilter('all');
     setSelectedMarkAllPointIds([]);
-    setHintDismissed(true);
   };
 
   const cancelMarkAll = () => {
@@ -1067,6 +1167,9 @@ export default function FieldApp() {
     setMarkAllError('');
   };
 
+  const guidance = route?.target ? pointGuidance(userLocation || route.origin, route.target) : null;
+  const pointMapsUrl = route?.target ? googleMapsDirectionsUrl(route.target, userLocation) : null;
+
   if (!isAuthenticated) {
     return <AuthScreen />;
   }
@@ -1112,6 +1215,9 @@ export default function FieldApp() {
                 className="field-avatar-menu-item field-avatar-menu-item-danger"
                 onClick={() => {
                   setAvatarMenuOpen(false);
+                  handleClearRoute();
+                  setUserLocation(null);
+                  setLocationAccuracy(null);
                   logout();
                 }}
               >
@@ -1132,12 +1238,13 @@ export default function FieldApp() {
         <ActivityFeed scope="field" />
       </div>}
 
-      {loadError && <div className="field-error field-error-inline">{loadError}</div>}
+      {loadError && <div className="field-error field-error-inline" role="alert">{loadError} <button type="button" onClick={reload} disabled={loading}>Retry</button></div>}
+      {locationError && <div className="field-error field-error-inline" role="alert">{locationError} <button type="button" onClick={() => setLocationError('')}>Dismiss</button></div>}
       {markAllError && !pendingMarkAllOpen && (
         <div className="field-error field-error-inline">{markAllError}</div>
       )}
 
-      <div className="field-map-wrap">
+      <div className={'field-map-wrap' + (route ? ' field-map-wrap-navigation' : '')}>
         <PointsMap
           points={points}
           projectSites={projectSites}
@@ -1145,36 +1252,49 @@ export default function FieldApp() {
           onSelect={handleSelect}
           route={route}
           userLocation={userLocation}
+          locationAccuracy={locationAccuracy}
+          focusRequest={focusRequest}
           completionSelectedIds={selectedMarkAllPointIds}
         />
 
-        {assignedZones.length > 0 && (
-          <div className="field-zone-summary" role="status">
-            <strong>{planter?.organization_name || 'Your organization'}</strong>
-            <span>Participant {planter?.participant_slot} · {points.length} assigned points</span>
-            <span>{assignedZones.map((zone) => zone.name).join(' · ')}</span>
-            <button type="button" className="field-btn field-btn-secondary"
-              disabled={!points.some(canNavigateNextPoint)}
-              onClick={() => {
-                const nextPoint = points.find(canNavigateNextPoint);
-                if (nextPoint) setSelectedId(nextPoint.assignment_point_id);
-              }}>
-              Next point
-            </button>
-          </div>
-        )}
+        <div className="field-map-tools" aria-label="Map controls">
+          <button type="button" onClick={() => setFocusRequest({ kind: 'points' })} disabled={loading || (!points.length && !projectSites.length)}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/><circle cx="12" cy="12" r="3"/></svg>
+            My points
+          </button>
+          <button type="button" onClick={handleLocate} disabled={locationBusy}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 1v4m0 14v4M1 12h4m14 0h4"/></svg>
+            {locationBusy ? 'Locating…' : 'My location'}
+          </button>
+          {userLocation && locationAccuracy != null && !route && <span className="field-gps-accuracy">GPS ±{Math.round(locationAccuracy)} m</span>}
+        </div>
+        {points.length > 0 && !route && <div className="field-map-legend" aria-label="Point colors">
+          <span><i style={{ background: getPlanterColor(planter?.organization_id) }} />To plant</span>
+          <span><i style={{ background: '#eab308' }} />Planted</span>
+          <span><i style={{ background: '#9ca3af' }} />Skipped</span>
+        </div>}
 
         {route && (
           <div className="field-route-banner" role="status">
             <div className="field-route-banner-info">
               <span className="field-route-banner-label">
-                {route.route_source === 'site_entrance' ? 'Walking route to entrance'
-                  : route.route_source === 'within_site' ? 'Within planting site' : 'Walking route'}
+                GPS to planting point
               </span>
               <span className="field-route-banner-stats">
-                {route.distance_label} · {route.duration_label}
+                Point #{route.pointNum}
               </span>
-              {route.navigation_note && <span className="field-route-banner-warning">{route.navigation_note}</span>}
+              {guidance && <span className="field-route-guidance">
+                {guidance.distanceLabel} to point · {guidance.distance < 1 ? 'At point coordinates' : `${guidance.direction} (${Math.round(guidance.bearing) % 360}°)`}
+              </span>}
+              {guidance && <span className="field-route-gps-note">
+                Live GPS{locationAccuracy != null ? ` ±${Math.round(locationAccuracy)} m` : ''}
+                {userLocation && locationAccuracy > guidance.distance ? ' · Use marked point' : ' · Straight-line distance'}
+              </span>}
+              {pointMapsUrl ? <a className="field-route-external-link" href={pointMapsUrl} target="_blank" rel="noopener noreferrer" title={route.navigation_note}>
+                <strong>Open Google Maps to point ↗</strong>
+                <span>Dashed = direct guidance; follow marked lanes.</span>
+              </a> : route.navigation_note && <span className="field-route-banner-warning">{route.navigation_note}</span>}
+              {navigationLocationError && <span className="field-route-banner-warning">{navigationLocationError}</span>}
             </div>
             <button
               type="button"
@@ -1186,7 +1306,7 @@ export default function FieldApp() {
           </div>
         )}
 
-        {routeError && (
+        {routeError && !selected && (
           <div className="field-route-error" role="alert">{routeError}</div>
         )}
 
@@ -1201,118 +1321,74 @@ export default function FieldApp() {
           </div>
         )}
 
-        {markAllChooseMode && (
-          <div className="field-hint-pill field-hint-pill-action" role="status">
-            {selectedMarkAllCount > 0
-              ? `${selectedMarkAllCount} selected - tap Review when done`
-              : 'Choose completed points'}
-          </div>
-        )}
-
-        {!markAllChooseMode && !hintDismissed && points.length > 0 && !route && (
-          <div className="field-hint-pill" role="status">
-            Tap a marker to see options
-          </div>
-        )}
-
       </div>
 
-      {!markAllChooseMode && points.length > 0 && (
-        <div className="field-fab-wrap" ref={fabMenuRef}>
-          {fabMenuOpen && (
-            <div className="field-fab-menu" role="menu">
-              <button
-                type="button"
-                role="menuitem"
-                className="field-fab-menu-item"
-                onClick={() => {
-                  setFabMenuOpen(false);
-                  handleStartMarkAll();
-                }}
-                disabled={loading || markAllBusy || markBusy}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-                Mark All as Completed
-              </button>
-            </div>
-          )}
-          <button
-            type="button"
-            className="field-fab"
-            onClick={() => setFabMenuOpen((value) => !value)}
-            disabled={loading || markAllBusy || markBusy}
-            aria-haspopup="menu"
-            aria-expanded={fabMenuOpen}
-            aria-label="Mark points"
-            title="Mark points"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <span className="field-fab-label">Mark Points</span>
+      <section className={'field-work-panel' + (pointListOpen ? ' field-work-panel-expanded' : '')} aria-label="Your planting work">
+        <div className="field-work-heading">
+          <div className="field-work-identity">
+            <span className="field-work-eyebrow">PARTICIPANT {planter?.participant_slot || '—'} · YOUR ASSIGNMENT</span>
+            <h1>{planter?.organization_name || planter?.full_name || 'Your organization'}</h1>
+            <span className="field-work-site">{assignedZones.map((zone) => zone.name).join(' · ') || 'Waiting for a project site'}</span>
+          </div>
+          <button type="button" className="field-refresh" onClick={reload} disabled={loading || markBusy || markAllBusy} aria-label="Refresh assignments" title="Refresh assignments">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 6M4 12l2 6a7 7 0 0 0 12-1"/></svg>
           </button>
         </div>
-      )}
-
-      {markAllChooseMode && (
-        <div className="field-fab-actions">
-          <button
-            type="button"
-            className="field-btn field-btn-mark-all"
-            onClick={reviewMarkAllSelection}
-            disabled={loading || markAllBusy || markBusy}
-          >
-            <svg className="field-btn-mark-all-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            <span>
-              {selectedMarkAllCount > 0
-                ? `Review ${selectedMarkAllCount} Point${selectedMarkAllCount === 1 ? '' : 's'}`
-                : 'Choose points'}
-            </span>
-          </button>
-          <button
-            type="button"
-            className="field-btn field-btn-ghost field-fab-cancel"
-            onClick={cancelMarkAllSelection}
-            disabled={markAllBusy}
-          >
-            Cancel
-          </button>
+        <div className="field-progress-copy" role="status">
+          <span>{loading ? 'Refreshing your points…' : plantedCount + ' of ' + assignedCount + ' planted'}</span>
+          <span>{pending - unavailableCount} to plant{skippedCount > 0 ? ' · ' + skippedCount + ' skipped' : ''}{unavailableCount > 0 ? ' · ' + unavailableCount + ' unavailable' : ''}</span>
         </div>
-      )}
-
-      <section className="field-bottom-bar" aria-label="Planting summary">
-        <div className="field-bottom-greeting">
-          <span className="field-bottom-greeting-hi">Hi,</span>
-          <span className="field-bottom-greeting-name">{planter?.full_name || 'planter'}</span>
+        <div className="field-progress-track" role="progressbar" aria-label="Planting progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress} aria-valuetext={plantedCount + ' of ' + assignedCount + ' points planted'}>
+          <span style={{ width: progress + '%' }} />
         </div>
-        <div className="field-bottom-stats" role="group" aria-label="Assignment summary">
-          <div className="field-bottom-stat field-bottom-stat-total">
-            <span className="field-bottom-stat-value">{assignedCount}</span>
-            <span className="field-bottom-stat-label">{assignedCount === 1 ? 'point' : 'points'} assigned</span>
-          </div>
-          <div className="field-bottom-stat field-bottom-stat-pending">
-            <span className="field-bottom-stat-dot" aria-hidden="true" />
-            <span className="field-bottom-stat-value">{pending}</span>
-            <span className="field-bottom-stat-label">pending</span>
-          </div>
-          <div className="field-bottom-stat field-bottom-stat-planted">
-            <span className="field-bottom-stat-dot" aria-hidden="true" />
-            <span className="field-bottom-stat-value">{plantedCount}</span>
-            <span className="field-bottom-stat-label">planted</span>
-          </div>
-          <div className="field-bottom-stat field-bottom-stat-skipped">
-            <span className="field-bottom-stat-dot" aria-hidden="true" />
-            <span className="field-bottom-stat-value">{skippedCount}</span>
-            <span className="field-bottom-stat-label">skipped</span>
-          </div>
+        <div className="field-work-actions">
+          {markAllChooseMode ? <>
+            <button type="button" className="field-btn field-btn-primary" onClick={reviewMarkAllSelection} disabled={loading || markAllBusy || !selectedMarkAllCount}>Review {selectedMarkAllCount || ''} {selectedMarkAllCount === 1 ? 'point' : 'points'}</button>
+            <button type="button" className="field-btn field-btn-outline" onClick={cancelMarkAllSelection} disabled={markAllBusy}>Cancel selection</button>
+          </> : <>
+            <button type="button" className="field-btn field-btn-primary" disabled={!nextPoint || loading || markBusy || markAllBusy} onClick={() => { if (nextPoint) handleSelect(nextPoint.assignment_point_id); }}>
+              {nextPoint ? 'Next point · #' + nextPoint.point_num : assignedCount ? 'No pending points' : 'Waiting for points'}
+            </button>
+            <button type="button" className="field-btn field-btn-outline" onClick={handleStartMarkAll} disabled={loading || markBusy || markAllBusy || !markAllCandidateCount}>Choose points to mark</button>
+          </>}
         </div>
+        <button type="button" className="field-list-toggle" onClick={() => setPointListOpen((value) => !value)} aria-expanded={pointListOpen} aria-controls="field-point-list">
+          <span>{markAllChooseMode ? selectedMarkAllCount + ' selected · ' + markAllCandidateCount + ' available' : 'My points (' + assignedCount + ')'}</span>
+          <span>{pointListOpen ? 'Hide list' : 'Show list'} <span aria-hidden="true">{pointListOpen ? '⌄' : '⌃'}</span></span>
+        </button>
+        {pointListOpen && <div id="field-point-list" className="field-point-list-panel">
+          {markAllChooseMode ? <div className="field-selection-help">
+            <span>Choose only the locations you have planted.</span>
+            <button type="button" onClick={() => setSelectedMarkAllPointIds(selectedMarkAllCount === markAllCandidateCount ? [] : markAllCandidatePoints.map((point) => point.assignment_point_id))} disabled={markAllBusy}>
+              {selectedMarkAllCount === markAllCandidateCount ? 'Clear selection' : 'Select available'}
+            </button>
+          </div> : <div className="field-list-filters" aria-label="Filter your points">
+            {[
+              ['all', 'All', assignedCount], ['pending', 'To plant', pending - unavailableCount],
+              ['planted', 'Planted', plantedCount], ['skipped', 'Skipped', skippedCount],
+              ...(unavailableCount ? [['eroded_unavailable', 'Unavailable', unavailableCount]] : []),
+            ].map(([filter, label, count]) => <button type="button" key={filter} aria-pressed={pointFilter === filter} onClick={() => setPointFilter(filter)}>{label} <span>{count}</span></button>)}
+          </div>}
+          <div className="field-point-list" aria-label={markAllChooseMode ? 'Select planted points' : 'Assigned planting points'}>
+            {(markAllChooseMode ? points : visibleListPoints).map((point) => {
+              const status = getFieldPointStatus(point);
+              const checked = selectedMarkAllPointSet.has(Number(point.assignment_point_id));
+              const color = ['pending', 'planned', 'assigned'].includes(status) ? getPlanterColor(planter?.organization_id) : STATUS_COLOR[status];
+              return <button type="button" key={point.assignment_point_id} className={'field-point-row' + (checked && markAllChooseMode ? ' field-point-row-selected' : '')}
+                onClick={() => handleSelect(point.assignment_point_id)} disabled={markAllChooseMode && (!canMarkPointCompleted(point) || markAllBusy)} aria-pressed={markAllChooseMode ? checked : undefined}>
+                <span className="field-point-order" style={{ '--point-color': color }}>{markAllChooseMode ? checked ? '✓' : '○' : point.visit_order || point.sequence_num}</span>
+                <span className="field-point-row-info"><strong>Point #{point.point_num}</strong><span>{point.species || 'Planting location'}{point.survival_warning ? ' · Planner warning' : ''}</span></span>
+                <span className="field-point-row-status">{COMPLETED_ASSIGNMENT_STATUSES.has(status) ? 'Planted' : STATUS_LABEL[status] || status}</span>
+                {!markAllChooseMode && <span aria-hidden="true">›</span>}
+              </button>;
+            })}
+            {!markAllChooseMode && !visibleListPoints.length && <p className="field-list-empty">No points in this filter.</p>}
+          </div>
+        </div>}
       </section>
 
-      <PointActionSheet
+      {selected && <PointActionSheet
+        key={selectedId}
         point={selected}
         open={Boolean(selected)}
         onClose={handleCloseSheet}
@@ -1321,7 +1397,8 @@ export default function FieldApp() {
         busy={markBusy}
         actionError={markError}
         routeBusy={routeBusy}
-      />
+        routeError={routeError}
+      />}
 
       <Modal
         open={welcomeOpen}
@@ -1409,7 +1486,7 @@ export default function FieldApp() {
 
       <Modal
         open={Boolean(completedMarkAllResult)}
-        title="All assigned points completed"
+        title="Selected points recorded"
         variant="success"
         confirmLabel="Continue"
         cancelLabel=""

@@ -1,0 +1,38 @@
+{
+  "copy": {
+    "login": {
+      "label": "sign-in",
+      "eyebrow": "SECURE SIGN-IN",
+      "title": "Your sign-in code",
+      "intro": "You're one step away from your MangroVision workspace. Use the code below to finish signing in."
+    },
+    "recovery": {
+      "label": "account recovery",
+      "eyebrow": "ACCOUNT RECOVERY",
+      "title": "Let's get you back in",
+      "intro": "Use the code below to verify your account and reset your MangroVision password."
+    },
+    "settings": {
+      "label": "password change",
+      "eyebrow": "PASSWORD CHANGE",
+      "title": "Confirm your password change",
+      "intro": "Use the code below to confirm the password change you requested in MangroVision."
+    }
+  },
+  "text": "Your MangroVision {{label}} code is: {{code}}\n\nIt expires in 10 minutes and can be used once.\nReturn to the MangroVision window where you requested this code and enter it to continue.\n\nIf you did not request this code, ignore this email. Never share your verification code.",
+  "html": [
+    "<!doctype html>",
+    "<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>{{title}} | MangroVision</title>",
+    "<style>body{margin:0;padding:0}table{border-spacing:0} @media screen and (min-width:600px){.outer{padding:40px 20px!important}.inset{padding-left:40px!important;padding-right:40px!important}.heading{font-size:30px!important;line-height:38px!important}.code{font-size:42px!important;line-height:52px!important;letter-spacing:7px!important}}</style></head>",
+    "<body style=\"margin:0;padding:0;background-color:#f0f4f1;color:#19382b;font-family:Arial,Helvetica,sans-serif;-webkit-text-size-adjust:100%\">",
+    "<div style=\"display:none;font-size:1px;line-height:1px;color:#f0f4f1;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all\">Your MangroVision {{label}} code. Valid for 10 minutes.</div>",
+    "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;background-color:#f0f4f1\"><tr><td class=\"outer\" align=\"center\" style=\"padding:20px 12px\">",
+    "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;max-width:560px;background-color:#ffffff;border:1px solid #dce6de;border-radius:20px\">",
+    "<tr><td class=\"inset\" bgcolor=\"#123c2c\" style=\"padding:30px 24px;background-color:#123c2c;border-radius:19px 19px 0 0\"><p style=\"margin:0;font-size:28px;line-height:34px;font-weight:700;color:#ffffff;letter-spacing:-0.6px\">Mangro<span style=\"color:#8ed5ba\">Vision</span></p><p style=\"margin:8px 0 0;font-size:11px;line-height:17px;letter-spacing:2px;color:#d0e6da\">LGU ADMIN WORKSPACE</p></td></tr>",
+    "<tr><td class=\"inset\" style=\"padding:32px 24px 26px\"><p style=\"margin:0 0 12px;font-size:11px;line-height:16px;font-weight:700;letter-spacing:1.8px;color:#277451\">{{eyebrow}}</p><h1 class=\"heading\" style=\"margin:0 0 14px;font-size:26px;line-height:34px;font-weight:700;letter-spacing:-0.7px;color:#123c2c\">{{title}}</h1><p style=\"margin:0;font-size:15px;line-height:24px;color:#586a61\">{{intro}}</p></td></tr>",
+    "<tr><td class=\"inset\" style=\"padding:0 24px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;background-color:#edf6ef;border:1px solid #cfe3d5;border-radius:14px\"><tr><td align=\"center\" style=\"padding:25px 12px 24px\"><p style=\"margin:0 0 12px;font-size:10px;line-height:16px;font-weight:700;letter-spacing:1.8px;color:#39634c\">YOUR VERIFICATION CODE</p><p class=\"code\" dir=\"ltr\" style=\"margin:0;font-family:'Courier New',Courier,monospace;font-size:36px;line-height:48px;font-weight:700;letter-spacing:5px;color:#123c2c;white-space:nowrap\">{{code}}</p><p style=\"margin:12px 0 0;font-size:12px;line-height:19px;color:#486551\">Expires in <strong>10 minutes</strong> &middot; Single use</p></td></tr></table></td></tr>",
+    "<tr><td class=\"inset\" style=\"padding:24px 24px 28px\"><p style=\"margin:0;font-size:14px;line-height:23px;color:#586a61\">Return to the MangroVision window where you requested this code and enter it to continue.</p></td></tr>",
+    "<tr><td class=\"inset\" style=\"padding:0 24px 34px\"><table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;border-top:1px solid #e7ece8\"><tr><td style=\"padding-top:22px\"><p style=\"margin:0 0 5px;font-size:13px;line-height:20px;font-weight:700;color:#304d3e\">Didn't request this?</p><p style=\"margin:0;font-size:12px;line-height:20px;color:#66756c\">You can safely ignore this email. Never share your verification code with anyone.</p></td></tr></table></td></tr>",
+    "</table><p style=\"margin:22px 0 0;font-size:11px;line-height:18px;color:#677b6d\">MangroVision &middot; Account security</p></td></tr></table></body></html>"
+  ]
+}

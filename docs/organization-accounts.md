@@ -12,8 +12,19 @@ batches balance the existing active/completed allocations without moving them.
 
 Staff select the organization and enter a point count in Planters. Available
 points are selected automatically; individual map clicks do not assign points.
-Its first mapped project site
-is selected and located automatically; organizations with multiple sites can
+
+Quick Assign includes organizations that have not registered a field account.
+Their points are reserved under an organization record with no login credentials.
+When that organization registers, the same record receives its credentials and
+the reserved points are divided using the participant count supplied at signup.
+No participant device can claim a slot before registration. Existing registered
+accounts keep their original allocations.
+
+An image's project-site link does not make all of its points belong to that
+site. Quick Assign counts and validates individual locations inside the saved
+Zone Editor boundary, including points on the boundary.
+The organization's first mapped project site is selected and located
+automatically; organizations with multiple sites can
 switch between their own sites. The map, field app, and activity report use the
 same organization color. The activity report and monitoring retain organization
 totals. There is no individual assignment action or roster.

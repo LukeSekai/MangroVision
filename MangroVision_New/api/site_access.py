@@ -25,13 +25,35 @@ def inside_area(point, polygon):
     return inside
 
 
+def segment_projection(point, a, b):
+    """Closest position on a short geographic segment, in [lat, lon]."""
+    scale = math.cos(math.radians(point[0]))
+    dx, dy = b[0]-a[0], (b[1]-a[1])*scale
+    length_sq = dx*dx + dy*dy
+    t = max(0, min(1, ((point[0]-a[0])*dx + (point[1]-a[1])*scale*dy)/length_sq)) if length_sq else 0
+    return [a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1])]
+
+
+def inside_or_near_area(point, polygon, tolerance_m=3):
+    """Include the traced boundary and a small, explicit measurement tolerance.
+
+    Planting coordinates and the manually traced physical-site outline do not
+    coincide exactly. This classifies nearby positions without drawing a path
+    or snapping their actual coordinates across the boundary.
+    """
+    if inside_area(point, polygon):
+        return True
+    return any(distance_m(point, segment_projection(point, a, b)) <= tolerance_m
+               for a, b in zip(polygon, [*polygon[1:], polygon[0]]))
+
+
 @lru_cache(maxsize=1)
 def access_routes():
     return json.loads((Path(__file__).parent / 'data/site_access_routes.json').read_text(encoding='utf-8'))
 
 
 def access_for_destination(destination):
-    return next((site for site in access_routes() if inside_area(destination, site['site_area'])), None)
+    return next((site for site in access_routes() if inside_or_near_area(destination, site['site_area'])), None)
 
 
 def remaining_access_path(origin, path, tolerance_m=12):
@@ -40,13 +62,9 @@ def remaining_access_path(origin, path, tolerance_m=12):
     The small tolerance accommodates phone GPS and tracing error; it must not
     snap a position across a pond to skip the public-road route.
     """
-    scale = math.cos(math.radians(origin[0]))
     best = None
     for index, (a, b) in enumerate(zip(path, path[1:])):
-        dx, dy = b[0]-a[0], (b[1]-a[1])*scale
-        length_sq = dx*dx + dy*dy
-        t = max(0, min(1, ((origin[0]-a[0])*dx + (origin[1]-a[1])*scale*dy)/length_sq)) if length_sq else 0
-        projection = [a[0]+t*(b[0]-a[0]), a[1]+t*(b[1]-a[1])]
+        projection = segment_projection(origin, a, b)
         gap = distance_m(origin, projection)
         if best is None or gap < best[0]:
             best = (gap, index, projection)

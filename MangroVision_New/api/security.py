@@ -17,6 +17,7 @@ STAFF_COOKIE = "mv_staff_session"
 PLANTER_COOKIE = "mv_planter_session"
 CSRF_COOKIE = "mv_csrf"
 CSRF_HEADER = "x-csrf-token"
+STAFF_CHALLENGE_COOKIES = {purpose: f"mv_staff_{purpose}_check" for purpose in ('login', 'recovery', 'settings')}
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _CSRF_EXEMPT_PATHS = {
     "/api/auth/login",
@@ -95,6 +96,17 @@ def clear_staff_session(response: Response) -> None:
     response.delete_cookie(STAFF_COOKIE, path="/", domain=settings.cookie_domain)
 
 
+def set_staff_challenge(response: Response, purpose: str, token: str) -> None:
+    options = _cookie_options(10 * 60)
+    options['path'] = '/api/auth'
+    response.set_cookie(STAFF_CHALLENGE_COOKIES[purpose], token, **options)
+    set_csrf_cookie(response)
+
+
+def clear_staff_challenge(response: Response, purpose: str) -> None:
+    response.delete_cookie(STAFF_CHALLENGE_COOKIES[purpose], path='/api/auth', domain=get_settings().cookie_domain)
+
+
 def clear_planter_session(response: Response) -> None:
     settings = get_settings()
     response.delete_cookie(PLANTER_COOKIE, path="/", domain=settings.cookie_domain)
@@ -112,6 +124,7 @@ class SessionSecurityMiddleware(BaseHTTPMiddleware):
 
             has_session = bool(
                 request.cookies.get(STAFF_COOKIE) or request.cookies.get(PLANTER_COOKIE)
+                or any(request.cookies.get(name) for name in STAFF_CHALLENGE_COOKIES.values())
             )
             if (
                 request.method.upper() not in _SAFE_METHODS

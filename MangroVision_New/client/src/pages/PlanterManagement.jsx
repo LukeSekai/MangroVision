@@ -37,6 +37,7 @@ function normalizeAssignmentSpecies(species) {
 
 export default function PlanterManagement() {
   const points = useMapStore((s) => s.points);
+  const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const fetchZones = useMapStore((s) => s.fetchZones);
   const projectSites = useMapStore((s) => s.projectSites);
@@ -48,6 +49,7 @@ export default function PlanterManagement() {
   const adminToken = useAuthStore((s) => s.token);
 
   const [planters, setPlanters] = useState([]);
+  const [organizations, setOrganizations] = useState([]);
   const [assignments, setAssignments] = useState([]);
   const [dashStats, setDashStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -56,12 +58,14 @@ export default function PlanterManagement() {
 
   // One unified assign form: one clicked point and many clicked points share
   // the same selected-id list and batch endpoint.
-  const [assignPlanterId, setAssignPlanterId] = useState(null);
+  const [assignOrganizationId, setAssignOrganizationId] = useState(null);
   const [assignmentCount, setAssignmentCount] = useState(null);
   const [assignProjectSiteChoice, setAssignProjectSiteId] = useState(null);
   const [assignBusy, setAssignBusy] = useState(false);
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
+  const [noAvailableSite, setNoAvailableSite] = useState(null);
+  const activeAssignmentsHeaderRef = useRef(null);
 
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -127,15 +131,17 @@ export default function PlanterManagement() {
     const sequence = ++loadSequence.current;
     setLoading(true);
     try {
-      const [pRes, dRes, aRes] = await Promise.all([
+      const [pRes, dRes, aRes, oRes] = await Promise.all([
         fetch(`${API}/api/planters/?include_inactive=true`),
         fetch(`${API}/api/planters/dashboard`),
         fetch(`${API}/api/assignments/?active_only=true`),
+        fetch(`${API}/api/planter-auth/organizations`),
       ]);
-      if (![pRes, dRes, aRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
-      const [nextPlanters, nextStats, nextAssignments] = await Promise.all([pRes.json(), dRes.json(), aRes.json()]);
+      if (![pRes, dRes, aRes, oRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
+      const [nextPlanters, nextStats, nextAssignments, nextOrganizations] = await Promise.all([pRes.json(), dRes.json(), aRes.json(), oRes.json()]);
       if (sequence !== loadSequence.current) return;
       setPlanters(nextPlanters);
+      setOrganizations(nextOrganizations.organizations);
       setDashStats(nextStats);
       setAssignments(nextAssignments);
       const openIds = Object.keys(assignmentPointsRef.current).filter((id) => assignmentPointsRef.current[id]);
@@ -180,8 +186,17 @@ export default function PlanterManagement() {
   }, [clearAssignmentSelection, setAssignmentScope]);
 
   const activePlanters = planters.filter((p) => p.status === 'active');
-  const selectedAssignmentPlanter = activePlanters.find(
-    (planter) => Number(planter.id) === Number(assignPlanterId),
+  const assignmentOrganizations = organizations.map((organization) => {
+    const account = planters.find((planter) => Number(planter.organization_id) === Number(organization.id));
+    return {
+      ...account,
+      organization_id: organization.id,
+      organization_name: organization.name,
+      registration_pending: !account || account.registration_pending,
+    };
+  }).filter((organization) => !organization.status || organization.status === 'active');
+  const selectedAssignmentPlanter = assignmentOrganizations.find(
+    (organization) => Number(organization.organization_id) === Number(assignOrganizationId),
   );
   const organizationProjectSites = (projectSites?.features || []).filter((feature) => {
     const ownerId = feature?.properties?.organization_id;
@@ -203,7 +218,7 @@ export default function PlanterManagement() {
   const availablePoints = useMemo(() => availableOrganizationPoints(points, scopeOrganizationId, scopeProjectSiteId),
     [points, scopeOrganizationId, scopeProjectSiteId]);
   const requestedCount = assignmentCount ?? availablePoints.length;
-  const validCount = Number.isInteger(requestedCount) && requestedCount > 0 && requestedCount <= availablePoints.length;
+  const validCount = !loadingPoints && Number.isInteger(requestedCount) && requestedCount > 0 && requestedCount <= availablePoints.length;
   const pointIdsToAssign = useMemo(() => validCount ? availablePoints.slice(0, requestedCount).map((point) => point.id) : [],
     [availablePoints, requestedCount, validCount]);
   useEffect(() => { setAssignmentSelection(pointIdsToAssign); }, [pointIdsToAssign, setAssignmentSelection]);
@@ -218,6 +233,28 @@ export default function PlanterManagement() {
     ? ASSIGNMENT_SPECIES_LABELS[selectedSpeciesKeys[0]]
     : '';
 
+  const warnIfNoAvailablePoints = (planter, site) => {
+    const siteId = site?.id ?? site?.properties?.id;
+    setAssignError('');
+    setAssignSuccess('');
+    setNoAvailableSite(
+      planter && siteId != null && !loadingPoints
+        && availableOrganizationPoints(points, planter.organization_id, siteId).length === 0
+        ? { organizationName: planter.organization_name, siteName: site.properties?.name || 'this project site' }
+        : null,
+    );
+  };
+
+  const showActiveAssignments = () => {
+    setNoAvailableSite(null);
+    window.requestAnimationFrame(() => {
+      const header = activeAssignmentsHeaderRef.current;
+      if (header?.getAttribute('aria-expanded') === 'false') header.click();
+      header?.focus();
+      header?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
+
   const handleAssign = async () => {
     setAssignError('');
     setAssignSuccess('');
@@ -225,7 +262,7 @@ export default function PlanterManagement() {
       setAssignError('Planting point assignment is locked while image processing is running.');
       return;
     }
-    if (!assignPlanterId) {
+    if (!assignOrganizationId) {
       setAssignError('Pick an organization.');
       return;
     }
@@ -239,7 +276,7 @@ export default function PlanterManagement() {
     }
     setAssignBusy(true);
     try {
-      const res = await fetch(`${API}/api/planters/${assignPlanterId}/assignments`, {
+      const res = await fetch(`${API}/api/planters/organizations/${assignOrganizationId}/assignments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -252,7 +289,7 @@ export default function PlanterManagement() {
       if (!res.ok) {
         throw new Error(payload.detail || 'Assignment failed.');
       }
-      const planter = activePlanters.find((p) => p.id === assignPlanterId);
+      const planter = selectedAssignmentPlanter;
       setAssignSuccess(
         `Assigned ${pointIdsToAssign.length} point${pointIdsToAssign.length === 1 ? '' : 's'} to ${planter?.organization_name || 'organization'}.`,
       );
@@ -541,25 +578,26 @@ export default function PlanterManagement() {
             <label className="form-label">Assign to organization</label>
             <select
               className="form-select"
-              value={assignPlanterId || ''}
+              value={assignOrganizationId || ''}
               onChange={(e) => {
                 const nextPlanterId = Number(e.target.value) || null;
-                const nextPlanter = activePlanters.find((planter) => Number(planter.id) === nextPlanterId);
-                setAssignPlanterId(nextPlanterId);
+                const nextPlanter = assignmentOrganizations.find((organization) => Number(organization.organization_id) === nextPlanterId);
+                setAssignOrganizationId(nextPlanterId);
                 setAssignmentCount(null);
                 const site = (projectSites?.features || []).find((feature) => Number(feature.properties?.organization_id) === Number(nextPlanter?.organization_id));
                 const siteId = site?.id ?? site?.properties?.id ?? null;
                 setAssignProjectSiteId(siteId);
+                warnIfNoAvailablePoints(nextPlanter, site);
                 setResetSlot(1);
                 setDeviceMessage('');
                 clearAssignmentSelection();
                 setAssignmentScope(nextPlanter?.organization_id ?? null, siteId);
               }}
-              disabled={assignmentLocked || assignBusy || loading}
+              disabled={assignmentLocked || assignBusy || loading || loadingPoints || !projectSites}
             >
               <option value="">Select an organization...</option>
-              {activePlanters.map((p) => (
-                <option key={p.id} value={p.id}>
+              {assignmentOrganizations.map((p) => (
+                <option key={p.organization_id} value={p.organization_id}>
                   {p.organization_name}
                 </option>
               ))}
@@ -567,7 +605,9 @@ export default function PlanterManagement() {
             {selectedAssignmentPlanter?.organization_name && (
               <span className="text-sm" style={{ color: 'var(--color-primary)', lineHeight: 1.4 }}>
                 <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
-                {selectedAssignmentPlanter.participant_count} participants · Shared organization account
+                {selectedAssignmentPlanter.registration_pending
+                  ? 'Account not registered yet · Points can be reserved now'
+                  : `${selectedAssignmentPlanter.participant_count} participants · Shared organization account`}
               </span>
             )}
           </div>
@@ -581,13 +621,14 @@ export default function PlanterManagement() {
                 const nextSiteId = Number(e.target.value) || null;
                 setAssignProjectSiteId(nextSiteId);
                 setAssignmentCount(null);
+                warnIfNoAvailablePoints(selectedAssignmentPlanter, organizationProjectSites.find((site) => Number(site.id ?? site.properties?.id) === nextSiteId));
                 clearAssignmentSelection();
                 setAssignmentScope(selectedAssignmentPlanter?.organization_id ?? null, nextSiteId);
               }}
-              disabled={assignmentLocked || assignBusy || !assignPlanterId || organizationProjectSites.length === 0}
+              disabled={assignmentLocked || assignBusy || loadingPoints || !assignOrganizationId || organizationProjectSites.length === 0}
             >
               <option value="">
-                {!assignPlanterId
+                {!assignOrganizationId
                   ? 'Select an organization first'
                   : organizationProjectSites.length
                     ? 'Select a project site'
@@ -606,15 +647,22 @@ export default function PlanterManagement() {
 
           <div className="form-group" style={{ marginTop: 10 }}>
             <label className="form-label" htmlFor="organization-point-count">Number of points to assign</label>
-            <input id="organization-point-count" className="form-input" type="number" min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked} />
-            <span className="text-sm">{availablePoints.length} available points in this project site.</span>
-            {!validCount && requestedCount > 0 && <span className="assign-error">Choose a whole number up to {availablePoints.length}.</span>}
+            <input id="organization-point-count" className="form-input" type="number" min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked || loadingPoints || availablePoints.length === 0} />
+            <span className="text-sm">
+              {loadingPoints ? 'Checking available points…' : `${availablePoints.length} available points in this project site.`}
+            </span>
+            {assignProjectSiteId && !loadingPoints && availablePoints.length === 0 && (
+              <span className="text-sm" role="status">No points are available to assign. Check Active Assignments to review existing allocations.</span>
+            )}
+            {!loadingPoints && availablePoints.length > 0 && !validCount && requestedCount > 0 && <span className="assign-error">Choose a whole number up to {availablePoints.length}.</span>}
           </div>
 
           {selectedAssignmentPlanter && (
             <div className="assign-point-info" role="status">
-              <strong>{pointIdsToAssign.length} points / {selectedAssignmentPlanter.participant_count} participants</strong>
-              <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>
+              <strong>{pointIdsToAssign.length} points{!selectedAssignmentPlanter.registration_pending && ` / ${selectedAssignmentPlanter.participant_count} participants`}</strong>
+              {selectedAssignmentPlanter.registration_pending ? (
+                <span className="text-sm">These points will appear when this organization registers. Its participant count at signup determines each participant’s share.</span>
+              ) : <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>}
               <span className="text-sm">All planted points count toward {selectedAssignmentPlanter.organization_name}.</span>
             </div>
           )}
@@ -626,7 +674,7 @@ export default function PlanterManagement() {
             disabled={
               assignmentLocked
               || assignBusy
-              || !assignPlanterId
+              || !assignOrganizationId
               || !assignProjectSiteId
               || pointIdsToAssign.length === 0
             }
@@ -642,7 +690,7 @@ export default function PlanterManagement() {
         </div>
       </PanelCard>
 
-      {selectedAssignmentPlanter && (
+      {selectedAssignmentPlanter && !selectedAssignmentPlanter.registration_pending && (
         <PanelCard title="Participant device recovery" defaultOpen={false}>
           <p className="text-sm">If a participant changes phones, reset their slot, then sign in on the replacement phone. Their assigned points stay the same.</p>
           <label className="form-label" htmlFor="participant-reset-slot">Participant number</label>
@@ -650,7 +698,7 @@ export default function PlanterManagement() {
           <button className="btn btn-secondary btn-sm" disabled={assignBusy || resetSlot < 1 || resetSlot > selectedAssignmentPlanter.participant_count || !Number.isInteger(resetSlot)} onClick={async () => {
             setAssignBusy(true);
             try {
-              const response = await fetch(`${API}/api/planters/${assignPlanterId}/participants/${resetSlot}/reset-device`, { method: 'POST' });
+              const response = await fetch(`${API}/api/planters/${selectedAssignmentPlanter.id}/participants/${resetSlot}/reset-device`, { method: 'POST' });
               const result = await response.json();
               if (!response.ok) throw new Error(result.detail || 'Could not reset device.');
               setDeviceMessage(`Participant ${resetSlot} can now sign in on a replacement device.`);
@@ -663,6 +711,7 @@ export default function PlanterManagement() {
 
       <PanelCard
         title="Active Assignments"
+        headerRef={activeAssignmentsHeaderRef}
         badge={assignments.length}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -771,6 +820,21 @@ export default function PlanterManagement() {
           )}
         </div>
       </PanelCard>
+
+      <Modal
+        open={Boolean(noAvailableSite)}
+        title="No available points"
+        variant="warning"
+        confirmLabel="View Active Assignments"
+        cancelLabel="Close"
+        onConfirm={showActiveAssignments}
+        onCancel={() => setNoAvailableSite(null)}
+      >
+        <p>
+          No points are available to assign in <strong>{noAvailableSite?.siteName}</strong> for <strong>{noAvailableSite?.organizationName}</strong>.
+        </p>
+        <p>Check Active Assignments to review points that have already been allocated, or choose another project site with available points.</p>
+      </Modal>
 
       <PlanterActivityReport
         open={reportOpen}

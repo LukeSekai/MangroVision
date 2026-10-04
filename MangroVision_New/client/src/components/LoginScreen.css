@@ -5,20 +5,27 @@
 
 .login-screen {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  height: 100vh;
+  height: 100dvh;
   width: 100vw;
-  background:
-    radial-gradient(ellipse at 20% 50%, rgba(22, 163, 74, 0.06) 0%, transparent 50%),
-    linear-gradient(160deg, #0c1a12 0%, #132a1b 35%, #1a3826 60%, #0f1f16 100%);
+  background-color: #050505;
+  background-image:
+    linear-gradient(180deg, rgba(5, 5, 5, 0.95), rgba(32, 32, 32, 0.95)),
+    url('/login-background.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
   padding: 24px;
+  overflow-y: auto;
 }
 
 /* Card container — holds both sides */
 
 .login-card {
   display: flex;
+  flex-shrink: 0;
+  margin: auto;
   width: 100%;
   max-width: 920px;
   min-height: 520px;
@@ -80,8 +87,9 @@
 }
 
 .login-hero-title {
+  font-family: var(--font-sans);
   font-size: 2rem;
-  font-weight: 800;
+  font-weight: 700;
   color: #ffffff;
   line-height: 1.15;
   margin-bottom: 8px;
@@ -132,8 +140,9 @@
 }
 
 .login-title {
+  font-family: var(--font-sans);
   font-size: 1.5rem;
-  font-weight: 800;
+  font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 6px;
   letter-spacing: -0.02em;
@@ -235,7 +244,18 @@
   }
 
   .login-hero {
-    height: 200px;
+    height: 140px;
     flex: none;
   }
+
+  .login-screen { padding: 16px; }
+  .login-form-side { padding: 24px; }
+  .login-form .form-input { font-size: 16px; }
 }
+
+.auth-text-button { background: none; border: 0; color: var(--green-700); font: inherit; font-size: .85rem; cursor: pointer; padding: 8px 0; }
+.auth-text-button:disabled { color: var(--text-muted); cursor: default; }
+.email-code-input { letter-spacing: .3em; font-size: 1.4rem !important; font-variant-numeric: tabular-nums; }
+.email-code-help { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: .8rem; align-items: flex-start; }
+.credential-hint { color: var(--text-secondary); font-size: .85rem; line-height: 1.5; }
+.auth-notice { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 12px; border-radius: 8px; font-size: .85rem; line-height: 1.5; }

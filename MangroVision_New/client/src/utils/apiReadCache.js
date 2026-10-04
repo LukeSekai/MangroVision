@@ -48,7 +48,10 @@ export function createApiReadCache({ fetcher, origin, ttl = 30_000, now = Date.n
     const url = new URL(input instanceof Request ? input.url : input, origin);
     const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const api = url.origin === origin && url.pathname.startsWith('/api/');
-    const mutation = api && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
+    // PDF rendering accepts a snapshot by POST but does not change records.
+    // Announcing a mutation would refresh the report and cancel its download.
+    const reportExport = method === 'POST' && url.pathname === '/api/export/report/pdf';
+    const mutation = api && !reportExport && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
     const auth = /^\/api\/(auth|planter-auth)(\/|$)/.test(url.pathname);
     if (mutation) {
       // Invalidate before AND after: reads during a write cannot survive its commit.

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useMapStore } from './mapStore';
+import { staffAuthRequest } from '../utils/staffAuth';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -19,22 +20,18 @@ function readStoredUser() {
 const initialUser = readStoredUser();
 
 export const useAuthStore = create((set) => ({
+  hydrated: false,
   isAuthenticated: Boolean(initialUser),
   token: initialUser ? 'cookie' : null,
   user: initialUser,
 
   login: async (username, password) => {
     useMapStore.getState().resetWorkspaceData();
-    const res = await fetch(`${API}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Login failed');
-    }
-    const data = await res.json();
+    return staffAuthRequest('login', { username, password });
+  },
+
+  verifyLogin: async (code) => {
+    const data = await staffAuthRequest('login/verify', { code });
     localStorage.setItem('mv_user', JSON.stringify({
       id: data.user_id,
       full_name: data.full_name,
@@ -42,10 +39,18 @@ export const useAuthStore = create((set) => ({
     }));
     sessionStorage.setItem('mv_show_welcome', '1');
     set({
+      hydrated: true,
       isAuthenticated: true,
       token: 'cookie',
       user: { id: data.user_id, full_name: data.full_name, role: data.role },
     });
+  },
+
+  clearSession: (notice = '') => {
+    useMapStore.getState().resetWorkspaceData();
+    localStorage.removeItem('mv_user');
+    if (notice) sessionStorage.setItem('mv_auth_notice', notice);
+    set({ isAuthenticated: false, token: null, user: null, hydrated: true });
   },
 
   logout: () => {
@@ -61,15 +66,16 @@ export const useAuthStore = create((set) => ({
       if (!res.ok) {
         useMapStore.getState().resetWorkspaceData();
         localStorage.removeItem('mv_user');
-        set({ isAuthenticated: false, token: null, user: null });
+        set({ isAuthenticated: false, token: null, user: null, hydrated: true });
         return;
       }
       const data = await res.json();
       const user = { id: data.user_id, full_name: data.full_name, role: data.role };
       localStorage.setItem('mv_user', JSON.stringify(user));
-      set({ isAuthenticated: true, token: 'cookie', user });
+      set({ isAuthenticated: true, token: 'cookie', user, hydrated: true });
     } catch {
       // Leave the cached session in place on transient network failures.
+      set({ hydrated: true });
     }
   },
 }));

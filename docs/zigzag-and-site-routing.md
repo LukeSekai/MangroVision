@@ -22,7 +22,7 @@ saves the previous allocation under `validation_outputs`, and updates only
 participant ownership while preserving each participant's count, all coordinates,
 sequence numbers, sessions and statuses. Any planting history prevents the repair.
 
-## Entrance routing
+## GPS-to-point navigation
 
 `MangroVision_New/api/data/site_access_routes.json` stores the white-road trace
 identified in the user's screenshots. It was matched against the application's
@@ -34,20 +34,54 @@ depend on an organization name or numeric database ID.
 For destinations in that footprint, Google Routes is asked for walking
 alternatives to the public-road junction. The shortest returned valid route by
 distance is followed by the traced white access road to the entrance at
-`10.78102952, 122.62457728`. Distance and time include the access-road leg. A
+`10.78102952, 122.62457728`. Road distance and time include the access-road leg. A
 person already on the access road joins its nearest segment instead of being
-sent back to the junction. Snap tolerances are 12 m on the access road, 20 m at
-the provider's destination and 30 m at its origin.
+sent back to the junction. Snap tolerances are 12 m on the access road and 20 m
+at the provider's access destination. A phone at home may be away from a mapped
+street; the actual GPS coordinate is retained, with a dashed connection to the
+provider's street start instead of rejecting a valid road route.
 
-The blue walking route ends at the entrance. The selected planting point remains
-marked, with its remaining straight-line distance explicitly identified.
-Internal walking lanes are not mapped: the app instructs participants to follow
-the LGU-marked lanes and planting order. It does not connect the gate to a point
-with an invented straight walking route. A participant already inside the site
-sees the point bearing/distance and planting instruction without being routed
-back outside. Routing errors are displayed instead of drawing a direct fallback
-across ponds. Navigation requests fresh phone location before using the
-organization's configured base if location is unavailable.
+Every navigation response starts at the actual phone GPS coordinate and ends at
+the exact selected planting point. `navigation_path` contains that complete
+geometry, while `segments` distinguishes solid-blue mapped roads (`road`) from
+orange dashed direct connections (`guidance`). The final entrance-to-point
+segment is explicitly drawn as guidance: internal walking lanes are not mapped,
+so participants must follow LGU-marked lanes. Dashed connections are not verified
+walking paths and have no walking ETA. `polyline` retains road-only geometry for
+older consumers. A participant already inside the site sees only GPS-to-point
+guidance, without being routed back outside. Navigation requires a fresh phone
+location. If GPS is denied or unavailable, it explains how to enable it; it
+never substitutes the organization's configured base or the access-road start.
+
+The traced physical footprint accepts planting destinations up to 3 m from its
+boundary, including NASUGBAN point #198, which lies about 0.6 m outside the trace.
+This tolerance does not change project-site ownership or point coordinates.
+For the origin, phone GPS accuracy is sent with the request. A position near the
+same footprint uses onsite guidance within `max(3, min(accuracy, 20))` metres;
+a poor GPS fix cannot skip the entrance route from farther away. The road snap
+tolerances above remain unchanged.
+
+During navigation the phone watches GPS and updates the route's start,
+straight-line distance and compass bearing to the selected point. Mapped road
+sections already passed are trimmed when the GPS fix is within 12 m of the road.
+On arrival inside the physical site, navigation switches to direct point guidance.
+The initial view includes both GPS origin and destination; subsequent fixes do
+not reset a participant's pan or zoom. When GPS uncertainty exceeds the point's
+distance, the panel tells participants to use the marked point. Clearing
+navigation, signing out, or leaving the field page stops the location watch.
+Errors appear in the point action sheet so participants can retry there.
+
+When testing from another location, Google can return no walking route to the
+public-road junction or fail to connect closely enough to the mapped road.
+The endpoint returns `partial_route`: a dashed GPS-to-road-start connection,
+the blue mapped access road, and a dashed entrance-to-point connection. Road
+directions are identified as unavailable; trip distance and duration remain
+empty. Provider outages and missing routing configuration use the same guidance.
+For a destination without a mapped access road, `point_guidance` draws direct
+GPS-to-point guidance without calling it a mapped path. Invalid requests still
+fail. The **Open Google Maps to point** action uses the latest GPS coordinate as
+origin and the exact planting point as destination, rather than the gate or road
+start. The link updates with each GPS fix and opens only after an explicit tap.
 
 To support a different physical site, add its mapped access road and footprint
 to the JSON file, add a routing regression, and restart the API. Do not enlarge

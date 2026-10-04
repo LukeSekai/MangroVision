@@ -2,6 +2,29 @@
 import hashlib
 
 
+def is_registration_pending(account):
+    """A reserved assignment owner has no login credentials until registration."""
+    return account.get('username') is None and account.get('password_hash') is None
+
+
+def allocate_reserved_points(conn, planter_id, participant_count):
+    """Divide pre-registration batches once, before any device claims a slot."""
+    rows = conn.execute('''SELECT pap.id FROM planter_assignment_points pap
+        JOIN planter_assignments pa ON pa.id = pap.assignment_id
+        WHERE pa.planter_id = ? AND pap.released_at IS NULL
+        ORDER BY pa.id, pap.sequence_num, pap.id''', (planter_id,)).fetchall()
+    allocations = list(zip(rows, allocation_slots(len(rows), participant_count)))
+    for offset in range(0, len(allocations), 1000):
+        batch = allocations[offset:offset + 1000]
+        values = ','.join('(CAST(? AS bigint), CAST(? AS integer))' for _ in batch)
+        params = [value for row, slot in batch for value in (row['id'], slot)]
+        conn.execute(f'''UPDATE planter_assignment_points pap SET participant_slot = allocation.slot
+            FROM (VALUES {values}) AS allocation(id, slot) WHERE pap.id = allocation.id''', params)
+    conn.execute('DELETE FROM organization_participants WHERE planter_id = ?', (planter_id,))
+    conn.execute('INSERT INTO organization_participants(planter_id, slot) SELECT ?, generate_series(1, ?)',
+                 (planter_id, participant_count))
+
+
 def allocation_slots(point_count, participant_count, existing_counts=None):
     """Balance cumulative allocations without moving points already assigned."""
     if not 1 <= participant_count <= 10000:
@@ -27,7 +50,7 @@ def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recov
     conn = _get_connection()
     try:
         account = conn.execute('SELECT * FROM planters WHERE id = ? FOR UPDATE', (planter_id,)).fetchone()
-        if not account or account['status'] != 'active' or account['merged_into_planter_id'] is not None:
+        if not account or account['status'] != 'active' or account['merged_into_planter_id'] is not None or is_registration_pending(dict(account)):
             raise ValueError('This organization account is inactive.')
         limit = account['participant_count']
         existing = conn.execute('SELECT slot FROM organization_participants WHERE planter_id = ? AND device_key_hash = ? AND slot <= ?',

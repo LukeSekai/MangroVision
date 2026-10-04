@@ -2,14 +2,28 @@
 
 import csv
 import io
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import Optional
 
 from waypoint_export import generate_gpx, generate_kml, generate_geojson
+from api.report_pdf import ReportPdfRequest, render_restoration_report_pdf
+from api.routes.dashboard import _require_lgu_user
 
 router = APIRouter()
+
+
+@router.post("/report/pdf", dependencies=[Depends(_require_lgu_user)])
+def export_report_pdf(body: ReportPdfRequest):
+    return Response(
+        content=render_restoration_report_pdf(body),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{body.filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 class WaypointItem(BaseModel):

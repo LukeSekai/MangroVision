@@ -186,7 +186,7 @@ def mark_notification_read(user_id: int, notification_id: int) -> bool:
         conn.close()
 
 
-def _send_smtp(recipient: str, subject: str, body: str) -> None:
+def _send_smtp(recipient: str, subject: str, body: str, *, html_body: str | None = None) -> None:
     host = os.getenv("SMTP_HOST", "").strip()
     sender = os.getenv("SMTP_FROM", "").strip()
     if not host or not sender:
@@ -201,6 +201,8 @@ def _send_smtp(recipient: str, subject: str, body: str) -> None:
     message["To"] = recipient
     message["Subject"] = subject
     message.set_content(body)
+    if html_body is not None:
+        message.add_alternative(html_body, subtype="html")
     transport = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
     with transport(host, port, timeout=20) as client:
         if port != 465:

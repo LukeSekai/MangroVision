@@ -11,7 +11,7 @@ from urllib.request import Request, urlopen
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from api.site_access import access_for_destination, distance_m, inside_area, path_distance, remaining_access_path
+from api.site_access import access_for_destination, distance_m, inside_area, inside_or_near_area, path_distance, remaining_access_path
 
 router = APIRouter()
 
@@ -35,6 +35,7 @@ class RouteRequest(BaseModel):
     dest_lat: float = Field(ge=-90, le=90)
     dest_lon: float = Field(ge=-180, le=180)
     travel_mode: Optional[str] = "walking"
+    origin_accuracy_m: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 def _travel_mode_to_google(mode: str) -> str:
@@ -162,8 +163,9 @@ def _google_route(origin, destination, travel_mode):
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as err:
         raise HTTPException(status_code=502, detail=f"Walking directions are unavailable (provider status {err.code}). Please retry.") from err
-    except URLError as err:
-        raise HTTPException(status_code=502, detail=f"Google Routes API connection error: {err.reason}") from err
+    except (URLError, TimeoutError) as err:
+        reason = err.reason if isinstance(err, URLError) else 'timed out'
+        raise HTTPException(status_code=502, detail=f"Google Routes API connection error: {reason}") from err
 
     candidates = []
     for route in payload.get('routes') or []:
@@ -174,9 +176,10 @@ def _google_route(origin, destination, travel_mode):
             continue
         if len(polyline) < 2:
             continue
-        # Reject snapping to a different road instead of drawing a bridge over
-        # the unmapped gap. In particular this prevents the eastern pond detour.
-        if distance_m(polyline[-1], destination) > 20 or distance_m(polyline[0], origin) > 30:
+        # The access destination must still join the correct road, rather than
+        # an eastern pond detour. The origin can be off-road (e.g. at home);
+        # the caller marks the GPS-to-street connection as dashed guidance.
+        if distance_m(polyline[-1], destination) > 20:
             continue
         meters = route.get('distanceMeters')
         if not isinstance(meters, (int, float)) or meters < 0:
@@ -187,6 +190,60 @@ def _google_route(origin, destination, travel_mode):
     return min(candidates, key=lambda item: (item[0], item[1] if item[1] is not None else float('inf')))
 
 
+def _navigation_to_point(origin, destination, mode, road_path, source, site=None,
+                         meters=None, seconds=None, note=None, road_sections=None):
+    """Always start at the actual GPS coordinate and end at the exact point.
+
+    Road geometry and direct guidance remain separate. Direct connections are
+    displayed dashed, never described as surveyed or routable walking paths.
+    ``polyline`` retains mapped-road geometry for older clients; the full view
+    uses ``segments`` and ``navigation_path``.
+    """
+    segments = []
+    cursor = origin
+    for section in road_sections if road_sections is not None else [road_path]:
+        if not section:
+            continue
+        if cursor != section[0]:
+            segments.append({'kind': 'guidance', 'polyline': [cursor, section[0]]})
+        if len(section) >= 2:
+            segments.append({'kind': 'road', 'polyline': section})
+        cursor = section[-1]
+    if cursor != destination or not segments:
+        segments.append({'kind': 'guidance', 'polyline': [cursor, destination]})
+    navigation_path = []
+    for segment in segments:
+        for coordinate in segment['polyline']:
+            if not navigation_path or navigation_path[-1] != coordinate:
+                navigation_path.append(coordinate)
+    if not navigation_path:
+        navigation_path = [origin, destination]
+    return {
+        'origin': origin, 'target': destination,
+        'polyline': road_path, 'segments': segments, 'navigation_path': navigation_path,
+        'entrance': site['access_path'][-1] if site else None,
+        'access_start': site['access_path'][0] if site else None,
+        'site_area': site['site_area'] if site else None,
+        # These quantities describe the mapped road leg, not an ETA along
+        # unknown internal paths or direct GPS connections.
+        'distance_m': meters, 'duration_s': seconds,
+        'distance_label': _format_distance(meters), 'duration_label': _format_duration(seconds),
+        'travel_mode': mode, 'route_source': source,
+        'navigation_note': note or 'Dashed lines are direct guidance, not mapped walking paths. Use LGU-marked lanes.',
+    }
+
+
+def _unavailable_route_guidance(origin, destination, mode, site=None):
+    """Provide GPS-to-point guidance when public-road directions are unavailable."""
+    result = _navigation_to_point(origin, destination, mode,
+        site['access_path'] if site else [], 'partial_route' if site else 'point_guidance', site)
+    result.update({
+        'distance_label': 'Road directions unavailable', 'duration_label': None,
+        'navigation_note': 'Road directions unavailable. Dashed lines are direct guidance; use mapped roads and LGU-marked lanes.',
+    })
+    return result
+
+
 @router.post('/compute')
 def compute_route(body: RouteRequest):
     origin, destination = [body.origin_lat, body.origin_lon], [body.dest_lat, body.dest_lon]
@@ -194,40 +251,53 @@ def compute_route(body: RouteRequest):
     site = access_for_destination(destination)
     note = None
     entrance = None
+    road_sections = None
     if site:
         if mode != 'walking':
             raise HTTPException(status_code=422, detail='The mangrove access road is configured for walking navigation.')
         path = site['access_path']
         entrance = path[-1]
-        if inside_area(origin, site['site_area']):
-            # Do not send someone already planting back out onto public roads,
-            # or draw an unverified straight route through mangroves/water.
-            return {
-                'polyline': [], 'target': destination, 'entrance': entrance,
-                'distance_m': None, 'duration_s': None,
-                'distance_label': f'{_format_distance(distance_m(origin, destination))} to point (straight-line)',
-                'duration_label': 'Follow planting order', 'travel_mode': mode,
-                'route_source': 'within_site',
-                'navigation_note': 'You are inside the site. Follow the LGU-marked planting lanes in zigzag order; internal walking paths are not mapped.',
-            }
+        # GPS uncertainty may straddle the shoreline/site outline. Cap the
+        # tolerance so a poor fix cannot classify a distant position as onsite.
+        near_site = inside_or_near_area(origin, site['site_area'], max(3, min(body.origin_accuracy_m or 0, 20)))
+        if near_site:
+            note = (
+                'You are near the site boundary; GPS may drift. '
+                if not inside_area(origin, site['site_area']) else 'You are inside the site. '
+            ) + 'Dashed guidance ends at your point; follow LGU-marked lanes.'
+            result = _navigation_to_point(origin, destination, mode, [], 'within_site', site, note=note)
+            result['distance_label'] = f'{_format_distance(distance_m(origin, destination))} to point (straight-line)'
+            result['duration_label'] = 'Follow planting order'
+            return result
         local_path = remaining_access_path(origin, path)
         if local_path is not None:
-            polyline = local_path
+            # remaining_access_path includes the actual GPS fix followed by
+            # its projection on the road. Keep that small gap dashed too.
+            polyline = local_path[1:]
             meters = path_distance(polyline)
             seconds = meters / 1.2
         else:
-            meters, seconds, polyline = _google_route(origin, path[0], mode)
-            access_meters = distance_m(polyline[-1], path[0]) + path_distance(path)
+            try:
+                meters, seconds, polyline = _google_route(origin, path[0], mode)
+            except HTTPException as error:
+                if error.status_code not in (404, 502, 503):
+                    raise
+                return _unavailable_route_guidance(origin, destination, mode, site)
+            access_meters = path_distance(path)
+            # A provider endpoint can be up to 20 m from the traced road start;
+            # preserve that gap as guidance instead of a solid road connection.
+            road_sections = [polyline, path]
             polyline = [*polyline, *path]
             meters += access_meters
             seconds = seconds + access_meters/1.2 if seconds is not None else None
-        note = f'Follow the white road to the entrance. Your point is {_format_distance(distance_m(entrance, destination))} beyond it (straight-line); use the LGU-marked planting lanes inside.'
+        note = 'Continue beyond the entrance to your point. Dashed sections are direct guidance; use LGU-marked lanes.'
     else:
-        meters, seconds, polyline = _google_route(origin, destination, mode)
-    return {
-        'polyline': polyline, 'target': destination, 'entrance': entrance,
-        'distance_m': meters, 'duration_s': seconds,
-        'distance_label': _format_distance(meters), 'duration_label': _format_duration(seconds),
-        'travel_mode': mode, 'route_source': 'site_entrance' if site else 'google_routes',
-        'navigation_note': note,
-    }
+        try:
+            meters, seconds, polyline = _google_route(origin, destination, mode)
+        except HTTPException as error:
+            if error.status_code not in (404, 502, 503):
+                raise
+            return _unavailable_route_guidance(origin, destination, mode)
+    return _navigation_to_point(origin, destination, mode, polyline,
+                                'site_route' if site else 'google_routes', site,
+                                meters, seconds, note, road_sections)

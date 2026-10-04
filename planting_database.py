@@ -1239,7 +1239,7 @@ def _hash_session_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _create_session(subject_type: str, subject_id: int, participant_slot: Optional[int] = None) -> str:
+def _create_session(subject_type: str, subject_id: int, participant_slot: Optional[int] = None, *, connection=None) -> str:
     """Create a persisted session token for a user or planter."""
     if subject_type not in {"user", "planter"}:
         raise ValueError("Invalid auth session subject type.")
@@ -1254,7 +1254,7 @@ def _create_session(subject_type: str, subject_id: int, participant_slot: Option
         else timedelta(days=settings.planter_session_days)
     )
 
-    conn = _get_connection()
+    conn = connection if connection is not None else _get_connection()
     try:
         conn.execute("""
             INSERT INTO auth_sessions (
@@ -1274,12 +1274,15 @@ def _create_session(subject_type: str, subject_id: int, participant_slot: Option
             organization_id=organization_id,
             summary="LGU staff signed in." if subject_type == "user" else "Organization participant signed in.",
         )
-        conn.commit()
+        if connection is None:
+            conn.commit()
     except Exception:
-        conn.rollback()
+        if connection is None:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if connection is None:
+            conn.close()
     return token
 
 
@@ -1405,7 +1408,7 @@ def ensure_admin_user() -> int:
     return int(row["id"])
 
 
-def authenticate_user(username: str, password: str) -> Optional[dict]:
+def authenticate_user(username: str, password: str, *, record_login: bool = True) -> Optional[dict]:
     """Authenticate using full_name + password. Returns user dict on success."""
     if not username or not password:
         return None
@@ -1428,10 +1431,15 @@ def authenticate_user(username: str, password: str) -> Optional[dict]:
 
     valid, upgraded_hash = verify_password(stored_hash, password)
     if valid:
-        conn.execute(
-            "UPDATE users SET password_hash = ?, last_login = CURRENT_TIMESTAMP WHERE id = ?",
-            (upgraded_hash or stored_hash, user["id"]),
+        updated = conn.execute(
+            "UPDATE users SET password_hash = ?, last_login = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_login END WHERE id = ? AND password_hash = ?",
+            (upgraded_hash or stored_hash, record_login, user["id"], stored_hash),
         )
+        if not updated.rowcount:
+            # A concurrent recovery must not be overwritten by this old login.
+            conn.rollback()
+            conn.close()
+            return None
         conn.commit()
         conn.close()
         user["password_hash"] = upgraded_hash or stored_hash
@@ -2288,10 +2296,9 @@ def _resolve_point_project_sites(
 ) -> List[dict]:
     """Attach an unambiguous stable project site to point-shaped rows.
 
-    New analyses may carry an explicit site link. Legacy analyses often do
-    not, so point ownership falls back to the Zone Editor polygon containing
-    the individual point. Overlapping polygons intentionally resolve to no
-    owner rather than guessing.
+    An analysis link narrows the candidate site, but each point must be
+    covered by that site's saved boundary. Unlinked analyses use the
+    unambiguous polygon containing the point.
     """
     site_by_id = {}
     for row in conn.execute("""
@@ -2306,20 +2313,21 @@ def _resolve_point_project_sites(
     unresolved = []
     for index, point in enumerate(point_items):
         site_id = point.get("source_project_site_id", point.get("source_site_id"))
-        if site_id is None and point.get("latitude") is not None and point.get("longitude") is not None:
-            unresolved.append((index, float(point["longitude"]), float(point["latitude"])))
+        if point.get("latitude") is not None and point.get("longitude") is not None:
+            unresolved.append((index, float(point["longitude"]), float(point["latitude"]), site_id))
     resolved_site_ids: dict[int, int] = {}
     if unresolved:
-        values_sql = ", ".join("(?, ?, ?)" for _ in unresolved)
+        values_sql = ", ".join("(?, ?, ?, CAST(? AS bigint))" for _ in unresolved)
         params = tuple(value for item in unresolved for value in item)
         matches = conn.execute(f"""
-            WITH input_points(row_key, longitude, latitude) AS (
+            WITH input_points(row_key, longitude, latitude, linked_site_id) AS (
                 VALUES {values_sql}
             ), matched AS (
                 SELECT ip.row_key, MIN(ps.id) AS site_id, COUNT(ps.id) AS match_count
                 FROM input_points ip
                 LEFT JOIN project_sites ps
-                  ON extensions.ST_Covers(
+                  ON (ip.linked_site_id IS NULL OR ps.id = ip.linked_site_id)
+                  AND extensions.ST_Covers(
                       ps.geometry,
                       extensions.ST_SetSRID(
                           extensions.ST_MakePoint(ip.longitude, ip.latitude), 4326
@@ -2335,9 +2343,7 @@ def _resolve_point_project_sites(
 
     resolved = []
     for index, point in enumerate(point_items):
-        site_id = point.get("source_project_site_id", point.get("source_site_id"))
-        if site_id is None:
-            site_id = resolved_site_ids.get(index)
+        site_id = resolved_site_ids.get(index)
         site = site_by_id.get(int(site_id)) if site_id is not None else None
         point["source_project_site_id"] = int(site_id) if site is not None else None
         point["source_site_id"] = int(site_id) if site is not None else None
@@ -3719,14 +3725,35 @@ def create_planter(
                 raise ValueError("Selected organization was not found.")
         organization = conn.execute("SELECT name FROM organizations WHERE id = ?", (clean_organization_id,)).fetchone()
         full_name = organization["name"]
-        if conn.execute("SELECT id FROM planters WHERE organization_id = ? AND merged_into_planter_id IS NULL", (clean_organization_id,)).fetchone():
+        from mangrovision_db.organization_accounts import is_registration_pending, allocate_reserved_points
+        reserved = conn.execute("SELECT * FROM planters WHERE organization_id = ? AND merged_into_planter_id IS NULL FOR UPDATE", (clean_organization_id,)).fetchone()
+        if reserved and not is_registration_pending(dict(reserved)):
             raise ValueError("This organization already has an account. Use its shared login.")
+        if reserved and reserved["status"] != "active":
+            raise ValueError("This organization is inactive. Ask the LGU to reactivate it.")
         existing = conn.execute(
             "SELECT id FROM planters WHERE lower(username) = lower(?)",
             (username,),
         ).fetchone()
         if existing:
             raise ValueError("That planter username is already in use.")
+
+        if reserved:
+            planter_id = int(reserved["id"])
+            conn.execute("""UPDATE planters SET username = ?, password_hash = ?, phone = ?,
+                base_label = ?, base_lat = ?, base_lon = ?, participant_count = ?, status = ?
+                WHERE id = ?""", (username, password_hash, phone.strip() or None,
+                base_label.strip() or None, base_lat, base_lon, participant_count, status, planter_id))
+            allocate_reserved_points(conn, planter_id, participant_count)
+            append_activity(conn, action="organization_account.created",
+                actor_type="staff" if created_by_user_id is not None else "planter",
+                actor_user_id=created_by_user_id,
+                actor_planter_id=planter_id if created_by_user_id is None else None,
+                organization_id=clean_organization_id,
+                summary=f"Registered the organization account for {full_name} with its reserved points.",
+                details={"planter_id": planter_id, "participant_count": participant_count})
+            conn.commit()
+            return planter_id
 
         cur = conn.execute("""
             INSERT INTO planters (
@@ -3769,6 +3796,7 @@ def list_planters(include_inactive: bool = True) -> List[dict]:
     query = """
         SELECT
             p.*,
+            (p.username IS NULL AND p.password_hash IS NULL) AS registration_pending,
             o.name AS organization_name,
             COUNT(DISTINCT CASE WHEN pa.status = 'active' THEN pa.id END) AS active_assignments,
             COALESCE(SUM(CASE WHEN pa.status = 'active' AND pap.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_points,
@@ -4026,6 +4054,36 @@ def create_planter_assignment(
     site_zone_id: Optional[int] = None,
     connection: Any = None,
 ) -> int:
+    """Create a batch atomically; a supplied connection belongs to its caller."""
+    conn = connection or _get_connection()
+    try:
+        assignment_id = _create_planter_assignment(
+            planter_id, planting_point_ids, assigned_by_user_id, title,
+            assignment_date, travel_mode, notes, species, site_zone_id, conn)
+        if connection is None:
+            conn.commit()
+        return assignment_id
+    except Exception:
+        if connection is None:
+            conn.rollback()
+        raise
+    finally:
+        if connection is None:
+            conn.close()
+
+
+def _create_planter_assignment(
+    planter_id: int,
+    planting_point_ids: List[int],
+    assigned_by_user_id: Optional[int] = None,
+    title: str = "",
+    assignment_date: str = "",
+    travel_mode: str = "walking",
+    notes: str = "",
+    species: str = "",
+    site_zone_id: Optional[int] = None,
+    connection: Any = None,
+) -> int:
     """Create one assignment batch and attach ordered planting points."""
     try:
         point_ids = list(dict.fromkeys(int(pid) for pid in planting_point_ids if pid is not None))
@@ -4033,10 +4091,6 @@ def create_planter_assignment(
         raise ValueError("Planting point ids must be whole numbers.") from error
     if not point_ids:
         raise ValueError("Select at least one planting point.")
-
-    planter = get_planter(planter_id)
-    if not planter:
-        raise ValueError("Selected planter was not found.")
 
     assignment_date = (assignment_date or datetime.now().date().isoformat()).strip()
     travel_mode = (travel_mode or "walking").strip().lower()
@@ -4051,9 +4105,11 @@ def create_planter_assignment(
 
     conn = connection or _get_connection()
     # Serialize batches for this organization before calculating each slot's share.
-    planter = dict(conn.execute("SELECT * FROM planters WHERE id = ? FOR UPDATE", (planter_id,)).fetchone())
+    row = conn.execute("SELECT * FROM planters WHERE id = ? FOR UPDATE", (planter_id,)).fetchone()
+    if not row:
+        raise ValueError("Selected planter was not found.")
+    planter = dict(row)
     if planter["status"] != "active" or planter.get("merged_into_planter_id") is not None or planter.get("organization_id") is None:
-        conn.close()
         raise ValueError("Choose an active organization account.")
     if site_zone_id is None:
         sites = conn.execute("SELECT id FROM project_sites WHERE organization_id = ? ORDER BY id", (planter["organization_id"],)).fetchall()
@@ -4061,33 +4117,28 @@ def create_planter_assignment(
             site_zone_id = sites[0]["id"]
     normalized_site_zone_id = None
     if planter.get("organization_id") is not None and site_zone_id is None:
-        conn.close()
         raise ValueError("Select a project site owned by this planter's organization.")
     if site_zone_id is not None:
         try:
             normalized_site_zone_id = int(site_zone_id)
         except (TypeError, ValueError) as error:
-            conn.close()
             raise ValueError("Invalid project site id.") from error
         selected_site = conn.execute(
             "SELECT id, organization_id FROM site_zones WHERE id = ?",
             (normalized_site_zone_id,),
         ).fetchone()
         if not selected_site:
-            conn.close()
             raise ValueError("Selected project site was not found.")
         if (
             planter.get("organization_id") is not None
             and selected_site["organization_id"] != planter["organization_id"]
         ):
-            conn.close()
             raise ValueError(
                 "The selected project site belongs to a different organization than this planter."
             )
     if not species_value:
         species_value = _infer_assignment_species(conn, point_ids)
     if not species_value:
-        conn.close()
         raise ValueError(
             "Choose a species for this assignment or record one on its image analysis before assigning points."
         )
@@ -4119,7 +4170,6 @@ def create_planter_assignment(
     if len(requested_rows) != len(point_ids):
         found = {int(row["id"]) for row in requested_rows}
         missing = [point_id for point_id in point_ids if point_id not in found]
-        conn.close()
         raise ValueError(f"Unknown planting point id(s): {', '.join(map(str, missing))}.")
     missing_analysis_species = [
         row for row in requested_rows
@@ -4127,7 +4177,6 @@ def create_planter_assignment(
     ]
     if missing_analysis_species:
         sample = missing_analysis_species[0]
-        conn.close()
         raise ValueError(
             f"Point #{sample['point_num']} has no valid species on its image analysis. "
             "Record the species there before assigning this point."
@@ -4138,7 +4187,6 @@ def create_planter_assignment(
     ]
     if non_assignable:
         sample = non_assignable[0]
-        conn.close()
         raise ValueError(
             f"Point #{sample['point_num']} is already planted or has mortality history; reset it before reassigning."
         )
@@ -4151,7 +4199,6 @@ def create_planter_assignment(
         ]
         if wrong_site_points:
             sample = wrong_site_points[0]
-            conn.close()
             if sample["source_site_id"] is None:
                 raise ValueError(
                     f"Point #{sample['point_num']} is not inside exactly one project site. "
@@ -4166,12 +4213,10 @@ def create_planter_assignment(
 
     deleted_point = _first_deleted_point(conn, point_ids)
     if deleted_point:
-        conn.close()
         raise ValueError(_deleted_point_message(deleted_point))
 
     eroded_point = _first_eroded_unavailable_point(conn, point_ids)
     if eroded_point:
-        conn.close()
         raise ValueError(_eroded_unavailable_message(eroded_point))
 
     duplicate_rows = conn.execute(f"""
@@ -4191,7 +4236,6 @@ def create_planter_assignment(
     """, tuple(point_ids)).fetchall()
     if duplicate_rows:
         sample = duplicate_rows[0]
-        conn.close()
         raise ValueError(
             f"Point #{sample['point_num']} from {sample['image_name']} is already assigned to {sample['planter_name']}."
         )
@@ -4250,9 +4294,35 @@ def create_planter_assignment(
         summary=f"Assigned {len(ordered_point_ids)} planting points to {planter['full_name']}.",
         details={"assignment_id": assignment_id, "point_count": len(ordered_point_ids)},
     )
-    conn.commit()
-    conn.close()
     return assignment_id
+
+
+def create_organization_assignment(organization_id: int, planting_point_ids: List[int], **kwargs) -> int:
+    """Reserve points for an organization, even before its shared login exists."""
+    conn = _get_connection()
+    try:
+        organization = conn.execute("SELECT * FROM organizations WHERE id = ? FOR UPDATE",
+                                    (organization_id,)).fetchone()
+        if not organization:
+            raise ValueError("Selected organization was not found.")
+        account = conn.execute("""SELECT * FROM planters WHERE organization_id = ?
+            AND merged_into_planter_id IS NULL FOR UPDATE""", (organization_id,)).fetchone()
+        if account is None:
+            # NULL credentials make this a reservation owner, unable to sign in.
+            cursor = conn.execute("""INSERT INTO planters(full_name, organization_id, status, participant_count)
+                VALUES (?, ?, 'active', 1)""", (organization["name"], organization_id))
+            planter_id = int(cursor.lastrowid)
+            conn.execute("INSERT INTO organization_participants(planter_id, slot) VALUES (?, 1)", (planter_id,))
+        else:
+            planter_id = int(account["id"])
+        assignment_id = create_planter_assignment(planter_id, planting_point_ids, connection=conn, **kwargs)
+        conn.commit()
+        return assignment_id
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def list_planter_assignment_map_points() -> List[dict]:
@@ -4359,7 +4429,7 @@ def list_planter_assignment_map_points() -> List[dict]:
         LEFT JOIN LATERAL (
             SELECT MIN(ps.id) AS site_id
             FROM project_sites ps
-            WHERE a.site_zone_id IS NULL
+            WHERE (a.site_zone_id IS NULL OR ps.id = a.site_zone_id)
               AND extensions.ST_Covers(
                   ps.geometry,
                   extensions.ST_SetSRID(extensions.ST_MakePoint(pp.longitude, pp.latitude), 4326)
@@ -4367,7 +4437,7 @@ def list_planter_assignment_map_points() -> List[dict]:
             HAVING COUNT(*) = 1
         ) inferred_site ON TRUE
         LEFT JOIN site_zones source_site
-          ON source_site.id = COALESCE(a.site_zone_id, inferred_site.site_id)
+          ON source_site.id = inferred_site.site_id
         LEFT JOIN organizations source_org ON source_org.id = source_site.organization_id
         LEFT JOIN active_point_assignments apa
                ON apa.planting_point_id = pp.id
@@ -6331,7 +6401,8 @@ def _project_site_counts(conn: Any) -> dict[int, dict]:
         WITH point_membership AS (
             SELECT a.site_zone_id AS site_id, pp.id AS point_id
             FROM analyses a JOIN planting_points pp ON pp.analysis_id = a.id
-            WHERE a.site_zone_id IS NOT NULL
+            JOIN project_sites ps ON ps.id = a.site_zone_id
+            WHERE extensions.ST_Covers(ps.geometry, pp.location)
             UNION
             SELECT pa.site_zone_id AS site_id, pp.id AS point_id
             FROM planter_assignments pa

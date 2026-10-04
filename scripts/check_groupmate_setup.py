@@ -32,6 +32,8 @@ ASSETS = {
 SHIPPED_FILES = (
     "MangroVision_New/try_model/model_metadata.json",
     "MangroVision_New/api/data/site_access_routes.json",
+    "MangroVision_New/api/assets/fonts/Inter-Regular.ttf",
+    "MangroVision_New/api/assets/fonts/Inter-Bold.ttf",
     "MangroVision_New/client/public/favicon.png",
     "MangroVision_New/client/public/logo-icon.png",
     "MangroVision_New/client/public/logo-icon-small.png",
@@ -40,7 +42,7 @@ SHIPPED_FILES = (
 )
 PYTHON_MODULES = (
     "fastapi", "psycopg", "boto3", "cv2", "rasterio", "torch",
-    "detectree2", "detectron2",
+    "detectree2", "detectron2", "reportlab",
 )
 
 

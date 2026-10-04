@@ -45,6 +45,9 @@ htmlcov/
 *.test.mjs
 *.spec.js
 *.spec.mjs
+# Keep the operational report regression checks with their implementation.
+!MangroVision_New/client/src/utils/restorationReports.test.js
+!MangroVision_New/client/src/pages/RestorationReports.test.js
 
 # Data and logs
 .env
