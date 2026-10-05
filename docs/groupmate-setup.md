@@ -120,6 +120,13 @@ fallback. Neither key is needed for image alignment.
 
 ## 6. Check and start
 
+After pulling changes that add Python dependencies, update the existing
+virtual environment from the repository root before restarting the app:
+
+```powershell
+.\venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
 ```powershell
 .\venv\Scripts\python.exe scripts/check_groupmate_setup.py
 .\venv\Scripts\python.exe MangroVision_New/start_dev.py

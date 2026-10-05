@@ -80,14 +80,33 @@ test('report text is escaped and remarks are included in the printable document'
   assert.match(html, /Report remarks/);
 });
 
-test('reports screen updates automatically and keeps tabs and filters available during loading', () => {
+test('report dialog workspace keeps the report type and scope controls available during loading', () => {
   const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ReportsPage)));
-  assert.equal((html.match(/aria-pressed=/g) || []).length, 4);
+  assert.match(html, /Report type<select/);
+  for (const type of ['planting', 'monitoring', 'mortality', 'organizations']) assert.match(html, new RegExp(`option value="${type}"`));
   assert.match(html, /Year to date/);
   assert.match(html, /Project site/);
   assert.match(html, /Preparing your report/);
   assert.match(html, /Reports update automatically/);
   assert.doesNotMatch(html, /Generate report|Budget utilization|Certification|Download CSV|disabled/);
+});
+
+test('report workspace starts with the source screen dates, site and report type', () => {
+  const html = renderToStaticMarkup(createElement(ReportsPage, {
+    initialSelection: { ...filters, type: 'organizations' }, initialSites: envelope.filter_options.sites,
+  }));
+  assert.match(html, /value="organizations" selected=""/);
+  assert.match(html, /value="custom" selected=""/);
+  assert.match(html, /value="2026-07-01"/);
+  assert.match(html, /value="2026-09-30"/);
+  assert.match(html, /value="4" selected="">Nasugban/);
+  assert.doesNotMatch(html, /Open monitoring|<h1>Reports/);
+});
+
+test('monitoring entry starts on monitoring and a selected site remains visible before data arrives', () => {
+  const html = renderToStaticMarkup(createElement(ReportsPage, { initialSelection: { type: 'monitoring', siteId: '4' } }));
+  assert.match(html, /value="monitoring" selected=""/);
+  assert.match(html, /value="4" selected="">Project site #4/);
 });
 
 test('report exports offer separate Print, Save as PDF and CSV buttons', () => {

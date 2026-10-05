@@ -14,7 +14,7 @@
 .org-monitoring-eyebrow { display: block; margin-bottom: 5px; color: var(--green-700); font-size: 0.6875rem; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
 .org-monitoring-page-header h1 { font-size: clamp(1.55rem, 2.2vw, 2rem); line-height: 1.15; letter-spacing: -0.025em; color: var(--green-900); }
 .org-monitoring-page-header p { margin-top: 7px; color: var(--text-secondary); font-size: 0.875rem; line-height: 1.5; }
-.org-monitoring-page-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.org-monitoring-page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; max-width: 650px; }
 .org-monitoring-page-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 8px 13px; border: 1px solid var(--border-medium); border-radius: var(--radius-md); background: white; color: var(--green-800); font-size: 0.75rem; font-weight: 700; cursor: pointer; }
 .org-monitoring-page-actions .is-primary { background: var(--green-700); border-color: var(--green-700); color: white; }
 .org-monitoring-page-actions button:disabled { opacity: 0.6; cursor: wait; }
@@ -559,6 +559,7 @@
 @media (max-width: 700px) {
   .org-monitoring-page { padding: 20px 12px 40px; }
   .org-monitoring-page-header { flex-direction: column; gap: 14px; }
+  .org-monitoring-page-actions { justify-content: flex-start; }
   .org-monitoring-organization-list, .org-monitoring-history { grid-template-columns: 1fr; }
   .org-monitoring-kpis { gap: 9px; }
   .org-monitoring-kpis article { padding: 14px; }

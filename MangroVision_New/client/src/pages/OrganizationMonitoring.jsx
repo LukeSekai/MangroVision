@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import Modal from '../components/Modal';
 import OrganizationHistory from '../components/OrganizationHistory';
 import AutomaticGrowth from '../components/AutomaticGrowth';
+import RestorationReportDialog from '../components/RestorationReportDialog';
 import { growthStageLabel } from '../utils/mangroveGrowth';
 import { monitoringCounts, visitFormFromLatest } from '../utils/organizationMonitoring';
 import { deathLocationCounts } from '../utils/monitoringLocations';
@@ -83,6 +84,7 @@ export default function OrganizationMonitoring() {
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
   const [fieldSheetOpen, setFieldSheetOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [fieldOrganization, setFieldOrganization] = useState('');
   const [selectedDeaths, setSelectedDeaths] = useState([]);
   const [visitContext, setVisitContext] = useState(null);
@@ -293,6 +295,7 @@ export default function OrganizationMonitoring() {
           <p>Track plant health, record visits, and review each organization’s progress.</p>
         </div>
         <div className="org-monitoring-page-actions">
+          <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
           <button type="button" onClick={() => setFieldSheetOpen(true)}>Prepare field sheet</button>
           <button type="button" onClick={() => loadWorkspace({ force: true })} disabled={loading}>Refresh</button>
           <button type="button" className="is-primary" onClick={() => navigate('/monitoring/map')}>
@@ -526,6 +529,7 @@ export default function OrganizationMonitoring() {
         <label>Organization<select className="org-monitoring-input" value={fieldOrganization} onChange={(e) => setFieldOrganization(e.target.value)}><option value="">Select an organization</option>{organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
         {fieldSheetOpen && fieldOrganization ? <Suspense fallback={<p>Loading map…</p>}><SeedlingLocations key={fieldOrganization} organizationId={fieldOrganization} readOnly /></Suspense> : null}
       </Modal>
+      {reportOpen && <RestorationReportDialog initialSelection={{ type: 'monitoring' }} onClose={() => setReportOpen(false)} />}
     </div>
   );
 }

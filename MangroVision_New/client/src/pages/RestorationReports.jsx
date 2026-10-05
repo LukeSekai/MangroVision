@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
 import Logo from '../components/Logo';
 import { useAuthStore } from '../stores/authStore';
 import {
@@ -81,12 +80,16 @@ export function RestorationReportDocument({ report, metadata }) {
   );
 }
 
-export default function RestorationReports() {
+export default function RestorationReportWorkspace({ initialSelection, initialSites = [] }) {
   const user = useAuthStore((state) => state.user);
-  const [selection, setSelection] = useState(() => ({ type: 'planting', ...reportPeriod('year'), siteId: '' }));
-  const [preset, setPreset] = useState('year');
+  const [selection, setSelection] = useState(() => ({ type: 'planting', ...reportPeriod('year'), siteId: '', ...initialSelection }));
+  const [preset, setPreset] = useState(() => {
+    const year = reportPeriod('year');
+    return (!initialSelection?.dateFrom || initialSelection.dateFrom === year.dateFrom)
+      && (!initialSelection?.dateTo || initialSelection.dateTo === year.dateTo) ? 'year' : 'custom';
+  });
   const [view, setView] = useState({ busy: true, error: '', snapshot: null });
-  const [sites, setSites] = useState([]);
+  const [sites, setSites] = useState(initialSites);
   const [remarks, setRemarks] = useState('');
   const [recordRevision, setRecordRevision] = useState(0);
   const [pdfBusy, setPdfBusy] = useState(false);
@@ -99,7 +102,7 @@ export default function RestorationReports() {
   const loading = !invalidPeriod && (view.busy || dirty || outdated);
   const exportReady = Boolean(view.snapshot && !loading && !invalidPeriod);
 
-  // Cancel an export if its report selection changes or the page is closed.
+  // Cancel an export if its report selection changes or the dialog is closed.
   useEffect(() => () => pdfController.current?.abort(), [selection, recordRevision]);
 
   useEffect(() => {
@@ -213,14 +216,13 @@ export default function RestorationReports() {
   return (
     <div className="reports-page">
       <div className="reports-workspace">
-        <header className="reports-header"><div><span className="reports-eyebrow">LGU workspace</span><h1>Reports</h1><p>Prepare planting and monitoring reports from your recorded activities.</p></div><Link to="/monitoring" className="reports-text-link">Open monitoring <span aria-hidden="true">↗</span></Link></header>
-        <div className="reports-type-grid" aria-label="Report type">{REPORT_TYPES.map((type) => <button type="button" key={type.id} className={`reports-type ${selection.type === type.id ? 'is-selected' : ''}`} aria-pressed={selection.type === type.id} onClick={() => change('type', type.id)}><span className="reports-type-icon"><ReportIcon type={type.id} /></span><span><strong>{type.title}</strong><small>{type.description}</small></span></button>)}</div>
         <div className="reports-controls" role="group" aria-label="Report filters">
+          <label className="reports-type-select">Report type<select value={selection.type} onChange={(event) => change('type', event.target.value)}>{REPORT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.title}</option>)}</select></label>
           <div className="reports-filter-grid">
             <label>Reporting period<select value={preset} onChange={(event) => changePeriod(event.target.value)}><option value="year">Year to date</option><option value="quarter">This quarter</option><option value="last-quarter">Last quarter</option><option value="custom">Custom dates</option></select></label>
             <label>From<input type="date" value={selection.dateFrom} max={manilaDay()} required onChange={(event) => { setPreset('custom'); change('dateFrom', event.target.value); }} /></label>
             <label>To<input type="date" value={selection.dateTo} max={manilaDay()} required onChange={(event) => { setPreset('custom'); change('dateTo', event.target.value); }} /></label>
-            <label>Project site<select value={selection.siteId} onChange={(event) => change('siteId', event.target.value)}><option value="">All project sites</option>{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
+            <label>Project site<select value={selection.siteId} onChange={(event) => change('siteId', event.target.value)}><option value="">All project sites</option>{selection.siteId && !sites.some((site) => String(site.id) === String(selection.siteId)) && <option value={selection.siteId}>Project site #{selection.siteId}</option>}{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
           </div>
           <p className="reports-filter-hint" role={invalidPeriod ? 'alert' : undefined}>{invalidPeriod || 'Reports update automatically when you change the selection.'}</p>
         </div>

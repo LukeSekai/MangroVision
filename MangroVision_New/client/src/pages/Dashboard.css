@@ -187,6 +187,7 @@
 .dash-filter-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -211,6 +212,20 @@
 .dash-filter-actions button:hover {
   text-decoration: underline;
 }
+
+.dash-filter-actions .dash-report-button {
+  min-height: 36px;
+  padding: 8px 13px;
+  border: 1px solid var(--green-700);
+  border-radius: var(--radius-md);
+  background: var(--green-700);
+  color: #fff;
+  white-space: nowrap;
+}
+
+.dash-filter-actions .dash-report-button:hover { text-decoration: none; background: var(--green-800); }
+.dash-filter-actions .dash-report-button:disabled { opacity: .55; cursor: default; }
+.dash-filter-actions .dash-report-button:focus-visible { outline: 3px solid #86efac; outline-offset: 3px; }
 
 .dash-filters {
   display: grid;

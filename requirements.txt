@@ -38,6 +38,7 @@ rtree>=1.2.0
 fastapi>=0.104.0
 uvicorn>=0.24.0
 python-multipart>=0.0.6
+httpx>=0.27,<1  # Staff verification email HTTPS transport
 reportlab>=4.4,<5  # Direct LGU report PDF downloads
 
 # Production persistence (PostgreSQL/PostGIS + S3-compatible object storage)

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
+import RestorationReportDialog from '../components/RestorationReportDialog';
 import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses';
 import { DASHBOARD_ENDPOINTS, dashboardSectionsForTab } from '../utils/dashboardLoading';
 import {
@@ -1436,6 +1437,7 @@ function SettingsForm({ settings, loading, error, onSaved }) {
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [reportSelection, setReportSelection] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [recordNotices, setRecordNotices] = useState(null);
   const [noticesError, setNoticesError] = useState('');
@@ -1611,6 +1613,10 @@ export default function Dashboard() {
           <div className="dash-filter-actions">
             <span className="dash-filter-count">{activeFilterCount ? 'Custom view' : 'This year so far'}</span>
             <button type="button" onClick={() => setFilters(makeYtdFilters())}>Show this year</button>
+            <button type="button" className="dash-report-button" aria-haspopup="dialog" disabled={invalidPeriod} onClick={() => setReportSelection({
+              ...filters, dateFrom: filters.dateFrom || defaultFilters.dateFrom, dateTo: filters.dateTo || defaultFilters.dateTo,
+              type: activeTab === 'operations' ? 'organizations' : activeTab === 'ecology' ? 'monitoring' : 'planting',
+            })}>Download Report</button>
           </div>
         </div>
         <div className="dash-filters">
@@ -1673,6 +1679,7 @@ export default function Dashboard() {
         ) : null}
 
       </section>
+      {reportSelection && <RestorationReportDialog initialSelection={reportSelection} initialSites={sites} onClose={() => setReportSelection(null)} />}
     </main>
   );
 }

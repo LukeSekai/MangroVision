@@ -1,6 +1,8 @@
 # Restoration reports
 
-LGU staff can open **Reports** in the sidebar (`/reports`). The page reads existing planting, dashboard and monitoring APIs. It does not require a database migration or change planting records.
+LGU staff open the report dialog from **Download Report** in Dashboard or **Download Monitoring Report** in Monitoring. Dashboard carries its current date range and project site into the dialog. Overview and Project Sites start with planting accomplishment; Planting Work starts with organization activity; Seedling Health and Monitoring start with survival and monitoring. Staff can choose any of the four report types in the dialog.
+
+Reports is no longer a separate sidebar section. Old `/reports` links redirect to Dashboard. The shared generator reads existing planting, dashboard and monitoring APIs. It does not require a database migration or change planting records.
 
 ## Available reports
 
@@ -11,7 +13,9 @@ LGU staff can open **Reports** in the sidebar (`/reports`). The page reads exist
 | Mortality and replanting | Reported seedling deaths by cause, plus individual dead seedlings with recorded death dates in the period and their current replanting status. Cause totals use the visit reporting date where applicable; these dates can differ from the recorded death dates in the location table. |
 | Organization activity | Assignment points marked planted or skipped during the period, alongside current pending work. Rows are grouped by the organization responsible for each site; sites without an organization are explicitly identified as unassigned groups. |
 
-Choose year to date, this quarter, last quarter or custom dates, and optionally a project site. The preview updates automatically when a report tab or filter changes, and when records change. Tabs and filters stay available while loading; requests for an earlier selection are cancelled. Downloads appear when the latest preview is ready. Invalid date ranges show a validation message and do not request a report.
+Choose year to date, this quarter, last quarter or custom dates, and optionally a project site. Monitoring opens with year to date and all sites because its workspace currently has no date or project-site filter. The preview updates automatically when the report type or a filter changes, and when records change. Controls stay available while loading; requests for an earlier selection are cancelled. Downloads appear when the latest preview is ready. Invalid date ranges show a validation message and do not request a report.
+
+The dialog opens below the workspace header, keeps its Close button visible while its contents scroll, supports Escape and keyboard focus containment, and returns focus to the opening button on close. Closing cancels pending report requests and PDF downloads. Print output includes the document without Dashboard, Monitoring or dialog controls.
 
 The preview records its site, date range, generation time in Asia/Manila and the signed-in officer's display name. Staff can add optional remarks. This identifies the preparer; it does not apply a signature or certify government acceptance.
 
@@ -41,11 +45,11 @@ From `MangroVision_New/client`:
 
 ```powershell
 node --test src/utils/restorationReports.test.js src/pages/RestorationReports.test.js
-npx eslint src/utils/restorationReports.js src/utils/restorationReports.test.js src/pages/RestorationReports.jsx src/pages/RestorationReports.test.js
+npx eslint src/utils/restorationReports.js src/utils/restorationReports.test.js src/components/RestorationReportDialog.jsx src/pages/RestorationReports.jsx src/pages/RestorationReports.test.js
 npm run build
 ```
 
-The tests check seedling/assignment distinctions, inspection denominators, missing observations, earlier deaths, timezone/date boundaries, replanting filters, consistent report wording and month labels, unassigned organization groups, safe CSV output, escaped report text and rendered report metadata. Visual browser and print-preview inspection should be performed when a browser connection is available.
+The tests check seedling/assignment distinctions, inspection denominators, missing observations, earlier deaths, timezone/date boundaries, replanting filters, consistent report wording and month labels, unassigned organization groups, safe CSV output, escaped report text, rendered report metadata and initial report scope from the source screen. Visual browser and print-preview inspection should be performed when a browser connection is available.
 
 From the repository root, with `pytest` and `pypdf` available in the development environment:
 

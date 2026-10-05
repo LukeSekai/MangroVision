@@ -12,7 +12,6 @@ import Monitoring from './pages/OrganizationMonitoring';
 import MonitoringMapWorkspace from './pages/MonitoringMapWorkspace';
 import LoginScreen from './components/LoginScreen';
 import AccountSettings from './pages/AccountSettings';
-import RestorationReports from './pages/RestorationReports';
 import { useAuthStore } from './stores/authStore';
 
 export default function StaffApp() {
@@ -38,7 +37,7 @@ export default function StaffApp() {
         <Route path="/scheduling" element={<Scheduling />} />
         <Route path="/activity" element={<ActivityLog />} />
         <Route path="/account" element={<AccountSettings />} />
-        <Route path="/reports" element={<RestorationReports />} />
+        <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/monitoring/map" element={<MonitoringMapWorkspace />} />
         <Route path="/planters" element={<PlanterManagement />} />

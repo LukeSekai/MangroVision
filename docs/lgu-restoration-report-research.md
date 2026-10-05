@@ -59,7 +59,7 @@ These are product recommendations, not a claim that every receiving office accep
 5. **Evidence:** a readable map, coordinates/detail workbook and available photos captioned with observation date and linked location.
 6. **Review:** spaces for the LGU's preparer, reviewer and approving officer. A generated draft must not invent signatures or certification.
 
-A short summary PDF with separate detail and evidence annexes will serve both office review and field follow-up. An eventual Reports screen should allow report type, period, project site and organization selection, then preview and download. Label drafts and retain the generation time and filters; retaining an immutable issued snapshot would make later corrections traceable.
+A short summary PDF with separate detail and evidence annexes will serve both office review and field follow-up. Report generation now opens in a dialog from Dashboard or Monitoring, carrying the source screen's available filters. It offers report type, period, project site, preview and downloads without a separate Reports navigation section. Organization selection could be added when the report sources support it consistently. Retain the generation time and filters; retaining an immutable issued snapshot would make later corrections traceable.
 
 ## Calculation and data-quality rules
 

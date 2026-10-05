@@ -42,7 +42,7 @@ SHIPPED_FILES = (
 )
 PYTHON_MODULES = (
     "fastapi", "psycopg", "boto3", "cv2", "rasterio", "torch",
-    "detectree2", "detectron2", "reportlab",
+    "detectree2", "detectron2", "httpx", "reportlab",
 )
 
 
