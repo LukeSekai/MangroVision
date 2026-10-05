@@ -15,13 +15,15 @@ import threading
 import time
 import traceback
 from collections import OrderedDict
+from contextvars import copy_context
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
+from uuid import UUID, uuid4
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
@@ -29,6 +31,7 @@ from shapely.geometry import Point, mapping, shape
 from shapely.ops import unary_union
 
 from api.runtime_state import processing_job
+from api.processing_jobs import ProcessingAlreadyStarted, ProcessingBusy, ProcessingJobs
 
 # Fix Windows console encoding because canopy_detection prints Unicode text.
 if sys.platform == "win32" and hasattr(sys.stdout, "buffer") and hasattr(sys.stderr, "buffer"):
@@ -125,6 +128,8 @@ _ERODED_ZONES_PATH = _ROOT / "eroded_zones.geojson"
 _TEMP_UPLOADS_DIR = _ROOT / "MangroVision_New" / "temp_uploads"
 _PROCESSING_CACHE: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _PROCESSING_CACHE_LIMIT = 24
+_PROCESSING_JOBS = ProcessingJobs()
+_WORKFLOW_LOCK = threading.Lock()
 _PREFLIGHT_ALIGNMENT_CACHE: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _PREFLIGHT_ALIGNMENT_CACHE_LIMIT = 24
 
@@ -5419,11 +5424,20 @@ def _execute_canopy_workflow(
 async def _save_upload_to_temp(image: UploadFile) -> tuple[Path, str]:
     """Persist an uploaded drone image to the temp uploads dir and return its path."""
     _TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
-    uploaded_name = image.filename or "uploaded_image"
-    temp_path = _TEMP_UPLOADS_DIR / f"{int(time.time() * 1000)}_{uploaded_name}"
-    contents = await image.read()
-    with open(temp_path, "wb") as temp_file:
-        temp_file.write(contents)
+    uploaded_name = Path((image.filename or "uploaded_image").replace("\\", "/")).name
+    temp_path = _TEMP_UPLOADS_DIR / f"{uuid4().hex}{Path(uploaded_name).suffix}"
+    # Bound temporary uploads and keep filenames out of filesystem paths.
+    total = 0
+    try:
+        with open(temp_path, "wb") as temp_file:
+            while chunk := await image.read(1024 * 1024):
+                total += len(chunk)
+                if total > 50 * 1024 * 1024:
+                    raise HTTPException(status_code=413, detail="Image must be smaller than 50 MB.")
+                temp_file.write(chunk)
+    except BaseException:
+        _cleanup_temp(temp_path)
+        raise
     return temp_path, uploaded_name
 
 
@@ -5436,6 +5450,106 @@ def _cleanup_temp(temp_path: Path) -> None:
         pass
 
 
+def _run_image_workflow(user_id: int, parameters: dict, progress_cb=None):
+    """Keep shared model/orthophoto state serialized across old and new clients."""
+    with processing_job(), _WORKFLOW_LOCK:
+        payload = _execute_canopy_workflow(**parameters, progress_cb=progress_cb)
+        cached = _get_processing_cache(payload.get("analysis_key", ""))
+        if cached is not None:
+            cached["owner_id"] = user_id
+    _record_processed_image(user_id, parameters["uploaded_name"], payload)
+    return payload
+
+
+def _run_preflight(temp_path, result):
+    with processing_job():
+        if not _WORKFLOW_LOCK.acquire(blocking=False):
+            raise HTTPException(status_code=409, detail="Another image is being analyzed. Wait for it to finish before checking a new image.")
+        try:
+            return _calibrate_preflight_footprint(temp_path, result)
+        finally:
+            _WORKFLOW_LOCK.release()
+
+
+def _inspect_image_upload(temp_path, uploaded_name, altitude, drone_model):
+    clean_altitude = _require_metric_value(
+        "altitude", altitude, min_value=_MIN_ANALYSIS_ALTITUDE_M,
+        max_value=_MAX_ANALYSIS_ALTITUDE_M,
+    )
+    metadata = ExifExtractor.extract_all_metadata(str(temp_path))
+    result = _build_image_location_preflight(metadata, clean_altitude, drone_model)
+    if result.get("can_process"):
+        result = _run_preflight(temp_path, result)
+    result["uploaded_file_name"] = uploaded_name
+    return result
+
+
+@router.post("/jobs", status_code=202)
+async def start_processing_job(
+    response: Response,
+    image: UploadFile = File(...),
+    request_id: Optional[str] = Form(None),
+    altitude: float = Form(6.0),
+    drone_model: str = Form("Autel_EVO_II_Pro"),
+    canopy_buffer: float = Form(2.0),
+    hexagon_size: float = Form(1.5),
+    ai_confidence: float = Form(0.80),
+    detection_mode: Optional[str] = Form(None),
+    ai_runtime_tuning: str = Form("{}"),
+    species: Optional[str] = Form(None),
+    allow_partial_map_overlap: bool = Form(False),
+):
+    """Upload once, then return immediately while analysis runs on the laptop."""
+    user = await run_in_threadpool(_require_lgu_user)
+    if request_id:
+        try:
+            request_id = str(UUID(request_id))
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail="Invalid analysis request identifier.") from error
+        existing = _PROCESSING_JOBS.find_request(int(user["id"]), request_id)
+        if existing:
+            response.headers["Cache-Control"] = "no-store"
+            return {"job_id": existing, "status": "running"}
+    temp_path, uploaded_name = await _save_upload_to_temp(image)
+    parameters = dict(
+        temp_path=temp_path, uploaded_name=uploaded_name, altitude=altitude,
+        drone_model=drone_model, canopy_buffer=canopy_buffer, hexagon_size=hexagon_size,
+        ai_confidence=ai_confidence, detection_mode=detection_mode,
+        ai_runtime_tuning=ai_runtime_tuning, species=species,
+        allow_partial_map_overlap=allow_partial_map_overlap,
+    )
+
+    def work(progress_cb):
+        try:
+            return _run_image_workflow(int(user["id"]), parameters, progress_cb)
+        finally:
+            _cleanup_temp(temp_path)
+
+    try:
+        job_id = _PROCESSING_JOBS.submit(int(user["id"]), work, request_id=request_id)
+    except ProcessingAlreadyStarted as error:
+        _cleanup_temp(temp_path)
+        job_id = error.job_id
+    except ProcessingBusy as error:
+        _cleanup_temp(temp_path)
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except Exception:
+        _cleanup_temp(temp_path)
+        raise
+    response.headers["Cache-Control"] = "no-store"
+    return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/jobs/{job_id}")
+def processing_job_status(job_id: str, response: Response):
+    user = _require_lgu_user()
+    job = _PROCESSING_JOBS.get(job_id, int(user["id"]))
+    if job is None:
+        raise HTTPException(status_code=404, detail="Analysis job not found or expired. The laptop server may have restarted.")
+    response.headers["Cache-Control"] = "no-store"
+    return job
+
+
 @router.post("/preflight")
 async def preflight_image_location(
     image: UploadFile = File(...),
@@ -5443,22 +5557,10 @@ async def preflight_image_location(
     drone_model: str = Form("GENERIC_4K"),
 ):
     """Read image metadata and classify its GIS footprint without running AI."""
-    _require_lgu_user()
+    await run_in_threadpool(_require_lgu_user)
     temp_path, uploaded_name = await _save_upload_to_temp(image)
     try:
-        clean_altitude = _require_metric_value(
-            "altitude",
-            altitude,
-            min_value=_MIN_ANALYSIS_ALTITUDE_M,
-            max_value=_MAX_ANALYSIS_ALTITUDE_M,
-        )
-        metadata = ExifExtractor.extract_all_metadata(str(temp_path))
-        result = _build_image_location_preflight(metadata, clean_altitude, drone_model)
-        if result.get("can_process"):
-            with processing_job():
-                result = await run_in_threadpool(_calibrate_preflight_footprint, temp_path, result)
-        result["uploaded_file_name"] = uploaded_name
-        return result
+        return await run_in_threadpool(_inspect_image_upload, temp_path, uploaded_name, altitude, drone_model)
     except HTTPException:
         raise
     except Exception as error:
@@ -5485,11 +5587,11 @@ async def process_image(
     allow_partial_map_overlap: bool = Form(False),
 ):
     """Run the canopy-analysis workflow and return the full JSON response."""
-    user = _require_lgu_user()
+    user = await run_in_threadpool(_require_lgu_user)
     temp_path, uploaded_name = await _save_upload_to_temp(image)
     try:
-        with processing_job():
-            payload = _execute_canopy_workflow(
+        payload = await run_in_threadpool(
+            _run_image_workflow, int(user["id"]), dict(
                 temp_path=temp_path,
                 uploaded_name=uploaded_name,
                 altitude=altitude,
@@ -5501,8 +5603,8 @@ async def process_image(
                 ai_runtime_tuning=ai_runtime_tuning,
                 species=species,
                 allow_partial_map_overlap=allow_partial_map_overlap,
-            )
-        _record_processed_image(int(user["id"]), uploaded_name, payload)
+            ),
+        )
         return payload
     except HTTPException:
         raise
@@ -5534,7 +5636,7 @@ async def process_image_stream(
       * {"type": "error",    "detail": str}             — terminal failure
     The stream closes after the terminal event.
     """
-    user = _require_lgu_user()
+    user = await run_in_threadpool(_require_lgu_user)
     temp_path, uploaded_name = await _save_upload_to_temp(image)
     events: queue_module.Queue = queue_module.Queue()
 
@@ -5543,8 +5645,8 @@ async def process_image_stream(
 
     def runner() -> None:
         try:
-            with processing_job():
-                payload = _execute_canopy_workflow(
+            payload = _run_image_workflow(
+                int(user["id"]), dict(
                     temp_path=temp_path,
                     uploaded_name=uploaded_name,
                     altitude=altitude,
@@ -5554,11 +5656,10 @@ async def process_image_stream(
                     ai_confidence=ai_confidence,
                     detection_mode=detection_mode,
                     ai_runtime_tuning=ai_runtime_tuning,
-                    progress_cb=progress_cb,
                     species=species,
                     allow_partial_map_overlap=allow_partial_map_overlap,
-                )
-            _record_processed_image(int(user["id"]), uploaded_name, payload)
+                ), progress_cb,
+            )
             events.put({"type": "result", "payload": payload})
         except HTTPException as error:
             events.put({
@@ -5570,9 +5671,11 @@ async def process_image_stream(
             traceback.print_exc()
             events.put({"type": "error", "detail": f"Processing failed: {error}"})
         finally:
+            _cleanup_temp(temp_path)
             events.put({"type": "__done__"})
 
-    thread = threading.Thread(target=runner, daemon=True)
+    context = copy_context()
+    thread = threading.Thread(target=lambda: context.run(runner), daemon=True)
     thread.start()
 
     def event_generator():
@@ -5585,7 +5688,8 @@ async def process_image_stream(
                 if event.get("type") in {"result", "error"}:
                     break
         finally:
-            _cleanup_temp(temp_path)
+            # The worker owns cleanup even when the streaming client disconnects.
+            pass
 
     return StreamingResponse(
         event_generator(),
@@ -5602,7 +5706,7 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
     """Persist a reviewed analysis after the React client confirms the results."""
     user = _require_lgu_user()
     cached_payload = _get_processing_cache(body.analysis_key)
-    if cached_payload is None:
+    if cached_payload is None or cached_payload.get("owner_id") != int(user["id"]):
         raise HTTPException(
             status_code=404,
             detail="Processing result not found. Run the analysis again before saving.",

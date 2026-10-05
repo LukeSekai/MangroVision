@@ -25,6 +25,7 @@ from mangrovision_db.config import get_settings
 from mangrovision_db.storage import storage_ready
 
 from api import map_tiles
+from api.error_responses import install_error_responses
 from api.security import SessionSecurityMiddleware
 from api.activity_audit import ActivityAuditMiddleware
 from api.read_compression import WorkspaceReadCompression
@@ -58,6 +59,7 @@ app = FastAPI(
     docs_url="/api/docs",
     redoc_url="/api/redoc",
 )
+install_error_responses(app)
 
 _default_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 _extra_origins_env = os.getenv("MANGROVISION_CORS_ORIGINS", "").strip()

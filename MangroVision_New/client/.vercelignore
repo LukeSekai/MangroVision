@@ -1,0 +1,6 @@
+.env*
+node_modules
+.vercel
+dist
+**/*.test.js
+**/*.test.mjs

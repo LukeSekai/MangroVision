@@ -6,6 +6,7 @@ import Logo from '../components/Logo';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
+import { readAnalysisResponse } from '../utils/processingJobs';
 import ResultsOverlay from './ResultsOverlay';
 import './ResultsOverlay.css';
 import './ImageProcessing.css';
@@ -134,10 +135,7 @@ export default function ImageProcessing() {
         method: 'POST',
         body: formData,
       });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || 'Could not verify this image on the GIS map.');
-      }
+      const payload = await readAnalysisResponse(response);
       if (preflightRequestRef.current !== requestId) return;
       setLocationCheck(payload);
       setLocationBlockModalOpen(

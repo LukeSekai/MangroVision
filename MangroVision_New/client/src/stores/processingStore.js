@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { readAnalysisResponse, startProcessingJob, waitForProcessingJob } from '../utils/processingJobs';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -11,14 +12,14 @@ const initialState = {
   // Survives page navigation because it lives here, not in the page component.
   processing: false,
 
-  // Latest stage label and percent emitted by the backend SSE stream.
+  // Latest stage label and percent reported by the backend job.
   stage: null,
   progress: 0,
 
   // Final analysis payload (the same shape the /process endpoint returns).
   result: null,
 
-  // Error message if the stream failed; null while everything is fine.
+  // Error message if processing failed; null while everything is fine.
   error: '',
 
   // Save-to-database state, also moved off the page so a save in flight
@@ -56,7 +57,8 @@ export const useProcessingStore = create((set, get) => ({
     set({ ...initialState });
   },
 
-  // Cancel an in-flight processing job without clearing already-saved state
+  // Stop watching progress without clearing already-saved state.
+  // The laptop completes its current analysis even if this tab disconnects.
   // (kept for an eventual cancel button; currently unused).
   cancel: () => {
     if (activeController) {
@@ -107,6 +109,8 @@ export const useProcessingStore = create((set, get) => ({
       reader.readAsDataURL(file);
     });
 
+    if (activeController !== controller) return;
+
     set({
       processing: true,
       stage: 'Uploading image...',
@@ -137,65 +141,27 @@ export const useProcessingStore = create((set, get) => ({
         formData.append('species', String(params.species));
       }
 
-      const response = await fetch(`${API}/api/analyses/process-stream`, {
-        method: 'POST',
-        body: formData,
+      const started = await startProcessingJob({
+        api: API,
+        formData,
         signal: controller.signal,
+        onRetry: () => {
+          if (activeController === controller) set({ stage: 'Connection interrupted. Retrying upload...' });
+        },
       });
-
-      if (!response.ok || !response.body) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || `Processing failed (${response.status})`);
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder('utf-8');
-      let buffer = '';
-      let finalPayload = null;
-      let streamError = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        let boundary = buffer.indexOf('\n\n');
-        while (boundary !== -1) {
-          const rawEvent = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-
-          const dataLine = rawEvent
-            .split('\n')
-            .find((line) => line.startsWith('data:'));
-          if (dataLine) {
-            const jsonText = dataLine.slice(5).trim();
-            if (jsonText) {
-              let event;
-              try {
-                event = JSON.parse(jsonText);
-              } catch {
-                event = null;
-              }
-              if (event) {
-                if (event.type === 'progress') {
-                  const next = {};
-                  if (typeof event.stage === 'string') next.stage = event.stage;
-                  if (typeof event.pct === 'number') next.progress = event.pct;
-                  if (Object.keys(next).length) set(next);
-                } else if (event.type === 'result') {
-                  finalPayload = event.payload;
-                } else if (event.type === 'error') {
-                  streamError = event.detail || 'Processing failed';
-                }
-              }
-            }
-          }
-          boundary = buffer.indexOf('\n\n');
-        }
-      }
-
-      if (streamError) throw new Error(streamError);
-      if (!finalPayload) throw new Error('Processing ended without a result');
+      const finalPayload = await waitForProcessingJob({
+        api: API,
+        jobId: started.job_id,
+        signal: controller.signal,
+        onProgress: (job) => {
+          if (activeController !== controller) return;
+          const next = {};
+          if (typeof job.stage === 'string') next.stage = job.stage;
+          if (typeof job.pct === 'number') next.progress = job.pct;
+          set(next);
+        },
+      });
+      if (activeController !== controller) return;
 
       set({
         processing: false,
@@ -208,6 +174,7 @@ export const useProcessingStore = create((set, get) => ({
         overlayOpen: true,
       });
     } catch (processError) {
+      if (activeController !== controller) return;
       if (processError.name === 'AbortError') {
         // User-initiated abort: just clear the running flags, no error message.
         set({ processing: false, stage: null, progress: 0 });
@@ -220,7 +187,7 @@ export const useProcessingStore = create((set, get) => ({
         });
       }
     } finally {
-      activeController = null;
+      if (activeController === controller) activeController = null;
     }
   },
 
@@ -242,12 +209,7 @@ export const useProcessingStore = create((set, get) => ({
         }),
       });
 
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || 'Save failed');
-      }
-
-      const payload = await response.json();
+      const payload = await readAnalysisResponse(response);
       const savedResult = {
         ...result,
         saved: true,

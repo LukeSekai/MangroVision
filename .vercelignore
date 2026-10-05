@@ -1,0 +1,15 @@
+# The linked Git repository contains the laptop backend and private runtime data.
+# Only this frontend directory may be uploaded by the Vercel CLI.
+*
+!MangroVision_New
+!MangroVision_New/client
+!MangroVision_New/client/**
+MangroVision_New/client/.env*
+MangroVision_New/client/node_modules
+MangroVision_New/client/node_modules/**
+MangroVision_New/client/.vercel
+MangroVision_New/client/.vercel/**
+MangroVision_New/client/dist
+MangroVision_New/client/dist/**
+MangroVision_New/client/**/*.test.js
+MangroVision_New/client/**/*.test.mjs

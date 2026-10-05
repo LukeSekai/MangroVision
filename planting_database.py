@@ -1298,43 +1298,47 @@ def _get_subject_by_session(subject_type: str, token: str) -> Optional[dict]:
 
     token_hash = _hash_session_token(token)
     conn = _get_connection()
-    session_row = conn.execute("""
-        SELECT id, subject_id, participant_slot
-        FROM auth_sessions
-        WHERE subject_type = ?
-          AND token_hash = ?
-          AND revoked_at IS NULL
-          AND expires_at > CURRENT_TIMESTAMP
-    """, (subject_type, token_hash)).fetchone()
-    if not session_row:
+    try:
+        # Validate revocation/expiry on every request, using one read. Updating
+        # the same session row on every tile/workspace read caused lock queues
+        # and exhausted the small hosted database pool under concurrent use.
+        if subject_type == "user":
+            subject_columns = "subject.*"
+            subject_join = "JOIN users subject ON subject.id = session.subject_id"
+        else:
+            subject_columns = "subject.*, organization.name AS organization_name"
+            subject_join = """JOIN planters subject ON subject.id = session.subject_id
+                LEFT JOIN organizations organization ON organization.id = subject.organization_id"""
+        row = conn.execute(f"""
+            SELECT {subject_columns}, session.id AS _auth_session_id,
+                   session.participant_slot AS _auth_participant_slot,
+                   (session.last_seen_at IS NULL OR session.last_seen_at
+                       < CURRENT_TIMESTAMP - INTERVAL '5 minutes') AS _auth_heartbeat_due
+            FROM auth_sessions session
+            {subject_join}
+            WHERE session.subject_type = ? AND session.token_hash = ?
+              AND session.revoked_at IS NULL AND session.expires_at > CURRENT_TIMESTAMP
+        """, (subject_type, token_hash)).fetchone()
+        if not row:
+            return None
+        result = dict(row)
+        session_id = result.pop("_auth_session_id")
+        participant_slot = result.pop("_auth_participant_slot")
+        # Compare timestamps in PostgreSQL: CompatRow converts them to strings.
+        # The boolean is preserved and uses the DB clock consistently.
+        heartbeat_due = result.pop("_auth_heartbeat_due")
+        if heartbeat_due:
+            conn.execute("""
+                UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND (last_seen_at IS NULL
+                    OR last_seen_at < CURRENT_TIMESTAMP - INTERVAL '5 minutes')
+            """, (session_id,))
+            conn.commit()
+        if subject_type == "planter":
+            result["participant_slot"] = participant_slot
+        return result
+    finally:
         conn.close()
-        return None
-
-    conn.execute(
-        "UPDATE auth_sessions SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?",
-        (session_row["id"],),
-    )
-    if subject_type == "user":
-        subject_row = conn.execute(
-            "SELECT * FROM users WHERE id = ?",
-            (session_row["subject_id"],),
-        ).fetchone()
-    else:
-        subject_row = conn.execute(
-            """
-            SELECT p.*, o.name AS organization_name
-            FROM planters p
-            LEFT JOIN organizations o ON o.id = p.organization_id
-            WHERE p.id = ?
-            """,
-            (session_row["subject_id"],),
-        ).fetchone()
-    conn.commit()
-    conn.close()
-    result = dict(subject_row) if subject_row else None
-    if result and subject_type == "planter":
-        result["participant_slot"] = session_row["participant_slot"]
-    return result
 
 
 def _revoke_session(subject_type: str, token: str) -> None:

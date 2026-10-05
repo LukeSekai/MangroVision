@@ -48,6 +48,8 @@ htmlcov/
 # Keep the operational report regression checks with their implementation.
 !MangroVision_New/client/src/utils/restorationReports.test.js
 !MangroVision_New/client/src/pages/RestorationReports.test.js
+!MangroVision_New/client/src/utils/processingJobs.test.js
+!MangroVision_New/client/src/utils/apiReadCache.test.js
 
 # Data and logs
 .env
@@ -63,6 +65,7 @@ planting_zones.db-*
 MangroVision_New/monitoring_uploads/
 MangroVision_New/run_logs/
 MangroVision_New/.dev-server/
+.vercel/
 supabase/.temp/
 run_logs/
 tmp/

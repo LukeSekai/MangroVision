@@ -85,6 +85,7 @@ _EXCLUDED = {
     ("POST", "/api/analyses/preflight"),
     ("POST", "/api/analyses/process"),
     ("POST", "/api/analyses/process-stream"),
+    ("POST", "/api/analyses/jobs"),
     ("POST", "/api/notifications/refresh"),
     ("POST", "/api/routing/compute"),
     ("POST", "/api/planters/assign-point"),
