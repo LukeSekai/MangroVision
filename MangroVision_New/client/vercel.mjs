@@ -1,22 +1,37 @@
-// Evaluated by Vercel at deployment time. This URL is public, not a credential.
-const backend = process.env.MANGROVISION_BACKEND_URL;
-if (!backend || !/^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/?$/.test(backend)) {
-  throw new Error('Set MANGROVISION_BACKEND_URL to the running laptop Quick Tunnel URL before deploying.');
-}
-const origin = backend.replace(/\/$/, '');
-
+// Git deployments validate this export before executing configuration code.
+// Literal routing placeholders are resolved from each deployment's public env.
+// deploy_testing.py validates and updates the current Quick Tunnel origin.
 export const config = {
   framework: 'vite',
   buildCommand: 'npm run build',
   outputDirectory: 'dist',
-  rewrites: [
-    { source: '/api/:path*', destination: `${origin}/api/:path*` },
-    { source: '/tiles/:path*', destination: `${origin}/tiles/:path*` },
-    { source: '/monitoring_uploads/:path*', destination: `${origin}/monitoring_uploads/:path*` },
-    { source: '/((?!api(?:/|$)|tiles(?:/|$)|monitoring_uploads(?:/|$)|assets(?:/|$)).*)', destination: '/index.html' },
-  ],
-  headers: [
-    { source: '/api/:path*', headers: [{ key: 'Cache-Control', value: 'private, no-store' }] },
-    { source: '/:path*', headers: [{ key: 'X-Content-Type-Options', value: 'nosniff' }] },
+  routes: [
+    {
+      src: '^/.*$',
+      headers: { 'X-Content-Type-Options': 'nosniff' },
+      continue: true,
+    },
+    {
+      src: '^/api(?:/(.*))?$',
+      dest: '$MANGROVISION_BACKEND_URL/api/$1',
+      env: ['MANGROVISION_BACKEND_URL'],
+      headers: { 'Cache-Control': 'private, no-store' },
+      respectOriginCacheControl: false,
+    },
+    {
+      src: '^/tiles(?:/(.*))?$',
+      dest: '$MANGROVISION_BACKEND_URL/tiles/$1',
+      env: ['MANGROVISION_BACKEND_URL'],
+    },
+    {
+      src: '^/monitoring_uploads(?:/(.*))?$',
+      dest: '$MANGROVISION_BACKEND_URL/monitoring_uploads/$1',
+      env: ['MANGROVISION_BACKEND_URL'],
+    },
+    { handle: 'filesystem' },
+    {
+      src: '^/((?!api(?:/|$)|tiles(?:/|$)|monitoring_uploads(?:/|$)|assets(?:/|$)).*)$',
+      dest: '/index.html',
+    },
   ],
 };

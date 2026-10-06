@@ -36,9 +36,10 @@ def main():
     env = os.environ.copy()
     env['MANGROVISION_BACKEND_URL'] = backend
     env['VERCEL_TELEMETRY_DISABLED'] = '1'
-    # Public routing settings only. Database/storage credentials stay in the laptop .env.
+    # Public routing settings only. Git previews need the same routing variables;
+    # database/storage credentials stay in the laptop .env.
     for name, value in (('MANGROVISION_BACKEND_URL', backend), ('VITE_API_BASE', ''), ('VITE_TILE_SERVER', '/tiles')):
-        subprocess.run(command + ['env', 'add', name, 'production', '--value', value, '--force', '--yes', '--no-sensitive'],
+        subprocess.run(command + ['env', 'add', name, 'production,preview', '--value', value, '--force', '--yes', '--no-sensitive'],
                        cwd=CLIENT, env=env, check=True)
     # Match the project's Git root directory, with a strict upload allowlist.
     metadata = ROOT.parent / '.vercel' / 'project.json'
