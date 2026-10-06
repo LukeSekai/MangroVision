@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import L from 'leaflet';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
@@ -57,6 +57,7 @@ function coveredPointCount(vertices, points) {
 }
 
 export default function ErodedZoneEditor() {
+  const loaded = useRef(false);
   const adminToken = useAuthStore((s) => s.token);
   const erodedZones = useMapStore((s) => s.erodedZones);
   const forbiddenZones = useMapStore((s) => s.forbiddenZones);
@@ -117,6 +118,8 @@ export default function ErodedZoneEditor() {
   );
 
   useEffect(() => {
+    if (loaded.current) return;
+    loaded.current = true;
     fetchZones();
     fetchPoints();
   }, [fetchPoints, fetchZones]);

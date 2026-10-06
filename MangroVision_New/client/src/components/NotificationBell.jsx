@@ -18,15 +18,16 @@ export default function NotificationBell() {
   const rootRef = useRef(null);
   const lastIds = useRef(new Set());
   const loadedOnce = useRef(false);
-  const lastRefreshDay = useRef('');
   const [items, setItems] = useState([]);
   const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState('unread');
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
   const [toast, setToast] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (sync = false) => {
+    setRefreshing(true);
     try {
       const response = await fetch(`${API}/api/notifications${sync ? '/refresh' : ''}`, {
         method: sync ? 'POST' : 'GET', cache: 'no-store',
@@ -44,26 +45,14 @@ export default function NotificationBell() {
       setUnread(payload.unread_count || 0);
     } catch {
       // Keep the workspace usable during a transient notification failure.
+    } finally {
+      setRefreshing(false);
     }
   }, []);
 
   useEffect(() => {
-    const tick = () => {
-      const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
-        timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
-      }).formatToParts(new Date()).map((part) => [part.type, part.value]));
-      const today = `${parts.year}-${parts.month}-${parts.day}`;
-      const sync = lastRefreshDay.current !== today;
-      lastRefreshDay.current = today;
-      void load(sync);
-    };
-    tick();
-    const timer = window.setInterval(tick, 60_000);
-    window.addEventListener('focus', tick);
-    return () => {
-      window.clearInterval(timer);
-      window.removeEventListener('focus', tick);
-    };
+    const timer = window.setTimeout(() => { void load(true); }, 0);
+    return () => window.clearTimeout(timer);
   }, [load]);
 
   useEffect(() => {
@@ -120,6 +109,9 @@ export default function NotificationBell() {
           <button type="button" className="notification-panel-close" aria-label="Close notifications" onClick={() => setOpen(false)}>×</button>
         </div>
         <div className="notification-filters" aria-label="Notification view">
+          <button type="button" onClick={() => load(true)} disabled={refreshing}>
+            {refreshing ? 'Refreshing…' : 'Refresh'}
+          </button>
           <button type="button" className={filter === 'unread' ? 'is-active' : ''} aria-pressed={filter === 'unread'}
             onClick={() => { setFilter('unread'); setVisibleCount(PAGE_SIZE); }}>Unread <span>{unread}</span></button>
           <button type="button" className={filter === 'all' ? 'is-active' : ''} aria-pressed={filter === 'all'}

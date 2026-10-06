@@ -1,4 +1,4 @@
-// A short-lived, memory-only cache for shared workspace reads. Mutation forms,
+// A session-long, memory-only cache for shared workspace reads. Mutation forms,
 // authentication, visit baselines, and planter/share links always hit the API.
 export const WORKSPACE_READ_PATHS = new Set([
   '/api/analyses/stats', '/api/planters/map-points',
@@ -29,7 +29,7 @@ function waitForRead(promise, signal) {
   });
 }
 
-export function createApiReadCache({ fetcher, origin, ttl = 30_000, now = Date.now,
+export function createApiReadCache({ fetcher, origin, ttl = Infinity, now = Date.now,
   onMutation = () => {}, onSessionChange = () => {} }) {
   const entries = new Map();
   let generation = 0;
@@ -48,12 +48,13 @@ export function createApiReadCache({ fetcher, origin, ttl = 30_000, now = Date.n
     const url = new URL(input instanceof Request ? input.url : input, origin);
     const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const api = url.origin === origin && url.pathname.startsWith('/api/');
-    // PDF rendering accepts a snapshot by POST but does not change records.
-    // Announcing a mutation would refresh the report and cancel its download.
-    const readOnlyPost = method === 'POST' && [
-      '/api/export/report/pdf', '/api/analyses/preflight', '/api/routing/compute',
-    ].includes(url.pathname);
-    const mutation = api && !readOnlyPost && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
+    // Exports and previews do not change workspace records. Notification
+    // refresh/read actions also must not reload the page behind the bell.
+    const readOnlyPost = method === 'POST' && (url.pathname.startsWith('/api/export/') || [
+      '/api/analyses/preflight', '/api/routing/compute',
+    ].includes(url.pathname));
+    const notification = url.pathname === '/api/notifications' || url.pathname.startsWith('/api/notifications/');
+    const mutation = api && !readOnlyPost && !notification && !['GET', 'HEAD', 'OPTIONS', 'TRACE'].includes(method);
     const auth = /^\/api\/(auth|planter-auth)(\/|$)/.test(url.pathname);
     if (mutation) {
       // Invalidate before AND after: reads during a write cannot survive its commit.

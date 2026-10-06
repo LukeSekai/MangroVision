@@ -5,7 +5,7 @@ export const DASHBOARD_ENDPOINTS = {
   sites: '/api/dashboard/sites',
 };
 
-// Each tab loads its own report. Record notices use a separate small read.
+// Each report tab loads its own data.
 export function dashboardSectionsForTab(tab) {
   return [tab in DASHBOARD_ENDPOINTS ? tab : 'overview'];
 }

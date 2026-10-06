@@ -26,12 +26,6 @@ export function installSecureFetch() {
     onSessionChange: () => window.dispatchEvent(new Event('mv:session-changed')),
   });
   window.addEventListener('mv:invalidate-reads', () => cache.invalidate());
-  // Another tab may record a visit or complete planting. Drop its sibling's
-  // cache on focus; mounted pages refresh through the same deduplicated reads.
-  window.addEventListener('focus', () => {
-    cache.invalidate();
-    window.dispatchEvent(new Event('mv:data-changed'));
-  });
   window.fetch = (input, init = {}) => {
     const method = String(init.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const headers = new Headers(input instanceof Request ? input.headers : undefined);

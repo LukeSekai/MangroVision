@@ -26,6 +26,10 @@
   padding: 10px 12px;
 }
 
+.analytics-unavailable-stat {
+  grid-column: 1 / -1;
+}
+
 /* Legend */
 
 .legend-list {

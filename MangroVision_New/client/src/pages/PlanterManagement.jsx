@@ -6,7 +6,6 @@ import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
-import SeedlingRecords from '../components/SeedlingRecords';
 import { getPlanterColor } from '../utils/planterColors';
 import './PlanterManagement.css';
 
@@ -83,6 +82,8 @@ export default function PlanterManagement() {
   const [assignmentPointsCache, setAssignmentPointsCache] = useState({});
   const assignmentPointsRef = useRef({});
   const loadSequence = useRef(0);
+  const dataLoaded = useRef(false);
+  const shareLoaded = useRef(null);
   useEffect(() => { assignmentPointsRef.current = assignmentPointsCache; }, [assignmentPointsCache]);
   const [pointStatusBusyId, setPointStatusBusyId] = useState(null);
 
@@ -103,6 +104,7 @@ export default function PlanterManagement() {
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(payload.detail || 'Could not check share link.');
       setShareLink(payload);
+      shareLoaded.current = adminToken;
     } catch (err) {
       console.error('Share link status failed:', err);
       if (!silent) setShareError(err.message || 'Could not check share link.');
@@ -156,14 +158,14 @@ export default function PlanterManagement() {
     } catch (err) {
       console.error('Failed to load planter data:', err);
     } finally {
-      if (sequence === loadSequence.current) setLoading(false);
+      if (sequence === loadSequence.current) { dataLoaded.current = true; setLoading(false); }
     }
   }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadData();
-      void loadShareStatus({ silent: true });
+      if (!dataLoaded.current) void loadData();
+      if (shareLoaded.current !== adminToken) void loadShareStatus({ silent: true });
     }, 0);
     const refresh = () => { void loadData(); };
     window.addEventListener('mv:data-changed', refresh);
@@ -172,7 +174,7 @@ export default function PlanterManagement() {
       loadSequence.current += 1;
       window.removeEventListener('mv:data-changed', refresh);
     };
-  }, [loadData, loadShareStatus]);
+  }, [adminToken, loadData, loadShareStatus]);
 
   useEffect(() => () => {
     if (shareCopiedTimerRef.current) window.clearTimeout(shareCopiedTimerRef.current);
@@ -428,6 +430,14 @@ export default function PlanterManagement() {
 
   return (
     <Panel title="Planter Management" subtitle={`${activePlanters.length} active organizations`}>
+      <button type="button" className="btn btn-secondary btn-sm" disabled={loading}
+        onClick={() => {
+          window.dispatchEvent(new Event('mv:invalidate-reads'));
+          void loadData();
+          void loadShareStatus({ silent: true });
+          void fetchPoints();
+          void fetchZones();
+        }}>{loading ? 'Refreshing…' : 'Refresh data'}</button>
       {dashStats && (
         <PanelCard
           title="Dashboard"
@@ -471,13 +481,6 @@ export default function PlanterManagement() {
           </button>
         </PanelCard>
       )}
-
-      <SeedlingRecords
-        points={points}
-        projectSites={projectSites}
-        disabled={processing}
-        onSaved={() => Promise.all([fetchPoints(), fetchZones(), loadData()])}
-      />
 
       <PanelCard
         title="Field Share Link"

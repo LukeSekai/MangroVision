@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { staffAuthRequest } from '../utils/staffAuth';
 import EmailCodeInput from '../components/EmailCodeInput';
@@ -7,6 +7,7 @@ import './AccountSettings.css';
 
 export default function AccountSettings() {
   const [account, setAccount] = useState(null);
+  const accountLoaded = useRef(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [password, setPassword] = useState('');
   const [confirmation, setConfirmation] = useState('');
@@ -18,10 +19,16 @@ export default function AccountSettings() {
   const clearSession = useAuthStore((state) => state.clearSession);
 
   useEffect(() => {
+    if (accountLoaded.current) return undefined;
     let active = true;
     staffAuthRequest('account').then((data) => {
-      if (active) setAccount(data);
-    }).catch((err) => { if (active) setError(err.message); });
+      if (active) {
+        accountLoaded.current = true;
+        setAccount(data);
+      }
+    }).catch((err) => {
+      if (active) { accountLoaded.current = true; setError(err.message); }
+    });
     return () => { active = false; };
   }, []);
 

@@ -13,6 +13,8 @@ import './AppShell.css';
 export default function AppShell({ children }) {
   const { pathname } = useLocation();
   const showMap = !['/monitoring', '/dashboard', '/account'].includes(pathname);
+  const [mapVisited, setMapVisited] = useState(showMap);
+  if (showMap && !mapVisited) setMapVisited(true);
   const user = useAuthStore((s) => s.user);
   const [welcomeOpen, setWelcomeOpen] = useState(false);
 
@@ -61,7 +63,7 @@ export default function AppShell({ children }) {
           <span>MangroVision workspace</span>
           <NotificationBell />
         </header>
-        {showMap && <div className="map-layer">
+        {mapVisited && <div className="map-layer" style={{ display: showMap ? undefined : 'none' }}>
           <MapView />
         </div>}
         <div className="content-layer">

@@ -93,16 +93,8 @@ export default function ImageProcessing() {
   // selected. Users can still override in the input below.
   const [canopyBuffer, setCanopyBuffer] = useState(2.0);
 
-  const [uploadOpen, setUploadOpen] = useState(true);
-  const [configOpen, setConfigOpen] = useState(true);
+  const [openPanel, setOpenPanel] = useState('upload');
   const [historyOpen, setHistoryOpen] = useState(false);
-
-  const handleUploadOpenChange = (next) => {
-    setUploadOpen(next);
-    if (next) {
-      setConfigOpen(true);
-    }
-  };
 
   // The preview shown in the upload panel: prefer the freshly-selected local
   // file's preview if one exists; otherwise rehydrate from the store so users
@@ -110,9 +102,12 @@ export default function ImageProcessing() {
   const preview = previewUrl;
   const displayedFileName = file?.name || storedFileName;
   const analyses = stats?.analyses || [];
+  const loaded = useRef(false);
   const pendingDeleteAnalysis = analyses.find((analysis) => analysis.id === pendingDeleteId);
 
   useEffect(() => {
+    if (loaded.current) return;
+    loaded.current = true;
     fetchStats();
   }, [fetchStats]);
 
@@ -219,8 +214,7 @@ export default function ImageProcessing() {
     clearUploadFields();
     clearCurrentAnalysis();
     resetProcessing();
-    setUploadOpen(true);
-    setConfigOpen(true);
+    setOpenPanel('upload');
   };
 
   const requestClear = () => {
@@ -261,7 +255,7 @@ export default function ImageProcessing() {
       const finalResult = useProcessingStore.getState().result;
       if (finalResult) {
         clearUploadFields();
-        setUploadOpen(true);
+        setOpenPanel('upload');
       }
       if (finalResult?.map?.available) {
         setCurrentAnalysis(finalResult);
@@ -382,12 +376,12 @@ export default function ImageProcessing() {
     <Panel
       title="Image Processing"
       subtitle={result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
-      accordion={false}
+      openKey={openPanel}
+      onOpenKeyChange={setOpenPanel}
     >
       <PanelCard
         title="Upload Image"
-        open={uploadOpen}
-        onOpenChange={handleUploadOpenChange}
+        panelKey="upload"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -465,8 +459,8 @@ export default function ImageProcessing() {
 
       <PanelCard
         title="Configuration"
-        open={configOpen}
-        onOpenChange={setConfigOpen}
+        panelKey="configuration"
+        defaultOpen={false}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="3" />

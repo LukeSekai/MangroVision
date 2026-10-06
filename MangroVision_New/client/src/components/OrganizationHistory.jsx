@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
 import { growthStageLabel } from '../utils/mangroveGrowth';
 import AutomaticGrowth from './AutomaticGrowth';
@@ -17,8 +17,11 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const loadedPage = useRef(null);
 
   useEffect(() => {
+    const key = `${organization.id}:${beforeId}:${retry}`;
+    if (loadedPage.current === key) return undefined;
     const controller = new AbortController();
     async function load() {
       setLoading(true);
@@ -35,7 +38,7 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
       } catch (failure) {
         if (!controller.signal.aborted) setError(failure.message || 'Could not load visit history.');
       } finally {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) { loadedPage.current = key; setLoading(false); }
       }
     }
     void load();

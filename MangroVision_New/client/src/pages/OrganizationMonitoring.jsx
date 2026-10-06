@@ -74,6 +74,9 @@ function HistoryIcon() {
 export default function OrganizationMonitoring() {
   const navigate = useNavigate();
   const token = useAuthStore((state) => state.token);
+  const loadedWorkspace = useRef(null);
+  const loadedVisit = useRef(null);
+  const [visitRefreshKey, setVisitRefreshKey] = useState(0);
   const [organizations, setOrganizations] = useState([]);
   const [deathReasons, setDeathReasons] = useState([]);
   const [historyOrganization, setHistoryOrganization] = useState(null);
@@ -101,6 +104,7 @@ export default function OrganizationMonitoring() {
   });
 
   const loadWorkspace = useCallback(async ({ quiet = false, force = false } = {}) => {
+    if (force) setVisitRefreshKey((value) => value + 1);
     if (!token) {
       setLoadError('Sign in again to load organization monitoring.');
       setLoading(false);
@@ -129,14 +133,16 @@ export default function OrganizationMonitoring() {
     } catch (error) {
       setLoadError(error.message || 'Could not load organization monitoring.');
     } finally {
+      loadedWorkspace.current = token;
       setLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
+    if (loadedWorkspace.current === token) return undefined;
     const timer = window.setTimeout(() => loadWorkspace(), 0);
     return () => window.clearTimeout(timer);
-  }, [loadWorkspace]);
+  }, [loadWorkspace, token]);
 
   useEffect(() => {
     const refresh = () => { void loadWorkspace({ quiet: true }); };
@@ -157,7 +163,12 @@ export default function OrganizationMonitoring() {
   const counts = monitoringCounts(visitContext?.total_planted, locationCounts.valid ? String(locationCounts.reported) : '', visitContext?.previous_dead_count);
 
   useEffect(() => {
-    if (!selectedOrganizationId || !form.monitored_at) return;
+    if (!selectedOrganizationId || !form.monitored_at) {
+      loadedVisit.current = null;
+      return;
+    }
+    const key = `${selectedOrganizationId}:${form.monitored_at}:${visitRefreshKey}`;
+    if (loadedVisit.current === key) return;
     const controller = new AbortController();
     async function loadVisit() {
       setVisitLoading(true);
@@ -176,12 +187,12 @@ export default function OrganizationMonitoring() {
       } catch (error) {
         if (!controller.signal.aborted) setVisitError(error.message);
       } finally {
-        if (!controller.signal.aborted) setVisitLoading(false);
+        if (!controller.signal.aborted) { loadedVisit.current = key; setVisitLoading(false); }
       }
     }
     void loadVisit();
     return () => controller.abort();
-  }, [selectedOrganizationId, form.monitored_at]);
+  }, [selectedOrganizationId, form.monitored_at, visitRefreshKey]);
 
   const updateForm = (updates) => {
     if (updates.monitored_at !== undefined) setSelectedDeaths([]);
