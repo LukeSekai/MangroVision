@@ -420,7 +420,7 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
   const advice = schedule ? assessment : { status: tidePlantingState(tide, guide) };
   const editSchedule = (item) => { onClose(); onEdit(item); };
   return <Modal open title={schedule ? schedule.title : `${scheduleStatusLabel(tideKind(tide))} tide`}
-    className="modal-card-wide schedule-details-modal" variant="info"
+    className={`modal-card-wide schedule-details-modal${grouped ? ' is-grouped' : ''}`} variant="info"
     confirmLabel={schedule && !grouped ? 'Edit activity' : 'Close'} cancelLabel={schedule && !grouped ? 'Close' : null}
     onCancel={onClose} onConfirm={schedule && !grouped ? () => editSchedule(schedule) : onClose}>
     <div className="schedule-entry-details">
@@ -432,17 +432,19 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
         <PlantingBadge assessment={advice} />
         <p>{schedule ? assessment.reason : 'Uses the same estimated planting limit as the graph. Check your planting area before going.'}</p>
       </div>
-      {grouped ? <div className="schedule-group-list">
-        <p className="schedule-group-summary">{schedules.length} organization schedules at this time. View or edit each organization's activity below.</p>
-        {schedules.map((item) => <section className="schedule-group-item" key={item.id}>
-          <div className="schedule-group-item-header">
-            <h3>{item.organization_name || 'Organization not set'}</h3>
-            <button type="button" className="schedule-group-edit" onClick={() => editSchedule(item)}
-              aria-label={`Edit activity for ${item.organization_name || 'this organization'}`}>Edit activity</button>
-          </div>
-          <ScheduleDetails schedule={item} showOrganization={false} />
-        </section>)}
-      </div> : schedule ? <ScheduleDetails schedule={schedule} /> : <dl>
+      {grouped ? <>
+        <p className="schedule-group-summary">{schedules.length} separate activities at this time. View or edit each organization's activity below.</p>
+        <div className="schedule-group-list" role="region" aria-label="Organization activities" tabIndex={0}>
+          {schedules.map((item) => <section className="schedule-group-item" key={item.id}>
+            <div className="schedule-group-item-header">
+              <h3>{item.organization_name || 'Organization not set'}</h3>
+              <button type="button" className="schedule-group-edit" onClick={() => editSchedule(item)}
+                aria-label={`Edit activity for ${item.organization_name || 'this organization'}`}>Edit activity</button>
+            </div>
+            <ScheduleDetails schedule={item} showOrganization={false} />
+          </section>)}
+        </div>
+      </> : schedule ? <ScheduleDetails schedule={schedule} /> : <dl>
         <div><dt>Water level</dt><dd>{formatHeight(tide.height_m)}</dd></div>
         <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide.threshold)}</dd></div>
       </dl>}
