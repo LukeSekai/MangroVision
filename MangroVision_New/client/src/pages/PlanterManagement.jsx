@@ -430,14 +430,6 @@ export default function PlanterManagement() {
 
   return (
     <Panel title="Planter Management" subtitle={`${activePlanters.length} active organizations`}>
-      <button type="button" className="btn btn-secondary btn-sm" disabled={loading}
-        onClick={() => {
-          window.dispatchEvent(new Event('mv:invalidate-reads'));
-          void loadData();
-          void loadShareStatus({ silent: true });
-          void fetchPoints();
-          void fetchZones();
-        }}>{loading ? 'Refreshing…' : 'Refresh data'}</button>
       {dashStats && (
         <PanelCard
           title="Dashboard"

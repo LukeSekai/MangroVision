@@ -2294,15 +2294,27 @@ def _matching_project_site_id(
     return int(row["site_id"]) if row and int(row["match_count"]) == 1 else None
 
 
+def _point_project_site_owner_sql(linked_site_column: str) -> str:
+    """Shared aggregate for covering-site ownership; column names are internal.
+
+    Keep a covering analysis link as the overlap tie-breaker. Otherwise a point
+    belongs to its one covering boundary, even if its image links elsewhere.
+    """
+    return f"""COALESCE(
+        MIN(ps.id) FILTER (WHERE ps.id = {linked_site_column}),
+        CASE WHEN COUNT(ps.id) = 1 THEN MIN(ps.id) END
+    )"""
+
+
 def _resolve_point_project_sites(
     conn: Any,
     point_rows: List[Any],
 ) -> List[dict]:
     """Attach an unambiguous stable project site to point-shaped rows.
 
-    An analysis link narrows the candidate site, but each point must be
-    covered by that site's saved boundary. Unlinked analyses use the
-    unambiguous polygon containing the point.
+    An image can cover multiple project sites. Its linked site is preferred
+    only where its boundary covers the point; other locations use the unique
+    covering boundary. Ambiguous unlinked overlaps stay unresolved.
     """
     site_by_id = {}
     for row in conn.execute("""
@@ -2327,11 +2339,11 @@ def _resolve_point_project_sites(
             WITH input_points(row_key, longitude, latitude, linked_site_id) AS (
                 VALUES {values_sql}
             ), matched AS (
-                SELECT ip.row_key, MIN(ps.id) AS site_id, COUNT(ps.id) AS match_count
+                SELECT ip.row_key,
+                       {_point_project_site_owner_sql('ip.linked_site_id')} AS site_id
                 FROM input_points ip
                 LEFT JOIN project_sites ps
-                  ON (ip.linked_site_id IS NULL OR ps.id = ip.linked_site_id)
-                  AND extensions.ST_Covers(
+                  ON extensions.ST_Covers(
                       ps.geometry,
                       extensions.ST_SetSRID(
                           extensions.ST_MakePoint(ip.longitude, ip.latitude), 4326
@@ -2341,7 +2353,7 @@ def _resolve_point_project_sites(
             )
             SELECT row_key, site_id
             FROM matched
-            WHERE match_count = 1
+            WHERE site_id IS NOT NULL
         """, params).fetchall()
         resolved_site_ids = {int(row["row_key"]): int(row["site_id"]) for row in matches}
 
@@ -4337,7 +4349,7 @@ def list_planter_assignment_map_points() -> List[dict]:
     repeated comparisons. Keep the priority/date/id ordering identical.
     """
     conn = _get_connection()
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         WITH active_point_assignments AS (
             SELECT DISTINCT ON (pap.planting_point_id)
                 pap.id AS assignment_point_id,
@@ -4431,14 +4443,12 @@ def list_planter_assignment_map_points() -> List[dict]:
         FROM planting_points pp
         JOIN analyses a ON a.id = pp.analysis_id
         LEFT JOIN LATERAL (
-            SELECT MIN(ps.id) AS site_id
+            SELECT {_point_project_site_owner_sql('a.site_zone_id')} AS site_id
             FROM project_sites ps
-            WHERE (a.site_zone_id IS NULL OR ps.id = a.site_zone_id)
-              AND extensions.ST_Covers(
+            WHERE extensions.ST_Covers(
                   ps.geometry,
                   extensions.ST_SetSRID(extensions.ST_MakePoint(pp.longitude, pp.latitude), 4326)
               )
-            HAVING COUNT(*) = 1
         ) inferred_site ON TRUE
         LEFT JOIN site_zones source_site
           ON source_site.id = inferred_site.site_id
@@ -6401,12 +6411,13 @@ def _project_site_feature(row: Any, counts: Optional[dict] = None) -> dict:
 
 def _project_site_counts(conn: Any) -> dict[int, dict]:
     counts: dict[int, dict] = {}
-    for row in conn.execute("""
+    for row in conn.execute(f"""
         WITH point_membership AS (
-            SELECT a.site_zone_id AS site_id, pp.id AS point_id
+            SELECT {_point_project_site_owner_sql('a.site_zone_id')} AS site_id,
+                   pp.id AS point_id
             FROM analyses a JOIN planting_points pp ON pp.analysis_id = a.id
-            JOIN project_sites ps ON ps.id = a.site_zone_id
-            WHERE extensions.ST_Covers(ps.geometry, pp.location)
+            LEFT JOIN project_sites ps ON extensions.ST_Covers(ps.geometry, pp.location)
+            GROUP BY pp.id
             UNION
             SELECT pa.site_zone_id AS site_id, pp.id AS point_id
             FROM planter_assignments pa
@@ -6716,22 +6727,73 @@ def set_project_site_tide_calibration(site_id: int, calibration: Optional[dict])
 
 
 def delete_project_site(site_id: int) -> bool:
+    """Remove a boundary before planting, retaining its saved planning records."""
     conn = _get_connection()
     try:
-        linked = conn.execute("""
-            SELECT
-                EXISTS(SELECT 1 FROM analyses WHERE site_zone_id = ?) AS has_analyses,
-                EXISTS(SELECT 1 FROM planter_assignments WHERE site_zone_id = ?) AS has_assignments,
-                EXISTS(SELECT 1 FROM planting_events WHERE site_zone_id = ?) AS has_events,
-                EXISTS(SELECT 1 FROM planting_schedules WHERE project_site_id = ?) AS has_schedules
-        """, (int(site_id), int(site_id), int(site_id), int(site_id))).fetchone()
-        if linked and any(int(linked[key] or 0) for key in linked.keys()):
-            raise ValueError(
-                "This project site is linked to analyses, assignments, planting history, or schedules and cannot be deleted."
+        site_id = int(site_id)
+        # Hold the parent row through the checks and deletion. Concurrent
+        # assignments/events must finish their foreign-key checks first or wait.
+        site = conn.execute(
+            "SELECT id FROM site_zones WHERE id = ? FOR UPDATE", (site_id,)
+        ).fetchone()
+        if site is None:
+            return False
+        linked = conn.execute(f"""
+            WITH resolved_points AS (
+                SELECT pp.id, {_point_project_site_owner_sql('a.site_zone_id')} AS site_id
+                FROM planting_points pp JOIN analyses a ON a.id = pp.analysis_id
+                LEFT JOIN project_sites ps ON extensions.ST_Covers(ps.geometry, pp.location)
+                GROUP BY pp.id
+            ), site_points AS (
+                SELECT pp.id, pp.status, pp.planted_at, pp.planted_date, pp.death_at
+                FROM planting_points pp
+                JOIN resolved_points rp ON rp.id = pp.id
+                WHERE rp.site_id = ? OR EXISTS(
+                    SELECT 1 FROM planter_assignment_points pap
+                    JOIN planter_assignments pa ON pa.id = pap.assignment_id
+                    WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id
+                )
             )
-        cursor = conn.execute("DELETE FROM site_zones WHERE id = ?", (int(site_id),))
+            SELECT
+                EXISTS(
+                    SELECT 1 FROM planting_events
+                    WHERE site_zone_id = ? OR (
+                        site_zone_id IS NULL AND (
+                            planting_point_id IN (SELECT id FROM site_points)
+                            OR assignment_id IN (
+                                SELECT id FROM planter_assignments WHERE site_zone_id = ?
+                            )
+                        )
+                    )
+                ) AS has_events,
+                EXISTS(
+                    SELECT 1 FROM site_points
+                    WHERE status = 'planted' OR planted_at IS NOT NULL
+                       OR planted_date IS NOT NULL OR death_at IS NOT NULL
+                ) AS has_planted_points,
+                EXISTS(
+                    SELECT 1 FROM planter_assignment_points pap
+                    JOIN planter_assignments pa ON pa.id = pap.assignment_id
+                    WHERE pa.site_zone_id = ?
+                      AND (pap.status = 'completed' OR pap.completed_at IS NOT NULL)
+                ) AS has_completed_points
+        """, (site_id,) * 5).fetchone()
+        if any(linked[key] for key in linked.keys()):
+            raise ValueError(
+                "This project site has recorded planting history and cannot be deleted."
+            )
+        # Schedules use RESTRICT, so detach their planning link explicitly. The
+        # analyses and assignments use SET NULL; all saved records stay intact.
+        conn.execute(
+            "UPDATE planting_schedules SET project_site_id = NULL WHERE project_site_id = ?",
+            (site_id,),
+        )
+        cursor = conn.execute("DELETE FROM site_zones WHERE id = ?", (site_id,))
         conn.commit()
         return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

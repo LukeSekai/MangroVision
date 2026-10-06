@@ -8,7 +8,7 @@ import { createServer } from 'vite';
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore;
 const pages = new Map();
 const originalGlobals = new Map();
-let requests;
+let requests, responses;
 
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://workspace.example', pretendToBeVisual: true });
@@ -20,6 +20,7 @@ before(async () => {
     fetch: async (input) => {
       const path = new URL(input, window.location.origin).pathname;
       requests.push(path);
+      if (responses.has(path)) return Response.json(responses.get(path));
       if (['/api/planters/', '/api/assignments/'].includes(path)) return Response.json([]);
       if (path === '/api/planters/dashboard') return Response.json({ active_planters: 0 });
       if (path === '/api/planter-auth/organizations') return Response.json({ organizations: [] });
@@ -62,6 +63,7 @@ after(async () => {
 
 beforeEach(() => {
   requests = [];
+  responses = new Map();
   useMapStore.getState().resetWorkspaceData();
   useMapStore.setState({ stats: { analyses: [], points: [], total_analyses: 0 } });
   useProcessingStore.getState().reset();
@@ -98,6 +100,38 @@ async function click(button) {
 
 const headers = () => [...document.querySelectorAll('.panel-card-header')];
 const expanded = () => headers().filter((header) => header.getAttribute('aria-expanded') === 'true');
+
+test('Quick Assign shows all 100 OTON points without the false no-available warning', async () => {
+  responses.set('/api/planters/', [{ id: 23, organization_id: 21, organization_name: 'OTON',
+    status: 'active', participant_count: 10, registration_pending: false }]);
+  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 21, name: 'OTON' }] });
+  useMapStore.setState({
+    projectSites: { features: [{ type: 'Feature', id: 14,
+      properties: { name: 'OTON', organization_id: 21, point_count: 100 } }] },
+    points: Array.from({ length: 100 }, (_, index) => ({
+      id: index + 1, point_num: index + 1, analysis_id: 1, latitude: 10.5,
+      longitude: 123.5 + index * .00001, source_project_site_id: 14,
+      source_organization_id: 21, planting_status: 'planned', species: 'Rhizophora',
+    })),
+  });
+  await render(pages.get('PlanterManagement'));
+  const quickAssign = headers().find((header) => header.textContent.includes('Quick Assign'));
+  if (quickAssign.getAttribute('aria-expanded') === 'false') await click(quickAssign);
+  const organization = document.querySelector('select');
+  await act(async () => {
+    organization.value = '21';
+    organization.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+  await settle();
+  assert.match(document.body.textContent, /100 available points in this project site/);
+  assert.doesNotMatch(document.body.textContent, /No points are available to assign in/);
+  const count = document.getElementById('organization-point-count');
+  assert.equal(count.disabled, false);
+  assert.equal(count.value, '100');
+  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 100 Points/.test(button.textContent));
+  assert.ok(assign);
+  assert.equal(assign.disabled, false);
+});
 
 for (const name of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'ErodedZoneEditor', 'MonitoringMapWorkspace']) {
   test(`${name} opens one section at a time and preserves all-closed state on return`, async () => {

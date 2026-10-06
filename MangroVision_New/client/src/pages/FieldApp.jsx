@@ -253,7 +253,7 @@ function AuthScreen() {
 
           {mode === 'login' && (
             <>
-              <small className="field-label-help">Use your organization's shared username and password. Each new device automatically receives its own participant slot, up to the organization's participant count.</small>
+              <small className="field-label-help">Use your organization's shared login. The same browser and field link on this device restore your points and saved planting progress. A new device receives the next free participant number.</small>
               <label className="field-label">
                 <span><input type="checkbox" checked={form.recover_slot} onChange={(event) => setForm((current) => ({ ...current, recover_slot: event.target.checked }))} /> I am replacing a device after an LGU reset</span>
               </label>
@@ -295,7 +295,7 @@ function AuthScreen() {
               <label className="field-label">
                 Number of participants / planters
                 <input className="field-input" type="number" min="1" max="10000" step="1" required value={form.participant_count} onChange={update('participant_count')} />
-                <small className="field-label-help">Register once for your organization. Each device uses this shared login and receives its own share of the assigned points.</small>
+                <small className="field-label-help">Register once for your organization. Each device receives its own share of the points and keeps its participant number and planting progress after logout.</small>
               </label>
               <label className="field-label">
                 Phone (optional)
@@ -1416,8 +1416,8 @@ export default function FieldApp() {
       >
         <p>
           {welcomeKind === 'register'
-            ? 'Your planter account is ready. Your assigned planting points will appear on the map below.'
-            : 'Your field map is ready. Tap any marker to see what to do next.'}
+            ? `Your organization account is ready. This device is Participant ${planter?.participant_slot}. Sign in here again to continue with the same assigned points and planting progress.`
+            : `Welcome back, Participant ${planter?.participant_slot}. Your assigned points and saved planting progress are ready.`}
         </p>
       </Modal>
 

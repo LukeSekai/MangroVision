@@ -351,7 +351,7 @@ export default function ErodedZoneEditor() {
         cancelDrawing();
         setSaveMsgText('Project site saved');
         setSaveMsgIsError(false);
-        await fetchZones();
+        await Promise.all([fetchZones(), fetchPoints()]);
       } else if (drawingKind === 'warning') {
         const name = zoneName.trim() || `Warning Zone ${warningFeatures.length + 1}`;
         const res = await fetch(`${API}/api/zones/warnings`, {
@@ -426,7 +426,7 @@ export default function ErodedZoneEditor() {
         throw new Error(err.detail || 'Failed to delete project site');
       }
       setPendingProjectSiteDelete(null);
-      await fetchZones();
+      await Promise.all([fetchZones(), fetchPoints()]);
     } catch (err) {
       setProjectSiteDeleteError(err.message || 'Failed to delete project site');
     } finally {
@@ -964,8 +964,8 @@ export default function ErodedZoneEditor() {
         }}
       >
         <p>
-          Only an unused project site can be deleted. If analyses, assignments, or planting history
-          are linked to this site, MangroVision will preserve the boundary and ask you to keep it.
+          You can delete this boundary until planting is recorded. Saved image analyses, mapped
+          points, assignments, and schedules will remain available without this project site.
         </p>
         {projectSiteDeleteError ? (
           <p role="alert" style={{ color: '#991b1b', fontWeight: 600, marginTop: 10 }}>

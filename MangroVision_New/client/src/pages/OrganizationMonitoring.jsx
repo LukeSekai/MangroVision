@@ -76,7 +76,6 @@ export default function OrganizationMonitoring() {
   const token = useAuthStore((state) => state.token);
   const loadedWorkspace = useRef(null);
   const loadedVisit = useRef(null);
-  const [visitRefreshKey, setVisitRefreshKey] = useState(0);
   const [organizations, setOrganizations] = useState([]);
   const [deathReasons, setDeathReasons] = useState([]);
   const [historyOrganization, setHistoryOrganization] = useState(null);
@@ -103,8 +102,7 @@ export default function OrganizationMonitoring() {
     actions_taken: '',
   });
 
-  const loadWorkspace = useCallback(async ({ quiet = false, force = false } = {}) => {
-    if (force) setVisitRefreshKey((value) => value + 1);
+  const loadWorkspace = useCallback(async ({ quiet = false } = {}) => {
     if (!token) {
       setLoadError('Sign in again to load organization monitoring.');
       setLoading(false);
@@ -112,9 +110,7 @@ export default function OrganizationMonitoring() {
     }
     if (!quiet) setLoading(true);
     try {
-      const organizationResponse = await fetch(`${API}/api/monitoring/organizations`, {
-        cache: force ? 'reload' : 'default',
-      });
+      const organizationResponse = await fetch(`${API}/api/monitoring/organizations`);
       const organizationPayload = await organizationResponse.json().catch(() => ({}));
       if (!organizationResponse.ok) {
         throw new Error(organizationPayload.detail || 'Could not load organizations.');
@@ -167,7 +163,7 @@ export default function OrganizationMonitoring() {
       loadedVisit.current = null;
       return;
     }
-    const key = `${selectedOrganizationId}:${form.monitored_at}:${visitRefreshKey}`;
+    const key = `${selectedOrganizationId}:${form.monitored_at}`;
     if (loadedVisit.current === key) return;
     const controller = new AbortController();
     async function loadVisit() {
@@ -192,7 +188,7 @@ export default function OrganizationMonitoring() {
     }
     void loadVisit();
     return () => controller.abort();
-  }, [selectedOrganizationId, form.monitored_at, visitRefreshKey]);
+  }, [selectedOrganizationId, form.monitored_at]);
 
   const updateForm = (updates) => {
     if (updates.monitored_at !== undefined) setSelectedDeaths([]);
@@ -308,7 +304,6 @@ export default function OrganizationMonitoring() {
         <div className="org-monitoring-page-actions">
           <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
           <button type="button" onClick={() => setFieldSheetOpen(true)}>Prepare field sheet</button>
-          <button type="button" onClick={() => loadWorkspace({ force: true })} disabled={loading}>Refresh</button>
           <button type="button" className="is-primary" onClick={() => navigate('/monitoring/map')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>
             Show map

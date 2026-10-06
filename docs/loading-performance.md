@@ -57,8 +57,8 @@ URLs; filters and pagination cursors are part of each key.
   including mutations made while a response body is still downloading.
 - Returning focus or visibility to the app keeps the displayed snapshot.
   There is no data refresh on focus, visibility changes, or an expiry timer.
-- Scheduling, planter management, and monitoring Refresh buttons
-  invalidate or bypass cached data. Store fetch actions accept `{ force: true }`
+- Scheduling's Refresh button invalidates cached data.
+  Store fetch actions accept `{ force: true }`
   for explicit refreshes.
 - Login/logout clear the cache and map state. Old-session requests are rejected.
 - Errors are not cached. Cancelling one caller stops that caller from receiving
@@ -79,8 +79,8 @@ panels have been removed, so the dashboard no longer fetches the separate
 `/api/dashboard/record-notices` read. The header's Planting Goals button opens an
 inline panel above the filters. Its year selector loads annual targets separately
 from the displayed report. Closing and reopening it preserves unsaved inputs.
-Dashboard and Map Analytics have no manual refresh button; browser reload still
-loads fresh data.
+Dashboard, Map Analytics, Monitoring, and Planter Management have no manual
+refresh button; browser reload still loads fresh data.
 
 Visited staff pages use React Activity to preserve their DOM, scroll position,
 filters, and local state. Hidden page effects pause so they cannot alter the

@@ -40,7 +40,11 @@ node_modules/
 htmlcov/
 
 # Development tests are not part of the laptop runtime package.
-/tests/
+/tests/*
+!/tests/test_project_site_deletion_postgres.py
+!/tests/test_planter_device_progress_postgres.py
+!/tests/test_quick_assign_postgres.py
+!/tests/test_project_site_counts.py
 *.test.js
 *.test.mjs
 *.spec.js
@@ -54,6 +58,7 @@ htmlcov/
 !MangroVision_New/client/src/pages/Dashboard.test.js
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
 !MangroVision_New/client/src/components/Panel.test.js
+!MangroVision_New/client/src/stores/planterAuthStore.test.js
 
 # Data and logs
 .env
