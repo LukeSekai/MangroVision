@@ -65,16 +65,23 @@ testing ends when its API/tunnel stop; the Vercel frontend itself remains hosted
    Use the appropriate project/team if setting up a different deployment.
    Project settings: framework **Vite**, root directory **MangroVision_New/client**,
    Node **22.x**, output directory **dist**, build **npm run build**.
+   Set the Git **production branch** to **Latest-Main** under the project's
+   production environment settings. Other branches create preview deployments.
    Both local `.vercel` project metadata and credentials are excluded from Git.
 
 ## Routing and authentication
 
-`client/vercel.mjs` reads the public `MANGROVISION_BACKEND_URL` at deployment
-time. The root `vercel.mjs` exposes that same configuration to CLI deployments.
+`client/vercel.mjs` defines literal routes with the public
+`$MANGROVISION_BACKEND_URL` placeholder and an explicit routing environment
+allowlist. Vercel resolves the placeholder using that deployment's environment
+variables. This allows Git's initial configuration validation to see every
+destination without evaluating JavaScript expressions. The root `vercel.mjs`
+exposes that same configuration to CLI deployments.
 The root `.vercelignore` allows only frontend files to upload. Never upload
 the laptop `.env`, GeoTIFF, checkpoint, or database credentials to Vercel.
 
-The deployment script sets three public production variables:
+The deployment script sets three public variables for both production and
+preview deployments:
 
 | Variable | Value |
 | --- | --- |
@@ -87,6 +94,9 @@ origin. `start_testing.py` applies secure, host-only cookies and trusts the
 exact configured frontend URL through process environment overrides. It does
 not edit the private `.env`. Test the **production website URL**; a different
 preview hostname is not automatically trusted by the backend.
+Preview builds can validate the frontend and routing configuration; use the
+stable production URL for signed-in user testing. Environment changes apply
+to new deployments, so a tunnel restart still requires `--deploy`.
 
 Long image analysis uses `POST /api/analyses/jobs` followed by authenticated
 `GET /api/analyses/jobs/{id}` progress polling. Quick Tunnels do not support SSE,
