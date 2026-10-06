@@ -225,15 +225,14 @@ export default function PlanterManagement() {
     [availablePoints, requestedCount, validCount]);
   useEffect(() => { setAssignmentSelection(pointIdsToAssign); }, [pointIdsToAssign, setAssignmentSelection]);
   const selectedPointIdSet = new Set(pointIdsToAssign.map((id) => Number(id)));
-  const selectedSpeciesKeys = Array.from(new Set(
-    points
-      .filter((point) => selectedPointIdSet.has(Number(point.id)))
-      .map((point) => normalizeAssignmentSpecies(point.species))
-      .filter(Boolean),
-  ));
-  const autoAssignSpecies = selectedSpeciesKeys.length === 1
-    ? ASSIGNMENT_SPECIES_LABELS[selectedSpeciesKeys[0]]
-    : '';
+  const selectedSpeciesCounts = {};
+  for (const point of points) {
+    if (!selectedPointIdSet.has(Number(point.id))) continue;
+    const label = ASSIGNMENT_SPECIES_LABELS[normalizeAssignmentSpecies(point.species)] || 'Species not recorded';
+    selectedSpeciesCounts[label] = (selectedSpeciesCounts[label] || 0) + 1;
+  }
+  const selectedSpeciesSummary = Object.entries(selectedSpeciesCounts)
+    .map(([label, count]) => `${count} ${label}`).join(' · ');
 
   const warnIfNoAvailablePoints = (planter, site) => {
     const siteId = site?.id ?? site?.properties?.id;
@@ -283,7 +282,6 @@ export default function PlanterManagement() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           planting_point_ids: pointIdsToAssign,
-          species: autoAssignSpecies,
           site_zone_id: assignProjectSiteId,
         }),
       });
@@ -655,6 +653,7 @@ export default function PlanterManagement() {
           {selectedAssignmentPlanter && (
             <div className="assign-point-info" role="status">
               <strong>{pointIdsToAssign.length} points{!selectedAssignmentPlanter.registration_pending && ` / ${selectedAssignmentPlanter.participant_count} participants`}</strong>
+              {selectedSpeciesSummary && <span className="text-sm">{selectedSpeciesSummary}</span>}
               {selectedAssignmentPlanter.registration_pending ? (
                 <span className="text-sm">These points will appear when this organization registers. Its participant count at signup determines each participant’s share.</span>
               ) : <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>}

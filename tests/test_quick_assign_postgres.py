@@ -223,3 +223,117 @@ def test_overlaps_preserve_covering_link_and_leave_other_overlaps_unresolved(wor
         ])[0]['source_site_id'] is None
     finally:
         conn.close()
+
+
+def create_cict_species_selection(workspace):
+    """Reproduce CICT's 99 Bungalon and 4 Rhizophora points in one site."""
+    workspace.execute(text("""
+        UPDATE organizations SET name='CICT', normalized_name='cict' WHERE id=1;
+        UPDATE project_sites SET name='CICT' WHERE id=1;
+        UPDATE analyses SET species='bungalon', planting_distance_m=1 WHERE id=1;
+        INSERT INTO analyses(id,analysis_number,image_name,analyzed_at,species,planting_distance_m)
+            VALUES (2,2,'second-species-test.jpg',CURRENT_TIMESTAMP,'rhizophora',2);
+        UPDATE planting_points SET longitude=122.5 + id * .00001 WHERE id<=103;
+        UPDATE planting_points SET analysis_id=2 WHERE id BETWEEN 100 AND 103;
+    """))
+
+
+def quick_assign_client(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
+    route = importlib.import_module('api.routes.planters')
+    app = FastAPI()
+    app.include_router(route.router, prefix='/api/planters')
+    app.dependency_overrides[route._require_lgu_user] = lambda: {'id': 1}
+    return TestClient(app)
+
+
+@pytest.mark.parametrize('count,registered', [(100, False), (103, True)])
+def test_cict_mixed_species_assigns_every_selected_point_and_balances_devices(workspace, monkeypatch, count, registered):
+    create_cict_species_selection(workspace)
+    if registered:
+        db.create_planter('CICT', 'cict_test', 'test', organization_id=1, participant_count=10)
+    with quick_assign_client(monkeypatch) as client:
+        assigned = client.post('/api/planters/organizations/1/assignments', json={
+            'planting_point_ids': list(range(1, count+1)), 'site_zone_id': 1,
+        })
+    assert assigned.status_code == 200, assigned.text
+    payload = assigned.json()
+    assert len(payload['assignment_ids']) == 2
+    assert payload['assignment_id'] == payload['assignment_ids'][0]
+    species_counts = workspace.execute(text("""
+        SELECT pa.species, COUNT(*) FROM planter_assignments pa
+        JOIN planter_assignment_points pap ON pap.assignment_id=pa.id GROUP BY pa.species
+    """)).all()
+    assert dict(species_counts) == {'Bungalon': 99, 'Rhizophora': count-99}
+    if not registered:
+        db.create_planter('CICT', 'cict_test', 'test', organization_id=1, participant_count=10)
+    account = db.list_planters()[0]
+    points = db.get_planter_field_points(account['id'])
+    assert {p['id'] for p in points} == set(range(1, count+1))
+    assert all(p['species'] == ('bungalon' if p['id'] < 100 else 'rhizophora') for p in points)
+    shares = Counter(p['participant_slot'] for p in points)
+    assert len(shares) == 10
+    assert max(shares.values()) - min(shares.values()) <= 1
+    assert sum(shares.values()) == count
+
+
+def test_single_species_cict_assignment_still_accepts_recorded_bungalon(workspace, monkeypatch):
+    create_cict_species_selection(workspace)
+    with quick_assign_client(monkeypatch) as client:
+        response = client.post('/api/planters/organizations/1/assignments', json={
+            'planting_point_ids': list(range(1,100)), 'site_zone_id': 1, 'species': 'BUNGALON',
+        })
+    assert response.status_code == 200, response.text
+    assert len(response.json()['assignment_ids']) == 1
+    assert workspace.scalar(text('SELECT species FROM planter_assignments')) == 'Bungalon'
+    assert workspace.scalar(text('SELECT COUNT(*) FROM planter_assignment_points')) == 99
+
+
+def test_genuinely_missing_species_blocks_the_entire_selection(workspace, monkeypatch):
+    create_cict_species_selection(workspace)
+    workspace.execute(text('UPDATE analyses SET species=NULL WHERE id=2'))
+    with quick_assign_client(monkeypatch) as client:
+        response = client.post('/api/planters/organizations/1/assignments', json={
+            'planting_point_ids': list(range(1,104)), 'site_zone_id': 1,
+        })
+    assert response.status_code == 400
+    assert 'Point #100 has no valid species on its image analysis' in response.json()['detail']
+    for table in ('planters', 'organization_participants', 'planter_assignments', 'planter_assignment_points', 'activity_logs'):
+        assert workspace.scalar(text(f'SELECT COUNT(*) FROM {table}')) == 0
+
+
+@pytest.mark.parametrize('ids,species', [([1], 'Rhizophora'), ([1,100], 'Bungalon')])
+def test_requested_species_cannot_relabel_recorded_points(workspace, monkeypatch, ids, species):
+    create_cict_species_selection(workspace)
+    with quick_assign_client(monkeypatch) as client:
+        response = client.post('/api/planters/organizations/1/assignments', json={
+            'planting_point_ids': ids, 'site_zone_id': 1, 'species': species,
+        })
+    assert response.status_code == 400
+    assert 'do not all have the requested species' in response.json()['detail']
+    assert workspace.scalar(text('SELECT COUNT(*) FROM planter_assignments')) == 0
+    assert db.list_planters() == []
+
+
+@pytest.mark.parametrize('failure', ['already_assigned', 'outside_site'])
+def test_later_species_failure_rolls_back_earlier_species_batch(workspace, monkeypatch, failure):
+    create_cict_species_selection(workspace)
+    if failure == 'already_assigned':
+        db.create_organization_assignment(1, [100], site_zone_id=1)
+        expected_assignments = 1
+        error = 'already assigned'
+    else:
+        workspace.execute(text('UPDATE planting_points SET longitude=124.5 WHERE id=100'))
+        expected_assignments = 0
+        error = 'not inside exactly one project site'
+    with quick_assign_client(monkeypatch) as client:
+        response = client.post('/api/planters/organizations/1/assignments', json={
+            'planting_point_ids': [1,100], 'site_zone_id': 1,
+        })
+    assert response.status_code == 400
+    assert error in response.json()['detail']
+    assert workspace.scalar(text('SELECT COUNT(*) FROM planter_assignments')) == expected_assignments
+    assert workspace.scalar(text('SELECT COUNT(*) FROM activity_logs')) == expected_assignments
+    assert workspace.scalar(text('SELECT COUNT(*) FROM planter_assignment_points WHERE planting_point_id=1')) == 0
+    if not expected_assignments:
+        assert db.list_planters() == []

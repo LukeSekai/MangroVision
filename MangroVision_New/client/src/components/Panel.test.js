@@ -8,7 +8,7 @@ import { createServer } from 'vite';
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore;
 const pages = new Map();
 const originalGlobals = new Map();
-let requests, responses;
+let requests, responses, mutations;
 
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://workspace.example', pretendToBeVisual: true });
@@ -17,9 +17,10 @@ before(async () => {
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
-    fetch: async (input) => {
+    fetch: async (input, options) => {
       const path = new URL(input, window.location.origin).pathname;
       requests.push(path);
+      if (options?.method === 'POST') mutations.push({ path, body: JSON.parse(options.body || '{}') });
       if (responses.has(path)) return Response.json(responses.get(path));
       if (['/api/planters/', '/api/assignments/'].includes(path)) return Response.json([]);
       if (path === '/api/planters/dashboard') return Response.json({ active_planters: 0 });
@@ -64,6 +65,7 @@ after(async () => {
 beforeEach(() => {
   requests = [];
   responses = new Map();
+  mutations = [];
   useMapStore.getState().resetWorkspaceData();
   useMapStore.setState({ stats: { analyses: [], points: [], total_analyses: 0 } });
   useProcessingStore.getState().reset();
@@ -131,6 +133,40 @@ test('Quick Assign shows all 100 OTON points without the false no-available warn
   const assign = [...document.querySelectorAll('button')].find((button) => /Assign 100 Points/.test(button.textContent));
   assert.ok(assign);
   assert.equal(assign.disabled, false);
+});
+
+test('Quick Assign submits CICT mixed species together using their recorded species', async () => {
+  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'CICT',
+    status: 'active', participant_count: 10, registration_pending: false }]);
+  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'CICT' }] });
+  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1, 2] });
+  useMapStore.setState({
+    projectSites: { features: [{ type: 'Feature', id: 15,
+      properties: { name: 'CICT', organization_id: 22, point_count: 103 } }] },
+    points: Array.from({ length: 103 }, (_, index) => ({
+      id: index + 1, point_num: index + 1, analysis_id: index < 99 ? 148 : 170, latitude: 10.5,
+      longitude: 122.5 + index * .00001, source_project_site_id: 15,
+      source_organization_id: 22, planting_status: 'planned', species: index < 99 ? 'bungalon' : 'rhizophora',
+    })),
+  });
+  await render(pages.get('PlanterManagement'));
+  const quickAssign = headers().find((header) => header.textContent.includes('Quick Assign'));
+  if (quickAssign.getAttribute('aria-expanded') === 'false') await click(quickAssign);
+  await act(async () => {
+    const organization = document.querySelector('select');
+    organization.value = '22';
+    organization.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+  await settle();
+  assert.match(document.body.textContent, /99 Bungalon · 4 Rhizophora/);
+  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 103 Points/.test(button.textContent));
+  assert.equal(assign.disabled, false);
+  await click(assign);
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].path, '/api/planters/organizations/22/assignments');
+  assert.deepEqual({ ...mutations[0].body, planting_point_ids: [...mutations[0].body.planting_point_ids].sort((a, b) => a - b) },
+    { planting_point_ids: Array.from({ length: 103 }, (_, i) => i + 1), site_zone_id: 15 });
+  assert.match(document.body.textContent, /Assigned 103 points to CICT/);
 });
 
 for (const name of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'ErodedZoneEditor', 'MonitoringMapWorkspace']) {

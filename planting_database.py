@@ -4197,6 +4197,17 @@ def _create_planter_assignment(
             f"Point #{sample['point_num']} has no valid species on its image analysis. "
             "Record the species there before assigning this point."
         )
+    mismatched_species = [
+        row for row in requested_rows
+        if _canonical_assignment_species(row["analysis_species"]) != species_value
+    ]
+    if mismatched_species:
+        sample = mismatched_species[0]
+        raise ValueError(
+            f"Point #{sample['point_num']} is recorded as "
+            f"{_canonical_assignment_species(sample['analysis_species'])}, not {species_value}. "
+            "Assign it using the species recorded on its image analysis."
+        )
     non_assignable = [
         row for row in requested_rows
         if row["status"] not in {"planned", "skipped"} or row["death_at"] is not None
@@ -4314,6 +4325,11 @@ def _create_planter_assignment(
 
 
 def create_organization_assignment(organization_id: int, planting_point_ids: List[int], **kwargs) -> int:
+    """Compatibility entry point returning the first batch's id."""
+    return create_organization_assignments(organization_id, planting_point_ids, **kwargs)[0]
+
+
+def create_organization_assignments(organization_id: int, planting_point_ids: List[int], **kwargs) -> List[int]:
     """Reserve points for an organization, even before its shared login exists."""
     conn = _get_connection()
     try:
@@ -4331,9 +4347,52 @@ def create_organization_assignment(organization_id: int, planting_point_ids: Lis
             conn.execute("INSERT INTO organization_participants(planter_id, slot) VALUES (?, 1)", (planter_id,))
         else:
             planter_id = int(account["id"])
-        assignment_id = create_planter_assignment(planter_id, planting_point_ids, connection=conn, **kwargs)
+
+        try:
+            point_ids = list(dict.fromkeys(int(pid) for pid in planting_point_ids if pid is not None))
+        except (TypeError, ValueError) as error:
+            raise ValueError("Planting point ids must be whole numbers.") from error
+        if not point_ids:
+            raise ValueError("Select at least one planting point.")
+        placeholders = ",".join("?" for _ in point_ids)
+        # Lock the complete selection in id order before creating any batches.
+        # A site can include several analyses with different recorded species.
+        rows = conn.execute(f"""
+            SELECT pp.id, pp.point_num, a.species AS analysis_species
+            FROM planting_points pp JOIN analyses a ON a.id = pp.analysis_id
+            WHERE pp.id IN ({placeholders}) ORDER BY pp.id FOR UPDATE OF pp
+        """, tuple(point_ids)).fetchall()
+        found = {int(row["id"]) for row in rows}
+        missing = [point_id for point_id in point_ids if point_id not in found]
+        if missing:
+            raise ValueError(f"Unknown planting point id(s): {', '.join(map(str, missing))}.")
+        species_groups = {}
+        for row in rows:
+            recorded_species = _canonical_assignment_species(row["analysis_species"])
+            if not recorded_species:
+                raise ValueError(
+                    f"Point #{row['point_num']} has no valid species on its image analysis. "
+                    "Record the species there before assigning this point."
+                )
+            species_groups.setdefault(recorded_species, []).append(int(row["id"]))
+        requested_species = kwargs.pop("species", "")
+        if requested_species:
+            species_value = _canonical_assignment_species(requested_species)
+            if not species_value:
+                raise ValueError("Species must be one of: " + ", ".join(ALLOWED_ASSIGNMENT_SPECIES) + ".")
+            if set(species_groups) != {species_value}:
+                raise ValueError(
+                    "The selected points do not all have the requested species. "
+                    "Assign them using their recorded species."
+                )
+        assignment_ids = [
+            create_planter_assignment(planter_id, ids, species=recorded_species, connection=conn, **kwargs)
+            for recorded_species, ids in species_groups.items()
+        ]
+        # Every species group succeeds together; any validation error rolls
+        # back the entire selection, including a new reservation account.
         conn.commit()
-        return assignment_id
+        return assignment_ids
     except Exception:
         conn.rollback()
         raise

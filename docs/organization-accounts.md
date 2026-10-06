@@ -10,14 +10,21 @@ organization account and participant number. Returning through the same browser
 and field-link origin reuses that number. Point statuses and planting events are
 stored in the database, so a new session restores the same points and progress.
 
-For an organization with 10 participants, assigning 100 points creates one
-organization assignment with 10 distinct points per participant. Points are stored with their
+For an organization with 10 participants, assigning 100 points allocates
+10 distinct points per participant. Points are stored with their
 participant slot; completion never moves someone else's points. If the count
 does not divide evenly, the extra points are distributed one at a time. Later
 batches balance the existing active/completed allocations without moving them.
 
 Staff select the organization and enter a point count in Planters. Available
 points are selected automatically; individual map clicks do not assign points.
+The selected points keep the species recorded on their image analyses. A site
+containing both Bungalon and Rhizophora creates separate species batches in one
+transaction; both species count toward the organization's participant allocation.
+The panel shows the selected species counts before assignment. Missing species
+must be recorded on the original analysis; selecting a different species cannot
+override a point's recorded species. If any batch fails validation, the complete
+selection is rolled back.
 
 Quick Assign includes organizations that have not registered a field account.
 Their points are reserved under an organization record with no login credentials.

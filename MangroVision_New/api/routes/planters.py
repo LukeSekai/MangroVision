@@ -16,7 +16,7 @@ from planting_database import (
     _hash_password,
     create_planter,
     create_planter_assignment,
-    create_organization_assignment,
+    create_organization_assignments,
     get_mortality_detail_table,
     get_mortality_stats,
     reset_planting_point_to_planned,
@@ -85,7 +85,7 @@ def create_organization_assignment_endpoint(organization_id: int, body: CreateAs
                                            user: dict = Depends(_require_lgu_user)):
     _raise_if_processing_active()
     try:
-        assignment_id = create_organization_assignment(
+        assignment_ids = create_organization_assignments(
             organization_id, body.planting_point_ids,
             assigned_by_user_id=int(user["id"]), title=body.title,
             assignment_date=body.assignment_date, travel_mode=body.travel_mode,
@@ -93,7 +93,7 @@ def create_organization_assignment_endpoint(organization_id: int, body: CreateAs
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return {"assignment_id": assignment_id}
+    return {"assignment_id": assignment_ids[0], "assignment_ids": assignment_ids}
 
 
 def _raise_if_processing_active():
