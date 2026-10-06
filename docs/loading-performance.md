@@ -41,44 +41,62 @@ restores if plans show inaccurate row estimates.
 ## Browser caching and freshness
 
 `utils/apiReadCache.js`, installed by `secureFetch.js`, caches only an explicit
-list of workspace GETs for 30 seconds in memory: map points, analysis statistics,
+list of workspace GETs for the browser session in memory: map points, analysis statistics,
 organization summaries and history, project sites, map zones, dashboard reports
 and settings, schedules, planter and assignment lists, assignment points, and
 saved analysis lists/details/points. Concurrent callers share one network read
 and receive independently readable Response bodies. The cache holds at most 64
 URLs; filters and pagination cursors are part of each key.
 
-- Page navigation during the TTL reuses the response; no browser storage or
+- Page navigation reuses the response; no browser storage or
   shared server cache stores authenticated results.
 - API mutations clear entries both before and after the request. Successful
   mutations refresh mounted dashboard, scheduling, planter management, monitoring
   summaries/history, and shared map data where it is displayed.
 - Reads started before a mutation cannot restore an older cached snapshot,
   including mutations made while a response body is still downloading.
-- Returning focus to the app invalidates cached reads and refreshes mounted
-  workspace data, including changes made from another browser or planter device.
-- Dashboard, scheduling, planter management, and monitoring Refresh buttons
+- Returning focus or visibility to the app keeps the displayed snapshot.
+  There is no data refresh on focus, visibility changes, or an expiry timer.
+- Scheduling, planter management, and monitoring Refresh buttons
   invalidate or bypass cached data. Store fetch actions accept `{ force: true }`
   for explicit refreshes.
 - Login/logout clear the cache and map state. Old-session requests are rejected.
 - Errors are not cached. Cancelling one caller stops that caller from receiving
   the response without aborting another caller's shared request. Explicit
   `no-store` requests bypass the cache.
+- Notification polling and forecast polling are disabled. Notifications and
+  Scheduling offer explicit Refresh buttons; forecast retries remain available.
+  Reading notifications or downloading an export does not refresh workspace data.
 - Visit baselines, death-location selection data, planter access, authentication,
   and shared-link endpoints are not cached. Server write validation remains
-  authoritative. Tide forecasts retain their existing server cache.
+  authoritative. Visited forms keep their loaded inputs when restored; the
+  server still validates each save. Tide forecasts retain their server cache.
 
 The dashboard loads only the report needed by the selected tab. It no longer
-mounts a hidden map or fetches map points on entry. Switching tabs can reuse
-recent reports within the cache lifetime. After removal of the Data Checks tab,
-its useful record notices load through a small, staff-protected
-`/api/dashboard/record-notices` read (one aggregate SQL statement), cached under
-the same freshness rules. Work, Health, and Sites display only their relevant
-missing-information warnings. Overview does not request this additional read.
+mounts a map or fetches map points on first entry. Switching tabs retains
+loaded reports and selections. The obsolete "Information to complete"
+panels have been removed, so the dashboard no longer fetches the separate
+`/api/dashboard/record-notices` read. The header's Planting Goals button opens an
+inline panel above the filters. Its year selector loads annual targets separately
+from the displayed report. Closing and reopening it preserves unsaved inputs.
+Dashboard and Map Analytics have no manual refresh button; browser reload still
+loads fresh data.
 
-This is not realtime push: changes from a different device appear on the next
-uncached read, manual refresh, or return to the window. TTL expiry alone does
-not poll a page that remains open and idle.
+Visited staff pages use React Activity to preserve their DOM, scroll position,
+filters, and local state. Hidden page effects pause so they cannot alter the
+shared map or handle keyboard events. Completed initial loads do not restart
+when a page becomes visible. The shared map stays mounted after its first visit.
+Signing out discards the retained pages; each staff user gets a separate tree.
+
+Side-panel sections share one accordion selection across Map Analytics, Image
+Processing, Planter Management, Zone Editor, and the Monitoring map. Opening a
+section closes its siblings. Collapsing sections preserves their inputs, and
+returning to a page preserves the selection, including an entirely closed panel.
+Collapsed sections are excluded from keyboard focus and assistive navigation.
+
+Changes from another device appear after an explicit Refresh, browser reload,
+or a new view that has not been loaded. Saving records in the current workspace
+still updates the visible page and clears cached API reads.
 
 ## Measurement and validation
 

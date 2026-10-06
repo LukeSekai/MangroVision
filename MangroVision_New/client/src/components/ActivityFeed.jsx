@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './ActivityFeed.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -17,8 +17,10 @@ export default function ActivityFeed({ scope = 'staff' }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [hasMore, setHasMore] = useState(false);
+  const loadedScope = useRef(null);
 
   const load = useCallback(async (beforeId = null) => {
+    loadedScope.current = scope;
     setLoading(true);
     setError('');
     try {
@@ -37,9 +39,10 @@ export default function ActivityFeed({ scope = 'staff' }) {
   }, [scope]);
 
   useEffect(() => {
+    if (loadedScope.current === scope) return undefined;
     const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
-  }, [load]);
+  }, [load, scope]);
 
   return <section className="activity-feed" aria-labelledby={`activity-feed-title-${scope}`}>
     <div className="activity-feed-toolbar">

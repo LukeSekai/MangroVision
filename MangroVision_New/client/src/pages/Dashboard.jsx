@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
 import RestorationReportDialog from '../components/RestorationReportDialog';
@@ -32,16 +32,6 @@ const TABS = [
   { id: 'operations', label: 'Planting Work' },
   { id: 'ecology', label: 'Seedling Health' },
   { id: 'sites', label: 'Project Sites' },
-];
-
-const INSPECTION_WEEKDAYS = [
-  { value: 1, label: 'Monday' },
-  { value: 2, label: 'Tuesday' },
-  { value: 3, label: 'Wednesday' },
-  { value: 4, label: 'Thursday' },
-  { value: 5, label: 'Friday' },
-  { value: 6, label: 'Saturday' },
-  { value: 7, label: 'Sunday' },
 ];
 
 const COLORS = {
@@ -250,15 +240,10 @@ function makeYtdFilters() {
   };
 }
 
-function makeSettingsForm(settings) {
-  const weekdays = arrayOf(settings?.inspection_weekdays)
-    .map(Number)
-    .filter((value) => Number.isInteger(value) && value >= 1 && value <= 7);
+function makePlantingGoalsForm(settings) {
   return {
-    year: settings?.year ?? Number(dateInManila().slice(0, 4)),
     annualTarget: settings?.annual_planting_target ?? '',
     survivalTarget: settings?.min_survival_target_pct ?? '',
-    inspectionWeekdays: weekdays.length ? [...new Set(weekdays)].sort((a, b) => a - b) : [2, 5],
   };
 }
 
@@ -500,43 +485,6 @@ function LifecycleChart({ rows }) {
   );
 }
 
-function RecordNotices({ tab, data, error }) {
-  if (error) return <ErrorBanner compact title="Missing-information check unavailable" message="The report is still available. Use Refresh data to try checking for incomplete records again." />;
-  if (!data) return null;
-  const checks = {
-    operations: [
-      ['skips_missing_reason', 'Planting points marked as not planted, but with no reason recorded'],
-    ],
-    ecology: [
-      ['missing_species_links', 'Image analyses or planting assignments with no species recorded'],
-      ['missing_event_species_links', 'Past planting records with no species recorded'],
-    ],
-    sites: [
-      ['missing_site_links', 'Image analyses or planting assignments with no project site recorded'],
-      ['missing_event_site_links', 'Past planting records with no project site recorded'],
-    ],
-  };
-  const issues = (checks[tab] || []).filter(([key]) => numberOrNull(data[key]) > 0);
-  if (!issues.length) return null;
-  const explanation = tab === 'operations'
-    ? 'Review the planting assignments to explain why these locations were not planted.'
-    : tab === 'ecology'
-      ? 'These records cannot be reliably included in comparisons by species. Review their original planting or image-analysis records.'
-      : 'These records cannot be reliably grouped under a project site. Review their original planting or image-analysis records.';
-  return (
-    <aside className="dash-record-notice" aria-label="Information to complete">
-      <h2>Information to complete</h2>
-      <p className="dash-record-notice-scope">Across all project sites and dates, including records outside your selected view.</p>
-      <ul>{issues.map(([key, label]) => <li key={key}>{label}: <strong>{formatCount(data[key])}</strong>.</li>)}</ul>
-      <p>{explanation}</p>
-      <div className="dash-record-notice-links">
-        <Link to="/planters">Review planting assignments</Link>
-        {tab !== 'operations' ? <Link to="/processing">Review image analyses</Link> : null}
-      </div>
-    </aside>
-  );
-}
-
 function boundarySourceLabel(value) {
   const source = String(value || '').toLowerCase();
   if (source.includes('approximate') || source.includes('estimated')) return 'Estimated boundary';
@@ -716,7 +664,7 @@ function PercentageBarLabel({ x, y, width, height, value }) {
   );
 }
 
-function OperationsTab({ data, notices, noticesError }) {
+function OperationsTab({ data }) {
   const workload = buildOrganizationWorkload(data)
     .sort((a, b) => (firstNumber(b.total, b.pending + b.completed + b.skipped, 0) ?? 0) - (firstNumber(a.total, a.pending + a.completed + a.skipped, 0) ?? 0));
   const aging = arrayOf(data?.backlog_aging);
@@ -729,7 +677,6 @@ function OperationsTab({ data, notices, noticesError }) {
 
   return (
     <div className="dash-tab-panel">
-      <RecordNotices tab="operations" data={notices} error={noticesError} />
       <div className="dash-grid">
         <ChartCard
           title="Planting work by organization"
@@ -865,7 +812,7 @@ function OutcomesChart({ rows, labelKey = 'name' }) {
   );
 }
 
-function EcologyTab({ data, settings, notices, noticesError }) {
+function EcologyTab({ data, settings }) {
   const summary = data?.summary || {};
   const cohorts = arrayOf(data?.survival_cohorts).map((row) => ({ ...row, interval_label: `${row.interval_days ?? '—'} days` }));
   const cohortsHaveData = cohorts.some((row) => (
@@ -938,7 +885,6 @@ function EcologyTab({ data, settings, notices, noticesError }) {
 
   return (
     <div className="dash-tab-panel">
-      <RecordNotices tab="ecology" data={notices} error={noticesError} />
       <div className="dash-method-note">
         <strong>How these results are counted.</strong> The percentage alive compares seedlings recorded as alive with all seedlings recorded as alive or dead. Seedlings that have not been inspected are not included.
       </div>
@@ -1161,7 +1107,7 @@ function AnalysisPieCard({ title, subtitle, slices, formatValue, percentagesOnly
   );
 }
 
-function SitesTab({ data, notices, noticesError }) {
+function SitesTab({ data }) {
   const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
   const summary = data?.summary || {};
   const { analyses: suitability, selected } = selectAnalysis(arrayOf(data?.suitability), selectedAnalysisId);
@@ -1178,7 +1124,6 @@ function SitesTab({ data, notices, noticesError }) {
 
   return (
     <div className="dash-tab-panel">
-      <RecordNotices tab="sites" data={notices} error={noticesError} />
       <KpiStrip>
         <KpiCard label="Project sites" value={formatCount(summary.project_sites)} hint="Registered project sites in this view" />
         <KpiCard label="Analyses" value={formatCount(summary.analyses)} hint="Analyses in the selected period" tone="blue" />
@@ -1321,43 +1266,31 @@ function SitesTab({ data, notices, noticesError }) {
   );
 }
 
-function SettingsForm({ settings, loading, error, onSaved }) {
-  const [form, setForm] = useState(() => makeSettingsForm(settings));
+function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
+  const [form, setForm] = useState(() => makePlantingGoalsForm(settings));
+  const appliedSettings = useRef(settings);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    const refreshedForm = makeSettingsForm(settings);
+    if (appliedSettings.current === settings) return;
+    appliedSettings.current = settings;
+    const refreshedForm = makePlantingGoalsForm(settings);
     queueMicrotask(() => setForm(refreshedForm));
   }, [settings]);
-
-  const toggleInspectionWeekday = (weekday) => {
-    setFormError('');
-    setForm((current) => ({
-      ...current,
-      inspectionWeekdays: current.inspectionWeekdays.includes(weekday)
-        ? current.inspectionWeekdays.filter((value) => value !== weekday)
-        : [...current.inspectionWeekdays, weekday].sort((a, b) => a - b),
-    }));
-  };
 
   const save = async (event) => {
     event.preventDefault();
     setFormError('');
     setNotice('');
-    const inspectionWeekdays = [...new Set(form.inspectionWeekdays)].sort((a, b) => a - b);
-    if (!inspectionWeekdays.length) {
-      setFormError('Select at least one LGU inspection weekday.');
-      return;
-    }
     const annualTarget = form.annualTarget === '' ? null : Number(form.annualTarget);
     const survivalTarget = form.survivalTarget === '' ? null : Number(form.survivalTarget);
     if (annualTarget !== null && (!Number.isInteger(annualTarget) || annualTarget < 0)) {
       setFormError('Enter zero or a positive whole number for the yearly planting goal, or leave it blank.');
       return;
     }
-    if (survivalTarget !== null && (survivalTarget < 0 || survivalTarget > 100)) {
+    if (survivalTarget !== null && (!Number.isFinite(survivalTarget) || survivalTarget < 0 || survivalTarget > 100)) {
       setFormError('Enter a target percentage from 0 to 100, or leave it blank.');
       return;
     }
@@ -1367,41 +1300,28 @@ function SettingsForm({ settings, loading, error, onSaved }) {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          year: Number(form.year),
+          year,
           annual_planting_target: annualTarget,
           min_survival_target_pct: survivalTarget,
-          inspection_weekdays: inspectionWeekdays,
         }),
       });
       onSaved(result);
-      setNotice('Your planting goal, survival goal, and inspection days were saved.');
+      setNotice(`Planting and survival goals for ${year} were saved.`);
     } catch (saveError) {
-      setFormError(saveError.message || 'Could not save dashboard settings.');
+      setFormError(saveError.message || 'Could not save planting goals.');
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading && !settings) return <LoadingState />;
-  if (error && !settings) return <ErrorBanner compact title="Settings could not be loaded" message="Use Refresh data before editing the planting goal or inspection days." />;
+  if (!settings && !error) return <LoadingState />;
+  if (error && !settings) return <ErrorBanner compact title="Planting goals could not be loaded" message="Reload the page to try again before editing goals for this reporting year." />;
   return (
-    <form className="dash-settings" onSubmit={save}>
+    <form className="dash-goals" onSubmit={save}>
       {error ? <ErrorBanner compact message={error} /> : null}
-      {formError ? <ErrorBanner compact title="Settings not saved." message={formError} /> : null}
+      {formError ? <ErrorBanner compact title="Planting goals not saved." message={formError} /> : null}
       {notice ? <div className="dash-success" role="status">{notice}</div> : null}
-      <div className="dash-settings-grid">
-        <label>
-          <span>Reporting year</span>
-          <input
-            type="number"
-            min="2000"
-            max="2100"
-            value={form.year}
-            readOnly
-            aria-describedby="reporting-year-help"
-          />
-          <small id="reporting-year-help">Change the dashboard date range to edit another reporting year.</small>
-        </label>
+      <div className="dash-goals-grid">
         <label>
           <span>Seedlings to plant this year</span>
           <input type="number" min="0" step="1" placeholder="Optional" value={form.annualTarget} onChange={(event) => setForm((current) => ({ ...current, annualTarget: event.target.value }))} />
@@ -1410,68 +1330,60 @@ function SettingsForm({ settings, loading, error, onSaved }) {
           <span>Target percentage of seedlings alive (%)</span>
           <input type="number" min="0" max="100" step="0.1" placeholder="Optional" value={form.survivalTarget} onChange={(event) => setForm((current) => ({ ...current, survivalTarget: event.target.value }))} />
         </label>
-        <fieldset className="dash-weekday-fieldset">
-          <legend>LGU inspection weekdays</legend>
-          <small>Preferred fieldwork days for planning only. Monitoring remains due every 14 days from each planting date, even when a due date falls on another weekday.</small>
-          <div className="dash-weekday-options">
-            {INSPECTION_WEEKDAYS.map((weekday) => (
-              <label key={weekday.value}>
-                <input
-                  type="checkbox"
-                  checked={form.inspectionWeekdays.includes(weekday.value)}
-                  onChange={() => toggleInspectionWeekday(weekday.value)}
-                />
-                <span>{weekday.label}</span>
-              </label>
-            ))}
-          </div>
-        </fieldset>
       </div>
-      <div className="dash-settings-actions">
+      <div className="dash-goals-actions">
         <span>{settings?.updated_at ? `Last updated ${formatDate(settings.updated_at, true)}` : 'Targets are optional.'}</span>
-        <button className="dash-primary-button" type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save settings'}</button>
+        <button className="dash-primary-button" type="submit" disabled={saving || loading}>{saving ? 'Saving…' : 'Save planting goals'}</button>
       </div>
     </form>
   );
 }
 
+function PlantingGoalsPanel({ year, onYearChange, settings, loading, error, onSaved }) {
+  return (
+    <Card title="Planting goals" subtitle="Set annual planting and survival targets across all project sites.">
+      <div className="dash-goals-year">
+        <label>
+          <span>Reporting year</span>
+          <select value={year} onChange={(event) => onYearChange(Number(event.target.value))}>
+            {Array.from({ length: 201 }, (_, index) => 2000 + index).map((value) => (
+              <option key={value} value={value}>{value}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <PlantingGoalsForm key={year} year={year} settings={settings} loading={loading} error={error} onSaved={onSaved} />
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [visitedTabs, setVisitedTabs] = useState(['overview']);
+  const reportCache = useRef(new Map());
+  const reportView = useRef('');
+  const goalsCache = useRef(new Map());
   const [reportSelection, setReportSelection] = useState(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [recordNotices, setRecordNotices] = useState(null);
-  const [noticesError, setNoticesError] = useState('');
+  const [goalsYear, setGoalsYear] = useState(() => Number(dateInManila().slice(0, 4)));
+  const [goalsOpen, setGoalsOpen] = useState(false);
+  const [goalsVisited, setGoalsVisited] = useState(false);
   const [filters, setFilters] = useState(makeYtdFilters);
   const [datasets, setDatasets] = useState({ overview: null, operations: null, ecology: null, sites: null });
   const [loading, setLoading] = useState({ overview: true, operations: false, ecology: false, sites: false });
   const [errors, setErrors] = useState({});
-  const [refreshKey, setRefreshKey] = useState(0);
-  const [settings, setSettings] = useState(null);
-  const [settingsLoading, setSettingsLoading] = useState(true);
-  const [settingsError, setSettingsError] = useState('');
+  const [dataRevision, setDataRevision] = useState(0);
+  const [annualGoals, setAnnualGoals] = useState({});
   const [todayManila] = useState(dateInManila);
 
   const invalidPeriod = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
-  useEffect(() => {
-    if (activeTab === 'overview') return undefined;
-    let active = true;
-    fetchJson('/api/dashboard/record-notices')
-      .then((result) => {
-        if (active) { setRecordNotices(result); setNoticesError(''); }
-      })
-      .catch((error) => {
-        if (active && error.name !== 'AbortError') {
-          setRecordNotices(null);
-          setNoticesError(error.message);
-        }
-      });
-    return () => { active = false; };
-  }, [activeTab, refreshKey]);
   const settingsYear = useMemo(() => {
     const toYear = Number(String(filters.dateTo || '').slice(0, 4));
-    if (Number.isInteger(toYear)) return toYear;
+    if (Number.isInteger(toYear) && toYear >= 2000) return toYear;
     return Number(dateInManila().slice(0, 4));
   }, [filters.dateTo]);
+  const settingsYears = useMemo(() => (
+    [...new Set([settingsYear, ...(goalsOpen ? [goalsYear] : [])])]
+  ), [settingsYear, goalsOpen, goalsYear]);
 
   const queryString = useMemo(() => {
     const query = new URLSearchParams();
@@ -1491,59 +1403,92 @@ export default function Dashboard() {
       });
       return undefined;
     }
-    // Each effect owns its subscription, not the shared network request. A
-    // rapid filter/tab change ignores old results while allowing cache reuse.
+    // Retain each report when changing tabs or leaving the dashboard. Only a
+    // different filter or saved change replaces the displayed view.
     let active = true;
     const sections = dashboardSectionsForTab(activeTab);
+    const view = `${dataRevision}:${queryString}`;
+    const changedView = reportView.current !== view;
+    reportView.current = view;
     queueMicrotask(() => {
-      if (active) {
+      if (active && changedView) {
         setDatasets({ overview: null, operations: null, ecology: null, sites: null });
-        setLoading(Object.fromEntries(Object.keys(DASHBOARD_ENDPOINTS).map((key) => [key, sections.includes(key)])));
+        setLoading({ overview: false, operations: false, ecology: false, sites: false });
         setErrors({});
       }
     });
     sections.forEach((key) => {
+      const cacheKey = `${view}:${key}`;
+      const cached = reportCache.current.get(cacheKey);
+      if (cached) {
+        queueMicrotask(() => {
+          if (!active) return;
+          setDatasets((current) => ({ ...current, [key]: cached.data || null }));
+          setErrors((current) => ({ ...current, [key]: cached.error || '' }));
+          setLoading((current) => ({ ...current, [key]: false }));
+        });
+        return;
+      }
+      queueMicrotask(() => {
+        if (active) setLoading((current) => ({ ...current, [key]: true }));
+      });
       fetchJson(`${DASHBOARD_ENDPOINTS[key]}?${queryString}`)
         .then((result) => {
+          reportCache.current.set(cacheKey, { data: result });
+          if (reportCache.current.size > 64) reportCache.current.delete(reportCache.current.keys().next().value);
           if (active) setDatasets((current) => ({ ...current, [key]: result }));
         })
         .catch((error) => {
-          if (active && error.name !== 'AbortError') setErrors((current) => ({ ...current, [key]: error.message }));
+          if (error.name !== 'AbortError') {
+            reportCache.current.set(cacheKey, { error: error.message });
+            if (active) setErrors((current) => ({ ...current, [key]: error.message }));
+          }
         })
         .finally(() => {
           if (active) setLoading((current) => ({ ...current, [key]: false }));
         });
     });
     return () => { active = false; };
-  }, [activeTab, queryString, refreshKey, invalidPeriod]);
+  }, [activeTab, queryString, dataRevision, invalidPeriod]);
 
   useEffect(() => {
-    const refresh = () => setRefreshKey((value) => value + 1);
-    window.addEventListener('mv:data-changed', refresh);
-    return () => window.removeEventListener('mv:data-changed', refresh);
+    const onDataChanged = () => setDataRevision((value) => value + 1);
+    window.addEventListener('mv:data-changed', onDataChanged);
+    return () => window.removeEventListener('mv:data-changed', onDataChanged);
   }, []);
 
   useEffect(() => {
     let active = true;
-    queueMicrotask(() => {
-      if (active) {
-        setSettingsLoading(true);
+    // The goals panel has its own reporting year. Opening it must not change
+    // the year or reload the report currently displayed in the dashboard.
+    settingsYears.forEach((year) => {
+      const key = `${dataRevision}:${year}`;
+      const cached = goalsCache.current.get(key);
+      if (cached) {
+        queueMicrotask(() => {
+          if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...cached, loading: false } }));
+        });
+        return;
       }
-    });
-    fetchJson(`/api/dashboard/settings?year=${settingsYear}`)
-      .then((result) => {
-        if (!active) return;
-        setSettings(result);
-        setSettingsError('');
-      })
-      .catch((error) => {
-        if (active && error.name !== 'AbortError') setSettingsError(error.message || 'Could not load dashboard settings.');
-      })
-      .finally(() => {
-        if (active) setSettingsLoading(false);
+      queueMicrotask(() => {
+        if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...current[year], loading: true, error: '' } }));
       });
+      fetchJson(`/api/dashboard/settings?year=${year}`)
+        .then((result) => {
+          const record = { data: result, error: '', loading: false };
+          goalsCache.current.set(key, record);
+          if (goalsCache.current.size > 32) goalsCache.current.delete(goalsCache.current.keys().next().value);
+          if (active) setAnnualGoals((current) => ({ ...current, [year]: record }));
+        })
+        .catch((error) => {
+          if (error.name === 'AbortError') return;
+          const record = { error: error.message || 'Could not load planting goals.', loading: false };
+          goalsCache.current.set(key, record);
+          if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...current[year], ...record } }));
+        });
+    });
     return () => { active = false; };
-  }, [refreshKey, settingsYear]);
+  }, [dataRevision, settingsYears]);
 
 
 
@@ -1554,7 +1499,8 @@ export default function Dashboard() {
     || datasets.sites?.filter_options
     || {}
   ), [datasets]);
-  const activeSettings = Number(settings?.year) === settingsYear ? settings : null;
+  const activeSettings = annualGoals[settingsYear]?.data || null;
+  const goalsRecord = annualGoals[goalsYear];
 
   const sites = arrayOf(filterOptions.sites);
   const defaultFilters = makeYtdFilters();
@@ -1563,15 +1509,9 @@ export default function Dashboard() {
     Boolean(filters.siteId),
   ].filter(Boolean).length;
   const asOf = datasets[activeTab]?.as_of || datasets.overview?.as_of;
-  const refreshing = Object.values(loading).some(Boolean);
 
   const changeFilter = (key, value) => {
     setFilters((current) => ({ ...current, [key]: value }));
-  };
-
-  const refreshData = () => {
-    window.dispatchEvent(new Event('mv:invalidate-reads'));
-    setRefreshKey((value) => value + 1);
   };
 
   return (
@@ -1584,25 +1524,24 @@ export default function Dashboard() {
         </div>
         <div className="dash-header-meta">
           <span>{asOf ? `Updated ${formatDate(asOf, true)}` : `Reporting in ${TIMEZONE}`}</span>
-          <button type="button" className="dash-refresh-button" aria-expanded={showSettings} aria-controls="dashboard-settings" onClick={() => setShowSettings((value) => !value)}>
-            {showSettings ? 'Close settings' : 'Settings'}
-          </button>
-          <button type="button" className="dash-refresh-button" onClick={refreshData} disabled={refreshing}>
-            <span aria-hidden="true">↻</span>{refreshing ? 'Refreshing…' : 'Refresh data'}
+          <button type="button" className="dash-goals-button" aria-expanded={goalsOpen}
+            aria-controls="dashboard-planting-goals" onClick={() => {
+              setGoalsVisited(true);
+              setGoalsOpen((current) => !current);
+            }}>
+            Planting Goals
           </button>
         </div>
       </header>
 
-      {showSettings ? (
-        <section id="dashboard-settings" aria-label="Dashboard settings">
-          <Card title="Planting goals and inspection days" subtitle="Set the goals for this reporting year and choose the days available for LGU field inspections.">
-            <SettingsForm key={settingsYear} settings={activeSettings} loading={settingsLoading} error={settingsError} onSaved={(saved) => {
-              if (Number(saved?.year) === settingsYear) setSettings(saved);
-              setRefreshKey((value) => value + 1);
+      {goalsVisited && <Activity mode={goalsOpen ? 'visible' : 'hidden'}>
+        <section id="dashboard-planting-goals" className="dash-goals-panel" aria-label="Planting goals">
+          <PlantingGoalsPanel year={goalsYear} onYearChange={setGoalsYear} settings={goalsRecord?.data || null}
+            loading={goalsRecord?.loading ?? true} error={goalsRecord?.error || ''} onSaved={(saved) => {
+              setAnnualGoals((current) => ({ ...current, [goalsYear]: { data: saved, error: '', loading: false } }));
             }} />
-          </Card>
         </section>
-      ) : null}
+      </Activity>}
 
       <section className="dash-filter-shell" aria-labelledby="dashboard-filters-title">
         <div className="dash-filter-head">
@@ -1649,36 +1588,40 @@ export default function Dashboard() {
             aria-selected={activeTab === tab.id}
             aria-controls={`dash-panel-${tab.id}`}
             className={activeTab === tab.id ? 'is-active' : ''}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setVisitedTabs((current) => current.includes(tab.id) ? current : [...current, tab.id]);
+              setActiveTab(tab.id);
+            }}
           >
             {tab.label}
           </button>
         ))}
       </nav>
 
-      <section id={`dash-panel-${activeTab}`} role="tabpanel" aria-labelledby={`dash-tab-${activeTab}`} className="dash-content">
-        {activeTab === 'overview' ? (
+      {visitedTabs.map((tab) => <Activity key={tab} mode={activeTab === tab ? 'visible' : 'hidden'}>
+      <section id={`dash-panel-${tab}`} role="tabpanel" aria-labelledby={`dash-tab-${tab}`} className="dash-content">
+        {tab === 'overview' ? (
           <DatasetBoundary loading={loading.overview} error={errors.overview} data={datasets.overview}>
             <OverviewTab data={datasets.overview || {}} />
           </DatasetBoundary>
         ) : null}
-        {activeTab === 'operations' ? (
+        {tab === 'operations' ? (
           <DatasetBoundary loading={loading.operations} error={errors.operations} data={datasets.operations}>
-            <OperationsTab data={datasets.operations || {}} notices={recordNotices} noticesError={noticesError} />
+            <OperationsTab data={datasets.operations || {}} />
           </DatasetBoundary>
         ) : null}
-        {activeTab === 'ecology' ? (
+        {tab === 'ecology' ? (
           <DatasetBoundary loading={loading.ecology} error={errors.ecology} data={datasets.ecology}>
-            <EcologyTab data={datasets.ecology || {}} settings={activeSettings} notices={recordNotices} noticesError={noticesError} />
+            <EcologyTab data={datasets.ecology || {}} settings={activeSettings} />
           </DatasetBoundary>
         ) : null}
-        {activeTab === 'sites' ? (
+        {tab === 'sites' ? (
           <DatasetBoundary loading={loading.sites} error={errors.sites} data={datasets.sites}>
-            <SitesTab data={datasets.sites || {}} notices={recordNotices} noticesError={noticesError} />
+            <SitesTab data={datasets.sites || {}} />
           </DatasetBoundary>
         ) : null}
-
       </section>
+      </Activity>)}
       {reportSelection && <RestorationReportDialog initialSelection={reportSelection} initialSites={sites} onClose={() => setReportSelection(null)} />}
     </main>
   );

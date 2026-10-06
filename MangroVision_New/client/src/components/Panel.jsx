@@ -20,41 +20,36 @@ export function Panel({
   subtitle,
   children,
   defaultHidden = false,
-  accordion = true,
-  initialOpenKeys = [],
+  initialOpenKey = null,
+  openKey: controlledOpenKey,
+  onOpenKeyChange,
   className = '',
   toggleClassName = '',
 }) {
   const [hidden, setHidden] = useState(defaultHidden);
-  const [openKeys, setOpenKeys] = useState(() => (
-    Array.isArray(initialOpenKeys) ? initialOpenKeys : []
-  ));
+  const [internalOpenKey, setInternalOpenKey] = useState(initialOpenKey);
+  const registeredCards = useRef(new Set());
+  const isControlled = controlledOpenKey !== undefined;
+  const openKey = isControlled ? controlledOpenKey : internalOpenKey;
 
   const registerCard = useCallback((key, defaultOpen) => {
-    if (!defaultOpen) return;
-    setOpenKeys((currentKeys) => {
-      if (currentKeys.length > 0) return currentKeys;
-      return [key];
-    });
-  }, []);
+    if (registeredCards.current.has(key)) return;
+    registeredCards.current.add(key);
+    if (!defaultOpen || isControlled) return;
+    setInternalOpenKey((currentKey) => currentKey ?? key);
+  }, [isControlled]);
 
   const setCardOpen = useCallback((key, nextOpen) => {
-    setOpenKeys((currentKeys) => {
-      if (nextOpen) return [key];
-      return currentKeys.filter((openKey) => openKey !== key);
-    });
-  }, []);
+    const nextKey = nextOpen ? key : openKey === key ? null : openKey;
+    if (!isControlled) setInternalOpenKey(nextKey);
+    onOpenKeyChange?.(nextKey);
+  }, [isControlled, onOpenKeyChange, openKey]);
 
-  const accordionContext = useMemo(() => (
-    accordion
-      ? {
-          openKeys,
-          registerCard,
-          setCardOpen,
-          isCardOpen: (key) => openKeys.includes(key),
-        }
-      : null
-  ), [accordion, openKeys, registerCard, setCardOpen]);
+  const accordionContext = useMemo(() => ({
+    registerCard,
+    setCardOpen,
+    isCardOpen: (key) => openKey === key,
+  }), [openKey, registerCard, setCardOpen]);
 
   return (
     <>
@@ -118,13 +113,11 @@ export function PanelCard({
   const setPanelCardOpen = accordionContext?.setCardOpen;
   const isPanelCardOpen = accordionContext?.isCardOpen;
   const isControlled = controlledOpen !== undefined;
-  const usesPanelAccordion = Boolean(accordionContext) && !isControlled;
+  const usesPanelAccordion = Boolean(accordionContext);
   const [internalOpen, setInternalOpen] = useState(defaultOpen);
-  const open = isControlled
-    ? Boolean(controlledOpen)
-    : usesPanelAccordion
-      ? isPanelCardOpen(cardKey)
-      : internalOpen;
+  const open = usesPanelAccordion
+    ? isPanelCardOpen(cardKey)
+    : isControlled ? Boolean(controlledOpen) : internalOpen;
   const initialOpen = open;
   const bodyRef = useRef(null);
   const [height, setHeight] = useState(initialOpen ? 'auto' : '0px');
@@ -172,17 +165,23 @@ export function PanelCard({
       setHeight(`${scrollH}px`);
       setOverflow('hidden');
       // Force reflow before collapsing
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
+      let collapseFrame;
+      const measureFrame = requestAnimationFrame(() => {
+        collapseFrame = requestAnimationFrame(() => {
           setHeight('0px');
         });
       });
+      return () => {
+        cancelAnimationFrame(measureFrame);
+        if (collapseFrame !== undefined) cancelAnimationFrame(collapseFrame);
+      };
     }
   }, [open]);
 
   return (
     <div className={`panel-card ${className} ${open ? 'panel-card-open' : ''}`.trim()}>
-      <button ref={headerRef} className="panel-card-header" aria-expanded={open} onClick={toggleOpen}>
+      <button type="button" ref={headerRef} className="panel-card-header" aria-expanded={open}
+        aria-controls={`${generatedKey}-body`} onClick={toggleOpen}>
         <div className="panel-card-header-left">
           {icon && <span className="panel-card-icon">{icon}</span>}
           <span className="panel-card-title">{title}</span>
@@ -204,7 +203,10 @@ export function PanelCard({
       </button>
       <div
         ref={bodyRef}
+        id={`${generatedKey}-body`}
         className="panel-card-body-wrapper"
+        aria-hidden={!open}
+        inert={!open}
         style={{ height, overflow }}
       >
         <div className="panel-card-body">{children}</div>

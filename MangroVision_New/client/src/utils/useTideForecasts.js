@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -6,14 +6,18 @@ const API = import.meta.env.VITE_API_BASE || '';
 // one site's forecast to colour another site's activities.
 export default function useTideForecasts(locationKeys, retryKey) {
   const [records, setRecords] = useState({});
+  const loaded = useRef(new Set());
   const signature = [...new Set(locationKeys.filter(Boolean))].sort().join(';');
   useEffect(() => {
     const controller = new AbortController();
-    const keys = signature.split(';').filter(Boolean);
+    const keys = signature.split(';').filter(Boolean)
+      .filter((key) => !loaded.current.has(`${retryKey}:${key}`));
+    if (!keys.length) return undefined;
     queueMicrotask(() => {
-      if (!controller.signal.aborted) setRecords((current) => Object.fromEntries(keys.map((key) => [key, {
-        ...current[key], loading: true, error: '',
-      }])));
+      if (!controller.signal.aborted) setRecords((current) => ({
+        ...current,
+        ...Object.fromEntries(keys.map((key) => [key, { ...current[key], loading: true, error: '' }])),
+      }));
     });
     let index = 0;
     async function worker() {
@@ -39,12 +43,14 @@ export default function useTideForecasts(locationKeys, retryKey) {
           window.clearTimeout(timeout);
           controller.signal.removeEventListener('abort', abortRequest);
         }
-        if (!controller.signal.aborted) setRecords((current) => ({
-          ...current,
-          // Keep the last displayed readings during a refresh or temporary
-          // request failure so the calendar's red/green tide guide does not vanish.
-          [key]: record.payload ? record : { ...current[key], ...record },
-        }));
+        if (!controller.signal.aborted) {
+          loaded.current.add(`${retryKey}:${key}`);
+          setRecords((current) => ({
+            ...current,
+            // Keep displayed readings during a refresh or temporary failure.
+            [key]: record.payload ? record : { ...current[key], ...record },
+          }));
+        }
       }
     }
     for (let i = 0; i < Math.min(3, keys.length); i += 1) void worker();

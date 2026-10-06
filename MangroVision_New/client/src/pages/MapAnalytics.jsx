@@ -1,12 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
+import { countMapPointStatuses } from '../utils/mapPointStats';
 import Modal from '../components/Modal';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
-const INITIAL_OPEN_CARDS = ['overview', 'legend'];
 
 function downloadBlob(blob, fileName) {
   const url = window.URL.createObjectURL(blob);
@@ -31,50 +31,25 @@ export default function MapAnalytics() {
   const [exportError, setExportError] = useState('');
   const [pendingExportFormat, setPendingExportFormat] = useState(null);
   const [completedExportFormat, setCompletedExportFormat] = useState(null);
-  const [openCards, setOpenCards] = useState(() => INITIAL_OPEN_CARDS);
+  const loaded = useRef(false);
 
   useEffect(() => {
+    if (loaded.current) return;
+    loaded.current = true;
     fetchStats();
     fetchPoints();
   }, [fetchPoints, fetchStats]);
 
   const allSavedPoints = stats?.points || [];
-  const activeMapPoints = points;
-
-  const skipped = activeMapPoints.filter((point) => (
-    point.assignment_status === 'skipped' || point.planting_status === 'skipped'
-  )).length;
-  const planned = activeMapPoints.filter((point) => (
-    !point.assigned_planter_name
-    && !point.eroded_unavailable
-    && !point.inside_eroded_zone
-    && point.planting_status !== 'planted'
-    && point.planting_status !== 'skipped'
-    && point.assignment_status !== 'skipped'
-  )).length;
-  const assigned = activeMapPoints.filter((point) => (
-    point.assigned_planter_name
-    && point.assignment_status !== 'completed'
-    && point.assignment_status !== 'skipped'
-    && point.planting_status !== 'skipped'
-  )).length;
-  const completed = activeMapPoints.filter((point) => (
-    point.assignment_status === 'completed' || point.planting_status === 'planted'
-  )).length;
+  const { mapped, planned, assigned, completed, skipped, unavailable } = useMemo(
+    () => countMapPointStatuses(points),
+    [points],
+  );
 
   const requestSavedPointsExport = (format) => {
     if (!allSavedPoints.length || busyExport) return;
     setExportError('');
     setPendingExportFormat(format);
-  };
-
-  const handleCardOpenChange = (cardId, nextOpen) => {
-    setOpenCards((currentOpenCards) => {
-      if (nextOpen) {
-        return [cardId];
-      }
-      return currentOpenCards.filter((id) => id !== cardId);
-    });
   };
 
   const cancelSavedPointsExport = () => {
@@ -123,11 +98,10 @@ export default function MapAnalytics() {
   };
 
   return (
-    <Panel title="Map Analytics" subtitle={`${allSavedPoints.length} saved planting points`}>
+    <Panel title="Map Analytics" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
       <PanelCard
         title="Overview"
-        open={openCards.includes('overview')}
-        onOpenChange={(nextOpen) => handleCardOpenChange('overview', nextOpen)}
+        panelKey="overview"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -139,18 +113,23 @@ export default function MapAnalytics() {
       >
         <div className="stats-grid">
           <div className="stat-card"><div className="stat-label">Analyses</div><div className="stat-value">{stats?.total_analyses ?? '-'}</div></div>
-          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{stats?.total_mapped_points ?? activeMapPoints.length}</div></div>
+          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{mapped}</div></div>
           <div className="stat-card"><div className="stat-label">Planned</div><div className="stat-value" style={{ color: 'var(--color-planned)' }}>{planned}</div></div>
           <div className="stat-card"><div className="stat-label">Assigned</div><div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{assigned}</div></div>
           <div className="stat-card"><div className="stat-label">Completed</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{completed}</div></div>
           <div className="stat-card"><div className="stat-label">Skipped</div><div className="stat-value" style={{ color: '#6b7280' }}>{skipped}</div></div>
+          <div className="stat-card analytics-unavailable-stat">
+            <div className="stat-label">Unavailable</div>
+            <div className="stat-value" style={{ color: '#f97316' }}>{unavailable}</div>
+            <div className="stat-sub">Points in eroded zones, unavailable for planting.</div>
+          </div>
         </div>
       </PanelCard>
 
       <PanelCard
         title="Legend"
-        open={openCards.includes('legend')}
-        onOpenChange={(nextOpen) => handleCardOpenChange('legend', nextOpen)}
+        panelKey="legend"
+        defaultOpen={false}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
@@ -166,6 +145,7 @@ export default function MapAnalytics() {
           <div className="legend-item"><span className="legend-dot" style={{ background: '#d97706' }} /><span>Planted</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#059669' }} /><span>Completed</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#9ca3af' }} /><span>Skipped</span></div>
+          <div className="legend-item"><span className="legend-dot" style={{ background: '#f97316' }} /><span>Unavailable for planting (eroded zone)</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#7f1d1d' }} /><span>Dead (review in Monitoring)</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#16a34a', background: 'rgba(22, 163, 74, 0.16)' }} /><span>Coverage Zone</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#0284c7', background: 'rgba(14, 165, 233, 0.08)' }} /><span>Project Site</span></div>
@@ -177,8 +157,8 @@ export default function MapAnalytics() {
 
       <PanelCard
         title="Layers"
-        open={openCards.includes('layers')}
-        onOpenChange={(nextOpen) => handleCardOpenChange('layers', nextOpen)}
+        panelKey="layers"
+        defaultOpen={false}
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polygon points="12 2 2 7 12 12 22 7 12 2" />
@@ -221,8 +201,7 @@ export default function MapAnalytics() {
 
       <PanelCard
         title="Coverage"
-        open={openCards.includes('coverage')}
-        onOpenChange={(nextOpen) => handleCardOpenChange('coverage', nextOpen)}
+        panelKey="coverage"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
@@ -241,8 +220,7 @@ export default function MapAnalytics() {
       <PanelCard
         title="Export Saved Points"
         badge={allSavedPoints.length}
-        open={openCards.includes('export')}
-        onOpenChange={(nextOpen) => handleCardOpenChange('export', nextOpen)}
+        panelKey="export"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

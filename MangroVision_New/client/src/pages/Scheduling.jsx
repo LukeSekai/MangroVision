@@ -557,6 +557,7 @@ export default function Scheduling() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const loadedSchedules = useRef(null);
   const [tideRetryKey, setTideRetryKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [view, setView] = useState('calendar');
@@ -584,20 +585,8 @@ export default function Scheduling() {
   }, []);
 
   useEffect(() => {
-    // Keep the forecast current when Scheduling remains open through the day,
-    // and refresh it promptly after the user returns to a backgrounded tab.
-    const timer = window.setInterval(() => setTideRetryKey((value) => value + 1), 15 * 60_000);
-    const refreshOnReturn = () => {
-      if (document.visibilityState === 'visible') setTideRetryKey((value) => value + 1);
-    };
-    document.addEventListener('visibilitychange', refreshOnReturn);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', refreshOnReturn);
-    };
-  }, []);
-
-  useEffect(() => {
+    const key = `${token}:${reloadKey}`;
+    if (loadedSchedules.current === key) return undefined;
     const controller = new AbortController();
     if (!token) {
       queueMicrotask(() => {
@@ -614,12 +603,17 @@ export default function Scheduling() {
       }
     });
     fetchJson('/api/planting-schedules', { signal: controller.signal })
-      .then((payload) => { if (!controller.signal.aborted) setApiData(payload); })
+      .then((payload) => {
+        if (!controller.signal.aborted) {
+          loadedSchedules.current = key;
+          setApiData(payload);
+        }
+      })
       .catch((loadError) => {
         if (loadError.name !== 'AbortError') setError(loadError.message || 'Could not load planting schedules.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        if (!controller.signal.aborted) { loadedSchedules.current = key; setLoading(false); }
       });
     return () => controller.abort();
   }, [reloadKey, token]);
@@ -633,6 +627,7 @@ export default function Scheduling() {
   const refreshSchedules = () => {
     window.dispatchEvent(new Event('mv:invalidate-reads'));
     setReloadKey((value) => value + 1);
+    setTideRetryKey((value) => value + 1);
   };
 
   const schedules = useMemo(() => {

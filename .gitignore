@@ -50,6 +50,10 @@ htmlcov/
 !MangroVision_New/client/src/pages/RestorationReports.test.js
 !MangroVision_New/client/src/utils/processingJobs.test.js
 !MangroVision_New/client/src/utils/apiReadCache.test.js
+!MangroVision_New/client/src/utils/mapPointStats.test.js
+!MangroVision_New/client/src/pages/Dashboard.test.js
+!MangroVision_New/client/src/components/RetainedRoutes.test.js
+!MangroVision_New/client/src/components/Panel.test.js
 
 # Data and logs
 .env

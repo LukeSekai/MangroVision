@@ -118,11 +118,14 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const loadedLocations = useRef(null);
   const [filters, setFilters] = useState({ site: '', assignment: '', search: '' });
   const [bounds, setBounds] = useState(null);
   const [printSnapshot, setPrintSnapshot] = useState(null);
   const closePrint = useCallback(() => setPrintSnapshot(null), []);
   useEffect(() => {
+    const key = `${organizationId}:${monitoredAt}:${recordId}:${retry}`;
+    if (loadedLocations.current === key) return undefined;
     const controller = new AbortController();
     async function load() {
       setLoading(true); setError('');
@@ -135,7 +138,7 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
         if (!response.ok) throw new Error(payload.detail || 'Could not load planting locations.');
         if (!controller.signal.aborted) setPoints(payload.points || []);
       } catch (failure) { if (!controller.signal.aborted) setError(failure.message); }
-      finally { if (!controller.signal.aborted) setLoading(false); }
+      finally { if (!controller.signal.aborted) { loadedLocations.current = key; setLoading(false); } }
     }
     void load();
     return () => controller.abort();
