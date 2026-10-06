@@ -1,9 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { TILESET_PATH } from '../config/mapTiles';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
-import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import './ResultsOverlay.css';
 
 // Per-format metadata for the confirmation/success modals. Keeping it inline
@@ -55,12 +53,6 @@ const ICON_PERCENT = (
     <circle cx="17.5" cy="17.5" r="2.5" />
   </svg>
 );
-const ICON_TREE = (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2l4 6h-3v4h4l4 6H3l4-6h4V8H8z" />
-    <path d="M12 18v4" />
-  </svg>
-);
 const ICON_PIN = (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z" />
@@ -77,13 +69,6 @@ const ICON_CHIP = (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <rect x="6" y="6" width="12" height="12" rx="1.5" />
     <path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" />
-  </svg>
-);
-const ICON_GAUGE = (
-  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 14a4 4 0 1 0-3.1-6.5" />
-    <path d="M12 14l5-5" />
-    <path d="M4 20a10 10 0 1 1 16 0" />
   </svg>
 );
 const ICON_GRID = (
@@ -104,13 +89,6 @@ const ICON_RULER = (
   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
     <path d="M3 17L17 3l4 4L7 21z" />
     <path d="M7 13l2 2M11 9l2 2M15 5l2 2" />
-  </svg>
-);
-const ICON_WARN = (
-  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M10.3 3.86l-8.1 14.02A2 2 0 0 0 3.94 21h16.12a2 2 0 0 0 1.74-3.12L13.7 3.86a2 2 0 0 0-3.4 0z" />
-    <line x1="12" y1="9" x2="12" y2="13" />
-    <line x1="12" y1="17" x2="12.01" y2="17" />
   </svg>
 );
 const ICON_TARGET = (
@@ -140,11 +118,14 @@ function formatProcessingTime(seconds) {
   return `${mins}m ${secs}s`;
 }
 
-function prettyDetectionMode(mode) {
-  if (!mode) return '—';
-  if (mode === 'ai') return 'AI (Detectree2)';
-  if (mode === 'hsv') return 'HSV Colour';
-  return String(mode).toUpperCase();
+function displayDroneModel(metadata, parameters) {
+  const model = metadata.camera?.model || parameters?.drone_to_use;
+  if (!model) return '—';
+  // FC7703 is the camera identifier in this project's DJI Mini 4K photos.
+  if (['FC7703', 'DJI_FC7703', 'DJI_MINI_4K'].includes(String(model).toUpperCase())) {
+    return 'DJI Mini 4K';
+  }
+  return String(model).replace(/_/g, ' ');
 }
 
 function downloadBlob(blob, fileName) {
@@ -240,7 +221,6 @@ export default function ResultsOverlay({
   const metrics = result.metrics || {};
   const metadata = result.metadata || {};
   const mapInfo = result.map || {};
-  const warnings = result.messages?.warnings || [];
   const overlaps = result.overlaps?.analyses || [];
   const coordinateRows = mapInfo.coordinates || [];
   const canopyAreaM2 = metrics.canopy_area_m2;
@@ -303,29 +283,14 @@ export default function ResultsOverlay({
 
   const hasMatchInfo = mapInfo.match && typeof mapInfo.match.success === 'boolean';
   const matchSuccess = hasMatchInfo && mapInfo.match.success;
-  const matchConfidence = hasMatchInfo ? mapInfo.match?.confidence : null;
   const vegetationHeadingRefined = [
     'vegetation_heading_metric_anchor',
     'vegetation_heading_scale_metric_anchor',
   ].includes(mapInfo.match?.projection_rotation_source);
   const vegetationScaleRefined = mapInfo.match?.projection_rotation_source
     === 'vegetation_scale_metric_anchor';
-  const vegetationAlignmentRefined = vegetationHeadingRefined || vegetationScaleRefined;
   const edgeHeadingRefined = mapInfo.match?.projection_rotation_source
     === 'exif_heading_metric_edge_alignment';
-  const safePointCount = (mapInfo.safe_points_geojson?.features || []).length;
-  const forbiddenFilteredCount = metrics.forbidden_filtered_count;
-  const erodedFilteredCount = metrics.eroded_filtered_count;
-  const postSnapDangerFilteredCount = metrics.post_snap_danger_filtered_count;
-  const orthophotoCanopyFilteredCount = metrics.orthophoto_canopy_filtered_count;
-  const clippedOutsideCount = metrics.outside_map_filtered_count
-    ?? metrics.clipped_outside_orthophoto;
-  const duplicateFilteredCount = metrics.duplicate_filtered_count;
-  const spacingFilteredCount = metrics.spacing_filtered_count;
-  const closeOrDuplicateFilteredCount =
-    spacingFilteredCount !== null && spacingFilteredCount !== undefined
-      ? Number(spacingFilteredCount || 0) + Number(duplicateFilteredCount || 0)
-      : duplicateFilteredCount;
   const displayedHeading = metadata.detected_heading ?? metadata.camera_heading;
   const displayedHeadingSource = matchSuccess
     ? vegetationScaleRefined
@@ -336,9 +301,6 @@ export default function ResultsOverlay({
       ? 'DJI EXIF heading with orthophoto edge correction'
       : 'Auto-aligned orthophoto'
     : metadata.heading_source;
-  const visibleTileset = TILESET_PATH
-    ? TILESET_PATH.split('/').map((segment) => decodeURIComponent(segment)).join('/')
-    : '';
 
   return createPortal(
     <div
@@ -414,28 +376,6 @@ export default function ResultsOverlay({
           </section>
 
           <section className="rs-metrics-col">
-            {result.map?.available && hasEstimatedAlignment(result.map.match) && (
-              <div className="warning-badges rs-full">
-                <div className="warning-badge">
-                  <span className="warning-badge-icon">{ICON_WARN}</span>
-                  <span className="warning-badge-text">
-                    Map alignment is approximate. The photo boundary is projected from GPS/camera alignment;
-                    orthophoto stitching seams are not the uploaded photo's edges.
-                  </span>
-                </div>
-              </div>
-            )}
-            {warnings.length > 0 && (
-              <div className="warning-badges rs-full">
-                {warnings.map((warning, index) => (
-                  <div key={`ov-warn-${index}`} className="warning-badge">
-                    <span className="warning-badge-icon">{ICON_WARN}</span>
-                    <span className="warning-badge-text">{warning}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
             <div className="metric-card metric-card-primary">
               <div className="metric-card-title">Coverage</div>
               <div className="metric-grid metric-grid-primary">
@@ -458,56 +398,6 @@ export default function ResultsOverlay({
                 <MetricItem icon={ICON_LEAF} label="Plantable Area" primary>
                   {fmt(metrics.plantable_area_m2, 1)} m²
                   <span className="metric-value-sub">({fmt(metrics.plantable_percentage, 1)}%)</span>
-                </MetricItem>
-              </div>
-            </div>
-
-            <div className="metric-card">
-              <div className="metric-card-title">Detection</div>
-              <div className="metric-grid">
-                <MetricItem icon={ICON_CHIP} label="Method">
-                  {prettyDetectionMode(result.detection_mode)}
-                </MetricItem>
-                <MetricItem icon={ICON_TARGET} label="Model">
-                  {metrics.model_name || (result.detection_mode === 'ai' ? 'Detectree2' : 'HSV')}
-                </MetricItem>
-                <MetricItem icon={ICON_GAUGE} label="Confidence">
-                  {metrics.ai_confidence_threshold !== undefined
-                    ? fmt(metrics.ai_confidence_threshold, 2)
-                    : '—'}
-                </MetricItem>
-                <MetricItem icon={ICON_TREE} label="AI Instances">
-                  {metrics.ai_instance_count ?? metrics.canopy_count ?? 0}
-                </MetricItem>
-                <MetricItem icon={ICON_PIN} label="Ortho Match">
-                  {hasMatchInfo && matchSuccess
-                    ? `${vegetationAlignmentRefined ? 'Vegetation ' : ''}${Math.round((matchConfidence || 0) * 100)}%`
-                    : hasMatchInfo ? 'Fallback' : '—'}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Below Conf.">
-                  {fmtCount(metrics.ai_below_confidence_detections)}
-                </MetricItem>
-                <MetricItem icon={ICON_LEAF} label="Rescued">
-                  {fmtCount(metrics.ai_rescued_low_confidence_detections)}
-                </MetricItem>
-                <MetricItem icon={ICON_LEAF} label="Seedlings Added">
-                  {fmtCount(metrics.ai_seedling_supplement_count)}
-                </MetricItem>
-                <MetricItem icon={ICON_LEAF} label="Micro Seedlings">
-                  {fmtCount(metrics.ai_seedling_micro_supplement_count)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Class Filtered">
-                  {fmtCount(metrics.ai_rejected_non_canopy_class_detections)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Water Filtered">
-                  {fmtCount(
-                    (metrics.ai_rejected_low_saturation_detections || 0)
-                    + (metrics.ai_rejected_low_saturation_components || 0)
-                    + (metrics.ai_seedling_water_context_rejected_count || 0)
-                  )}
-                </MetricItem>
-                <MetricItem icon={ICON_AREA} label="Max Filtered">
-                  {fmtCount(metrics.ai_rejected_too_large_detections)}
                 </MetricItem>
               </div>
             </div>
@@ -541,7 +431,7 @@ export default function ResultsOverlay({
                   {metadata.gps_valid ? 'Valid (EXIF)' : 'Missing / Fallback'}
                 </MetricItem>
                 <MetricItem icon={ICON_CHIP} label="Drone">
-                  {metadata.camera?.model || result.parameters?.drone_to_use?.replace(/_/g, ' ') || '—'}
+                  {displayDroneModel(metadata, result.parameters)}
                 </MetricItem>
                 <MetricItem icon={ICON_RULER} label="Altitude">
                   {metrics.altitude_m ? `${fmt(metrics.altitude_m, 1)} m` : '—'}
@@ -566,69 +456,6 @@ export default function ResultsOverlay({
                   ))}
                 </div>
               )}
-            </div>
-
-            <div className="metric-card">
-              <div className="metric-card-title">Geotagged Map Review</div>
-              <div className="metric-grid">
-                <MetricItem icon={ICON_PIN} label="Geotagged Points">
-                  {safePointCount}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Forbidden Filtered">
-                  {fmtCount(forbiddenFilteredCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Eroded Filtered">
-                  {fmtCount(erodedFilteredCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Danger Recheck">
-                  {fmtCount(postSnapDangerFilteredCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Canopy Recheck">
-                  {fmtCount(orthophotoCanopyFilteredCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Outside Map Filtered">
-                  {fmtCount(clippedOutsideCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_WARN} label="Too Close / Duplicates">
-                  {fmtCount(closeOrDuplicateFilteredCount)}
-                </MetricItem>
-                <MetricItem icon={ICON_TARGET} label="Alignment">
-                  {matchSuccess
-                    ? vegetationAlignmentRefined
-                      ? `GPS + vegetation (${Math.round((matchConfidence || 0) * 100)}%)`
-                      : edgeHeadingRefined
-                      ? `GPS + edges (${Math.round((matchConfidence || 0) * 100)}%)`
-                      : `Auto (${Math.round((matchConfidence || 0) * 100)}%)`
-                    : hasMatchInfo ? 'Heading fallback' : 'Not stored'}
-                  {matchSuccess && (
-                    <span className="metric-value-sub">
-                      {mapInfo.match?.ortho_name || 'Matched orthophoto'}
-                      {vegetationHeadingRefined
-                        && mapInfo.match?.vegetation_heading_correction_deg !== undefined
-                        && mapInfo.match?.vegetation_heading_correction_deg !== null
-                        ? ` · heading correction ${fmt(mapInfo.match.vegetation_heading_correction_deg, 1)}°`
-                        : ''}
-                      {edgeHeadingRefined
-                        && mapInfo.match?.edge_heading_correction_deg !== undefined
-                        && mapInfo.match?.edge_heading_correction_deg !== null
-                        ? ` · heading correction ${fmt(mapInfo.match.edge_heading_correction_deg, 1)}°`
-                        : ''}
-                      {mapInfo.match?.vegetation_gsd_scale_factor !== undefined
-                        && mapInfo.match?.vegetation_gsd_scale_factor !== null
-                        ? ` · footprint ${fmt(mapInfo.match.vegetation_gsd_scale_factor * 100, 0)}% of altitude estimate`
-                        : ''}
-                      {mapInfo.match?.center_drift_m !== undefined && mapInfo.match?.center_drift_m !== null
-                        ? ` · drift ${fmt(mapInfo.match.center_drift_m, 2)} m`
-                        : ''}
-                      {mapInfo.match?.center_offset_east_m !== undefined && mapInfo.match?.center_offset_east_m !== null
-                        && mapInfo.match?.center_offset_north_m !== undefined && mapInfo.match?.center_offset_north_m !== null
-                        ? ` · E ${fmt(mapInfo.match.center_offset_east_m, 2)} m, N ${fmt(mapInfo.match.center_offset_north_m, 2)} m`
-                        : ''}
-                      {visibleTileset ? ` · tiles ${visibleTileset}` : ''}
-                    </span>
-                  )}
-                </MetricItem>
-              </div>
             </div>
 
             {!exportsDisabled && (

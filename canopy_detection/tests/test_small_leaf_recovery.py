@@ -51,8 +51,60 @@ class SmallCanopyEvidenceTests(unittest.TestCase):
 
     def test_short_thin_leaf_is_not_rejected_as_long_wood(self):
         image, mask = self.woody_scene(short=True)
+        # A short leaf has substantial foliage, rather than one colored spot
+        # on an otherwise non-leafy object.
+        cv2.ellipse(image, (120, 120), (12, 4), 0, 0, 360, (35, 160, 65), -1)
         filtered, _ = filter_small_canopy_ground_artifacts(image, mask, .01)
         np.testing.assert_array_equal(filtered, mask)
+
+    def test_tiny_leaf_colored_core_does_not_validate_whole_ground_patch(self):
+        for scale in (1, 2):
+            image, mask = self.scene((55, 90, 88))
+            cv2.circle(image, (80, 80), 2, (35, 160, 65), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            filtered, info = filter_small_canopy_ground_artifacts(image, mask, .01 / scale)
+            self.assertFalse(np.any(filtered))
+            self.assertEqual(info['canopy_ground_artifact_rejected_reasons'], {'sparse_leaf_support': 1})
+
+    def test_visible_edge_ground_rejected_but_edge_foliage_preserved(self):
+        for scale in (1, 2):
+            for color, expected_reject in [((55, 90, 88), True), ((35, 130, 65), False)]:
+                image, mask = self.scene(color)
+                image, mask = image[80:, :], mask[80:, :]
+                image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                filtered, info = filter_small_canopy_ground_artifacts(image, mask, .01 / scale)
+                if expected_reject:
+                    self.assertFalse(np.any(filtered))
+                    self.assertTrue(info['canopy_ground_artifact_rejected_evidence'][0]['touches_edge'])
+                else:
+                    np.testing.assert_array_equal(filtered, mask)
+
+    def test_split_wood_with_moderate_aspect_and_sparse_flecks_rejected(self):
+        for scale in (1, 2):
+            image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
+            mask = np.zeros((160, 160), np.uint8)
+            cv2.rectangle(mask, (40, 71), (120, 89), 255, -1)
+            image[mask > 0] = (135, 165, 164)
+            cv2.circle(image, (80, 80), 5, (35, 160, 65), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            filtered, info = filter_small_canopy_ground_artifacts(image, mask, .01 / scale)
+            self.assertFalse(np.any(filtered))
+            self.assertEqual(info['canopy_ground_artifact_rejected_reasons'], {'elongated_wood_prediction': 1})
+
+    def test_dense_leafy_crown_clipped_into_a_strip_at_edge_is_preserved(self):
+        for scale in (1, 2):
+            image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
+            mask = np.zeros((160, 160), np.uint8)
+            cv2.rectangle(mask, (0, 70), (100, 82), 255, -1)
+            image[mask > 0] = (35, 130, 65)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            mask = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            filtered, info = filter_small_canopy_ground_artifacts(image, mask, .01 / scale)
+            np.testing.assert_array_equal(filtered, mask)
+            self.assertEqual(info['canopy_ground_artifact_rejected_count'], 0)
 
     def scene(self, color, scale=1):
         image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
@@ -90,11 +142,17 @@ class SmallCanopyEvidenceTests(unittest.TestCase):
             np.testing.assert_array_equal(filtered, mask)
 
     def test_partial_crown_at_image_edge_is_not_judged_as_ground(self):
-        image, mask = self.scene((55, 90, 88))
+        image, mask = self.scene((35, 130, 65))
         image, mask = image[65:100, 70:110], mask[65:100, 70:110]
         filtered, info = filter_small_canopy_ground_artifacts(image, mask, .01)
         np.testing.assert_array_equal(filtered, mask)
         self.assertEqual(info['canopy_ground_artifact_rejected_count'], 0)
+
+    def test_no_visible_surroundings_keeps_existing_canopy_checks(self):
+        image, mask = self.scene((55, 90, 88))
+        image, mask = image[72:90, 74:86], mask[72:90, 74:86]
+        filtered, _ = filter_small_canopy_ground_artifacts(image, mask, .01)
+        np.testing.assert_array_equal(filtered, mask)
 
 
 @unittest.skipUnless(os.environ.get('MANGROVISION_TEST_IMAGE_DIR'),
@@ -117,6 +175,29 @@ class CanopyWoodPhotoTests(unittest.TestCase):
                                          {'elongated_wood_prediction': 1})
                     else:
                         np.testing.assert_array_equal(filtered, mask)
+
+
+@unittest.skipUnless(os.environ.get('MANGROVISION_TEST_IMAGE_DIR'),
+                     'Original regression photos are supplied separately')
+class CanopyGroundPhotoTests(unittest.TestCase):
+    def test_reviewed_ground_and_wood_removed_without_losing_leafy_plants(self):
+        cases = json.loads(Path(__file__).with_name('canopy_ground_review_examples.json').read_text())
+        for case in cases:
+            with self.subTest(photo=case['filename'], example=case['note']):
+                path = Path(os.environ['MANGROVISION_TEST_IMAGE_DIR']) / case['filename']
+                self.assertEqual(hashlib.sha256(path.read_bytes()).hexdigest(), case['sha256'],
+                                 'Use the original photo, not a resized/exported copy')
+                image = cv2.imread(str(path))
+                self.assertIsNotNone(image)
+                mask = np.zeros(image.shape[:2], np.uint8)
+                cv2.fillPoly(mask, [np.array(polygon, np.int32) for polygon in case['polygons']], 255)
+                filtered, info = filter_small_canopy_ground_artifacts(image, mask, case['gsd'])
+                if case['expected'] == 'reject':
+                    self.assertFalse(np.any(filtered))
+                    self.assertEqual(info['canopy_ground_artifact_rejected_count'], 1)
+                else:
+                    np.testing.assert_array_equal(filtered, mask)
+                    self.assertEqual(info['canopy_ground_artifact_rejected_count'], 0)
 
 
 class SmallYellowLeafRecoveryTests(unittest.TestCase):

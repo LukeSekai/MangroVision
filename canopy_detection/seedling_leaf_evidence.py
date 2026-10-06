@@ -161,16 +161,17 @@ def filter_small_canopy_ground_artifacts(image, canopy_mask, gsd):
     """Validate small AI crowns against local leaf evidence before buffering.
 
     Olive ground patches can pass the model's broad vegetation color gate.
-    For isolated crowns up to 1.2 m², require a compact bright or strongly
-    green leaf core inside the actual prediction. Long, thin predictions also
-    need substantial compact leaf support to avoid accepting colored wood.
-    Larger crowns retain the
-    existing mature-canopy checks. This is a conservative appearance gate,
-    not an algae species classifier.
+    For crowns up to 1.2 m², compact bright or strongly green leaves must support
+    at least 3% of the actual prediction, rather than letting a tiny colored
+    fleck validate an entire mud/wood patch. Long, thin predictions need 10%
+    support. At photo edges, dense leaf color can also support a clipped crown
+    whose visible core is elongated by cropping. Larger crowns retain the mature
+    checks. This is an appearance gate, not an algae species classifier.
     """
     metadata = {"canopy_ground_artifact_rejected_count": 0,
                 "canopy_ground_artifact_rejected_centers": [],
-                "canopy_ground_artifact_rejected_reasons": {}}
+                "canopy_ground_artifact_rejected_reasons": {},
+                "canopy_ground_artifact_rejected_evidence": []}
     if gsd is None or not np.isfinite(gsd) or gsd <= 0:
         return canopy_mask.copy(), metadata
     count, labels, stats, centers = cv2.connectedComponentsWithStats(
@@ -188,10 +189,6 @@ def filter_small_canopy_ground_artifacts(image, canopy_mask, gsd):
         x, y, w, h, area = stats[label]
         if area * gsd**2 > 1.2:
             continue
-        # An edge fragment may belong to a larger crown beyond this photo.
-        # Its size and surrounding ground cannot be established here.
-        if x == 0 or y == 0 or x+w == image.shape[1] or y+h == image.shape[0]:
-            continue
         x0, x1 = max(0, x-radius), min(image.shape[1], x+w+radius)
         y0, y1 = max(0, y-radius), min(image.shape[0], y+h+radius)
         sl = np.s_[y0:y1, x0:x1]
@@ -204,11 +201,22 @@ def filter_small_canopy_ground_artifacts(image, canopy_mask, gsd):
                   & (sat[sl] >= 55) & (exg[sl] >= 35)
                   & ((val[sl] >= ground_value + 8) | (chroma[sl] >= .08)))
         compact_leaves, leaf_areas = _compact_leaf_pixels(leaves, gsd)
+        touches_edge = bool(x == 0 or y == 0 or x+w == image.shape[1]
+                            or y+h == image.shape[0])
+        # Cropping can make a genuine connected leafy crown look like a long
+        # strip. Require dense leaf evidence (25% of the visible prediction),
+        # rather than granting every edge patch an unconditional exemption.
+        if touches_edge and np.count_nonzero(leaves) >= .25 * area:
+            compact_leaves = leaves
+            leaf_areas = [int(np.count_nonzero(leaves))]
+        leaf_fraction = float(np.count_nonzero(compact_leaves) / area)
         reason = None
         if not leaf_areas:
             reason = "insufficient_leaf_support"
         elif _is_thin_woody_prediction(component, compact_leaves, gsd):
             reason = "elongated_wood_prediction"
+        elif leaf_fraction < .03:
+            reason = "sparse_leaf_support"
         if reason:
             patch = filtered[sl]
             patch[component] = 0
@@ -217,6 +225,11 @@ def filter_small_canopy_ground_artifacts(image, canopy_mask, gsd):
             )
             reasons = metadata["canopy_ground_artifact_rejected_reasons"]
             reasons[reason] = reasons.get(reason, 0) + 1
+            metadata["canopy_ground_artifact_rejected_evidence"].append({
+                "center": centers[label].tolist(), "reason": reason,
+                "area_m2": float(area * gsd**2), "compact_leaf_fraction": leaf_fraction,
+                "touches_edge": touches_edge,
+            })
     metadata["canopy_ground_artifact_rejected_count"] = len(
         metadata["canopy_ground_artifact_rejected_centers"]
     )
@@ -230,7 +243,9 @@ def _is_thin_woody_prediction(component, compact_leaves, gsd):
     with a wider crown or substantial compact leaf support remain eligible.
     This check applies before canopy expansion/merging and danger buffering.
     """
-    if _principal_aspect(component) < 5.0:
+    # Split sticks in the photo review had aspects around 4.3–4.4, so the
+    # former 5.0 floor admitted them even with only a few colored flecks.
+    if _principal_aspect(component) < 4.0:
         return False
     y, x = np.nonzero(component)
     _, dimensions, _ = cv2.minAreaRect(np.column_stack((x, y)).astype(np.float32))
