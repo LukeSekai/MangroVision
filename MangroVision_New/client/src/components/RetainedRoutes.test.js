@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
 let server, dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling;
-let requests;
+let requests, scheduleRows;
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
   analysis_id: id, analysis_number: id, image_name: `Analysis ${id}`,
@@ -36,7 +36,7 @@ before(async () => {
     if (url.pathname === '/api/activity/staff') return Response.json({ items: [{
       id: 1, summary: 'A retained activity record', created_at: '2026-10-06T01:00:00Z', actor_type: 'system',
     }] });
-    if (url.pathname === '/api/planting-schedules') return Response.json({ schedules: [], organizations: [], project_sites: [] });
+    if (url.pathname === '/api/planting-schedules') return Response.json({ schedules: scheduleRows, organizations: [], project_sites: [] });
     if (url.pathname === '/api/tides/forecast') return Response.json({ available: false, message: 'Forecast unavailable', events: [] });
     throw new Error(`Unexpected test request: ${url.pathname}`);
   };
@@ -67,6 +67,7 @@ after(async () => {
 
 beforeEach(() => {
   requests = [];
+  scheduleRows = [];
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
 });
@@ -101,6 +102,37 @@ async function click(selector) {
 }
 
 const count = (path) => requests.filter((url) => url.split('?')[0] === path).length;
+
+test('matching calendar activities open all organizations and edit the selected schedule', async () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date());
+  const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  const date = `${dateParts.year}-${dateParts.month}-${dateParts.day}`;
+  scheduleRows = [1, 2, 3].map((id) => ({
+    id, organization_id: id, organization_name: `Organization ${id}`,
+    project_site_id: id, project_site_name: `Planting area ${id}`,
+    title: 'Tentative follow-up planting activity', date,
+    start_at: `${date}T07:30:00+08:00`, end_at: `${date}T11:30:00+08:00`,
+    start_time: '07:30', end_time: '11:30', status: 'tentative',
+    expected_participants: 20, seedlings: 60, inspection_interval_days: 14,
+  }));
+  await render('scheduling');
+  const cards = document.querySelectorAll('.schedule-calendar-event');
+  assert.equal(cards.length, 1);
+  assert.match(cards[0].textContent, /3 organizations/);
+  await click(cards[0]);
+  const organizations = document.querySelectorAll('.schedule-group-item');
+  assert.equal(organizations.length, 3);
+  organizations.forEach((item, index) => {
+    assert.match(item.textContent, new RegExp(`Organization ${index + 1}`));
+    assert.match(item.textContent, new RegExp(`Planting area ${index + 1}`));
+  });
+  await click(organizations[1].querySelector('.schedule-group-edit'));
+  assert.equal(document.querySelector('.schedule-form input[list="schedule-organizations"]').value, 'Organization 2');
+  assert.equal(document.querySelector('.schedule-form input[maxlength="180"]').value, 'Tentative follow-up planting activity');
+  assert.equal(requests.filter((url) => !url.startsWith('/api/planting-schedules') && !url.startsWith('/api/tides/forecast')).length, 0);
+});
 
 test('dashboard tabs and sidebar navigation retain the selected analysis, filters and DOM', async () => {
   await render();

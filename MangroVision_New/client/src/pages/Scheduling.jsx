@@ -17,6 +17,7 @@ import {
   forecastPlantingGuide, guideLevelState, coloredTideSeries,
 } from '../utils/plantingTides';
 import { useAuthStore } from '../stores/authStore';
+import { groupCalendarSchedules } from '../utils/calendarScheduleGroups';
 import './Scheduling.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -340,12 +341,20 @@ function PlantingLegend() {
   </div>;
 }
 
-function ScheduleCalendarEvent({ schedule, assessment, onOpen }) {
+function ScheduleCalendarEvent({ group, assessment, onOpen }) {
+  const schedule = group.schedule;
+  const grouped = group.schedules.length > 1;
+  const organizationLabel = grouped
+    ? group.organizationCount === group.schedules.length
+      ? `${group.organizationCount} organizations`
+      : `${group.schedules.length} schedules`
+    : schedule.organization_name || 'Organization not set';
   const state = PLANTING_STATES[assessment.status] || PLANTING_STATES.unknown;
-  return <button type="button" className={`schedule-calendar-event planting-${assessment.status}`} onClick={() => onOpen(schedule)}
-    aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${state.label}. View activity details.`}>
+  return <button type="button" className={`schedule-calendar-event planting-${assessment.status}`} onClick={() => onOpen(group)}
+    aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${organizationLabel}. ${state.label}. View activity details.`}>
     <span className="schedule-entry-top"><time>{scheduleStartTime(schedule) ? formatClock(scheduleStartTime(schedule)) : 'Time not set'}</time></span>
     <strong className="schedule-entry-title">{schedule.title}</strong>
+    <span className="schedule-entry-organizations">{organizationLabel}</span>
   </button>;
 }
 
@@ -389,15 +398,31 @@ function HighTideCaution({ selection, onContinue, onBack }) {
   </Modal>;
 }
 
+function ScheduleDetails({ schedule, showOrganization = true }) {
+  return <dl>
+    <div><dt>Status</dt><dd>{scheduleStatusLabel(schedule.status)}</dd></div>
+    {showOrganization ? <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
+    <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div>
+    <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
+    <div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
+    <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div>
+    {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
+    {schedule.notes ? <div><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
+  </dl>;
+}
+
 function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
   if (!entry) return null;
   const schedule = entry.kind === 'schedule' ? entry.schedule : null;
+  const schedules = schedule ? arrayOf(entry.schedules) : [];
+  const grouped = schedules.length > 1;
   const tide = entry.kind === 'tide' ? entry.tide : null;
   const advice = schedule ? assessment : { status: tidePlantingState(tide, guide) };
+  const editSchedule = (item) => { onClose(); onEdit(item); };
   return <Modal open title={schedule ? schedule.title : `${scheduleStatusLabel(tideKind(tide))} tide`}
     className="modal-card-wide schedule-details-modal" variant="info"
-    confirmLabel={schedule ? 'Edit activity' : 'Close'} cancelLabel={schedule ? 'Close' : null}
-    onCancel={onClose} onConfirm={schedule ? () => { onClose(); onEdit(schedule); } : onClose}>
+    confirmLabel={schedule && !grouped ? 'Edit activity' : 'Close'} cancelLabel={schedule && !grouped ? 'Close' : null}
+    onCancel={onClose} onConfirm={schedule && !grouped ? () => editSchedule(schedule) : onClose}>
     <div className="schedule-entry-details">
       <div className="schedule-detail-when">
         <strong>{schedule ? scheduleTimeLabel(schedule) : tideClock(tide)}</strong>
@@ -407,16 +432,17 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
         <PlantingBadge assessment={advice} />
         <p>{schedule ? assessment.reason : 'Uses the same estimated planting limit as the graph. Check your planting area before going.'}</p>
       </div>
-      {schedule ? <dl>
-        <div><dt>Status</dt><dd>{scheduleStatusLabel(schedule.status)}</dd></div>
-        <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div>
-        <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div>
-        <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
-        <div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
-        <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div>
-        {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
-        {schedule.notes ? <div><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
-      </dl> : <dl>
+      {grouped ? <div className="schedule-group-list">
+        <p className="schedule-group-summary">{schedules.length} organization schedules at this time. View or edit each organization's activity below.</p>
+        {schedules.map((item) => <section className="schedule-group-item" key={item.id}>
+          <div className="schedule-group-item-header">
+            <h3>{item.organization_name || 'Organization not set'}</h3>
+            <button type="button" className="schedule-group-edit" onClick={() => editSchedule(item)}
+              aria-label={`Edit activity for ${item.organization_name || 'this organization'}`}>Edit activity</button>
+          </div>
+          <ScheduleDetails schedule={item} showOrganization={false} />
+        </section>)}
+      </div> : schedule ? <ScheduleDetails schedule={schedule} /> : <dl>
         <div><dt>Water level</dt><dd>{formatHeight(tide.height_m)}</dd></div>
         <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide.threshold)}</dd></div>
       </dl>}
@@ -704,10 +730,11 @@ export default function Scheduling() {
   const calendarWeeks = useMemo(() => Array.from({ length: 6 }, (_, index) => calendarDays.slice(index * 7, index * 7 + 7)), [calendarDays]);
   const schedulesByDate = useMemo(() => {
     const grouped = new Map();
-    schedules.forEach((schedule) => {
+    groupCalendarSchedules(schedules).forEach((group) => {
+      const schedule = group.schedule;
       if (!schedule.scheduled_date) return;
       if (!grouped.has(schedule.scheduled_date)) grouped.set(schedule.scheduled_date, []);
-      grouped.get(schedule.scheduled_date).push(schedule);
+      grouped.get(schedule.scheduled_date).push(group);
     });
     return grouped;
   }, [schedules]);
@@ -923,8 +950,8 @@ export default function Scheduling() {
         {notice ? <Message type="success">{notice}</Message> : null}
 
         <div className="schedule-kpis">
-          <article><span>Upcoming activities</span><strong>{formatCount(upcoming.length)}</strong><small>Pending or confirmed</small></article>
-          <article><span>Confirmed</span><strong>{formatCount(confirmed)}</strong><small>Ready to choose a planting area</small></article>
+          <article><span>Upcoming schedules</span><strong>{formatCount(upcoming.length)}</strong><small>By organization</small></article>
+          <article><span>Confirmed schedules</span><strong>{formatCount(confirmed)}</strong><small>Ready to choose a planting area</small></article>
           <article><span>Expected participants</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.expected_participants) || 0), 0))}</strong><small>Across upcoming activities</small></article>
           <article><span>Expected seedlings</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.seedlings) || 0), 0))}</strong><small>Across upcoming activities</small></article>
         </div>
@@ -960,7 +987,7 @@ export default function Scheduling() {
                     <article className={`schedule-calendar-day${cell.inMonth ? '' : ' is-outside'}${cell.date === today ? ' is-today' : ''}`} role="gridcell" key={cell.date}>
                       <time dateTime={cell.date}>{cell.day}</time>
                       <div className="schedule-calendar-events">
-                        {daySchedules.map((schedule) => <ScheduleCalendarEvent key={schedule.id} schedule={schedule} assessment={assessmentFor(schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item })} />)}
+                        {daySchedules.map((group) => <ScheduleCalendarEvent key={group.key} group={group} assessment={assessmentFor(group.schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item.schedule, schedules: item.schedules })} />)}
                         {dayTides.slice(0, 4).map((tide) => (
                           <TideTime key={`${tide.occurred_at}-${tideKind(tide)}`} tide={tide} guide={calendarGuide} onOpen={(item) => setCalendarEntry({ kind: 'tide', tide: item })} />
                         ))}
