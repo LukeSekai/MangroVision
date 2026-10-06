@@ -95,6 +95,7 @@ def main(argv=None):
             'PYTHONIOENCODING': 'utf-8', 'COOKIE_SECURE': 'true', 'COOKIE_DOMAIN': '',
             'TRUSTED_ORIGINS': f'{frontend},http://localhost:5173,http://127.0.0.1:5173',
             'MANGROVISION_CORS_ORIGINS': frontend,
+            'MANGROVISION_PUBLIC_FRONTEND_URL': frontend,
         })
         backend_log = (STATE_DIR / 'testing-backend.log').open('w', encoding='utf-8')
         logs.append(backend_log)

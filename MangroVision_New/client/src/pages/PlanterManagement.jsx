@@ -213,7 +213,8 @@ export default function PlanterManagement() {
   }, [assignProjectSiteId, selectedAssignmentPlanter?.organization_id, setAssignmentScope]);
   const assignmentLocked = processing;
   const shareFieldUrl = shareLink?.field_url || '';
-  const shareCloudflareActive = Boolean(shareLink?.active && shareLink?.field_url);
+  const shareHosted = shareLink?.provider === 'hosted';
+  const shareLinkActive = Boolean(shareLink?.active && shareLink?.field_url);
 
   const scopeOrganizationId = selectedAssignmentPlanter?.organization_id == null ? null : Number(selectedAssignmentPlanter.organization_id);
   const scopeProjectSiteId = assignProjectSiteId == null ? null : Number(assignProjectSiteId);
@@ -328,7 +329,7 @@ export default function PlanterManagement() {
       if (payload.field_url) {
         try {
           await copyTextToClipboard(payload.field_url);
-          showShareCopied('Cloudflare link copied.');
+          showShareCopied(payload.provider === 'hosted' ? 'Field link copied.' : 'Cloudflare link copied.');
         } catch (copyError) {
           console.warn('Clipboard copy failed:', copyError);
           setShareError('Link generated, but clipboard permission was blocked.');
@@ -487,17 +488,17 @@ export default function PlanterManagement() {
         <div className="share-card">
           <div className="share-status-row">
             <span
-              className={`share-status-dot ${shareCloudflareActive ? 'share-status-dot-active' : ''}`}
+              className={`share-status-dot ${shareLinkActive ? 'share-status-dot-active' : ''}`}
               aria-hidden="true"
             />
-            <span>{shareCloudflareActive ? 'Cloudflare active' : 'Cloudflare inactive'}</span>
+            <span>{shareHosted ? 'Field link available' : shareLinkActive ? 'Cloudflare active' : 'Cloudflare inactive'}</span>
           </div>
 
           <div className="share-link-box">
             <input
               className="share-link-input"
               value={shareFieldUrl}
-              placeholder="Generate a Cloudflare link"
+              placeholder={shareHosted ? 'Field app link' : 'Generate a Cloudflare link'}
               readOnly
               aria-label="Field app share link"
             />
@@ -520,10 +521,10 @@ export default function PlanterManagement() {
             <button
               type="button"
               className="btn btn-primary btn-sm share-action-primary"
-              onClick={handleGenerateCloudflareLink}
+              onClick={shareHosted ? handleCopyShareLink : handleGenerateCloudflareLink}
               disabled={shareBusy}
             >
-              {shareBusy ? 'Working...' : 'Generate Cloudflare Link'}
+              {shareBusy ? 'Working...' : shareHosted ? 'Copy Field Link' : 'Generate Cloudflare Link'}
             </button>
             <button
               type="button"
@@ -533,7 +534,7 @@ export default function PlanterManagement() {
             >
               Check Status
             </button>
-            {shareCloudflareActive && (
+            {shareLinkActive && !shareHosted && (
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
