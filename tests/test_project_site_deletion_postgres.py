@@ -141,11 +141,30 @@ def test_assignments_and_schedules_allow_deletion_before_planting(workspace, cli
     assignment = workspace.execute(text("SELECT * FROM planter_assignments")).mappings().one()
     assert assignment["project_site_id"] is None
     assert assignment["title"] == "Unplanted assignment"
+    assert assignment["status"] == "archived"
     assert workspace.scalar(text("SELECT status FROM planter_assignment_points")) == "pending"
+    assert workspace.scalar(text("SELECT released_at FROM planter_assignment_points")) is not None
     schedule = workspace.execute(text("SELECT * FROM planting_schedules")).mappings().one()
     assert schedule["project_site_id"] is None
     assert schedule["title"] == "Planned activity"
     assert workspace.scalar(text("SELECT COUNT(*) FROM planting_points")) == 27
+    # A participant with a previously loaded point cannot record planting after
+    # its site's deletion. The stale id is no longer an actionable assignment.
+    with pytest.raises(ValueError, match='not found'):
+        db.update_assignment_point_status(1, 'completed')
+
+
+def test_skipped_unplanted_point_is_released_to_planned(workspace, client):
+    workspace.execute(text("""
+        INSERT INTO planter_assignments(id,planter_id,title,assignment_date,project_site_id,species)
+          VALUES (1,1,'Unplanted assignment',CURRENT_DATE,1,'Bungalon');
+        INSERT INTO planter_assignment_points(id,assignment_id,planting_point_id,sequence_num,status)
+          VALUES (1,1,1,1,'skipped');
+        UPDATE planting_points SET status='skipped' WHERE id=1;
+    """))
+    assert client[0].delete('/api/project-sites/1').status_code == 200
+    assert workspace.scalar(text('SELECT status FROM planting_points WHERE id=1')) == 'planned'
+    assert workspace.scalar(text('SELECT released_at FROM planter_assignment_points WHERE id=1')) is not None
 
 
 def test_planting_outside_boundary_does_not_block_linked_image(workspace, client):

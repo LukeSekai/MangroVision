@@ -178,7 +178,7 @@ def _google_route(origin, destination, travel_mode):
             continue
         # The access destination must still join the correct road, rather than
         # an eastern pond detour. The origin can be off-road (e.g. at home);
-        # the caller marks the GPS-to-street connection as dashed guidance.
+        # its marker stays separate from the mapped road geometry.
         if distance_m(polyline[-1], destination) > 20:
             continue
         meters = route.get('distanceMeters')
@@ -192,32 +192,20 @@ def _google_route(origin, destination, travel_mode):
 
 def _navigation_to_point(origin, destination, mode, road_path, source, site=None,
                          meters=None, seconds=None, note=None, road_sections=None):
-    """Always start at the actual GPS coordinate and end at the exact point.
+    """Follow mapped roads, then show local guidance to the exact point.
 
-    Road geometry and direct guidance remain separate. Direct connections are
-    displayed dashed, never described as surveyed or routable walking paths.
-    ``polyline`` retains mapped-road geometry for older clients; the full view
-    uses ``segments`` and ``navigation_path``.
+    Remote GPS-to-road gaps remain separate. The final dashed guide starts at
+    the known site entrance, or at the current GPS fix when already onsite.
     """
-    segments = []
-    cursor = origin
-    for section in road_sections if road_sections is not None else [road_path]:
-        if not section:
-            continue
-        if cursor != section[0]:
-            segments.append({'kind': 'guidance', 'polyline': [cursor, section[0]]})
-        if len(section) >= 2:
-            segments.append({'kind': 'road', 'polyline': section})
-        cursor = section[-1]
-    if cursor != destination or not segments:
-        segments.append({'kind': 'guidance', 'polyline': [cursor, destination]})
-    navigation_path = []
-    for segment in segments:
-        for coordinate in segment['polyline']:
-            if not navigation_path or navigation_path[-1] != coordinate:
-                navigation_path.append(coordinate)
-    if not navigation_path:
-        navigation_path = [origin, destination]
+    segments = [{'kind': 'road', 'polyline': section}
+                for section in (road_sections if road_sections is not None else [road_path])
+                if len(section) >= 2]
+    guide_start = origin if source == 'within_site' else site['access_path'][-1] if site else None
+    if guide_start is None and road_path and distance_m(road_path[-1], destination) <= 20:
+        guide_start = road_path[-1]
+    if guide_start is not None and guide_start != destination:
+        segments.append({'kind': 'guidance', 'polyline': [guide_start, destination]})
+    navigation_path = [coordinate for segment in segments for coordinate in segment['polyline']]
     return {
         'origin': origin, 'target': destination,
         'polyline': road_path, 'segments': segments, 'navigation_path': navigation_path,
@@ -229,17 +217,20 @@ def _navigation_to_point(origin, destination, mode, road_path, source, site=None
         'distance_m': meters, 'duration_s': seconds,
         'distance_label': _format_distance(meters), 'duration_label': _format_duration(seconds),
         'travel_mode': mode, 'route_source': source,
-        'navigation_note': note or 'Dashed lines are direct guidance, not mapped walking paths. Use LGU-marked lanes.',
+        'road_route_available': source not in {'partial_route', 'point_guidance', 'within_site'},
+        'navigation_note': note or 'Follow the blue road route, then the orange dashed guide to your point using marked planting lanes.',
     }
 
 
 def _unavailable_route_guidance(origin, destination, mode, site=None):
-    """Provide GPS-to-point guidance when public-road directions are unavailable."""
+    """Keep the known access road and local point guide during provider outages."""
     result = _navigation_to_point(origin, destination, mode,
         site['access_path'] if site else [], 'partial_route' if site else 'point_guidance', site)
     result.update({
         'distance_label': 'Road directions unavailable', 'duration_label': None,
-        'navigation_note': 'Road directions unavailable. Dashed lines are direct guidance; use mapped roads and LGU-marked lanes.',
+        'navigation_note': 'Road directions from your location are unavailable. Open Google Maps for road directions. '
+            + ('The access road and orange dashed guide to your point are shown; follow marked planting lanes.'
+               if site else 'No unmapped shortcut is drawn.'),
     })
     return result
 
@@ -264,7 +255,7 @@ def compute_route(body: RouteRequest):
             note = (
                 'You are near the site boundary; GPS may drift. '
                 if not inside_area(origin, site['site_area']) else 'You are inside the site. '
-            ) + 'Dashed guidance ends at your point; follow LGU-marked lanes.'
+            ) + 'The orange dashed line shows the direction to your point; follow marked planting lanes.'
             result = _navigation_to_point(origin, destination, mode, [], 'within_site', site, note=note)
             result['distance_label'] = f'{_format_distance(distance_m(origin, destination))} to point (straight-line)'
             result['duration_label'] = 'Follow planting order'
@@ -272,7 +263,7 @@ def compute_route(body: RouteRequest):
         local_path = remaining_access_path(origin, path)
         if local_path is not None:
             # remaining_access_path includes the actual GPS fix followed by
-            # its projection on the road. Keep that small gap dashed too.
+            # its projection on the road. Draw only the road from that projection.
             polyline = local_path[1:]
             meters = path_distance(polyline)
             seconds = meters / 1.2
@@ -285,12 +276,12 @@ def compute_route(body: RouteRequest):
                 return _unavailable_route_guidance(origin, destination, mode, site)
             access_meters = path_distance(path)
             # A provider endpoint can be up to 20 m from the traced road start;
-            # preserve that gap as guidance instead of a solid road connection.
+            # keep these sections separate so the gap is never drawn as a road.
             road_sections = [polyline, path]
             polyline = [*polyline, *path]
             meters += access_meters
             seconds = seconds + access_meters/1.2 if seconds is not None else None
-        note = 'Continue beyond the entrance to your point. Dashed sections are direct guidance; use LGU-marked lanes.'
+        note = 'Follow the blue road route to the entrance, then the orange dashed guide to your point using marked planting lanes.'
     else:
         try:
             meters, seconds, polyline = _google_route(origin, destination, mode)

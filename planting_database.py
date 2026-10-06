@@ -6797,6 +6797,20 @@ def delete_project_site(site_id: int) -> bool:
         ).fetchone()
         if site is None:
             return False
+        conn.execute("""
+            SELECT pap.id FROM planter_assignment_points pap
+            JOIN planter_assignments pa ON pa.id = pap.assignment_id
+            WHERE pa.site_zone_id = ? ORDER BY pap.id FOR UPDATE OF pap
+        """, (site_id,)).fetchall()
+        conn.execute("""
+            SELECT pp.id FROM planting_points pp
+            WHERE EXISTS (SELECT 1 FROM project_sites ps WHERE ps.id = ?
+                          AND extensions.ST_Covers(ps.geometry, pp.location))
+               OR EXISTS (SELECT 1 FROM planter_assignment_points pap
+                          JOIN planter_assignments pa ON pa.id = pap.assignment_id
+                          WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id)
+            ORDER BY pp.id FOR UPDATE OF pp
+        """, (site_id, site_id)).fetchall()
         linked = conn.execute(f"""
             WITH resolved_points AS (
                 SELECT pp.id, {_point_project_site_owner_sql('a.site_zone_id')} AS site_id
@@ -6841,8 +6855,29 @@ def delete_project_site(site_id: int) -> bool:
             raise ValueError(
                 "This project site has recorded planting history and cannot be deleted."
             )
-        # Schedules use RESTRICT, so detach their planning link explicitly. The
-        # analyses and assignments use SET NULL; all saved records stay intact.
+        # Release unplanted allocations before removing their boundary. Keeping
+        # them active would allow planting under an organization with no site.
+        conn.execute("""
+            UPDATE planting_points pp SET status = 'planned'
+            WHERE pp.status IN ('planned', 'skipped') AND EXISTS (
+                SELECT 1 FROM planter_assignment_points pap
+                JOIN planter_assignments pa ON pa.id = pap.assignment_id
+                WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id
+                  AND pap.released_at IS NULL
+            )
+        """, (site_id,))
+        conn.execute("""
+            UPDATE planter_assignment_points pap SET released_at = CURRENT_TIMESTAMP
+            FROM planter_assignments pa
+            WHERE pap.assignment_id = pa.id AND pa.site_zone_id = ?
+              AND pap.released_at IS NULL
+        """, (site_id,))
+        conn.execute("""
+            UPDATE planter_assignments SET status = 'archived'
+            WHERE site_zone_id = ? AND status = 'active'
+        """, (site_id,))
+        # Schedules use RESTRICT, so detach their planning link explicitly.
+        # Saved analyses, points and archived assignment evidence remain.
         conn.execute(
             "UPDATE planting_schedules SET project_site_id = NULL WHERE project_site_id = ?",
             (site_id,),

@@ -38,20 +38,20 @@ distance is followed by the traced white access road to the entrance at
 person already on the access road joins its nearest segment instead of being
 sent back to the junction. Snap tolerances are 12 m on the access road and 20 m
 at the provider's access destination. A phone at home may be away from a mapped
-street; the actual GPS coordinate is retained, with a dashed connection to the
-provider's street start instead of rejecting a valid road route.
+street; the actual GPS coordinate is retained as its own marker without drawing
+a shortcut to the provider's street start.
 
-Every navigation response starts at the actual phone GPS coordinate and ends at
-the exact selected planting point. `navigation_path` contains that complete
-geometry, while `segments` distinguishes solid-blue mapped roads (`road`) from
-orange dashed direct connections (`guidance`). The final entrance-to-point
-segment is explicitly drawn as guidance: internal walking lanes are not mapped,
-so participants must follow LGU-marked lanes. Dashed connections are not verified
-walking paths and have no walking ETA. `polyline` retains road-only geometry for
-older consumers. A participant already inside the site sees only GPS-to-point
-guidance, without being routed back outside. Navigation requires a fresh phone
-location. If GPS is denied or unavailable, it explains how to enable it; it
-never substitutes the organization's configured base or the access-road start.
+Navigation retains the actual phone GPS origin and exact selected point as
+separate markers. Mapped road sections are drawn in blue, followed by an orange
+dashed guide from the site entrance to the exact selected point. The dashed
+section shows direction, not a surveyed walking lane; participants follow marked
+planting lanes. Remote GPS-to-road connections and gaps between mapped road
+sections are not drawn across ponds or open water. `segments` keeps road and
+guidance sections separate. `navigation_path` is a compatibility list of their
+coordinates, not a surveyed continuous path. For a destination outside the known
+site footprint, a final guide is limited to the provider's 20 m endpoint tolerance.
+Navigation requires a fresh phone location and never substitutes an organization
+base or access-road start when GPS is denied.
 
 The traced physical footprint accepts planting destinations up to 3 m from its
 boundary, including NASUGBAN point #198, which lies about 0.6 m outside the trace.
@@ -64,7 +64,9 @@ tolerances above remain unchanged.
 During navigation the phone watches GPS and updates the route's start,
 straight-line distance and compass bearing to the selected point. Mapped road
 sections already passed are trimmed when the GPS fix is within 12 m of the road.
-On arrival inside the physical site, navigation switches to direct point guidance.
+On arrival inside the physical site, the road overlay is replaced by the orange
+dashed guide from the latest GPS fix to the exact point. This guide updates with
+each fix and disappears when origin and target coordinates coincide.
 The initial view includes both GPS origin and destination; subsequent fixes do
 not reset a participant's pan or zoom. When GPS uncertainty exceeds the point's
 distance, the panel tells participants to use the marked point. Clearing
@@ -73,15 +75,19 @@ Errors appear in the point action sheet so participants can retry there.
 
 When testing from another location, Google can return no walking route to the
 public-road junction or fail to connect closely enough to the mapped road.
-The endpoint returns `partial_route`: a dashed GPS-to-road-start connection,
-the blue mapped access road, and a dashed entrance-to-point connection. Road
-directions are identified as unavailable; trip distance and duration remain
-empty. Provider outages and missing routing configuration use the same guidance.
-For a destination without a mapped access road, `point_guidance` draws direct
-GPS-to-point guidance without calling it a mapped path. Invalid requests still
-fail. The **Open Google Maps to point** action uses the latest GPS coordinate as
-origin and the exact planting point as destination, rather than the gate or road
-start. The link updates with each GPS fix and opens only after an explicit tap.
+The endpoint returns `partial_route` with the blue mapped access road and the
+local orange dashed guide from the entrance to the point.
+The panel visibly states that road directions from the participant's location
+are unavailable; trip distance and duration remain empty. Provider outages and
+missing configuration use the same behavior. For an unmapped site,
+`point_guidance` retains the point marker without drawing a line. The browser
+rebuilds local guidance from the known entrance and target, filtering remote
+shortcuts from older responses. Invalid requests still fail.
+The **Open Google Maps road directions** action requests walking directions from
+the latest GPS to the exact point via the public-road junction and site entrance.
+Once onsite, it omits those waypoints to avoid backtracking. The link updates
+with each GPS fix and opens only after an explicit tap. Google Maps support for
+waypoints varies by product; the in-app traced entrance road remains available.
 
 To support a different physical site, add its mapped access road and footprint
 to the JSON file, add a routing regression, and restart the API. Do not enlarge

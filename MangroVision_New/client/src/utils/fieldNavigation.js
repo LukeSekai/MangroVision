@@ -14,17 +14,20 @@ export function pointGuidance(origin, destination) {
 
 // https://developers.google.com/maps/documentation/urls/get-started#directions
 // Use the latest device GPS as origin and the exact planting point as target.
-// Travel mode is chosen by Google Maps.
 // Constructing the link makes no request; it opens only after an explicit tap.
 function validCoordinate(point) {
   return Array.isArray(point) && point.length === 2
     && point.every(Number.isFinite) && Math.abs(point[0]) <= 90 && Math.abs(point[1]) <= 180;
 }
 
-export function googleMapsDirectionsUrl(destination, origin) {
+export function googleMapsDirectionsUrl(destination, origin, route = null) {
   if (!validCoordinate(destination) || !validCoordinate(origin)) return null;
   const params = new URLSearchParams({ api: '1', origin: origin.join(','),
-    destination: destination.join(','), dir_action: 'navigate' });
+    destination: destination.join(','), dir_action: 'navigate', travelmode: route?.travel_mode || 'walking', avoid: 'ferries' });
+  if (!nearSite(origin, route?.site_area, 3)) {
+    const waypoints = [route?.access_start, route?.entrance].filter(validCoordinate);
+    if (waypoints.length) params.set('waypoints', waypoints.map((point) => point.join(',')).join('|'));
+  }
   return `https://www.google.com/maps/dir/?${params}`;
 }
 
@@ -52,16 +55,17 @@ function nearSite(point, polygon, accuracy) {
   return inside;
 }
 
-// Update the first coordinate with each GPS fix, trim roads already reached,
-// and switch to the exact point once inside the physical planting site.
+// Retain the road route and restore only local guidance to the exact point.
+// Never reuse an older server's remote GPS-to-point shortcut across water.
 export function navigationSegments(route, currentPosition, accuracy = null) {
-  if (!route?.target || !validCoordinate(currentPosition)) return [];
-  const direct = [{ kind: 'guidance', polyline: [currentPosition, route.target] }];
-  if (nearSite(currentPosition, route.site_area, accuracy)
-    || pointGuidance(currentPosition, route.target).distance <= Math.max(3, Math.min(accuracy || 0, 20))) return direct;
-  const segments = route.segments?.length ? route.segments : route.polyline?.length >= 2
-    ? [{ kind: 'road', polyline: route.polyline }] : [];
-  if (!segments.some(segment => segment.kind === 'road')) return direct;
+  if (!validCoordinate(route?.target) || !validCoordinate(currentPosition)) return [];
+  const guide = (start) => start[0] === route.target[0] && start[1] === route.target[1]
+    ? [] : [{ kind: 'guidance', polyline: [start, route.target] }];
+  if (currentPosition[0] === route.target[0] && currentPosition[1] === route.target[1]) return [];
+  const targetInSite = nearSite(route.target, route.site_area, 3);
+  if (targetInSite && nearSite(currentPosition, route.site_area, accuracy)) return guide(currentPosition);
+  const segments = (route.segments != null ? route.segments : route.polyline?.length >= 2
+    ? [{ kind: 'road', polyline: route.polyline }] : []).filter((segment) => segment.kind === 'road' && segment.polyline?.length >= 2);
   let nearest = null;
   segments.forEach((segment, segmentIndex) => {
     if (segment.kind !== 'road') return;
@@ -71,20 +75,16 @@ export function navigationSegments(route, currentPosition, accuracy = null) {
       if (!nearest || distance < nearest.distance) nearest = { distance, segmentIndex, index: i, projection };
     }
   });
-  let remaining;
+  let remaining = segments;
   if (nearest && nearest.distance <= 12) {
     const segment = segments[nearest.segmentIndex];
-    remaining = [{ kind: 'guidance', polyline: [currentPosition, nearest.projection] },
-      { kind: 'road', polyline: [nearest.projection, ...segment.polyline.slice(nearest.index + 1)] },
+    remaining = [{ kind: 'road', polyline: [nearest.projection, ...segment.polyline.slice(nearest.index + 1)] },
       ...segments.slice(nearest.segmentIndex + 1)];
-  } else if (segments[0].kind === 'guidance') {
-    remaining = [{ ...segments[0], polyline: [currentPosition, ...segments[0].polyline.slice(1)] }, ...segments.slice(1)];
-  } else {
-    remaining = [{ kind: 'guidance', polyline: [currentPosition, segments[0].polyline[0]] }, ...segments];
   }
-  const last = remaining.at(-1).polyline.at(-1);
-  if (last[0] !== route.target[0] || last[1] !== route.target[1]) {
-    remaining.push({ kind: 'guidance', polyline: [last, route.target] });
+  if (targetInSite && validCoordinate(route.entrance) && nearSite(route.entrance, route.site_area, 3)) {
+    return [...remaining, ...guide(route.entrance)];
   }
-  return remaining;
+  const roadEnd = remaining.at(-1)?.polyline.at(-1);
+  return roadEnd && pointGuidance(roadEnd, route.target).distance <= 20
+    ? [...remaining, ...guide(roadEnd)] : remaining;
 }

@@ -45,6 +45,8 @@ htmlcov/
 !/tests/test_planter_device_progress_postgres.py
 !/tests/test_quick_assign_postgres.py
 !/tests/test_project_site_counts.py
+!/tests/test_field_routing.py
+!/tests/test_organization_reset_postgres.py
 *.test.js
 *.test.mjs
 *.spec.js
@@ -59,6 +61,7 @@ htmlcov/
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
 !MangroVision_New/client/src/components/Panel.test.js
 !MangroVision_New/client/src/stores/planterAuthStore.test.js
+!MangroVision_New/client/src/utils/fieldNavigation.test.js
 
 # Data and logs
 .env

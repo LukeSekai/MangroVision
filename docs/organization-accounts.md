@@ -47,6 +47,23 @@ switch between their own sites. The map, field app, and activity report use the
 same organization color. The activity report and monitoring retain organization
 totals. There is no individual assignment action or roster.
 
+A project site can be deleted before any planting is recorded, including when
+points are already assigned. Recorded planting events (including closed history),
+planted point timestamps, mortality history, or completed assignment points block
+deletion. Unplanted allocations are released and their batches archived when a
+site is deleted; points return to planned, with coordinates, species, analyses,
+and planning evidence preserved. A field participant cannot plant a released
+point using a stale page. This prevents new planting under a deleted site.
+
+For an explicitly requested organization reset with no remaining project site,
+`scripts/reset_organization.py --organization-id ID --expected-name NAME` previews
+the exact affected records. `--apply` saves and verifies a private backup, removes
+the organization's accounts/sessions/assignments/planting history, and returns
+its locations to planned. Other organizations' live points and records prevent
+an unsafe reset; hashes of all records outside the captured scope must remain
+unchanged before the transaction commits. Normal site deletion does not perform
+this organization reset.
+
 If a device is replaced or its browser storage is cleared, staff select the
 organization and open **Participant device recovery**. Reset the participant's
 number, then select **I am replacing a device after an LGU reset** on the

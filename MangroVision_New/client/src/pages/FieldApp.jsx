@@ -536,7 +536,7 @@ function PointsMap({
         const line = L.polyline(segment.polyline, {
           color: isGuidance ? '#ea580c' : '#4169e1', weight: 4, opacity: 0.95,
           dashArray: isGuidance ? '8 8' : null, lineCap: 'round', lineJoin: 'round',
-        }).bindTooltip(isGuidance ? 'Direct guidance — walking path not mapped' : 'Mapped road').addTo(routeGroup);
+        }).bindTooltip(isGuidance ? 'Direction to planting point — follow marked lanes' : 'Mapped road').addTo(routeGroup);
         bounds.extend(line.getBounds());
       });
 
@@ -1168,7 +1168,7 @@ export default function FieldApp() {
   };
 
   const guidance = route?.target ? pointGuidance(userLocation || route.origin, route.target) : null;
-  const pointMapsUrl = route?.target ? googleMapsDirectionsUrl(route.target, userLocation) : null;
+  const pointMapsUrl = route?.target ? googleMapsDirectionsUrl(route.target, userLocation, route) : null;
 
   if (!isAuthenticated) {
     return <AuthScreen />;
@@ -1278,11 +1278,14 @@ export default function FieldApp() {
           <div className="field-route-banner" role="status">
             <div className="field-route-banner-info">
               <span className="field-route-banner-label">
-                GPS to planting point
+                Directions to planting point
               </span>
               <span className="field-route-banner-stats">
                 Point #{route.pointNum}
               </span>
+              {route.route_source !== 'within_site' && <span className="field-route-guidance">
+                {route.distance_label}{route.road_route_available && route.duration_label ? ` · ${route.duration_label}` : ''}
+              </span>}
               {guidance && <span className="field-route-guidance">
                 {guidance.distanceLabel} to point · {guidance.distance < 1 ? 'At point coordinates' : `${guidance.direction} (${Math.round(guidance.bearing) % 360}°)`}
               </span>}
@@ -1291,9 +1294,10 @@ export default function FieldApp() {
                 {userLocation && locationAccuracy > guidance.distance ? ' · Use marked point' : ' · Straight-line distance'}
               </span>}
               {pointMapsUrl ? <a className="field-route-external-link" href={pointMapsUrl} target="_blank" rel="noopener noreferrer" title={route.navigation_note}>
-                <strong>Open Google Maps to point ↗</strong>
-                <span>Dashed = direct guidance; follow marked lanes.</span>
-              </a> : route.navigation_note && <span className="field-route-banner-warning">{route.navigation_note}</span>}
+                <strong>Open Google Maps road directions ↗</strong>
+                <span>Walk via the access road to the planting site.</span>
+              </a> : null}
+              {route.navigation_note && <span className="field-route-banner-warning">{route.navigation_note}</span>}
               {navigationLocationError && <span className="field-route-banner-warning">{navigationLocationError}</span>}
             </div>
             <button

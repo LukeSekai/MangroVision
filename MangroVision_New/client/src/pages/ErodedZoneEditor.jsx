@@ -964,8 +964,9 @@ export default function ErodedZoneEditor() {
         }}
       >
         <p>
-          You can delete this boundary until planting is recorded. Saved image analyses, mapped
-          points, assignments, and schedules will remain available without this project site.
+          You can delete this boundary if no planting has been recorded. Unplanted assignments
+          will be released and their points will return to planned. Saved image analyses and
+          mapped points will remain available.
         </p>
         {projectSiteDeleteError ? (
           <p role="alert" style={{ color: '#991b1b', fontWeight: 600, marginTop: 10 }}>
