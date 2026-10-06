@@ -1,0 +1,28 @@
+.website-requests { margin-top: 24px; }
+.website-request-count { display: inline-block; margin-left: 8px; padding: 4px 8px; border-radius: 20px; font-size: 11px; color: #166534; background: #dcfce7; vertical-align: middle; }
+.website-preview-link { font-size: 12px; font-weight: 600; color: #166534; white-space: nowrap; }
+.website-request-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin: 16px 18px; }
+.website-request-error, .website-request-notice { margin: 14px 18px; padding: 12px; border-radius: 7px; font-size: 13px; background: #fef2f2; color: #991b1b; }
+.website-request-notice { background: #f0fdf4; color: #166534; }
+.website-request-empty { padding: 25px 20px; font-size: 13px; color: #64748b; }
+.website-review-button { padding: 7px 11px; border: 1px solid #bbd5c1; border-radius: 6px; color: #166534; background: #f0fdf4; font-weight: 600; font-size: 12px; cursor: pointer; }
+.website-review { display: grid; gap: 17px; }
+.website-review > label, .website-review-times > label { display: grid; gap: 6px; font-size: 13px; font-weight: 600; }
+.website-review label > small { font-size: 11px; font-weight: 400; color: #64748b; line-height: 1.5; }
+.website-review input:not([type=checkbox]), .website-review select, .website-review textarea { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background: #fff; color: #111827; font: inherit; }
+.website-review-times { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 13px; }
+.website-request-details { display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+.website-request-details dt { font-size: 11px; color: #64748b; margin-bottom: 4px; }
+.website-request-details dd { font-size: 13px; margin: 0; overflow-wrap: anywhere; }
+.website-request-details a { color: #166534; text-decoration: underline; }
+.website-request-notes { padding: 12px; background: #f8fafc; border-radius: 6px; white-space: pre-wrap; font-size: 13px; }
+.website-request-advice { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; }
+.website-request-advice p { font-size: 12px; line-height: 1.6; margin-top: 8px; }
+.website-review .website-review-check { display: flex; gap: 9px; align-items: flex-start; font-size: 12px; line-height: 1.6; font-weight: 400; }
+.website-review-check input { width: 16px; height: 16px; flex-shrink: 0; margin-top: 3px; accent-color: #166534; }
+.schedule-calendar-request { display: grid; gap: 4px; width: 100%; text-align: left; background: #f0fdf4; border: 1px dashed #75a981; border-radius: 6px; padding: 9px; color: #14532d; cursor: pointer; }
+.schedule-calendar-request > span { font-size: 9px; letter-spacing: .4px; text-transform: uppercase; }
+.schedule-calendar-request > strong { font-size: 11px; }
+.schedule-calendar-request > small { font-size: 10px; }
+.schedule-entry-source { font-size: 10px; color: #64748b; }
+@media (max-width: 640px) { .website-request-toolbar { align-items: flex-start; flex-direction: column; } .website-review-times, .website-request-details { grid-template-columns: 1fr; } }

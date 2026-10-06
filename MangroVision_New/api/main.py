@@ -40,6 +40,7 @@ from api.routes import (
     monitoring,
     notifications,
     planting_schedules,
+    like_appointments,
     planter_auth,
     planters,
     processing,
@@ -96,6 +97,8 @@ app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"]
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(planting_schedules.router, prefix="/api/planting-schedules", tags=["Planting Schedules"])
+app.include_router(like_appointments.public_router, prefix="/api/public/like", tags=["Public LIKE"])
+app.include_router(like_appointments.staff_router, prefix="/api/like-appointments", tags=["LIKE Appointments"])
 app.include_router(project_sites.router, prefix="/api/project-sites", tags=["Project Sites"])
 app.include_router(zones.router, prefix="/api/zones", tags=["Zones"])
 app.include_router(env_context.router, prefix="/api/zones", tags=["Env Context"])

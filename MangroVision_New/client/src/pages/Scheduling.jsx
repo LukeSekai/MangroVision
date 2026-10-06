@@ -11,6 +11,7 @@ import {
   YAxis,
 } from 'recharts';
 import Modal from '../components/Modal';
+import WebsiteRequests from '../components/WebsiteRequests';
 import useTideForecasts from '../utils/useTideForecasts';
 import {
   PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, finiteNumber, forecastIssue,
@@ -401,6 +402,7 @@ function HighTideCaution({ selection, onContinue, onBack }) {
 function ScheduleDetails({ schedule, showOrganization = true }) {
   return <dl>
     <div><dt>Status</dt><dd>{scheduleStatusLabel(schedule.status)}</dd></div>
+    <div><dt>Source</dt><dd>{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</dd></div>
     {showOrganization ? <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
     <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div>
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
@@ -585,6 +587,8 @@ export default function Scheduling() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const [websiteRequests, setWebsiteRequests] = useState([]);
+  const [reviewRequest, setReviewRequest] = useState(null);
   const loadedSchedules = useRef(null);
   const [tideRetryKey, setTideRetryKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
@@ -740,6 +744,15 @@ export default function Scheduling() {
     });
     return grouped;
   }, [schedules]);
+  const requestsByDate = useMemo(() => {
+    const grouped = new Map();
+    websiteRequests.filter((request) => request.status === 'pending').forEach((request) => {
+      const day = dateInManila(new Date(request.start_at));
+      if (!grouped.has(day)) grouped.set(day, []);
+      grouped.get(day).push(request);
+    });
+    return grouped;
+  }, [websiteRequests]);
   const assignmentSites = useMemo(() => assigningSchedule
     ? projectSites.filter((site) => sameOrganization(site, assigningSchedule))
     : [], [assigningSchedule, projectSites]);
@@ -989,6 +1002,7 @@ export default function Scheduling() {
                     <article className={`schedule-calendar-day${cell.inMonth ? '' : ' is-outside'}${cell.date === today ? ' is-today' : ''}`} role="gridcell" key={cell.date}>
                       <time dateTime={cell.date}>{cell.day}</time>
                       <div className="schedule-calendar-events">
+                        {arrayOf(requestsByDate.get(cell.date)).map((request) => <button type="button" className="schedule-calendar-request" key={`request-${request.id}`} onClick={() => setReviewRequest(request)} aria-haspopup="dialog"><span>Website request · Pending</span><strong>{request.organization}</strong><small>{formatDate(request.start_at, true)} · {request.participants} participants</small></button>)}
                         {daySchedules.map((group) => <ScheduleCalendarEvent key={group.key} group={group} assessment={assessmentFor(group.schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item.schedule, schedules: item.schedules })} />)}
                         {dayTides.slice(0, 4).map((tide) => (
                           <TideTime key={`${tide.occurred_at}-${tideKind(tide)}`} tide={tide} guide={calendarGuide} onOpen={(item) => setCalendarEntry({ kind: 'tide', tide: item })} />
@@ -1010,7 +1024,7 @@ export default function Scheduling() {
                 return (
                   <tr key={schedule.id}>
                     <td><strong>{formatDate(`${schedule.scheduled_date}T12:00:00+08:00`)}</strong><small>{scheduleTimeLabel(schedule)}</small></td>
-                    <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small></td>
+                    <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
                     <td>{schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen')}</td>
                     <td>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</td>
                     <td><span className={`schedule-status is-${String(schedule.status).toLowerCase()}`}>{scheduleStatusLabel(schedule.status)}</span></td>
@@ -1032,6 +1046,11 @@ export default function Scheduling() {
 
       <CalendarEntryDetails entry={calendarEntry} assessment={calendarEntry?.kind === 'schedule' ? assessmentFor(calendarEntry.schedule) : null}
         guide={calendarGuide} onClose={() => setCalendarEntry(null)} onEdit={openEdit} />
+
+      <WebsiteRequests token={token} reloadKey={reloadKey} organizations={organizations} schedules={schedules}
+        assessmentFor={assessmentFor} renderAdvice={(assessment) => <PlantingBadge assessment={assessment} />}
+        onRequestsChange={setWebsiteRequests} reviewRequest={reviewRequest} onReview={setReviewRequest}
+        onClose={() => setReviewRequest(null)} onChanged={() => setReloadKey((value) => value + 1)} />
 
       <HighTideCaution selection={timeCaution}
         onContinue={() => {
