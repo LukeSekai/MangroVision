@@ -18,6 +18,7 @@ router = APIRouter()
 _URL_PATTERN = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 _TARGET_URL = os.getenv("MANGROVISION_SHARE_TARGET_URL", "http://127.0.0.1:5173").rstrip("/")
 _FIELD_PATH = os.getenv("MANGROVISION_FIELD_PATH", "/field")
+_HOSTED_FRONTEND_URL = os.getenv("MANGROVISION_PUBLIC_FRONTEND_URL", "").strip().rstrip("/")
 
 _lock = threading.Lock()
 _tunnel_proc: subprocess.Popen[str] | None = None
@@ -75,6 +76,10 @@ def _find_cloudflared() -> str:
             candidates.append(str(Path(root) / "cloudflared" / "cloudflared.exe"))
             candidates.append(str(Path(root) / "Cloudflare" / "cloudflared.exe"))
 
+    # The testing setup keeps its executable here without changing system PATH.
+    # Existing overrides and installed copies retain priority.
+    candidates.append(str(Path(__file__).resolve().parents[2] / ".dev-server" / "tools" / "cloudflared.exe"))
+
     seen: set[str] = set()
     for candidate in candidates:
         if not candidate or candidate in seen:
@@ -109,6 +114,17 @@ def _reader_thread(proc: subprocess.Popen[str]) -> None:
 
 
 def _payload(status: str = "idle") -> dict:
+    if _HOSTED_FRONTEND_URL:
+        return {
+            "status": "active",
+            "active": True,
+            "provider": "hosted",
+            "cloudflare_url": "",
+            "field_url": _field_url(_HOSTED_FRONTEND_URL),
+            "local_field_url": _field_url(_TARGET_URL),
+            "target_url": _HOSTED_FRONTEND_URL,
+            "started_at": None,
+        }
     with _lock:
         active = _is_running(_tunnel_proc) and bool(_tunnel_url)
         cloudflare_url = _tunnel_url if active else ""
@@ -116,6 +132,7 @@ def _payload(status: str = "idle") -> dict:
     return {
         "status": "active" if active else status,
         "active": active,
+        "provider": "cloudflare",
         "cloudflare_url": cloudflare_url,
         "field_url": _field_url(cloudflare_url),
         "local_field_url": _field_url(_TARGET_URL),
@@ -137,6 +154,11 @@ def start_cloudflare_field_link():
     global _started_at, _tunnel_proc, _tunnel_url
 
     _require_planner()
+
+    # A hosted frontend already has a public field route. Reuse it instead of
+    # starting a second tunnel to an absent local React development server.
+    if _HOSTED_FRONTEND_URL:
+        return _payload()
 
     reuse_existing = False
     with _lock:
@@ -210,6 +232,9 @@ def stop_cloudflare_field_link():
     global _started_at, _tunnel_proc, _tunnel_url
 
     _require_planner()
+
+    if _HOSTED_FRONTEND_URL:
+        return _payload()
 
     with _lock:
         proc = _tunnel_proc

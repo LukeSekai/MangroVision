@@ -6,6 +6,14 @@ on the owner's laptop. The laptop runs the existing FastAPI, detector, and
 orthophoto files, with the private database/storage settings in the root `.env`.
 The expert needs the website URL and an authorized MangroVision account.
 
+In testing mode, **Field Share Link** uses the same Vercel website's `/field`
+route. Copy that link for planters; no second frontend tunnel is needed. The
+launcher supplies `MANGROVISION_PUBLIC_FRONTEND_URL` to its backend process.
+Local development continues to offer **Generate Cloudflare Link** for the
+React server on port 5173. It checks `CLOUDFLARED_BIN`, the system PATH and
+installation directories, then the testing setup's
+`MangroVision_New/.dev-server/tools/cloudflared.exe`.
+
 ## Start the next testing session
 
 From the repository root in PowerShell, using this laptop's existing venv:
