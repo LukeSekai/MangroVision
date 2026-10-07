@@ -114,9 +114,10 @@ Activity images show the entire photo, including group members and event text.
 Edit `pastActivities` in `LikeWebsite.jsx` with each activity's `date`
 (YYYY-MM-DD), short recap, `photo` filename, and descriptive `alt` text. Titles
 automatically follow the configured filenames. Use three or four entries.
-Dates and recaps remain placeholders until supplied. Leave `photo` and `date`
-as `null` to keep their placeholders. Do not present example events or dates as
-actual activity history.
+The recaps are shortened versions of the LIKE Facebook captions supplied for
+these activities. Dates remain placeholders until supplied. Leave `photo` and
+`date` as `null` to keep their placeholders. Do not present example events or
+dates as actual activity history.
 
 Supply official contact information, hours, visitor guidelines, and approved
 activity content before publishing.

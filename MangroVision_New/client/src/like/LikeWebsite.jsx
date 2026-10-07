@@ -42,22 +42,22 @@ function Photo({ file, alt, label, className = '', priority = false }) {
 const pastActivities = [
   {
     id: '01', photo: 'NGO Love Our Own Brethren (LOOB) Inc. Field Visit.jpg', date: null,
-    description: 'A short recap of this activity will be added here.',
+    description: 'A group of 21 Japanese youth and ISAT-U volunteers joined LOOB Inc. for mangrove bagging and a guided tour of LIKE, learning about conservation and coastal ecosystems.',
     alt: 'Visitors wearing yellow shirts posing together inside an ecopark viewing tower',
   },
   {
     id: '02', photo: 'University of the Philippines Visayas Field Visit.jpg', date: null,
-    description: 'A short recap of this activity will be added here.',
+    description: 'UPV’s STS class, led by Dr. Diana Paguntalan, and Tourism Management students from Green International Technological College visited LIKE to learn about mangrove conservation, ecotourism, and sustainable community development.',
     alt: 'A group posing indoors beside the LIKE sign with a green ecotourism banner',
   },
   {
     id: '03', photo: 'UPV IFPDS Field Visit.jpg', date: null,
-    description: 'A short recap of this activity will be added here.',
+    description: 'LIKE welcomed UPV IFPDS for a field visit focused on mangrove protection and sustainability, sharing how the ecopark supports environmental learning, ecotourism, and community empowerment.',
     alt: 'Visitors gathered in a viewing tower beneath a painted ceiling, with an IFPDS banner along the bottom',
   },
   {
     id: '04', photo: 'ZSL - Mangrove Caravan.jpg', date: null,
-    description: 'A short recap of this activity will be added here.',
+    description: 'Grade 9 students from Leganes National High School joined the Mangrove Caravan at LIKE for World Mangrove Day, exploring mangrove ecosystems and the importance of caring for them beyond planting.',
     alt: 'A group outside LIKE holding certificates beneath the Mangrove Caravan event heading',
   },
 ].map((activity) => ({ ...activity, title: activity.photo ? activity.photo.replace(/\.[^.]+$/, '') : 'Activity title to be added' }));
