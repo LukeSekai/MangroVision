@@ -39,8 +39,10 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-brand-dot { color: #16a34a; }
 .like-header nav { display: flex; gap: 28px; align-items: center; }
 .like-header nav > a:not(.like-button), .like-nav-map { color: #566059; font-size: 11px; font-weight: 550; transition: color .2s; }
-.like-nav-map { background: transparent; padding: 0; text-align: left; }
+.like-nav-map { min-height: 42px; padding: 11px 16px; border-radius: 7px; text-align: left; }
 .like-header nav > a:hover, .like-nav-map:hover { color: #166534; }
+.like-button.like-view-map, .like-nav-map { background: linear-gradient(115deg, #d9efcb, #c9e7be); border: 1px solid #b6d7a8; color: #14532d; }
+.like-button.like-view-map:hover, .like-nav-map:hover { background: linear-gradient(115deg, #cce7bc, #bcdda9); color: #14532d; }
 .like-menu-toggle { display: none; background: transparent; color: #166534; padding: 8px; }
 .like-hero { overflow: hidden; position: relative; padding: 62px 0 22px; background: radial-gradient(ellipse at 0% 10%, #d8e8ceaa, transparent 55%), linear-gradient(150deg, #eaf2e3, #f3f7ed 75%); }
 .like-hero-grid { display: grid; grid-template-columns: 1fr 1.03fr; gap: 60px; align-items: center; }

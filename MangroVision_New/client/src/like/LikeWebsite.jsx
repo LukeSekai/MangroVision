@@ -197,7 +197,7 @@ export default function LikeWebsite() {
         <div className="like-hero-copy"><span className="like-eyebrow"><span className="like-live-dot" /> ROOTED IN LEGANES. GROWING TOGETHER.</span>
           <h1>A little seedling.<br />A <em>greener</em><br />tomorrow.</h1>
           <p>Welcome to Leganes Integrated Katunggan Ecopark. Discover the mangroves, meet the community, and be part of something that grows.</p>
-          <div className="like-hero-actions"><a className="like-button" href="#appointment">Book an appointment <Icon name="arrow" size={19} /></a><button className="like-button is-secondary" type="button" aria-haspopup="dialog" onClick={() => setMapOpen(true)}>View map <Icon name="map" size={19} /></button><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
+          <div className="like-hero-actions"><a className="like-button" href="#appointment">Book an appointment <Icon name="arrow" size={19} /></a><button className="like-button is-secondary like-view-map" type="button" aria-haspopup="dialog" onClick={() => setMapOpen(true)}>View map <Icon name="map" size={19} /></button><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
           <div className="like-hero-location"><span><Icon name="pin" size={18} /></span><div><strong>A greener corner of Leganes</strong><small>Leganes, Iloilo · Philippines</small></div></div>
         </div>
         <div className="like-hero-visual"><Photo className="like-hero-photo" file="hero.jpg" alt="Aerial view of LIKE's mangrove forest, elevated walkways, viewing towers, and coastal pavilions" label="The mangroves of LIKE" priority />

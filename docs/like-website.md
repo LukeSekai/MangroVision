@@ -36,10 +36,16 @@ The mapping library loads only when the dialog opens. Closing it preserves the
 visitor's scroll position and appointment form; Escape and the close button both
 work. Loading failures show a Retry button.
 
-The existing backend must serve the orthophoto at `/tiles/FINAL/{z}/{x}/{y}.png`
-(or the configured tile URL). The Vite development proxy already forwards
-`/tiles` to the backend. Production hosting needs the same tile proxy or a public
-tile host with the exported `MAP/FINAL` pyramid. This feature needs no database
+For local development and `vite preview`, Vite serves the exported PNG tiles
+directly from `MAP/FINAL` at `/tiles/FINAL/{z}/{x}/{y}.png`. The map therefore
+works in the website-only preview with FastAPI stopped, provided that the tile
+pyramid is present. Restart an existing preview after changing Vite configuration.
+Only numbered PNG tile paths are served; other files are not exposed.
+
+Missing local tiles fall through to the existing backend proxy. A laptop with
+only `final_orthophoto.tif` needs the backend to render those tiles. Production
+hosting still needs the tile backend or a public tile host with the exported
+`MAP/FINAL` pyramid (or the configured tile URL). This feature needs no database
 migration, email settings, or private `.env` changes. The existing orthophoto
 asset is reused; no map data is copied into the frontend build.
 
