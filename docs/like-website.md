@@ -82,16 +82,30 @@ Otherwise visitors behind one proxy can share the same rate-limit bucket. Never
 trust arbitrary forwarded client-IP headers. Database credentials stay server-side;
 the request tables have RLS enabled and no `anon` or `authenticated` access.
 
-## Replace placeholders
+## Photos and remaining content
 
 Public content lives in `client/src/like/LikeWebsite.jsx`; its gradients and
-animations live in `client/src/like/like.css`. Replace `PhotoPlaceholder` elements
-with approved photos and descriptive alternative text. Supply the official staff
-member's name and profile, contact information, hours, and visitor guidelines before publishing.
-LIKE has one official staff member, so the website has a single profile placeholder.
-A staff portrait is optional for now; if available later, use `public/like/staff.jpg`
-instead of the previously suggested three staff image files. Photo paths still
-need to be connected in the component before added files appear on the website.
+animations live in `client/src/like/like.css`. The five photos are connected from
+`MangroVision_New/client/public/like/`:
+
+| File | Website section |
+| --- | --- |
+| `hero.jpg` | Main banner |
+| `about.jpg` | About LIKE |
+| `planting.jpg` | Plant with purpose |
+| `mangroves.jpg` | Learn from the coast |
+| `community.jpg` | Grow as a community |
+
+Replace an image using the same filename to update that section. These public
+photos are included in Git and copied into production builds. Images use
+descriptive alternative text and crop to fill their frames; the main banner
+loads immediately and the other photos load as visitors approach them.
+
+Supply the official staff member's name and profile, contact information,
+hours, and visitor guidelines before publishing. LIKE has one official staff
+member, so the website retains a single profile placeholder. A staff portrait
+is optional for now; if available later, use `public/like/staff.jpg` and replace
+that profile's `PhotoPlaceholder` with a `Photo` component.
 Animations honor the visitor's reduced-motion preference.
 
 ## Verification

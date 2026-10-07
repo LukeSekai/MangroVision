@@ -57,6 +57,10 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-photo { position: relative; isolation: isolate; overflow: hidden; min-height: 210px; border-radius: 10px; background: radial-gradient(ellipse at 30% 20%, #b9d0a277, transparent 55%), linear-gradient(145deg, #d5e5c8 0%, #86a87f 45%, #456e55 100%); }
 .like-photo::before { content: ''; position: absolute; width: 160%; height: 75%; bottom: -36%; left: -15%; background: #244b3838; border-radius: 50%; transform: rotate(-12deg); z-index: -1; }
 .like-photo::after { content: ''; position: absolute; width: 100%; height: 80%; left: 38%; bottom: -18%; border-radius: 50%; background: #203e3121; transform: rotate(-35deg); z-index: -1; }
+.like-photo.has-image::before { content: none; }
+.like-photo.has-image::after { inset: 0; width: auto; height: auto; border-radius: 0; transform: none; background: linear-gradient(180deg, transparent 45%, #0d2315b8 100%); z-index: 0; pointer-events: none; }
+.like-photo > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.like-photo.has-image .like-photo-caption { z-index: 1; text-shadow: 0 1px 8px #0006; }
 .like-photo-pattern { position: absolute; inset: 0; background-image: repeating-linear-gradient(115deg, transparent 0 42px, #ffffff09 43px 44px); opacity: .9; }
 .like-photo-label { position: absolute; top: 22px; left: 22px; display: inline-flex; align-items: center; gap: 8px; color: #ffffffc9; font-size: 8px; font-weight: 650; letter-spacing: 1.9px; }
 .like-photo-caption { position: absolute; left: 24px; right: 20px; bottom: 24px; color: #fff; }
@@ -82,6 +86,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-about-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; align-items: center; }
 .like-about-images { position: relative; padding: 0 30px 24px 0; }
 .like-about-images .like-photo { height: 380px; border-radius: 10px 70px 10px 10px; }
+.like-about-images .like-photo > img { object-position: 50% 65%; }
 .like-about-tag { position: absolute; bottom: 0; right: 0; padding: 22px 28px; display: flex; gap: 16px; align-items: center; background: #f2f6eb; border: 5px solid #fff; border-radius: 9px; color: #476441; font-size: 12px; line-height: 1.6; }
 .like-about-copy > p { font-size: 13px; }
 .like-about-copy .like-text-link { margin-top: 15px; }
@@ -226,6 +231,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
   .like-about-grid, .like-guidelines-grid, .like-appointment-grid { grid-template-columns: 1fr; gap: 38px; }
   .like-about-images { max-width: 500px; }
   .like-about-images .like-photo { height: 310px; }
+  .like-about-images .like-photo-caption { bottom: 105px; }
   .like-about-copy > p, .like-guidelines-grid > div > p, .like-appointment-copy > p { max-width: 100%; font-size: 14px; }
   .like-section-heading { flex-direction: column; align-items: flex-start; gap: 18px; }
   .like-section-heading > p { max-width: 100%; margin: 0; }

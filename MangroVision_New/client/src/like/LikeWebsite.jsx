@@ -31,6 +31,13 @@ function PhotoPlaceholder({ label, className = '', number }) {
   </div>;
 }
 
+function Photo({ file, alt, label, className = '', priority = false }) {
+  return <div className={`like-photo has-image ${className}`}>
+    <img src={`${import.meta.env.BASE_URL}like/${file}`} alt={alt} loading={priority ? 'eager' : 'lazy'} decoding="async" />
+    <div className="like-photo-caption"><span>{label}</span></div>
+  </div>;
+}
+
 const initialForm = {
   organization: '', contact_name: '', phone: '', email: '', title: '',
   date: '', start_time: '', end_time: '', participants: '', notes: '', consent: false, website: '',
@@ -161,7 +168,7 @@ export default function LikeWebsite() {
           <div className="like-hero-actions"><a className="like-button" href="#appointment">Plant with us <Icon name="arrow" size={19} /></a><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
           <div className="like-hero-location"><span><Icon name="pin" size={18} /></span><div><strong>A greener corner of Leganes</strong><small>Leganes, Iloilo · Philippines</small></div></div>
         </div>
-        <div className="like-hero-visual"><PhotoPlaceholder className="like-hero-photo" label="The mangroves of LIKE" number="01" />
+        <div className="like-hero-visual"><Photo className="like-hero-photo" file="hero.jpg" alt="Aerial view of LIKE's mangrove forest, elevated walkways, viewing towers, and coastal pavilions" label="The mangroves of LIKE" priority />
           <div className="like-visual-stamp"><Icon size={22} /><span>Small roots.<br /><b>Lasting impact.</b></span></div>
           <div className="like-visual-note"><span>01 / THE ECOPARK</span><p>Where the land meets the tide,<br />and a community takes root.</p></div>
           <span className="like-orbit" aria-hidden="true" />
@@ -171,17 +178,17 @@ export default function LikeWebsite() {
       <div className="like-values-strip" aria-label="Our focus"><div className="like-container"><span><Icon /> Mangrove conservation</span><i /><span><Icon name="people" /> Community participation</span><i /><span><Icon name="calendar" /> Meaningful planting experiences</span></div></div>
 
       <section className="like-section like-about" id="about"><div className="like-container like-about-grid">
-        <div className="like-about-images" data-reveal><PhotoPlaceholder label="A walk through the ecopark" number="02" /><div className="like-about-tag"><Icon /><span>Rooted in nature.<br /><strong>Made for community.</strong></span></div></div>
+        <div className="like-about-images" data-reveal><Photo file="about.jpg" alt="A viewing tower and boardwalk among mangroves overlooking the sea at LIKE" label="A view from the ecopark" /><div className="like-about-tag"><Icon /><span>Rooted in nature.<br /><strong>Made for community.</strong></span></div></div>
         <div className="like-about-copy" data-reveal><span className="like-eyebrow">MORE THAN A PLACE TO VISIT</span><h2>A place to connect.<br />A reason to <em>care.</em></h2><p>LIKE brings Leganes’ mangrove conservation efforts and community participation together. It is a place to learn about the coast and take part in caring for it.</p><p>Whether you’re coming with a school, an organization, or your community, your next planting activity can start here.</p><a className="like-text-link" href="#experience">Find your way to take part <Icon name="arrow" size={18} /></a><div className="like-about-signature"><span />LEGANES INTEGRATED KATUNGGAN ECOPARK</div></div>
       </div></section>
 
       <section className="like-section like-experience" id="experience"><div className="like-container">
         <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">A LITTLE CLOSER TO NATURE</span><h2>Come for the mangroves.<br />Stay for the <em>meaning.</em></h2></div><p>Make room for a day that connects your group to the coast, and to each other.</p></div>
         <div className="like-experience-grid">{[
-          ['01', 'Plant with purpose', 'Bring your group together for a mangrove planting activity coordinated with LIKE and the LGU.', 'Mangrove planting in action', 'leaf'],
-          ['02', 'Learn from the coast', 'Get to know the mangroves and the role they play in the environment around us.', 'Discovering the mangroves', 'pin'],
-          ['03', 'Grow as a community', 'Share an experience with the people working to care for Leganes’ mangrove areas.', 'Community at the ecopark', 'people'],
-        ].map(([number, title, description, photo, icon]) => <article className="like-experience-card" key={number} data-reveal><PhotoPlaceholder label={photo} number={String(Number(number) + 2).padStart(2, '0')} /><div className="like-experience-text"><div><span>{number}</span><Icon name={icon} /></div><h3>{title}</h3><p>{description}</p></div></article>)}</div>
+          ['01', 'Plant with purpose', 'Bring your group together for a mangrove planting activity coordinated with LIKE and the LGU.', 'Mangrove planting in action', 'leaf', 'planting.jpg', 'An adult and child planting a mangrove seedling together in the mud'],
+          ['02', 'Learn from the coast', 'Get to know the mangroves and the role they play in the environment around us.', 'Discovering the mangroves', 'pin', 'mangroves.jpg', 'Visitors walking along a narrow boardwalk surrounded by green mangroves'],
+          ['03', 'Grow as a community', 'Share an experience with the people working to care for Leganes’ mangrove areas.', 'Community at the ecopark', 'people', 'community.jpg', 'A group of visitors posing together beside the LIKE ecopark sign'],
+        ].map(([number, title, description, photo, icon, file, alt]) => <article className="like-experience-card" key={number} data-reveal><Photo file={file} alt={alt} label={photo} /><div className="like-experience-text"><div><span>{number}</span><Icon name={icon} /></div><h3>{title}</h3><p>{description}</p></div></article>)}</div>
       </div></section>
 
       <section className="like-invitation"><div className="like-container" data-reveal><span className="like-eyebrow">LET’S GROW SOMETHING GOOD</span><h2>The next chapter of the coast<br />could start with <em>you.</em></h2><a className="like-button is-white" href="#appointment">Request a planting appointment <Icon name="arrow" size={18} /></a><span className="like-invitation-leaf" aria-hidden="true"><Icon size={240} /></span></div></section>
