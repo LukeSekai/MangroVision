@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { countMapPointStatuses } from './mapPointStats.js';
+import { countMapPointStatuses, getMapPointStatus } from './mapPointStats.js';
 
 function assertReconciled(counts) {
   const { mapped, ...statuses } = counts;
@@ -17,22 +17,24 @@ test('eroded points remain mapped and appear in the unavailable breakdown', () =
   ];
   const counts = countMapPointStatuses(points);
   assert.deepEqual(counts, {
-    mapped: 3464, planned: 1853, assigned: 245, completed: 1100, skipped: 20, unavailable: 246,
+    mapped: 3464, planned: 1853, assigned: 245, planted: 1100, dead: 0, skipped: 20, unavailable: 246,
   });
   assertReconciled(counts);
 });
 
 test('overlapping assignment, planting and erosion flags count each point once', () => {
   const cases = [
-    [{ assigned_planter_name: 'Organization', assignment_status: 'pending', planting_status: 'planted' }, 'completed'],
-    [{ assignment_status: 'completed', planting_status: 'planned' }, 'completed'],
+    [{ assigned_planter_name: 'Organization', assignment_status: 'pending', planting_status: 'planted' }, 'planted'],
+    [{ assignment_status: 'completed', planting_status: 'planned' }, 'planted'],
     [{ assignment_status: 'skipped', planting_status: 'planted' }, 'skipped'],
     [{ assignment_status: 'completed', planting_status: 'skipped' }, 'skipped'],
     [{ assigned_planter_name: 'Organization', assignment_status: 'pending', eroded_unavailable: true }, 'unavailable'],
     [{ planting_status: 'planned', inside_eroded_zone: true }, 'unavailable'],
-    [{ planting_status: 'planted', eroded_unavailable: true }, 'completed'],
+    [{ planting_status: 'planted', eroded_unavailable: true }, 'planted'],
     [{ planting_status: 'skipped', eroded_unavailable: true }, 'skipped'],
-    [{ planting_status: 'planted', death_at: '2026-09-18' }, 'completed'],
+    [{ planting_status: 'planted', death_at: '2026-09-18' }, 'dead'],
+    [{ assignment_status: 'skipped', death_at: '2026-09-18', eroded_unavailable: true }, 'dead'],
+    [{ planting_status: 'planned', assigned_planter_id: 7, assigned_planter_name: '' }, 'assigned'],
   ];
   for (const [point, expectedStatus] of cases) {
     const counts = countMapPointStatuses([point]);
@@ -55,13 +57,29 @@ test('removing an eroded zone returns a point to its planting or assignment stat
 
 test('empty and saved-analysis point data reconcile without assignment fields', () => {
   assert.deepEqual(countMapPointStatuses([]), {
-    mapped: 0, planned: 0, assigned: 0, completed: 0, skipped: 0, unavailable: 0,
+    mapped: 0, planned: 0, assigned: 0, planted: 0, dead: 0, skipped: 0, unavailable: 0,
   });
   const counts = countMapPointStatuses([
     { status: 'planned' }, { status: 'planted' }, { status: 'skipped' }, {},
   ]);
   assert.deepEqual(counts, {
-    mapped: 4, planned: 2, assigned: 0, completed: 1, skipped: 1, unavailable: 0,
+    mapped: 4, planned: 2, assigned: 0, planted: 1, dead: 0, skipped: 1, unavailable: 0,
   });
   assertReconciled(counts);
+});
+
+test('API status drives the map and deleted points never inflate its totals', () => {
+  const points = [
+    { map_status: 'planned' }, { map_status: 'assigned' },
+    { map_status: 'planted' }, { map_status: 'dead', planting_status: 'planted' },
+    { map_status: 'skipped' }, { map_status: 'unavailable' },
+    { map_status: 'dead', deleted_at: '2026-10-07' },
+    { map_status: 'planned', is_deleted: true },
+  ];
+  assert.deepEqual(countMapPointStatuses(points), {
+    mapped: 6, planned: 1, assigned: 1, planted: 1, dead: 1, skipped: 1, unavailable: 1,
+  });
+  assert.deepEqual(points.map(getMapPointStatus), [
+    'planned', 'assigned', 'planted', 'dead', 'skipped', 'unavailable', null, null,
+  ]);
 });

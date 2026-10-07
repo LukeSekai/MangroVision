@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
 import { countMapPointStatuses } from '../utils/mapPointStats';
@@ -31,17 +31,14 @@ export default function MapAnalytics() {
   const [exportError, setExportError] = useState('');
   const [pendingExportFormat, setPendingExportFormat] = useState(null);
   const [completedExportFormat, setCompletedExportFormat] = useState(null);
-  const loaded = useRef(false);
 
   useEffect(() => {
-    if (loaded.current) return;
-    loaded.current = true;
     fetchStats();
     fetchPoints();
   }, [fetchPoints, fetchStats]);
 
   const allSavedPoints = stats?.points || [];
-  const { mapped, planned, assigned, completed, skipped, unavailable } = useMemo(
+  const { mapped, planned, assigned, planted, dead, skipped, unavailable } = useMemo(
     () => countMapPointStatuses(points),
     [points],
   );
@@ -116,7 +113,8 @@ export default function MapAnalytics() {
           <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{mapped}</div></div>
           <div className="stat-card"><div className="stat-label">Planned</div><div className="stat-value" style={{ color: 'var(--color-planned)' }}>{planned}</div></div>
           <div className="stat-card"><div className="stat-label">Assigned</div><div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{assigned}</div></div>
-          <div className="stat-card"><div className="stat-label">Completed</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{completed}</div></div>
+          <div className="stat-card"><div className="stat-label">Planted</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{planted}</div></div>
+          <div className="stat-card"><div className="stat-label">Dead</div><div className="stat-value" style={{ color: '#7f1d1d' }}>{dead}</div></div>
           <div className="stat-card"><div className="stat-label">Skipped</div><div className="stat-value" style={{ color: '#6b7280' }}>{skipped}</div></div>
           <div className="stat-card analytics-unavailable-stat">
             <div className="stat-label">Unavailable</div>
@@ -143,7 +141,6 @@ export default function MapAnalytics() {
           <div className="legend-item"><span className="legend-dot" style={{ background: '#db2777' }} /><span>Rhizophora</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#2563eb' }} /><span>Assigned</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#d97706' }} /><span>Planted</span></div>
-          <div className="legend-item"><span className="legend-dot" style={{ background: '#059669' }} /><span>Completed</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#9ca3af' }} /><span>Skipped</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#f97316' }} /><span>Unavailable for planting (eroded zone)</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#7f1d1d' }} /><span>Dead (review in Monitoring)</span></div>

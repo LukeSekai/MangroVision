@@ -5,8 +5,8 @@ import { MemoryRouter, Route, useNavigate } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
-let server, dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling;
-let requests, scheduleRows;
+let server, dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, useMapStore;
+let requests, scheduleRows, mapPoints;
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
   analysis_id: id, analysis_number: id, image_name: `Analysis ${id}`,
@@ -19,6 +19,8 @@ before(async () => {
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true,
+    requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
     ResizeObserver: class { observe() {} disconnect() {} unobserve() {} },
   };
   for (const [key, value] of Object.entries(globals)) {
@@ -26,12 +28,30 @@ before(async () => {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   originalGlobals.set('fetch', Object.getOwnPropertyDescriptor(globalThis, 'fetch'));
-  window.fetch = async (input) => {
+  window.fetch = async (input, options = {}) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.origin);
     requests.push(url.pathname + url.search);
+    if (url.pathname === '/api/planters/map-points/1/death' && options.method === 'PATCH') {
+      mapPoints = mapPoints.map((point) => ({ ...point, map_status: 'dead', death_at: '2026-10-07' }));
+      return Response.json({ death_at: '2026-10-07' });
+    }
+    if (url.pathname === '/api/planters/map-points/1/restore') {
+      mapPoints = mapPoints.map((point) => ({ ...point, map_status: 'planted', death_at: null }));
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === '/api/planters/map-points/1/reset-to-planned') {
+      mapPoints = mapPoints.map((point) => ({ ...point, map_status: 'unavailable', death_at: null, planting_status: 'planned' }));
+      return Response.json({ ok: true });
+    }
+    if (url.pathname === '/api/planters/map-points') return Response.json(mapPoints);
+    if (url.pathname === '/api/analyses/stats') return Response.json({ total_analyses: 1, points: mapPoints });
     if (url.pathname === '/api/dashboard/settings') return Response.json({ year: Number(url.searchParams.get('year')), annual_planting_target: 4000, min_survival_target_pct: 80 });
     if (url.pathname.startsWith('/api/dashboard/')) return Response.json({
       as_of: '2026-10-06T01:00:00Z', filter_options: { sites: [{ id: 1, name: 'Test Site' }] }, suitability: rows,
+      lifecycle: mapPoints.map((point) => ({
+        key: { planned: 'available', planted: 'planted_unverified' }[point.map_status] || point.map_status,
+        value: 1,
+      })),
     });
     if (url.pathname === '/api/activity/staff') return Response.json({ items: [{
       id: 1, summary: 'A retained activity record', created_at: '2026-10-06T01:00:00Z', actor_type: 'system',
@@ -49,6 +69,8 @@ before(async () => {
   ({ default: Dashboard } = await server.ssrLoadModule('/src/pages/Dashboard.jsx'));
   ({ default: ActivityFeed } = await server.ssrLoadModule('/src/components/ActivityFeed.jsx'));
   ({ default: Scheduling } = await server.ssrLoadModule('/src/pages/Scheduling.jsx'));
+  ({ default: MapAnalytics } = await server.ssrLoadModule('/src/pages/MapAnalytics.jsx'));
+  ({ useMapStore } = await server.ssrLoadModule('/src/stores/mapStore.js'));
   const { useAuthStore } = await server.ssrLoadModule('/src/stores/authStore.js');
   useAuthStore.setState({ token: 'cookie', hydrated: true, isAuthenticated: true });
   const { installSecureFetch } = await server.ssrLoadModule('/src/utils/secureFetch.js');
@@ -68,6 +90,7 @@ after(async () => {
 beforeEach(() => {
   requests = [];
   scheduleRows = [];
+  mapPoints = [];
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
 });
@@ -75,7 +98,7 @@ afterEach(async () => { await act(async () => root.unmount()); });
 
 function Navigation() {
   const navigate = useNavigate();
-  return createElement('nav', null, ...['dashboard', 'activity', 'scheduling'].map((page) =>
+  return createElement('nav', null, ...['dashboard', 'activity', 'scheduling', 'map'].map((page) =>
     createElement('button', { key: page, 'data-page': page, onClick: () => navigate(`/${page}`) }, page)));
 }
 
@@ -86,10 +109,11 @@ async function settle() {
 async function render(page = 'dashboard') {
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/${page}`] },
     createElement(Navigation),
-    createElement(RetainedRoutes, { paths: ['/dashboard', '/activity', '/scheduling'] },
+    createElement(RetainedRoutes, { paths: ['/dashboard', '/activity', '/scheduling', '/map'] },
       createElement(Route, { path: '/dashboard', element: createElement(Dashboard) }),
       createElement(Route, { path: '/activity', element: createElement(ActivityFeed) }),
       createElement(Route, { path: '/scheduling', element: createElement(Scheduling) }),
+      createElement(Route, { path: '/map', element: createElement(MapAnalytics) }),
     ))));
   await settle();
 }
@@ -102,6 +126,51 @@ async function click(selector) {
 }
 
 const count = (path) => requests.filter((url) => url.split('?')[0] === path).length;
+
+test('map and donut pick up mutations made while their retained page is hidden', async () => {
+  mapPoints = [{ id: 1, map_status: 'planted', planting_status: 'planted' }];
+  await render('map');
+  const statValue = (label) => [...document.querySelectorAll('.stat-card')]
+    .find((card) => card.querySelector('.stat-label')?.textContent === label)
+    ?.querySelector('.stat-value')?.textContent;
+  const legend = () => document.querySelector('.dash-lifecycle-legend').textContent;
+  assert.equal(statValue('Planted'), '1');
+  await click('[data-page="dashboard"]');
+  assert.match(legend(), /Planted/);
+  await click('[data-page="activity"]');
+  await act(async () => { await useMapStore.getState().markPointDead(1, 'other', ''); });
+  await click('[data-page="dashboard"]');
+  assert.match(legend(), /Dead/);
+  assert.doesNotMatch(legend(), /Planted/);
+  assert.equal(count('/api/dashboard/overview'), 2);
+  await click('[data-page="map"]');
+  assert.equal(statValue('Planted'), '0');
+  assert.equal(statValue('Dead'), '1');
+  assert.equal(statValue('Mapped Points'), '1');
+  const requestsBeforeReturn = requests.length;
+  await click('[data-page="dashboard"]');
+  await click('[data-page="map"]');
+  assert.equal(requests.length, requestsBeforeReturn);
+});
+
+test('recording death, restoring and releasing a point update map counts immediately', async () => {
+  mapPoints = [{ id: 1, map_status: 'planted', planting_status: 'planted', eroded_unavailable: true }];
+  await render('map');
+  const statValue = (label) => [...document.querySelectorAll('.stat-card')]
+    .find((card) => card.querySelector('.stat-label')?.textContent === label)
+    ?.querySelector('.stat-value')?.textContent;
+  assert.equal(statValue('Planted'), '1');
+  await act(async () => { await useMapStore.getState().markPointDead(1, 'other', ''); });
+  assert.equal(statValue('Dead'), '1');
+  assert.equal(statValue('Planted'), '0');
+  await act(async () => { await useMapStore.getState().restorePointToPlanted(1); });
+  assert.equal(statValue('Dead'), '0');
+  assert.equal(statValue('Planted'), '1');
+  await act(async () => { await useMapStore.getState().resetPointToPlanned(1); });
+  assert.equal(statValue('Planted'), '0');
+  assert.equal(statValue('Unavailable'), '1');
+  assert.equal(statValue('Mapped Points'), '1');
+});
 
 test('matching calendar activities open all organizations and edit the selected schedule', async () => {
   const parts = new Intl.DateTimeFormat('en-CA', {

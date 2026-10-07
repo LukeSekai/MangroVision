@@ -63,12 +63,12 @@ const ATTENTION_REASON_LABELS = {
 };
 
 const LIFECYCLE_LABELS = {
-  not_assigned: 'Ready for assignment',
-  assigned: 'Assigned, not yet planted',
+  not_assigned: 'Planned',
+  assigned: 'Assigned',
   planted: 'Planted',
-  dead: 'Recorded dead',
-  skipped: 'Could not be planted',
-  unavailable: 'Unavailable due to site conditions',
+  dead: 'Dead',
+  skipped: 'Skipped',
+  unavailable: 'Unavailable',
 };
 
 const LIFECYCLE_HINTS = {
@@ -558,7 +558,7 @@ function OverviewTab({ data }) {
       <div className="dash-grid">
         <ChartCard
           title="Current status of planting locations"
-          subtitle="Current map locations. A location made available for replanting returns to ready for assignment; the original organization keeps its recorded deaths in monitoring history."
+          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Map Analytics. A location released for replanting returns to Planned; its recorded deaths stay in monitoring history."
           data={lifecycle}
           chartLabel="Cards showing the current status of all planting points"
           columns={[
@@ -1268,14 +1268,17 @@ function SitesTab({ data }) {
 
 function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   const [form, setForm] = useState(() => makePlantingGoalsForm(settings));
-  const appliedSettings = useRef(settings);
+  const appliedSettings = useRef(JSON.stringify(settings));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    if (appliedSettings.current === settings) return;
-    appliedSettings.current = settings;
+    // Cached API reads create fresh objects even when saved values are unchanged.
+    // Preserve the user's draft when returning to this retained form.
+    const settingsSnapshot = JSON.stringify(settings);
+    if (appliedSettings.current === settingsSnapshot) return;
+    appliedSettings.current = settingsSnapshot;
     const refreshedForm = makePlantingGoalsForm(settings);
     queueMicrotask(() => setForm(refreshedForm));
   }, [settings]);
@@ -1360,9 +1363,7 @@ function PlantingGoalsPanel({ year, onYearChange, settings, loading, error, onSa
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState('overview');
   const [visitedTabs, setVisitedTabs] = useState(['overview']);
-  const reportCache = useRef(new Map());
   const reportView = useRef('');
-  const goalsCache = useRef(new Map());
   const [reportSelection, setReportSelection] = useState(null);
   const [goalsYear, setGoalsYear] = useState(() => Number(dateInManila().slice(0, 4)));
   const [goalsOpen, setGoalsOpen] = useState(false);
@@ -1403,8 +1404,8 @@ export default function Dashboard() {
       });
       return undefined;
     }
-    // Retain each report when changing tabs or leaving the dashboard. Only a
-    // different filter or saved change replaces the displayed view.
+    // Shared API reads retain unchanged reports. Read again on activation so
+    // writes made while this retained page was hidden invalidate its view too.
     let active = true;
     const sections = dashboardSectionsForTab(activeTab);
     const view = `${dataRevision}:${queryString}`;
@@ -1418,29 +1419,18 @@ export default function Dashboard() {
       }
     });
     sections.forEach((key) => {
-      const cacheKey = `${view}:${key}`;
-      const cached = reportCache.current.get(cacheKey);
-      if (cached) {
-        queueMicrotask(() => {
-          if (!active) return;
-          setDatasets((current) => ({ ...current, [key]: cached.data || null }));
-          setErrors((current) => ({ ...current, [key]: cached.error || '' }));
-          setLoading((current) => ({ ...current, [key]: false }));
-        });
-        return;
-      }
       queueMicrotask(() => {
         if (active) setLoading((current) => ({ ...current, [key]: true }));
       });
       fetchJson(`${DASHBOARD_ENDPOINTS[key]}?${queryString}`)
         .then((result) => {
-          reportCache.current.set(cacheKey, { data: result });
-          if (reportCache.current.size > 64) reportCache.current.delete(reportCache.current.keys().next().value);
-          if (active) setDatasets((current) => ({ ...current, [key]: result }));
+          if (active) {
+            setDatasets((current) => ({ ...current, [key]: result }));
+            setErrors((current) => ({ ...current, [key]: '' }));
+          }
         })
         .catch((error) => {
           if (error.name !== 'AbortError') {
-            reportCache.current.set(cacheKey, { error: error.message });
             if (active) setErrors((current) => ({ ...current, [key]: error.message }));
           }
         })
@@ -1462,28 +1452,17 @@ export default function Dashboard() {
     // The goals panel has its own reporting year. Opening it must not change
     // the year or reload the report currently displayed in the dashboard.
     settingsYears.forEach((year) => {
-      const key = `${dataRevision}:${year}`;
-      const cached = goalsCache.current.get(key);
-      if (cached) {
-        queueMicrotask(() => {
-          if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...cached, loading: false } }));
-        });
-        return;
-      }
       queueMicrotask(() => {
         if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...current[year], loading: true, error: '' } }));
       });
       fetchJson(`/api/dashboard/settings?year=${year}`)
         .then((result) => {
           const record = { data: result, error: '', loading: false };
-          goalsCache.current.set(key, record);
-          if (goalsCache.current.size > 32) goalsCache.current.delete(goalsCache.current.keys().next().value);
           if (active) setAnnualGoals((current) => ({ ...current, [year]: record }));
         })
         .catch((error) => {
           if (error.name === 'AbortError') return;
           const record = { error: error.message || 'Could not load planting goals.', loading: false };
-          goalsCache.current.set(key, record);
           if (active) setAnnualGoals((current) => ({ ...current, [year]: { ...current[year], ...record } }));
         });
     });

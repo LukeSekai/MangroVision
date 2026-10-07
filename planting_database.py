@@ -22,6 +22,7 @@ from mangrovision_db.activity import append_activity
 from mangrovision_db.config import get_settings
 from mangrovision_db.monitoring_progress import age_snapshot, carried_counts
 from mangrovision_db.passwords import hash_password, verify_password
+from mangrovision_db.point_status import current_point_status
 from mangrovision_db.request_context import planter_session_token, staff_session_token
 from mangrovision_db.storage import (
     StoredAsset,
@@ -3045,6 +3046,7 @@ def _annotate_point_advisories(rows, *, eroded_point_ids=None) -> List[dict]:
             item["warning_reasons"] = []
             item["warning_severity"] = None
             item["warning_summary"] = None
+            item["map_status"] = current_point_status(item)
             annotated.append(item)
             continue
 
@@ -3052,6 +3054,7 @@ def _annotate_point_advisories(rows, *, eroded_point_ids=None) -> List[dict]:
         item["inside_eroded_zone"] = inside_eroded_zone
         item["erosion_advisory"] = inside_eroded_zone
         item["eroded_unavailable"] = inside_eroded_zone
+        item["map_status"] = current_point_status(item)
         item["availability_status"] = (
             "eroded_unavailable" if inside_eroded_zone else "available"
         )
@@ -9102,7 +9105,7 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
                     WHEN pap.status = 'completed' THEN 1
                     ELSE 2
                 END,
-                COALESCE(pap.completed_at, pap.status_changed_at, pap.assigned_at, pa.created_at) DESC,
+                COALESCE(pap.completed_at, pa.created_at) DESC,
                 pap.id DESC
         )
         SELECT
@@ -9126,7 +9129,12 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
             ra.assignment_status,
             ra.assigned_at,
             ra.status_changed_at,
-            ra.skip_reason
+            ra.skip_reason,
+            EXISTS (
+                SELECT 1 FROM map_zones mz
+                WHERE mz.zone_type = 'eroded' AND mz.deleted_at IS NULL
+                  AND extensions.ST_Covers(mz.geometry, pp.location)
+            ) AS eroded_unavailable
         FROM planting_points pp
         JOIN analyses a ON a.id = pp.analysis_id
         LEFT JOIN ranked_assignment ra
@@ -9258,15 +9266,13 @@ def get_dashboard_overview(
         for point in points:
             # Soft-deleted/filtered candidates are historical removals, not a
             # stage in the current restoration lifecycle.
-            if point.get("deleted_at"):
+            status = current_point_status(point)
+            if status is None:
                 continue
-            if point.get("point_status") == "skipped" or point.get("assignment_point_status") == "skipped":
-                lifecycle_counts["skipped"] += 1
+            if status != "planted":
+                lifecycle_counts["available" if status == "planned" else status] += 1
                 continue
-            if point.get("point_status") == "planted":
-                if point.get("death_at"):
-                    lifecycle_counts["dead"] += 1
-                    continue
+            if status == "planted":
                 events_for_point = all_events_by_point.get(int(point["id"]), [])
                 latest_event = max(
                     events_for_point,
@@ -9294,18 +9300,8 @@ def get_dashboard_overview(
                     )
                 if latest_observation and latest_observation["status"] == "alive":
                     lifecycle_counts["verified_alive"] += 1
-                elif latest_observation and latest_observation["status"] == "dead":
-                    lifecycle_counts["dead"] += 1
                 else:
                     lifecycle_counts["planted_unverified"] += 1
-                continue
-            if (
-                point.get("assignment_status") == "active"
-                and point.get("assignment_point_status") == "pending"
-            ):
-                lifecycle_counts["assigned"] += 1
-            else:
-                lifecycle_counts["available"] += 1
 
         progress = _blank_bucket_series(start, end, clean_bucket)
         progress_by_date = {row["period_start"]: row for row in progress}
@@ -9432,9 +9428,7 @@ def get_dashboard_overview(
 
         backlog_points = [
             point for point in points
-            if point.get("assignment_status") == "active"
-            and point.get("assignment_point_status") == "pending"
-            and not point.get("deleted_at")
+            if current_point_status(point) == "assigned"
         ]
         overdue_backlog = sum(
             1 for point in backlog_points

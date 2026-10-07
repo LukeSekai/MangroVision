@@ -36,6 +36,8 @@ export default function AppShell({ children }) {
     };
     window.addEventListener('mv:data-changed', refresh);
     window.addEventListener('mv:session-changed', reset);
+    // Returning from the dashboard must pick up writes made while the map was hidden.
+    if (showMap) refresh();
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('mv:data-changed', refresh);

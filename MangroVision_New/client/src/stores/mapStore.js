@@ -224,6 +224,7 @@ export const useMapStore = create((set, get) => ({
         return {
           ...point,
           death_at: payload.death_at,
+          map_status: null,
           death_reason: payload.death_reason,
           death_reason_category: payload.death_reason_category,
           death_notes: payload.death_notes,
@@ -247,6 +248,7 @@ export const useMapStore = create((set, get) => ({
         return {
           ...point,
           death_at: null,
+          map_status: null,
           death_reason: null,
           death_reason_category: null,
           death_notes: null,
@@ -273,6 +275,7 @@ export const useMapStore = create((set, get) => ({
         return {
           ...point,
           planting_status: 'planned',
+          map_status: null,
           planted_at: null,
           planted_date: null,
           death_at: null,

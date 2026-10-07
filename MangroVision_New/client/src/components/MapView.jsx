@@ -8,6 +8,7 @@ import { createGoogleSatelliteLayer } from '../config/googleBasemap';
 import { getPlanterColor, getPlanterTint } from '../utils/planterColors';
 import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
+import { getMapPointStatus } from '../utils/mapPointStats';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
 import './MapView.css';
@@ -156,18 +157,10 @@ function filterCrossSpeciesDisplayPoints(allPoints) {
 }
 
 function getPointDisplayStatus(point) {
-  // status stays 'planted' in the DB even after marking dead — death_at is
-  // the canonical signal (see planting_database.mark_planting_point_dead).
-  if (point.death_at) return 'dead';
-  if (point.assignment_status === 'skipped' || point.planting_status === 'skipped') {
-    return 'skipped';
-  }
-  if (point.assignment_status === 'completed' || point.planting_status === 'planted') {
-    return point.assignment_status === 'completed' ? 'completed' : 'planted';
-  }
-  if (point.eroded_unavailable || point.inside_eroded_zone) return 'eroded_unavailable';
-  if (point.assigned_planter_name) return 'assigned';
-  return point.planting_status || 'planned';
+  const status = getMapPointStatus(point);
+  if (status === 'unavailable') return 'eroded_unavailable';
+  if (status === 'planted' && point.assignment_status === 'completed') return 'completed';
+  return status;
 }
 
 function formatStatusLabel(status) {

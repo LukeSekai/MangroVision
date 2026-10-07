@@ -131,6 +131,24 @@ test('overview focuses on progress and follow-up without repeating health compar
   assert.doesNotMatch(render(OperationsTab, { data: {} }), /class="dash-kpis"/);
 });
 
+test('donut status labels and total match Map Analytics including deaths and erosion', () => {
+  const html = render(OverviewTab, { data: { lifecycle: [
+    { key: 'available', value: 1853 }, { key: 'assigned', value: 245 },
+    { key: 'planted_unverified', value: 900 }, { key: 'verified_alive', value: 100 },
+    { key: 'dead', value: 100 }, { key: 'skipped', value: 20 },
+    { key: 'unavailable', value: 246 },
+  ] } });
+  for (const [label, value] of [
+    ['Planned', '1,853'], ['Assigned', '245'], ['Planted', '1,000'],
+    ['Dead', '100'], ['Skipped', '20'], ['Unavailable', '246'],
+  ]) {
+    assert.match(html, new RegExp(`<strong>${label}</strong><small>[^<]*</small></div><b>${value}</b>`));
+  }
+  assert.match(html, /<strong>3,464<\/strong><span>Total points<\/span>/);
+  assert.match(html, /across all dates/);
+  assert.match(html, /Choose all project sites to compare with Map Analytics/);
+});
+
 test('analysis dates and boundary information share the existing sites table', () => {
   const html = render(SitesTab, { data: { suitability: [
     { ...rows[0], footprint_quality: 'approximate_coverage_rectangle' },
