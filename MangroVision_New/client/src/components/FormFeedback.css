@@ -1,0 +1,13 @@
+.form-field-error {
+  display: block;
+  color: #b91c1c;
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin-top: 5px;
+  font-weight: 500;
+}
+.form-error-summary { color: #b91c1c; font-size: 0.875rem; margin: 8px 0; }
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
+  border-color: #b91c1c;
+  outline-color: #b91c1c;
+}

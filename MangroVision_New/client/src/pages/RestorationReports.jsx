@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import Logo from '../components/Logo';
 import { useAuthStore } from '../stores/authStore';
 import {
   REPORT_TYPES, buildRestorationReport, downloadReportPdf, formatReportValue, loadReportSource, manilaDay,
-  reportCsv, reportFilename, reportPeriod, reportRequests, validateReportPeriod,
+  reportCsv, reportFilename, reportPeriod, reportRequests, validateReportPeriod, reportPeriodFieldErrors,
 } from '../utils/restorationReports';
 import './RestorationReports.css';
+import '../components/FormFeedback.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const selectionKey = (selection) => JSON.stringify(selection);
@@ -97,6 +98,8 @@ export default function RestorationReportWorkspace({ initialSelection, initialSi
   const pdfController = useRef(null);
   const originalTitle = useRef(null);
   const invalidPeriod = validateReportPeriod(selection);
+  const dateErrors = reportPeriodFieldErrors(selection);
+  const errorId = useId();
   const dirty = Boolean(view.snapshot && view.snapshot.key !== selectionKey(selection));
   const outdated = Boolean(view.snapshot && view.snapshot.revision !== recordRevision);
   const loading = !invalidPeriod && (view.busy || dirty || outdated);
@@ -220,11 +223,11 @@ export default function RestorationReportWorkspace({ initialSelection, initialSi
           <label className="reports-type-select">Report type<select value={selection.type} onChange={(event) => change('type', event.target.value)}>{REPORT_TYPES.map((type) => <option key={type.id} value={type.id}>{type.title}</option>)}</select></label>
           <div className="reports-filter-grid">
             <label>Reporting period<select value={preset} onChange={(event) => changePeriod(event.target.value)}><option value="year">Year to date</option><option value="quarter">This quarter</option><option value="last-quarter">Last quarter</option><option value="custom">Custom dates</option></select></label>
-            <label>From<input type="date" value={selection.dateFrom} max={manilaDay()} required onChange={(event) => { setPreset('custom'); change('dateFrom', event.target.value); }} /></label>
-            <label>To<input type="date" value={selection.dateTo} max={manilaDay()} required onChange={(event) => { setPreset('custom'); change('dateTo', event.target.value); }} /></label>
+            <label>From<input type="date" value={selection.dateFrom} max={manilaDay()} required aria-invalid={Boolean(dateErrors.dateFrom)} aria-describedby={dateErrors.dateFrom ? `${errorId}-from` : undefined} onChange={(event) => { setPreset('custom'); change('dateFrom', event.target.value); }} />{dateErrors.dateFrom && <span id={`${errorId}-from`} className="form-field-error">{dateErrors.dateFrom}</span>}</label>
+            <label>To<input type="date" value={selection.dateTo} max={manilaDay()} required aria-invalid={Boolean(dateErrors.dateTo)} aria-describedby={dateErrors.dateTo ? `${errorId}-to` : undefined} onChange={(event) => { setPreset('custom'); change('dateTo', event.target.value); }} />{dateErrors.dateTo && <span id={`${errorId}-to`} className="form-field-error">{dateErrors.dateTo}</span>}</label>
             <label>Project site<select value={selection.siteId} onChange={(event) => change('siteId', event.target.value)}><option value="">All project sites</option>{selection.siteId && !sites.some((site) => String(site.id) === String(selection.siteId)) && <option value={selection.siteId}>Project site #{selection.siteId}</option>}{sites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}</select></label>
           </div>
-          <p className="reports-filter-hint" role={invalidPeriod ? 'alert' : undefined}>{invalidPeriod || 'Reports update automatically when you change the selection.'}</p>
+          <p className="reports-filter-hint" role={invalidPeriod ? 'alert' : undefined}>{invalidPeriod ? 'Correct the highlighted dates to generate the report.' : 'Reports update automatically when you change the selection.'}</p>
         </div>
         {view.error && <div className="reports-alert" role="alert">{view.error}{!view.snapshot && <button type="button" className="reports-button" onClick={() => setRecordRevision((current) => current + 1)}>Retry</button>}</div>}
         {loading && <div className="reports-loading" role="status"><ReportIcon /> Preparing your report…</div>}

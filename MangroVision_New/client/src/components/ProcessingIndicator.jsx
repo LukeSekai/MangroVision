@@ -65,8 +65,8 @@ export default function ProcessingIndicator() {
       type="button"
       className="processing-indicator"
       onClick={handleClick}
-      aria-label={`${label}. Click to open the Image Processing page.`}
-      title="Open Image Processing"
+      aria-label={`${label}. Click to open Analyze Image.`}
+      title="Open Analyze Image"
     >
       <span className="processing-indicator__spinner" aria-hidden="true" />
       <span className="processing-indicator__body">

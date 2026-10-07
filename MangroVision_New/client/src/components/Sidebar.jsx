@@ -8,7 +8,7 @@ import './Sidebar.css';
 const NAV_ITEMS = [
   {
     to: '/',
-    label: 'Map Analytics',
+    label: 'Planting Map',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" />
@@ -53,7 +53,7 @@ const NAV_ITEMS = [
   },
   {
     to: '/processing',
-    label: 'Image Processing',
+    label: 'Analyze Image',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
@@ -64,7 +64,7 @@ const NAV_ITEMS = [
   },
   {
     to: '/planters',
-    label: 'Planters',
+    label: 'Organizations & Assignments',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />

@@ -7,6 +7,9 @@ import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
+import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
 import { usePlanterAuthStore } from '../stores/planterAuthStore';
 import { ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { createGoogleSatelliteLayer } from '../config/googleBasemap';
@@ -21,32 +24,12 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-const STATUS_LABEL = {
-  pending: 'Pending',
-  planned: 'Planned',
-  assigned: 'Assigned',
-  planted: 'Planted',
-  completed: 'Completed',
-  skipped: 'Skipped',
-  eroded_unavailable: 'Not Available for Planting',
-};
-
 // Field-side palette. The planter assignment lifecycle on the database side
 // uses 'pending' (assigned to me, not yet planted) and 'completed' (I have
 // planted it). Both 'planned' and 'assigned' map to blue so any not-yet-done
 // state is visually identical on the planter map. 'completed' / 'planted'
 // is the freshly-planted state and renders YELLOW so it stands clearly
 // apart from blue assigned points.
-const STATUS_COLOR = {
-  planned: '#2563eb',    // blue — still pending
-  assigned: '#2563eb',   // blue — still pending
-  pending: '#2563eb',    // blue — DB enum for "still pending"
-  planted: '#eab308',    // yellow — planter has marked this complete
-  completed: '#eab308',  // yellow — DB enum for "planted"
-  skipped: '#9ca3af',
-  eroded_unavailable: '#f97316',
-};
-
 const COMPLETED_ASSIGNMENT_STATUSES = new Set(['planted', 'completed']);
 const FINAL_ASSIGNMENT_STATUSES = new Set(['planted', 'completed', 'skipped']);
 
@@ -135,6 +118,15 @@ function AuthScreen() {
 
   const [mode, setMode] = useState('login');
   const [localError, setLocalError] = useState('');
+  const feedback = useFormFeedback({
+    organization_id: { label: 'Organization', serverTerms: ['organization is required', 'organization not found'] },
+    username: { label: 'Shared username', serverTerms: ['username is already', 'username already', 'username must'] },
+    password: { label: 'Password', serverTerms: ['password must', 'password should'] },
+    participant_count: { label: 'Number of participants', serverTerms: ['participant count', 'participant_count'] },
+    participant_slot: { label: 'Participant number', serverTerms: ['participant number', 'participant slot', 'participant_slot'] },
+    phone: { label: 'Phone' },
+    base_label: { label: 'Home base label' },
+  });
   const [organizations, setOrganizations] = useState([]);
   const [organizationsLoading, setOrganizationsLoading] = useState(true);
   const [form, setForm] = useState({
@@ -171,12 +163,15 @@ function AuthScreen() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setLocalError('');
+    usePlanterAuthStore.setState({ error: '' });
+    if (!feedback.validate()) return;
     try {
       if (mode === 'login') {
         await login(form.username.trim(), form.password, Number(form.participant_slot) || null, form.recover_slot);
       } else {
-        if (!form.organization_id || !form.username.trim() || !form.password) {
-          throw new Error('Organization, username, and password are required.');
+        if (!form.organization_id) {
+          feedback.reject({ organization_id: 'Choose your organization. Ask the LGU to add it through Scheduling if it is missing.' });
+          return;
         }
         await register({
           full_name: organizations.find((organization) => Number(organization.id) === Number(form.organization_id))?.name || 'Organization',
@@ -189,7 +184,9 @@ function AuthScreen() {
         });
       }
     } catch (error) {
-      setLocalError(error.message || 'Something went wrong');
+      usePlanterAuthStore.setState({ status: 'error' });
+      if (feedback.fromServer(error)) usePlanterAuthStore.setState({ error: '' });
+      else setLocalError(error.message || 'Could not sign in. Check your connection and try again.');
     }
   };
 
@@ -208,25 +205,26 @@ function AuthScreen() {
           <button
             type="button"
             className={`field-tab ${mode === 'login' ? 'field-tab-active' : ''}`}
-            onClick={() => { setMode('login'); setLocalError(''); }}
+            onClick={() => { setMode('login'); setLocalError(''); feedback.clear(); usePlanterAuthStore.setState({ error: '' }); }}
           >
             Sign In
           </button>
           <button
             type="button"
             className={`field-tab ${mode === 'register' ? 'field-tab-active' : ''}`}
-            onClick={() => { setMode('register'); setLocalError(''); }}
+            onClick={() => { setMode('register'); setLocalError(''); feedback.clear(); usePlanterAuthStore.setState({ error: '' }); }}
           >
             Register
           </button>
         </div>
 
-        <form className="field-form" onSubmit={handleSubmit}>
+        <form className="field-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
+          <FormErrorSummary feedback={feedback} />
           {mode === 'register' && (
             <>
               <label className="field-label">
                 Organization
-                <select
+                <select {...feedback.props('organization_id')}
                   className="field-input"
                   value={form.organization_id}
                   onChange={update('organization_id')}
@@ -244,6 +242,7 @@ function AuthScreen() {
                     <option key={organization.id} value={organization.id}>{organization.name}</option>
                   ))}
                 </select>
+              <FieldError feedback={feedback} field="organization_id" />
                 {!organizationsLoading && organizations.length === 0 && (
                   <small className="field-label-help">Ask the LGU to create the organization through Scheduling first.</small>
                 )}
@@ -260,7 +259,8 @@ function AuthScreen() {
               {form.recover_slot && (
                 <label className="field-label">
                   Participant number reset by the LGU
-                  <input className="field-input" type="number" min="1" max="10000" required value={form.participant_slot} onChange={update('participant_slot')} />
+                  <input {...feedback.props('participant_slot')} className="field-input" type="number" min="1" max="10000" required value={form.participant_slot} onChange={update('participant_slot')} />
+              <FieldError feedback={feedback} field="participant_slot" />
                   <small className="field-label-help">Only use this to recover your previous points on a replacement phone.</small>
                 </label>
               )}
@@ -268,7 +268,7 @@ function AuthScreen() {
           )}
           <label className="field-label">
             Shared username
-            <input
+            <input {...feedback.props('username')}
               className="field-input"
               type="text"
               value={form.username}
@@ -276,11 +276,12 @@ function AuthScreen() {
               autoComplete="username"
               required
             />
+              <FieldError feedback={feedback} field="username" />
           </label>
 
           <label className="field-label">
             Password
-            <input
+            <input {...feedback.props('password')}
               className="field-input"
               type="password"
               value={form.password}
@@ -288,40 +289,44 @@ function AuthScreen() {
               autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
               required
             />
+              <FieldError feedback={feedback} field="password" />
           </label>
 
           {mode === 'register' && (
             <>
               <label className="field-label">
                 Number of participants / planters
-                <input className="field-input" type="number" min="1" max="10000" step="1" required value={form.participant_count} onChange={update('participant_count')} />
+                <input {...feedback.props('participant_count')} className="field-input" type="number" min="1" max="10000" step="1" required value={form.participant_count} onChange={update('participant_count')} />
+              <FieldError feedback={feedback} field="participant_count" />
                 <small className="field-label-help">Register once for your organization. Each device receives its own share of the points and keeps its participant number and planting progress after logout.</small>
               </label>
               <label className="field-label">
                 Phone (optional)
-                <input
+                <input {...feedback.props('phone')}
                   className="field-input"
                   type="tel"
                   value={form.phone}
                   onChange={update('phone')}
                   autoComplete="tel"
                 />
+              <FieldError feedback={feedback} field="phone" />
               </label>
               <label className="field-label">
                 Home base label (optional)
-                <input
+                <input {...feedback.props('base_label')}
                   className="field-input"
                   type="text"
                   value={form.base_label}
                   onChange={update('base_label')}
                   placeholder="e.g. Leganes barangay hall"
                 />
+              <FieldError feedback={feedback} field="base_label" />
               </label>
             </>
           )}
 
           {(localError || storeError) && (
-            <div className="field-error">{localError || storeError}</div>
+            <div className="field-error" role="alert">{localError || storeError}</div>
           )}
 
           <button
@@ -662,7 +667,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
   const warningSummary = point?.warning_summary || 'Planner warning';
   const isFinal = isPlanted || isSkipped;
   const badgeStatus = isUnavailable ? 'eroded' : isSkipped ? 'skipped' : isPlanted ? 'planted' : 'pending';
-  const badgeLabel = isUnavailable ? 'Not Available' : isSkipped ? 'Skipped' : isPlanted ? 'Planted' : 'Pending';
+  const badgeLabel = isUnavailable ? STATUS_LABEL.unavailable : isSkipped ? STATUS_LABEL.skipped : isPlanted ? STATUS_LABEL.planted : STATUS_LABEL.assigned;
 
   return (
     <>
@@ -714,7 +719,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
             </div>
             {isUnavailable && (
               <div className="field-warning">
-                This point is inside an eroded zone and is currently Not Available for Planting. It will return to Planned when the LGU/Admin removes the zone.
+                This point is inside an eroded zone and is currently Unavailable for planting. It will return to Planned when the LGU/Admin removes the zone.
               </div>
             )}
             {hasPlannerWarning && (
@@ -834,6 +839,7 @@ export default function FieldApp() {
   const [pendingMarkPoint, setPendingMarkPoint] = useState(null);
   const [pendingMarkStatus, setPendingMarkStatus] = useState('completed');
   const [pendingSkipReason, setPendingSkipReason] = useState('');
+  const skipFeedback = useFormFeedback({ skip_reason: { label: 'Reason for skipping', serverTerms: ['skip reason', 'skip_reason'] } });
   const [completedMarkPoint, setCompletedMarkPoint] = useState(null);
   const [completedMarkStatus, setCompletedMarkStatus] = useState('completed');
   const [markAllChooseMode, setMarkAllChooseMode] = useState(false);
@@ -894,7 +900,7 @@ export default function FieldApp() {
   const handleStartNavigation = useCallback(async (point) => {
     setRouteError('');
     if (point?.eroded_unavailable || point?.inside_eroded_zone) {
-      setRouteError('This point is Not Available for Planting while it remains inside an eroded zone.');
+      setRouteError('This point is Unavailable for planting while it remains inside an eroded zone.');
       return;
     }
     const latitude = Number(point?.latitude);
@@ -1048,9 +1054,10 @@ export default function FieldApp() {
   // confirmation modal isn't half-hidden behind it on phone screens.
   // If the planter cancels, they re-tap the marker to reopen the sheet.
   const handleMark = (point, status) => {
+    skipFeedback.clear();
     setMarkError('');
     if (point?.eroded_unavailable || point?.inside_eroded_zone) {
-      setMarkError('This point is Not Available for Planting while it remains inside an eroded zone.');
+      setMarkError('This point is Unavailable for planting while it remains inside an eroded zone.');
       return;
     }
     setSelectedId(null);
@@ -1069,7 +1076,7 @@ export default function FieldApp() {
     const point = pendingMarkPoint;
     if (!point) return;
     if (pendingMarkStatus === 'skipped' && !pendingSkipReason.trim()) {
-      setMarkError('Briefly explain why this point is being skipped.');
+      skipFeedback.reject({ skip_reason: 'Describe why this point cannot be planted, such as blocked access, deep mud, or unsafe tide.' });
       return;
     }
     setMarkBusy(true);
@@ -1106,7 +1113,7 @@ export default function FieldApp() {
     setMarkError('');
     setSelectedId(null);
     if (markAllCandidateCount === 0) {
-      setMarkAllError('There are no available pending or skipped points to mark completed.');
+      setMarkAllError('There are no available Assigned or Skipped points to mark as Planted.');
       return;
     }
     setRoute(null);
@@ -1269,7 +1276,7 @@ export default function FieldApp() {
           {userLocation && locationAccuracy != null && !route && <span className="field-gps-accuracy">GPS ±{Math.round(locationAccuracy)} m</span>}
         </div>
         {points.length > 0 && !route && <div className="field-map-legend" aria-label="Point colors">
-          <span><i style={{ background: getPlanterColor(planter?.organization_id) }} />To plant</span>
+          <span><i style={{ background: getPlanterColor(planter?.organization_id) }} />{STATUS_LABEL.assigned}</span>
           <span><i style={{ background: '#eab308' }} />Planted</span>
           <span><i style={{ background: '#9ca3af' }} />Skipped</span>
         </div>}
@@ -1351,7 +1358,7 @@ export default function FieldApp() {
             <button type="button" className="field-btn field-btn-outline" onClick={cancelMarkAllSelection} disabled={markAllBusy}>Cancel selection</button>
           </> : <>
             <button type="button" className="field-btn field-btn-primary" disabled={!nextPoint || loading || markBusy || markAllBusy} onClick={() => { if (nextPoint) handleSelect(nextPoint.assignment_point_id); }}>
-              {nextPoint ? 'Next point · #' + nextPoint.point_num : assignedCount ? 'No pending points' : 'Waiting for points'}
+              {nextPoint ? 'Next point · #' + nextPoint.point_num : assignedCount ? 'No assigned points awaiting planting' : 'Waiting for points'}
             </button>
             <button type="button" className="field-btn field-btn-outline" onClick={handleStartMarkAll} disabled={loading || markBusy || markAllBusy || !markAllCandidateCount}>Choose points to mark</button>
           </>}
@@ -1368,7 +1375,7 @@ export default function FieldApp() {
             </button>
           </div> : <div className="field-list-filters" aria-label="Filter your points">
             {[
-              ['all', 'All', assignedCount], ['pending', 'To plant', pending - unavailableCount],
+              ['all', 'All', assignedCount], ['pending', STATUS_LABEL.assigned, pending - unavailableCount],
               ['planted', 'Planted', plantedCount], ['skipped', 'Skipped', skippedCount],
               ...(unavailableCount ? [['eroded_unavailable', 'Unavailable', unavailableCount]] : []),
             ].map(([filter, label, count]) => <button type="button" key={filter} aria-pressed={pointFilter === filter} onClick={() => setPointFilter(filter)}>{label} <span>{count}</span></button>)}
@@ -1466,15 +1473,18 @@ export default function FieldApp() {
             </p>
             <label className="form-label" htmlFor="field-skip-reason">Reason for skipping</label>
             <textarea
+              {...skipFeedback.props('skip_reason')}
               id="field-skip-reason"
               className="form-input"
               rows={3}
+              required
               maxLength={500}
               value={pendingSkipReason}
-              onChange={(event) => setPendingSkipReason(event.target.value)}
+              onChange={(event) => { skipFeedback.onChange(event); setPendingSkipReason(event.target.value); }}
               placeholder="For example: deep mud, blocked access, or unsafe tide"
               disabled={markBusy}
             />
+            <FieldError feedback={skipFeedback} field="skip_reason" />
           </>
         ) : (
           <p>

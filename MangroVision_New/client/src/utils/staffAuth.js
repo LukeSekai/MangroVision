@@ -1,3 +1,5 @@
+import { submissionError } from './formValidation';
+
 const API = import.meta.env.VITE_API_BASE || '';
 
 export async function staffAuthRequest(path, body) {
@@ -9,7 +11,7 @@ export async function staffAuthRequest(path, body) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(typeof data.detail === 'string' ? data.detail : 'Please check the form and try again.');
+    const error = submissionError(data.detail, 'Could not submit. Check the entered values and try again.');
     error.retryAfter = Number(response.headers.get('Retry-After') || 0);
     if (error.retryAfter) error.message += ` Try again in ${error.retryAfter} seconds.`;
     throw error;

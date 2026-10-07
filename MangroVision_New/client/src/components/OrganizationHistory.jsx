@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import { growthStageLabel } from '../utils/mangroveGrowth';
 import AutomaticGrowth from './AutomaticGrowth';
@@ -54,41 +55,45 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
     return () => window.removeEventListener('mv:data-changed', refresh);
   }, []);
 
-  if (editing) return <DeathLocationEditor key={editing.id} record={editing} onClose={() => setEditing(null)} onSaved={(updated) => {
+  if (editing) return createPortal(<DeathLocationEditor key={editing.id} record={editing} onClose={() => setEditing(null)} onSaved={(updated) => {
     setRecords((current) => current.map((item) => item.id === updated.id ? updated : item));
     setEditing(null); onChanged?.();
-  }} />;
-  return <Modal open title={`Monitoring history · ${organization.name}`} className="modal-card-wide org-monitoring-history-modal"
+  }} />, document.body);
+  return createPortal(<Modal open title={<>Monitoring history<span className="org-monitoring-history-organization">{organization.name}</span></>} className="modal-card-wide org-monitoring-history-modal"
     variant="info" confirmLabel="Close history" cancelLabel={null} onConfirm={onClose} onCancel={onClose}>
     <div className="org-monitoring-history-visits">
       {!loading && !error && !records.length ? <p className="org-monitoring-muted">No monitoring visits recorded for this organization yet.</p> : null}
       {records.map((record) => <article key={record.id} className="org-monitoring-record">
         <div className="org-monitoring-record-head">
-          <strong>{dateLabel(record.monitored_at)}</strong>
+          <strong><time dateTime={record.monitored_at}>{dateLabel(record.monitored_at)}</time></strong>
           <span className={`org-monitoring-health is-${record.health_status}`}>{record.health_status || 'Not recorded'}</span>
         </div>
         <div className="org-monitoring-record-metrics">
           <span><strong>{record.alive_count + record.dead_count}</strong> seedlings counted</span>
           <span><strong>{record.alive_count}</strong> alive</span>
           <span><strong>{record.dead_count}</strong> total dead</span>
+          <span><strong>{record.survival_rate_pct == null ? '—' : `${record.survival_rate_pct}%`}</strong> survival</span>
+        </div>
+        <div className="org-monitoring-record-context">
           {record.new_dead_count !== null && record.new_dead_count !== undefined ? <span><strong>{record.new_dead_count}</strong> newly dead this visit</span> : null}
-          <span><strong>{record.survival_rate_pct ?? '—'}%</strong> survival</span>
           <span><strong>{record.growth_snapshot?.label || growthStageLabel(record.growth_stage)}</strong> {record.growth_snapshot ? 'automatic estimate' : 'previously recorded stage'}</span>
           {record.average_height_cm !== null && record.average_height_cm !== undefined
             ? <span><strong>{record.average_height_cm} cm</strong> recorded average height</span> : null}
         </div>
         {record.growth_snapshot ? <details className="growth-guide"><summary>Growth at this visit</summary><AutomaticGrowth snapshot={record.growth_snapshot} alive={record.alive_count} guide={false} /></details> : null}
-        <p><strong>LGU actions:</strong> {record.actions_taken}</p>
-        {record.reported_dead_count > 0 ? <p><strong>Cause of death:</strong> {record.death_reason || 'Not determined'}{record.death_reason_notes ? ` — ${record.death_reason_notes}` : ''}</p> : null}
-        {record.location_review_required ? <p>Location matching needs review: this older visit has inconsistent death counts.</p> : <div>
-          <p>{record.reported_dead_count ?? 0} reported dead · {record.located_dead_count ?? 0} located · {record.unlocated_dead_count ?? 0} still to locate</p>
-          {record.reported_dead_count > 0 ? <button type="button" onClick={() => setEditing(record)}>{record.unlocated_dead_count > 0 ? 'Identify remaining locations' : 'Review death locations'}</button> : null}
+        <dl className="org-monitoring-record-notes">
+          <div><dt>LGU actions</dt><dd>{record.actions_taken || 'No actions recorded.'}</dd></div>
+          {record.reported_dead_count > 0 ? <div><dt>Cause of death</dt><dd>{record.death_reason || 'Not determined'}{record.death_reason_notes ? ` — ${record.death_reason_notes}` : ''}</dd></div> : null}
+        </dl>
+        {record.location_review_required ? <p className="org-monitoring-record-location-review">Location matching needs review: this older visit has inconsistent death counts.</p> : <div className="org-monitoring-record-locations">
+          <p><strong>{record.reported_dead_count ?? 0}</strong> reported dead · <strong>{record.located_dead_count ?? 0}</strong> located · <strong>{record.unlocated_dead_count ?? 0}</strong> still to locate</p>
+          {record.reported_dead_count > 0 ? <button className="btn btn-secondary org-monitoring-location-action" type="button" onClick={() => setEditing(record)}>{record.unlocated_dead_count > 0 ? 'Identify remaining locations' : 'Review death locations'}</button> : null}
         </div>}
-        <small>Recorded by {record.inspector_name || 'LGU staff'}</small>
+        <footer className="org-monitoring-record-footer"><small>Recorded by {record.inspector_name || 'LGU staff'}</small></footer>
       </article>)}
       {loading ? <p role="status">Loading visit history...</p> : null}
-      {error ? <div className="org-monitoring-message is-error" role="alert">{error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div> : null}
+      {error ? <div className="org-monitoring-message is-error" role="alert">{error} <button className="btn btn-secondary btn-sm" type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div> : null}
       {!loading && !error && nextId !== null ? <button type="button" className="org-monitoring-load-older" onClick={() => setBeforeId(nextId)}>Load older visits</button> : null}
     </div>
-  </Modal>;
+  </Modal>, document.body);
 }

@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Modal from '../components/Modal';
 import OrganizationHistory from '../components/OrganizationHistory';
 import AutomaticGrowth from '../components/AutomaticGrowth';
@@ -10,6 +10,9 @@ import { deathLocationCounts } from '../utils/monitoringLocations';
 import { PanelCard } from '../components/Panel';
 import { useAuthStore } from '../stores/authStore';
 import './OrganizationMonitoring.css';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { submissionError } from '../utils/formValidation';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const MANILA_TIMEZONE = 'Asia/Manila';
@@ -71,8 +74,36 @@ function HistoryIcon() {
   );
 }
 
+function OrganizationCardHeading({ name }) {
+  return <span className="org-monitoring-organization-head">
+    <span className="org-monitoring-organization-icon" aria-hidden="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="9" cy="8" r="3" /><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.66" />
+      </svg>
+    </span>
+    <strong>{name}</strong>
+  </span>;
+}
+
+function OrganizationCardAction({ label, locked = false }) {
+  return <span className="org-monitoring-card-action">
+    {label}
+    {!locked && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>}
+  </span>;
+}
+
 export default function OrganizationMonitoring() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const dueOnly = searchParams.get('filter') === 'due';
+  const feedback = useFormFeedback({
+    monitored_at: { label: 'Monitoring date', serverTerms: ['visit date', 'monitoring date'] },
+    dead_count: { label: 'Newly dead seedlings', aliases: ['new_dead_count'], serverTerms: ['new deaths', 'newly dead'] },
+    death_reason_category: { label: 'Cause of death', serverTerms: ['cause of death'] },
+    death_reason_notes: { label: 'Death cause notes' },
+    health_status: { label: 'Overall plant health', serverTerms: ['health_status'] },
+    actions_taken: { label: 'LGU actions', serverTerms: ['LGU actions'] },
+  });
   const token = useAuthStore((state) => state.token);
   const loadedWorkspace = useRef(null);
   const loadedVisit = useRef(null);
@@ -85,9 +116,7 @@ export default function OrganizationMonitoring() {
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
-  const [fieldSheetOpen, setFieldSheetOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
-  const [fieldOrganization, setFieldOrganization] = useState('');
   const [selectedDeaths, setSelectedDeaths] = useState([]);
   const [visitContext, setVisitContext] = useState(null);
   const [visitLoading, setVisitLoading] = useState(false);
@@ -193,7 +222,7 @@ export default function OrganizationMonitoring() {
   const updateForm = (updates) => {
     if (updates.monitored_at !== undefined) setSelectedDeaths([]);
     if (updates.dead_count !== undefined && Number(updates.dead_count) < selectedDeaths.length) {
-      setFormError(`Deselect locations first: ${selectedDeaths.length} seedlings are currently selected.`);
+      feedback.reject({ dead_count: `Deselect locations first. ${selectedDeaths.length} seedlings are selected, so the death count must be at least ${selectedDeaths.length}.` });
       return;
     }
     setForm((current) => ({ ...current, ...updates }));
@@ -203,7 +232,8 @@ export default function OrganizationMonitoring() {
 
   const submitRecord = async (event) => {
     event.preventDefault();
-    if (saving || !contextReady) return;
+    if (saving) return;
+    if (!feedback.validate() || !contextReady) return;
     setFormError('');
     setNotice('');
     if (!selectedOrganizationId) {
@@ -211,23 +241,23 @@ export default function OrganizationMonitoring() {
       return;
     }
     if (!locationCounts.valid) {
-      setFormError('Enter a whole-number death count at least as large as the number of selected locations.');
+      feedback.reject({ dead_count: `Enter a whole number from ${selectedDeaths.length} to ${visitContext.alive_before_count}.` });
       return;
     }
     if (counts.error) {
-      setFormError(counts.error);
+      feedback.reject({ dead_count: counts.error });
       return;
     }
     if (counts.newlyDead > 0 && !form.death_reason_category) {
-      setFormError('Select the cause of death for the newly dead seedlings.');
+      feedback.reject({ death_reason_category: 'Choose the cause of death for these newly dead seedlings.' });
       return;
     }
     if (!form.health_status) {
-      setFormError('Select the organization’s overall plant health.');
+      feedback.reject({ health_status: 'Choose the plant health observed during this visit.' });
       return;
     }
     if (!form.actions_taken.trim()) {
-      setFormError('Describe what the LGU did during monitoring.');
+      feedback.reject({ actions_taken: 'Describe what the LGU did during this visit. If no action was needed, say so.' });
       return;
     }
 
@@ -254,7 +284,7 @@ export default function OrganizationMonitoring() {
         },
       );
       const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.detail || 'Could not save monitoring record.');
+      if (!response.ok) throw submissionError(payload.detail, 'Could not save monitoring record. Please try again.');
       setNotice(`${payload.organization_name} monitoring was recorded as one organization visit.`);
       setSelectedOrganizationId('');
       setSelectedDeaths([]);
@@ -268,13 +298,14 @@ export default function OrganizationMonitoring() {
       }));
       await loadWorkspace({ quiet: true });
     } catch (error) {
-      setFormError(error.message || 'Could not save monitoring record.');
+      if (!feedback.fromServer(error)) setFormError(error.message || 'Could not save monitoring record. Please try again.');
     } finally {
       setSaving(false);
     }
   };
 
   const openVisitModal = (organizationId) => {
+    feedback.clear();
     setSelectedDeaths([]);
     setForm(visitFormFromLatest(null, manilaDateInputValue()));
     prefilledOrganization.current = null;
@@ -303,7 +334,6 @@ export default function OrganizationMonitoring() {
         </div>
         <div className="org-monitoring-page-actions">
           <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
-          <button type="button" onClick={() => setFieldSheetOpen(true)}>Prepare field sheet</button>
           <button type="button" className="is-primary" onClick={() => navigate('/monitoring/map')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>
             Show map
@@ -311,6 +341,13 @@ export default function OrganizationMonitoring() {
         </div>
       </header>
 
+      <label className="monitoring-due-filter"><input type="checkbox" checked={dueOnly} onChange={(event) => {
+        const next = new URLSearchParams(searchParams);
+        if (event.target.checked) next.set('filter', 'due'); else next.delete('filter');
+        setSearchParams(next);
+      }} /> Show organizations due for a visit</label>
+      {dueOnly && !loading && !loadError && !organizations.some((organization) => organization.monitoring_available === true)
+        ? <p role="status">No organizations are due for a monitoring visit. Clear the filter to see upcoming visits.</p> : null}
       <div className="org-monitoring-kpis" aria-label="Monitoring overview">
         <article><span>Organizations</span><strong>{loading ? '—' : organizations.length}</strong><small>Participating in monitoring</small></article>
         <article><span>Seedlings planted</span><strong>{loading ? '—' : organizations.reduce((sum, item) => sum + Number(item.total_planted ?? item.current_planted_points ?? 0), 0).toLocaleString()}</strong><small>Includes recorded deaths and replacement plantings</small></article>
@@ -335,7 +372,7 @@ export default function OrganizationMonitoring() {
         ) : null}
         {organizations.length > 0 ? (
           <div className="org-monitoring-organization-list">
-            {organizations.map((organization) => {
+            {organizations.filter((organization) => !dueOnly || organization.monitoring_available === true).map((organization) => {
               const organizationLatest = organization.latest_record || null;
               const hasPlantedSeedlings = Number(organization.total_planted ?? organization.current_planted_points ?? 0) > 0;
               const monitoringAvailable = organization.monitoring_available === true;
@@ -346,18 +383,15 @@ export default function OrganizationMonitoring() {
                   className={`org-monitoring-organization-card${monitoringAvailable ? '' : ' is-not-due'}`}
                   onClick={() => openVisitModal(organization.id)}
                   disabled={!monitoringAvailable}
+                  aria-haspopup="dialog"
                 >
-                  <span className="org-monitoring-organization-head">
-                    <strong>{organization.name}</strong>
-                    <span>{monitoringAvailable ? 'Record visit →' : 'Locked'}</span>
-                  </span>
+                  <OrganizationCardHeading name={organization.name} />
                   {monitoringAvailable ? (
                     <span className="org-monitoring-organization-metrics">
-                      <span><strong>{organization.total_planted ?? organization.current_planted_points ?? 0}</strong> planted</span>
-                      <span><strong>{organization.monitoring_record_count || 0}</strong> visits</span>
-                      <span><strong>{organization.alive_seedlings ?? 0}</strong> alive now</span>
-                      <span>{organizationLatest?.growth_snapshot?.label || growthStageLabel(organizationLatest?.growth_stage)}</span>
-                      <span><strong>{organizationLatest ? `${organizationLatest.survival_rate_pct ?? 0}%` : '—'}</strong> alive</span>
+                      <span><strong>{organization.total_planted ?? organization.current_planted_points ?? 0}</strong>Planted</span>
+                      <span><strong>{organization.alive_seedlings ?? 0}</strong>Alive now</span>
+                      <span><strong>{organization.monitoring_record_count || 0}</strong>Visits</span>
+                      <span><strong>{organizationLatest ? `${organizationLatest.survival_rate_pct ?? 0}%` : '—'}</strong>Survival</span>
                     </span>
                   ) : (
                     <span className="org-monitoring-waiting-message">
@@ -367,6 +401,10 @@ export default function OrganizationMonitoring() {
                         : 'Monitoring starts two weeks after planting.'}</small>
                     </span>
                   )}
+                  <span className="org-monitoring-organization-footer">
+                    {monitoringAvailable ? <span className="org-monitoring-organization-growth">{organizationLatest?.growth_snapshot?.label || growthStageLabel(organizationLatest?.growth_stage)}</span> : null}
+                    <OrganizationCardAction label={monitoringAvailable ? 'Record visit' : 'Locked'} locked={!monitoringAvailable} />
+                  </span>
                 </button>
               );
             })}
@@ -384,7 +422,8 @@ export default function OrganizationMonitoring() {
         onCancel={closeVisitModal}
         className="modal-card-wide org-monitoring-visit-modal"
       >
-        <form className="org-monitoring-form" onSubmit={submitRecord}>
+        <form className="org-monitoring-form" noValidate onChangeCapture={feedback.onChange} onSubmit={submitRecord}>
+          <FormErrorSummary feedback={feedback} />
           {visitLoading ? <p role="status">Loading the latest saved visit...</p> : null}
           {visitError ? <p className="org-monitoring-message is-error" role="alert">{visitError} Close and reopen this organization to retry.</p> : null}
           <div className="org-monitoring-form-organization">
@@ -397,7 +436,7 @@ export default function OrganizationMonitoring() {
 
           <div className="org-monitoring-field org-monitoring-date-field">
             <label className="org-monitoring-label" htmlFor="monitoring-date">Monitoring date</label>
-            <input
+            <input {...feedback.props('monitored_at')}
               id="monitoring-date"
               className="org-monitoring-input"
               type="date"
@@ -407,6 +446,7 @@ export default function OrganizationMonitoring() {
               disabled={saving}
               required
             />
+              <FieldError feedback={feedback} field="monitored_at" />
           </div>
 
           <div className="org-monitoring-count-grid">
@@ -417,26 +457,29 @@ export default function OrganizationMonitoring() {
             </label>
             <label>
               <span>Newly dead seedlings</span>
-              <input className="org-monitoring-input is-dead" type="number" min="0"
+              <input {...feedback.props('dead_count')} className="org-monitoring-input is-dead" type="number" min="0"
                 max={visitContext?.alive_before_count ?? 0} step="1" value={form.dead_count}
                 onChange={(event) => updateForm({ dead_count: event.target.value })}
                 placeholder="Enter 0 if none" disabled={saving || !contextReady} required />
+              <FieldError feedback={feedback} field="dead_count" />
               <small>Enter the total new deaths since the last visit. Select up to this many seedlings below to identify their locations.</small>
             </label>
           </div>
           {Number(form.dead_count) > 0 ? <div className="org-monitoring-count-grid">
             <label><span>Cause of death</span>
-              <select className="org-monitoring-input" value={form.death_reason_category}
+              <select {...feedback.props('death_reason_category')} className="org-monitoring-input" value={form.death_reason_category}
                 onChange={(event) => updateForm({ death_reason_category: event.target.value })} disabled={saving || !contextReady} required>
                 <option value="">Select a cause…</option>
                 {deathReasons.map((reason) => <option key={reason.value} value={reason.value}>{reason.label}</option>)}
               </select>
+              <FieldError feedback={feedback} field="death_reason_category" />
               <small>Applies to the new deaths reported in this visit, including those still to locate.</small>
             </label>
             <label><span>Cause notes (optional)</span>
-              <textarea className="org-monitoring-input" rows="2" maxLength="500" value={form.death_reason_notes}
+              <textarea {...feedback.props('death_reason_notes')} className="org-monitoring-input" rows="2" maxLength="500" value={form.death_reason_notes}
                 onChange={(event) => updateForm({ death_reason_notes: event.target.value })} disabled={saving || !contextReady}
                 placeholder="Describe what you observed." />
+              <FieldError feedback={feedback} field="death_reason_notes" />
             </label>
           </div> : null}
           {selectedOrganization && contextReady ? <fieldset disabled={saving} className="seedling-location-fieldset">
@@ -465,7 +508,7 @@ export default function OrganizationMonitoring() {
 
           <div className="org-monitoring-field">
             <label className="org-monitoring-label" htmlFor="overall-health">Overall plant health</label>
-            <select
+            <select {...feedback.props('health_status')}
               id="overall-health"
               className="org-monitoring-input"
               value={form.health_status}
@@ -478,13 +521,14 @@ export default function OrganizationMonitoring() {
                 <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
+              <FieldError feedback={feedback} field="health_status" />
           </div>
 
           <div className="org-monitoring-field org-monitoring-actions-field">
             <label className="org-monitoring-label" htmlFor="actions-taken">
               What did the LGU do during monitoring?
             </label>
-            <textarea
+            <textarea {...feedback.props('actions_taken')}
               id="actions-taken"
               className="org-monitoring-input org-monitoring-textarea"
               rows="4"
@@ -495,9 +539,10 @@ export default function OrganizationMonitoring() {
               disabled={saving || !contextReady}
               required
             />
+              <FieldError feedback={feedback} field="actions_taken" />
           </div>
 
-          {formError && <div className="org-monitoring-message is-error">{formError}</div>}
+          {formError && <div className="org-monitoring-message is-error" role="alert">{formError}</div>}
           {notice && <div className="org-monitoring-message is-success">{notice}</div>}
           <button
             className="org-monitoring-submit"
@@ -520,21 +565,18 @@ export default function OrganizationMonitoring() {
         {!loading && !organizations.length ? <p className="org-monitoring-muted">No organizations to display yet.</p> : null}
         <div className="org-monitoring-organization-list">
           {organizations.map((organization) => <button key={organization.id} type="button"
-            className="org-monitoring-organization-card" onClick={() => setHistoryOrganization(organization)} aria-haspopup="dialog">
-            <span className="org-monitoring-organization-head"><strong>{organization.name}</strong><span>View history →</span></span>
+            className="org-monitoring-organization-card is-history" onClick={() => setHistoryOrganization(organization)} aria-haspopup="dialog">
+            <OrganizationCardHeading name={organization.name} />
             <span className="org-monitoring-organization-metrics">
-              <span><strong>{organization.monitoring_record_count || 0}</strong> visits</span>
-              <span>{organization.latest_record ? `Last visit: ${formatDate(organization.latest_record.monitored_at)}` : 'No visits yet'}</span>
+              <span><strong>{organization.monitoring_record_count || 0}</strong>Visits</span>
+              <span className="org-monitoring-last-visit"><strong>{organization.latest_record ? formatDate(organization.latest_record.monitored_at) : '—'}</strong>{organization.latest_record ? 'Last visit' : 'No visits yet'}</span>
             </span>
+            <span className="org-monitoring-organization-footer"><OrganizationCardAction label="View history" /></span>
           </button>)}
         </div>
       </PanelCard>
       </div>
       {historyOrganization ? <OrganizationHistory key={historyOrganization.id} organization={historyOrganization} onChanged={() => loadWorkspace({ quiet: true })} onClose={() => setHistoryOrganization(null)} /> : null}
-      <Modal open={fieldSheetOpen} title="Prepare field sheet" className="modal-card-wide" variant="info" confirmLabel="Close" cancelLabel={null} onConfirm={() => setFieldSheetOpen(false)} onCancel={() => setFieldSheetOpen(false)}>
-        <label>Organization<select className="org-monitoring-input" value={fieldOrganization} onChange={(e) => setFieldOrganization(e.target.value)}><option value="">Select an organization</option>{organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
-        {fieldSheetOpen && fieldOrganization ? <Suspense fallback={<p>Loading map…</p>}><SeedlingLocations key={fieldOrganization} organizationId={fieldOrganization} readOnly /></Suspense> : null}
-      </Modal>
       {reportOpen && <RestorationReportDialog initialSelection={{ type: 'monitoring' }} onClose={() => setReportOpen(false)} />}
     </div>
   );

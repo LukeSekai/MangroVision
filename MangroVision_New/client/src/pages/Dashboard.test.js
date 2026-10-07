@@ -146,7 +146,7 @@ test('donut status labels and total match Map Analytics including deaths and ero
   }
   assert.match(html, /<strong>3,464<\/strong><span>Total points<\/span>/);
   assert.match(html, /across all dates/);
-  assert.match(html, /Choose all project sites to compare with Map Analytics/);
+  assert.match(html, /Choose all project sites to compare with Planting Map/);
 });
 
 test('analysis dates and boundary information share the existing sites table', () => {

@@ -67,6 +67,8 @@ from planting_database import (
     OutsideVisibleMapError,
     count_nearby_points,
     find_overlapping_analyses,
+    find_repeat_image_analyses,
+    get_analysis_area_context,
     get_analysis_by_id,
     filter_new_planting_hexagons,
     get_user_by_session_token,
@@ -337,6 +339,39 @@ def _empty_feature_collection(name: str) -> dict[str, Any]:
         "name": name,
         "features": [],
     }
+
+
+def _image_identity(temp_path: Path) -> dict[str, str]:
+    """Match renamed uploads and images saved before raw upload hashes."""
+    image = cv2.imread(str(temp_path))
+    if image is None:
+        raise HTTPException(status_code=400, detail="This image could not be read. Select a valid JPEG or PNG.")
+    success, encoded = cv2.imencode('.jpg', image, [cv2.IMWRITE_JPEG_QUALITY, 94])
+    if not success:
+        raise HTTPException(status_code=400, detail="This image could not be checked. Select a valid JPEG or PNG.")
+    return {
+        'source_image_sha256': _file_sha256(temp_path),
+        'source_original_sha256': hashlib.sha256(encoded.tobytes()).hexdigest(),
+    }
+
+
+def _check_repeat_image(temp_path, uploaded_name, preflight, *, allow_repeat=False):
+    identity = _image_identity(temp_path)
+    try:
+        repeats = find_repeat_image_analyses(
+            uploaded_name, preflight.get('latitude'), preflight.get('longitude'),
+            identity['source_image_sha256'], identity['source_original_sha256'],
+        )
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Could not check whether this image was already analyzed. Retry the image location check.") from error
+    if repeats and not allow_repeat:
+        raise HTTPException(status_code=409, detail="This image has already been analyzed. Check its location again and confirm Continue analysis. No planting points will be added.")
+    return identity, repeats
+
+
+def _exclude_repeat_image_points(hexagons, repeats):
+    """Keep every planting point output empty for repeat images."""
+    return [] if repeats else hexagons
 
 
 def _waypoints_to_geojson(waypoints: list[dict[str, Any]], metadata: dict[str, Any]) -> dict[str, Any]:
@@ -3573,6 +3608,7 @@ def _execute_canopy_workflow(
     progress_cb: Optional[Any] = None,
     species: Optional[str] = None,
     allow_partial_map_overlap: bool = False,
+    allow_repeat_image_analysis: bool = False,
 ) -> dict[str, Any]:
     """Run the full canopy-analysis workflow on an already-saved drone image.
 
@@ -3635,6 +3671,10 @@ def _execute_canopy_workflow(
     _enforce_image_location_preflight(
         location_preflight,
         allow_partial_map_overlap=allow_partial_map_overlap,
+    )
+
+    image_identity, repeat_analyses = _check_repeat_image(
+        temp_path, uploaded_name, location_preflight, allow_repeat=allow_repeat_image_analysis,
     )
 
     _emit(progress_cb, "Checking AI availability", 8)
@@ -4584,12 +4624,9 @@ def _execute_canopy_workflow(
                 f"{canonical_species} planting points were kept on the fixed {SPECIES_SPACING_M[canonical_species]:.1f} m species lattice; off-lattice fallback points were not used."
             )
 
-        # Do not hide DB-nearby points during processing preview. Re-running
-        # the same image replaces its old analysis at save time, and
-        # save_analysis still deduplicates against other analyses before
-        # persistence. Keeping the preview complete makes the visible overlay
-        # match the actual safe-space placement instead of inheriting stale DB
-        # gaps from an earlier run.
+        # Keep normal-image candidates complete for the final spatial checks.
+        # Repeat-image candidates are removed before rendering, exports and
+        # caching. Saving also enforces zero new points for those repeats.
         _duplicate_hexes: list = []
 
         results["hexagons"] = _safe
@@ -4939,6 +4976,7 @@ def _execute_canopy_workflow(
     # the image. The same coordinate masks are used for this final core-only
     # invariant check, so map, exports, and preview retain identical membership.
     _emit(progress_cb, "Rendering visualization overlay", 90)
+    safe_hexagons = _exclude_repeat_image_points(safe_hexagons, repeat_analyses)
     (
         safe_hexagons,
         visualization_hexagons,
@@ -5136,6 +5174,7 @@ def _execute_canopy_workflow(
 
     response_payload = {
         "status": "success",
+        "repeat_image": {"analyses": repeat_analyses, "points_not_added": True} if repeat_analyses else None,
         "analysis_key": analysis_key,
         "uploaded_file_name": uploaded_name,
         "detection_mode": detection_mode,
@@ -5392,6 +5431,8 @@ def _execute_canopy_workflow(
     }
     results["_analysis_detail_json"] = json.dumps(
         {
+            **image_identity,
+            "repeat_image": response_payload["repeat_image"],
             "detection_mode": response_payload["detection_mode"],
             "parameters": response_payload["parameters"],
             "metadata": response_payload["metadata"],
@@ -5480,6 +5521,14 @@ def _inspect_image_upload(temp_path, uploaded_name, altitude, drone_model):
     result = _build_image_location_preflight(metadata, clean_altitude, drone_model)
     if result.get("can_process"):
         result = _run_preflight(temp_path, result)
+        try:
+            result["area_context"] = get_analysis_area_context(result["map"]["analysis_footprint"])
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="Could not check existing planting data. Use Retry location check to try again.") from error
+    if result.get('can_process'):
+        identity, repeats = _check_repeat_image(temp_path, uploaded_name, result, allow_repeat=True)
+        result['image_identity'] = identity
+        result['area_context']['repeat_analyses'] = repeats
     result["uploaded_file_name"] = uploaded_name
     return result
 
@@ -5498,6 +5547,7 @@ async def start_processing_job(
     ai_runtime_tuning: str = Form("{}"),
     species: Optional[str] = Form(None),
     allow_partial_map_overlap: bool = Form(False),
+    allow_repeat_image_analysis: bool = Form(False),
 ):
     """Upload once, then return immediately while analysis runs on the laptop."""
     user = await run_in_threadpool(_require_lgu_user)
@@ -5517,6 +5567,7 @@ async def start_processing_job(
         ai_confidence=ai_confidence, detection_mode=detection_mode,
         ai_runtime_tuning=ai_runtime_tuning, species=species,
         allow_partial_map_overlap=allow_partial_map_overlap,
+        allow_repeat_image_analysis=allow_repeat_image_analysis,
     )
 
     def work(progress_cb):
@@ -5585,6 +5636,7 @@ async def process_image(
     ai_runtime_tuning: str = Form("{}"),
     species: Optional[str] = Form(None),
     allow_partial_map_overlap: bool = Form(False),
+    allow_repeat_image_analysis: bool = Form(False),
 ):
     """Run the canopy-analysis workflow and return the full JSON response."""
     user = await run_in_threadpool(_require_lgu_user)
@@ -5603,6 +5655,7 @@ async def process_image(
                 ai_runtime_tuning=ai_runtime_tuning,
                 species=species,
                 allow_partial_map_overlap=allow_partial_map_overlap,
+                allow_repeat_image_analysis=allow_repeat_image_analysis,
             ),
         )
         return payload
@@ -5627,6 +5680,7 @@ async def process_image_stream(
     ai_runtime_tuning: str = Form("{}"),
     species: Optional[str] = Form(None),
     allow_partial_map_overlap: bool = Form(False),
+    allow_repeat_image_analysis: bool = Form(False),
 ):
     """Stream real pipeline progress as Server-Sent Events.
 
@@ -5658,6 +5712,7 @@ async def process_image_stream(
                     ai_runtime_tuning=ai_runtime_tuning,
                     species=species,
                     allow_partial_map_overlap=allow_partial_map_overlap,
+                    allow_repeat_image_analysis=allow_repeat_image_analysis,
                 ), progress_cb,
             )
             events.put({"type": "result", "payload": payload})
@@ -5722,6 +5777,19 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
 
     # A different analysis may have been saved while this preview was open.
     # Do not save an overlay/export that advertises points the database will skip.
+    saved_detail = cached_payload['results'].get('_analysis_detail_json') or {}
+    if isinstance(saved_detail, str):
+        saved_detail = json.loads(saved_detail)
+    if saved_detail.get('source_image_sha256') and not saved_detail.get('repeat_image'):
+        try:
+            repeats_now = find_repeat_image_analyses(
+                cached_payload['image_name'], center_lat, center_lon,
+                saved_detail['source_image_sha256'], saved_detail.get('source_original_sha256'),
+            )
+        except Exception as error:
+            raise HTTPException(status_code=503, detail="Could not check previous runs of this image. Try saving again.") from error
+        if repeats_now:
+            raise HTTPException(status_code=409, detail="This image was saved after your analysis started. Run it again and confirm the repeat-image warning. No planting points will be added.")
     _, newly_conflicting = _thin_hexagons_against_saved_species_points(
         cached_payload["safe_hexagons"],
         cached_payload["results"].get("species"),

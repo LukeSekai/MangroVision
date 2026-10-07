@@ -23,6 +23,11 @@ import {
   YAxis,
 } from 'recharts';
 import './Dashboard.css';
+import NextActions from '../components/NextActions';
+import { POINT_STATUS_LABELS, POINT_STATUS_COLORS } from '../utils/pointStatus';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { submissionError } from '../utils/formValidation';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const TIMEZONE = 'Asia/Manila';
@@ -62,14 +67,7 @@ const ATTENTION_REASON_LABELS = {
   warning_exposure: 'Planting points are inside a risk area',
 };
 
-const LIFECYCLE_LABELS = {
-  not_assigned: 'Planned',
-  assigned: 'Assigned',
-  planted: 'Planted',
-  dead: 'Dead',
-  skipped: 'Skipped',
-  unavailable: 'Unavailable',
-};
+const LIFECYCLE_LABELS = POINT_STATUS_LABELS;
 
 const LIFECYCLE_HINTS = {
   not_assigned: 'All open points not yet given to an organization',
@@ -263,7 +261,7 @@ async function fetchJson(path, options = {}) {
   const response = await fetch(`${API}${path}`, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(body?.detail || body?.message || `Request failed (${response.status})`);
+    throw submissionError(body?.detail || body?.message, `Request failed (${response.status})`);
   }
   return body && typeof body === 'object' ? body : {};
 }
@@ -438,7 +436,7 @@ function LifecycleChart({ rows }) {
     ...row,
     name: LIFECYCLE_LABELS[row.key] || row.label,
     value: firstNumber(row.value, row.count, 0) ?? 0,
-    color: COLORS[row.key] || '#64748b',
+    color: POINT_STATUS_COLORS[row.key] || COLORS[row.key] || '#64748b',
   }));
   const total = chartRows.reduce((sum, row) => sum + row.value, 0);
   return (
@@ -558,7 +556,7 @@ function OverviewTab({ data }) {
       <div className="dash-grid">
         <ChartCard
           title="Current status of planting locations"
-          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Map Analytics. A location released for replanting returns to Planned; its recorded deaths stay in monitoring history."
+          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Planting Map. A location released for replanting returns to Planned; its recorded deaths stay in monitoring history."
           data={lifecycle}
           chartLabel="Cards showing the current status of all planting points"
           columns={[
@@ -721,15 +719,15 @@ function OperationsTab({ data }) {
             { key: 'label', label: 'Time waiting' },
             { key: 'count', label: 'Not yet planted', render: (row) => formatCount(row.count) },
           ]}
-          emptyHint="Pending assigned points will be grouped into aging bands once assignment timestamps exist."
+          emptyHint="Assigned points will be grouped into aging bands once assignment timestamps exist."
         >
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={aging} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 11 }} />
               <YAxis allowDecimals={false} width={44} />
-              <Tooltip formatter={(value) => [formatCount(value), 'Pending points']} />
-              <Bar dataKey="count" name="Pending points" fill={COLORS.pending} radius={[5, 5, 0, 0]} />
+              <Tooltip formatter={(value) => [formatCount(value), 'Assigned points']} />
+              <Bar dataKey="count" name="Assigned points" fill={COLORS.pending} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -1267,6 +1265,10 @@ function SitesTab({ data }) {
 }
 
 function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
+  const feedback = useFormFeedback({
+    annualTarget: { label: 'Yearly planting goal', aliases: ['annual_planting_target'] },
+    survivalTarget: { label: 'Target percentage alive', aliases: ['min_survival_target_pct'] },
+  });
   const [form, setForm] = useState(() => makePlantingGoalsForm(settings));
   const appliedSettings = useRef(JSON.stringify(settings));
   const [saving, setSaving] = useState(false);
@@ -1287,14 +1289,15 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
     event.preventDefault();
     setFormError('');
     setNotice('');
+    if (!feedback.validate()) return;
     const annualTarget = form.annualTarget === '' ? null : Number(form.annualTarget);
     const survivalTarget = form.survivalTarget === '' ? null : Number(form.survivalTarget);
     if (annualTarget !== null && (!Number.isInteger(annualTarget) || annualTarget < 0)) {
-      setFormError('Enter zero or a positive whole number for the yearly planting goal, or leave it blank.');
+      feedback.reject({ annualTarget: 'Enter zero or a positive whole number for the yearly planting goal, or leave it blank.' });
       return;
     }
     if (survivalTarget !== null && (!Number.isFinite(survivalTarget) || survivalTarget < 0 || survivalTarget > 100)) {
-      setFormError('Enter a target percentage from 0 to 100, or leave it blank.');
+      feedback.reject({ survivalTarget: 'Enter a target percentage from 0 to 100, or leave it blank.' });
       return;
     }
     setSaving(true);
@@ -1311,7 +1314,7 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
       onSaved(result);
       setNotice(`Planting and survival goals for ${year} were saved.`);
     } catch (saveError) {
-      setFormError(saveError.message || 'Could not save planting goals.');
+      if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save planting goals.');
     } finally {
       setSaving(false);
     }
@@ -1320,18 +1323,21 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   if (!settings && !error) return <LoadingState />;
   if (error && !settings) return <ErrorBanner compact title="Planting goals could not be loaded" message="Reload the page to try again before editing goals for this reporting year." />;
   return (
-    <form className="dash-goals" onSubmit={save}>
+    <form className="dash-goals" noValidate onChangeCapture={feedback.onChange} onSubmit={save}>
+      <FormErrorSummary feedback={feedback} />
       {error ? <ErrorBanner compact message={error} /> : null}
       {formError ? <ErrorBanner compact title="Planting goals not saved." message={formError} /> : null}
       {notice ? <div className="dash-success" role="status">{notice}</div> : null}
       <div className="dash-goals-grid">
         <label>
           <span>Seedlings to plant this year</span>
-          <input type="number" min="0" step="1" placeholder="Optional" value={form.annualTarget} onChange={(event) => setForm((current) => ({ ...current, annualTarget: event.target.value }))} />
+          <input {...feedback.props('annualTarget')} type="number" min="0" step="1" placeholder="Optional" value={form.annualTarget} onChange={(event) => setForm((current) => ({ ...current, annualTarget: event.target.value }))} />
+              <FieldError feedback={feedback} field="annualTarget" />
         </label>
         <label>
           <span>Target percentage of seedlings alive (%)</span>
-          <input type="number" min="0" max="100" step="0.1" placeholder="Optional" value={form.survivalTarget} onChange={(event) => setForm((current) => ({ ...current, survivalTarget: event.target.value }))} />
+          <input {...feedback.props('survivalTarget')} type="number" min="0" max="100" step="0.1" placeholder="Optional" value={form.survivalTarget} onChange={(event) => setForm((current) => ({ ...current, survivalTarget: event.target.value }))} />
+              <FieldError feedback={feedback} field="survivalTarget" />
         </label>
       </div>
       <div className="dash-goals-actions">
@@ -1513,6 +1519,13 @@ export default function Dashboard() {
         </div>
       </header>
 
+      <NextActions actions={[
+        { label: 'Review analysis', to: '/processing?action=review', description: 'Review the current result or open image analysis history.' },
+        { label: 'Assign available points', to: '/planters?section=assign', description: 'Choose an organization and reserve planting locations.' },
+        { label: 'Record planting', to: '/planters?section=assignments', description: 'Mark the assigned locations actually planted.' },
+        { label: 'Inspect plants due', to: '/monitoring?filter=due', description: 'Find organizations due for a monitoring visit.' },
+      ]} />
+
       {goalsVisited && <Activity mode={goalsOpen ? 'visible' : 'hidden'}>
         <section id="dashboard-planting-goals" className="dash-goals-panel" aria-label="Planting goals">
           <PlantingGoalsPanel year={goalsYear} onYearChange={setGoalsYear} settings={goalsRecord?.data || null}
@@ -1544,7 +1557,8 @@ export default function Dashboard() {
           </label>
           <label>
             <span>To</span>
-            <input type="date" value={filters.dateTo} min={filters.dateFrom || undefined} max={todayManila} onChange={(event) => changeFilter('dateTo', event.target.value)} />
+            <input type="date" value={filters.dateTo} min={filters.dateFrom || undefined} max={todayManila} aria-invalid={invalidPeriod} aria-describedby={invalidPeriod ? 'dashboard-period-error' : undefined} onChange={(event) => changeFilter('dateTo', event.target.value)} />
+            {invalidPeriod && <span id="dashboard-period-error" className="form-field-error" role="alert">Choose an end date on or after the start date.</span>}
           </label>
           <label>
             <span>Project site</span>
@@ -1554,7 +1568,6 @@ export default function Dashboard() {
             </select>
           </label>
         </div>
-        {invalidPeriod ? <ErrorBanner compact message="The start date must be on or before the end date." /> : null}
       </section>
 
       <nav className="dash-tabs" role="tablist" aria-label="Dashboard sections">

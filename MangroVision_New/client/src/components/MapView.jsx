@@ -9,6 +9,7 @@ import { getPlanterColor, getPlanterTint } from '../utils/planterColors';
 import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
 import { getMapPointStatus } from '../utils/mapPointStats';
+import { POINT_STATUS_COLORS as STATUS_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
 import './MapView.css';
@@ -29,16 +30,6 @@ L.Icon.Default.mergeOptions({
 //   - completed = yellow (DB enum equivalent of planted; still distinct from
 //                         the never-touched "planned" green so reviewers can
 //                         see at a glance which points are done)
-const STATUS_COLORS = {
-  planned: '#16a34a',
-  assigned: '#2563eb',
-  planted: '#eab308',
-  completed: '#eab308',
-  skipped: '#9ca3af',
-  dead: '#7f1d1d',
-  eroded_unavailable: '#f97316',
-};
-
 // Species-driven palette for *planned* (not yet assigned) points. Rhizophora
 // requires 2 m spacing and is shown in magenta; Bungalon requires 1 m and is green. Falls back to
 // the generic 'planned' green when the analysis didn't record a species
@@ -164,16 +155,7 @@ function getPointDisplayStatus(point) {
 }
 
 function formatStatusLabel(status) {
-  const labels = {
-    planned: 'Planned',
-    assigned: 'Assigned',
-    planted: 'Planted',
-    completed: 'Planted',
-    skipped: 'Skipped',
-    dead: 'Dead',
-    eroded_unavailable: 'Not Available for Planting',
-  };
-  return labels[status] || String(status || 'Planned');
+  return pointStatusLabel(status);
 }
 
 export default function MapView() {
@@ -1064,8 +1046,8 @@ export default function MapView() {
         ? PREVIEW_COLORS.erodedUnavailable
         : PREVIEW_COLORS.safe;
       const previewStatus = erodedUnavailable
-        ? 'Not Available for Planting'
-        : 'Planned';
+        ? pointStatusLabel('unavailable')
+        : pointStatusLabel('planned');
       L.circleMarker([lat, lon], {
         radius: getAnalysisPointRadius(map.getZoom()),
         color: '#000000',
@@ -1212,7 +1194,8 @@ export default function MapView() {
 
     if (previewLatLngs.length > 0 && !currentAnalysis.preserveMapView) {
       map.fitBounds(L.latLngBounds(previewLatLngs), {
-        padding: [60, 420, 60, 100],
+        paddingTopLeft: [60, 60],
+        paddingBottomRight: [map.getSize().x >= 900 ? 450 : 36, 60],
         maxZoom: 20,
         animate: true,
       });

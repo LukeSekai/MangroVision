@@ -104,10 +104,11 @@ class JobEndpointTests(unittest.TestCase):
         p = self.processing
         manager = ProcessingJobs()
         started, finish = Event(), Event()
-        paths = []
+        paths, repeat_approvals = [], []
         request_id = str(uuid4())
         def pipeline(**parameters):
             paths.append(parameters['temp_path'])
+            repeat_approvals.append(parameters['allow_repeat_image_analysis'])
             parameters['progress_cb']({'stage': 'Detecting', 'pct': 25})
             started.set()
             finish.wait(5)
@@ -115,10 +116,11 @@ class JobEndpointTests(unittest.TestCase):
         with patch.object(p, '_PROCESSING_JOBS', manager), patch.object(p, '_require_lgu_user', return_value={'id': 7}), \
              patch.object(p, '_execute_canopy_workflow', side_effect=pipeline), patch.object(p, '_record_processed_image') as activity:
             try:
-                created = self.client.post('/api/analyses/jobs', data={'request_id': request_id}, files={'image': ('../../outside.jpg', b'test', 'image/jpeg')})
+                created = self.client.post('/api/analyses/jobs', data={'request_id': request_id, 'allow_repeat_image_analysis':'true'}, files={'image': ('../../outside.jpg', b'test', 'image/jpeg')})
                 self.assertEqual(created.status_code, 202)
                 job_id = created.json()['job_id']
                 self.assertTrue(started.wait(3))
+                self.assertEqual(repeat_approvals,[True])
                 status = self.client.get(f'/api/analyses/jobs/{job_id}')
                 self.assertEqual(status.headers['cache-control'], 'no-store')
                 self.assertEqual(status.json()['pct'], 25)

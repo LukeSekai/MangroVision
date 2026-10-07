@@ -5,6 +5,9 @@ import { useProcessingStore } from '../stores/processingStore';
 import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { submissionError } from '../utils/formValidation';
 import './ErodedZoneEditor.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -89,6 +92,13 @@ export default function ErodedZoneEditor() {
   const [saveMsgIsError, setSaveMsgIsError] = useState(false);
   const [warningType, setWarningType] = useState('deep_mud');
   const [warningSeverity, setWarningSeverity] = useState('medium');
+  const feedback = useFormFeedback({
+    organization_id: { label: 'Organization owner', serverTerms: ['organization'] },
+    name: { label: 'Zone name' },
+    notes: { label: 'Notes' },
+    warning_type: { label: 'Warning type' },
+    severity: { label: 'Severity' },
+  });
   const [warningDeleting, setWarningDeleting] = useState(null);
   const [pendingWarningDelete, setPendingWarningDelete] = useState(null);
   const [projectSiteDeleting, setProjectSiteDeleting] = useState(null);
@@ -324,6 +334,11 @@ export default function ErodedZoneEditor() {
       setSaveMsgIsError(true);
       return;
     }
+    if (!feedback.validate()) return;
+    if (drawingKind === 'site' && !projectSiteOrganizationId) {
+      feedback.reject({ organization_id: 'Choose the organization that owns this project site.' });
+      return;
+    }
     setSaving(true);
     setSaveMsgText('');
     setSaveMsgIsError(false);
@@ -332,7 +347,6 @@ export default function ErodedZoneEditor() {
 
       if (drawingKind === 'site') {
         if (!adminToken) throw new Error('Your LGU session has expired. Sign in again to save a project site.');
-        if (!projectSiteOrganizationId) throw new Error('Select the organization that owns this project site.');
         const name = zoneName.trim() || selectedProjectOrganization?.name || `Project Site ${projectSiteFeatures.length + 1}`;
         const res = await fetch(`${API}/api/project-sites`, {
           method: 'POST',
@@ -346,7 +360,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Failed to save project site');
+          throw submissionError(err.detail, 'Failed to save project site. Please try again.');
         }
         cancelDrawing();
         setSaveMsgText('Project site saved');
@@ -367,7 +381,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Failed to save warning zone');
+          throw submissionError(err.detail, 'Failed to save warning zone. Please try again.');
         }
         cancelDrawing();
         setSaveMsgText('Warning zone saved');
@@ -386,7 +400,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || 'Failed to save zone');
+          throw submissionError(err.detail, 'Failed to save zone. Please try again.');
         }
         cancelDrawing();
         setSaveMsgText('Zone saved');
@@ -395,8 +409,10 @@ export default function ErodedZoneEditor() {
         fetchPoints();
       }
     } catch (err) {
-      setSaveMsgText(err.message || 'Failed to save zone');
-      setSaveMsgIsError(true);
+      if (!feedback.fromServer(err)) {
+        setSaveMsgText(err.message || 'Failed to save zone');
+        setSaveMsgIsError(true);
+      }
     } finally {
       setSaving(false);
     }
@@ -606,7 +622,7 @@ export default function ErodedZoneEditor() {
             {drawingKind === 'site' ? (
               <div className="form-group project-site-owner-first">
                 <label className="form-label" htmlFor="project-site-organization">Organization owner *</label>
-                <select
+                <select {...feedback.props('organization_id')}
                   id="project-site-organization"
                   className="form-input"
                   value={projectSiteOrganizationId}
@@ -616,6 +632,7 @@ export default function ErodedZoneEditor() {
                       (option) => String(option.id) === String(organizationId),
                     );
                     setProjectSiteOrganizationId(organizationId);
+                    feedback.clear();
                     setZoneName(organization?.name || '');
                     setSaveMsgText('');
                     setSaveMsgIsError(false);
@@ -628,6 +645,7 @@ export default function ErodedZoneEditor() {
                     <option key={organization.id} value={organization.id}>{organization.name}</option>
                   ))}
                 </select>
+                <FieldError feedback={feedback} field="organization_id" />
                 <small className="project-site-owner-help">
                   Organizations appear here after their first planting schedule is created.
                 </small>
@@ -651,7 +669,7 @@ export default function ErodedZoneEditor() {
                 ? 'Warning zones mark plantable points with expert notes such as deep mud, difficult access, or low survival confidence. They do not block assignment.'
                 : drawingKind === 'site'
                   ? 'Long-press the map, then drag a loop around the wanted points. The live count helps you adjust the boundary before saving.'
-                  : 'Click points on the map to draw an erosion polygon. Covered planting points stay visible but become Not Available for Planting. Removing the zone returns unassigned points to Planned. Click the first green point to close it.'}
+                  : 'Click points on the map to draw an erosion polygon. Covered planting points stay visible but become Unavailable for planting. Removing the zone returns unassigned points to Planned. Click the first green point to close it.'}
             </p>
             {saveMsgText && (
               <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
@@ -679,7 +697,17 @@ export default function ErodedZoneEditor() {
             )}
           </div>
         ) : (
-          <div className="save-form">
+          <div className="save-form" onChangeCapture={feedback.onChange}>
+            <FormErrorSummary feedback={feedback} />
+            {drawingKind === 'site' && <label className="form-group">
+              <span className="form-label">Organization owner *</span>
+              <select {...feedback.props('organization_id')} className="form-input" required disabled={saving} value={projectSiteOrganizationId}
+                onChange={(event) => setProjectSiteOrganizationId(event.target.value)}>
+                <option value="">Select an organization</option>
+                {organizationOptions.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
+              </select>
+              <FieldError feedback={feedback} field="organization_id" />
+            </label>}
             <div className="zone-covered-count is-ready" role="status">
               <strong>{coveredCount}</strong>
               <span>mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
@@ -688,7 +716,7 @@ export default function ErodedZoneEditor() {
               <label className="form-label">
                 {drawingKind === 'site' ? 'Project Site Name' : 'Zone Name'}
               </label>
-              <input
+              <input {...feedback.props('name')}
                 className="form-input"
                 type="text"
                 placeholder={drawingKind === 'warning'
@@ -699,12 +727,13 @@ export default function ErodedZoneEditor() {
                 value={zoneName}
                 onChange={(e) => setZoneName(e.target.value)}
               />
+              <FieldError feedback={feedback} field="name" />
             </div>
             {drawingKind === 'warning' && (
               <>
                 <div className="form-group">
                   <label className="form-label">Warning Type</label>
-                  <select
+                  <select {...feedback.props('warning_type')}
                     className="form-input"
                     value={warningType}
                     onChange={(e) => setWarningType(e.target.value)}
@@ -713,10 +742,11 @@ export default function ErodedZoneEditor() {
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
+              <FieldError feedback={feedback} field="warning_type" />
                 </div>
                 <div className="form-group">
                   <label className="form-label">Severity</label>
-                  <select
+                  <select {...feedback.props('severity')}
                     className="form-input"
                     value={warningSeverity}
                     onChange={(e) => setWarningSeverity(e.target.value)}
@@ -725,13 +755,14 @@ export default function ErodedZoneEditor() {
                       <option key={value} value={value}>{label}</option>
                     ))}
                   </select>
+              <FieldError feedback={feedback} field="severity" />
                 </div>
               </>
             )}
             {(drawingKind === 'warning' || drawingKind === 'site') && (
               <div className="form-group">
                 <label className="form-label">Notes (optional)</label>
-                <textarea
+                <textarea {...feedback.props('notes')}
                   className="form-input"
                   rows={2}
                   placeholder={drawingKind === 'site'
@@ -740,6 +771,7 @@ export default function ErodedZoneEditor() {
                   value={zoneNotes}
                   onChange={(e) => setZoneNotes(e.target.value)}
                 />
+              <FieldError feedback={feedback} field="notes" />
               </div>
             )}
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>

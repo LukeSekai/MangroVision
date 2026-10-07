@@ -1,10 +1,12 @@
+import { pointStatusLabel } from './pointStatus.js';
+
 const TIMEZONE = 'Asia/Manila';
 
 export const REPORT_TYPES = [
   { id: 'planting', title: 'Planting accomplishment', description: 'Seedlings planted during the reporting period, including replacement seedlings.' },
   { id: 'monitoring', title: 'Survival and monitoring', description: 'Seedling inspection results, monitoring visits and recorded height measurements.' },
   { id: 'mortality', title: 'Mortality and replanting', description: 'Reported seedling deaths and replanting progress at identified locations.' },
-  { id: 'organizations', title: 'Organization activity', description: 'Assigned points marked planted or skipped, with current pending work.' },
+  { id: 'organizations', title: 'Organization activity', description: 'Planted and skipped points, with current assigned work.' },
 ];
 
 export function manilaDay(value = new Date()) {
@@ -32,11 +34,22 @@ export function reportPeriod(preset, today = manilaDay()) {
   return { dateFrom: `${year}-${String(quarterMonth).padStart(2, '0')}-01`, dateTo: today };
 }
 
-export function validateReportPeriod(filters, today = manilaDay()) {
-  const isDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '')
+const isReportDay = (value) => /^\d{4}-\d{2}-\d{2}$/.test(value || '')
     && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
     && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
-  if (!isDay(filters.dateFrom) || !isDay(filters.dateTo)) return 'Choose valid start and end dates.';
+
+export function reportPeriodFieldErrors(filters, today = manilaDay()) {
+  const errors = {};
+  if (!isReportDay(filters.dateFrom)) errors.dateFrom = 'Choose a valid start date.';
+  if (!isReportDay(filters.dateTo)) errors.dateTo = 'Choose a valid end date.';
+  if (!Object.keys(errors).length && filters.dateFrom > filters.dateTo) errors.dateTo = 'Choose an end date on or after the start date.';
+  if (isReportDay(filters.dateFrom) && filters.dateFrom > today) errors.dateFrom = 'Choose today or an earlier start date.';
+  if (isReportDay(filters.dateTo) && filters.dateTo > today) errors.dateTo = 'Choose today or an earlier end date.';
+  return errors;
+}
+
+export function validateReportPeriod(filters, today = manilaDay()) {
+  if (!isReportDay(filters.dateFrom) || !isReportDay(filters.dateTo)) return 'Choose valid start and end dates.';
   if (filters.dateFrom > filters.dateTo) return 'The start date must be on or before the end date.';
   if (filters.dateTo > today) return 'The reporting period cannot end in the future.';
   return '';
@@ -256,20 +269,20 @@ export function buildRestorationReport(type, data, filters) {
     report.stats = [
       stat('Organization groups', workload.length, 'count', 'Responsible organizations and unassigned groups listed'),
       stat('Points marked planted', source.summary?.completed, 'count', 'Assignment completions in the reporting period'),
-      stat('Pending assignment points', source.summary?.pending, 'count', 'Outstanding work when the report was generated'),
+      stat(`${pointStatusLabel('pending')} points (current)`, source.summary?.pending, 'count', 'Assigned points awaiting planting when the report was generated'),
       stat('Skipped assignment points', source.summary?.skipped, 'count', 'Marked skipped in the reporting period'),
     ];
     report.sections = [{
       title: 'Assignment point status by responsible organization',
-      columns: [column('organization_name', 'Responsible organization / group'), column('completed', 'Points marked planted in period', 'count'), column('pending', 'Pending points (current)', 'count'), column('skipped', 'Points skipped in period', 'count')],
+      columns: [column('organization_name', 'Responsible organization / group'), column('completed', 'Points marked planted in period', 'count'), column('pending', `${pointStatusLabel('pending')} points (current)`, 'count'), column('skipped', 'Points skipped in period', 'count')],
       rows: workload,
     }, {
       title: 'Assignment detail',
-      columns: [column('title', 'Assignment'), column('organization_name', 'Responsible organization / group'), column('site_name', 'Project site'), column('species', 'Species'), column('completed', 'Points marked planted in period', 'count'), column('pending', 'Pending points (current)', 'count'), column('skipped', 'Points skipped in period', 'count')],
+      columns: [column('title', 'Assignment'), column('organization_name', 'Responsible organization / group'), column('site_name', 'Project site'), column('species', 'Species'), column('completed', 'Points marked planted in period', 'count'), column('pending', `${pointStatusLabel('pending')} points (current)`, 'count'), column('skipped', 'Points skipped in period', 'count')],
       rows: rowsOf(source.assignments).map((row) => ({ ...row, organization_name: responsibleGroup(row) })),
     }];
     report.notes = [
-      'Planted and skipped figures count assignment points with those recorded status dates within the reporting period. Pending figures show current active assignments when the report was generated.',
+      'Planted and skipped figures count assignment points with those recorded status dates within the reporting period. Assigned figures count points awaiting planting in current active assignments when the report was generated.',
       'Use the planting accomplishment report for the number of seedlings planted. This report summarizes assignment point statuses; released, removed or reused points can make the totals differ.',
       'Rows are grouped by the organization responsible for each project site. Sites without a responsible organization appear as unassigned groups. These groups do not represent attendance or participant counts.',
     ];

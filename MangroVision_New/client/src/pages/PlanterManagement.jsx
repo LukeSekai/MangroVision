@@ -7,20 +7,14 @@ import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
 import { getPlanterColor } from '../utils/planterColors';
+import { POINT_STATUS_LABELS as STATUS_LABEL } from '../utils/pointStatus';
+import { useLocation } from 'react-router-dom';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { submissionError } from '../utils/formValidation';
 import './PlanterManagement.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
-
-const STATUS_LABEL = {
-  planned: 'Planned',
-  assigned: 'Assigned',
-  pending: 'Pending',
-  planted: 'Planted',
-  completed: 'Completed',
-  skipped: 'Skipped',
-  deleted: 'Deleted',
-  eroded_unavailable: 'Not Available for Planting',
-};
 
 const ASSIGNMENT_SPECIES_LABELS = {
   bungalon: 'Bungalon',
@@ -35,6 +29,17 @@ function normalizeAssignmentSpecies(species) {
 }
 
 export default function PlanterManagement() {
+  const location = useLocation();
+  const requestedSection = new URLSearchParams(location.search).get('section');
+  const [openPanel, setOpenPanel] = useState(requestedSection === 'assignments' ? 'assignments' : 'assign');
+  const feedback = useFormFeedback({
+    organization: { label: 'Organization', aliases: ['organization_id'] },
+    site: { label: 'Project site', aliases: ['site_zone_id'], serverTerms: ['project site'] },
+    point_count: { label: 'Number of points', serverTerms: ['point count'] },
+  });
+  useEffect(() => {
+    if (requestedSection === 'assign' || requestedSection === 'assignments') queueMicrotask(() => setOpenPanel(requestedSection));
+  }, [requestedSection, location.key]);
   const points = useMapStore((s) => s.points);
   const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
@@ -265,17 +270,18 @@ export default function PlanterManagement() {
       return;
     }
     if (!assignOrganizationId) {
-      setAssignError('Pick an organization.');
+      feedback.reject({ organization: 'Choose the organization receiving these points.' });
       return;
     }
     if (!assignProjectSiteId) {
-      setAssignError("Select a project site owned by the organization.");
+      feedback.reject({ site: 'Choose a project site owned by this organization.' });
       return;
     }
     if (!pointIdsToAssign.length) {
-      setAssignError('Enter a point count within the available points for this site.');
+      feedback.reject({ point_count: `Enter a whole number from 1 to ${availablePoints.length}.` });
       return;
     }
+    if (!feedback.validate()) return;
     setAssignBusy(true);
     try {
       const res = await fetch(`${API}/api/planters/organizations/${assignOrganizationId}/assignments`, {
@@ -288,7 +294,7 @@ export default function PlanterManagement() {
       });
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(payload.detail || 'Assignment failed.');
+        throw submissionError(payload.detail, 'Assignment failed. Please try again.');
       }
       const planter = selectedAssignmentPlanter;
       setAssignSuccess(
@@ -301,7 +307,7 @@ export default function PlanterManagement() {
       // immediately without a manual page reload.
       await Promise.all([fetchPoints(), fetchZones(), loadData()]);
     } catch (err) {
-      setAssignError(err.message);
+      if (!feedback.fromServer(err)) setAssignError(err.message);
     } finally {
       setAssignBusy(false);
     }
@@ -428,7 +434,7 @@ export default function PlanterManagement() {
   };
 
   return (
-    <Panel title="Planter Management" subtitle={`${activePlanters.length} active organizations`}>
+    <Panel title="Organizations & Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
       {dashStats && (
         <PanelCard
           title="Dashboard"
@@ -446,11 +452,11 @@ export default function PlanterManagement() {
               <div className="stat-value">{dashStats.active_assignments}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Pending</div>
+              <div className="stat-label">Assigned</div>
               <div className="stat-value">{dashStats.pending_assigned_points}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Completed</div>
+              <div className="stat-label">{STATUS_LABEL.completed}</div>
               <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{dashStats.completed_assigned_points}</div>
             </div>
             <div className="stat-card">
@@ -550,7 +556,8 @@ export default function PlanterManagement() {
       </PanelCard>
 
       <PanelCard
-        title="Quick Assign"
+        title="Assign available points"
+        panelKey="assign"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
         }
@@ -563,18 +570,22 @@ export default function PlanterManagement() {
             </span>
           </div>
         )}
-        <div className="assign-card">
+        <div className="assign-card" onChangeCapture={feedback.onChange}>
+          <FormErrorSummary feedback={feedback} />
           <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
             Select an organization and choose how many points to assign. Each participant receives staggered point locations forming zigzag strips, divided equally. Short strips at the site boundary continue into the next strip.
           </p>
 
           <div className="form-group" style={{ marginTop: 10 }}>
-            <label className="form-label">Assign to organization</label>
-            <select
+            <label className="form-label" htmlFor="assign-organization">Assign to organization</label>
+            <select {...feedback.props('organization')}
+              required
               className="form-select"
+              id="assign-organization"
               value={assignOrganizationId || ''}
               onChange={(e) => {
                 const nextPlanterId = Number(e.target.value) || null;
+                feedback.clear();
                 const nextPlanter = assignmentOrganizations.find((organization) => Number(organization.organization_id) === nextPlanterId);
                 setAssignOrganizationId(nextPlanterId);
                 setAssignmentCount(null);
@@ -596,6 +607,7 @@ export default function PlanterManagement() {
                 </option>
               ))}
             </select>
+              <FieldError feedback={feedback} field="organization" />
             {selectedAssignmentPlanter?.organization_name && (
               <span className="text-sm" style={{ color: 'var(--color-primary)', lineHeight: 1.4 }}>
                 <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
@@ -607,12 +619,15 @@ export default function PlanterManagement() {
           </div>
 
           <div className="form-group" style={{ marginTop: 10 }}>
-            <label className="form-label">Project site</label>
-            <select
+            <label className="form-label" htmlFor="assign-site">Project site</label>
+            <select {...feedback.props('site')}
+              required
               className="form-select"
+              id="assign-site"
               value={assignProjectSiteId || ''}
               onChange={(e) => {
                 const nextSiteId = Number(e.target.value) || null;
+                feedback.clear();
                 setAssignProjectSiteId(nextSiteId);
                 setAssignmentCount(null);
                 warnIfNoAvailablePoints(selectedAssignmentPlanter, organizationProjectSites.find((site) => Number(site.id ?? site.properties?.id) === nextSiteId));
@@ -634,6 +649,7 @@ export default function PlanterManagement() {
                 return <option key={id} value={id}>{props.name || `Project Site ${id}`}</option>;
               })}
             </select>
+              <FieldError feedback={feedback} field="site" />
             <span className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.4 }}>
               The map automatically locates this organization's project site.
             </span>
@@ -641,14 +657,14 @@ export default function PlanterManagement() {
 
           <div className="form-group" style={{ marginTop: 10 }}>
             <label className="form-label" htmlFor="organization-point-count">Number of points to assign</label>
-            <input id="organization-point-count" className="form-input" type="number" min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked || loadingPoints || availablePoints.length === 0} />
+            <input {...feedback.props('point_count')} id="organization-point-count" className="form-input" type="number" required min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked || loadingPoints || availablePoints.length === 0} />
+              <FieldError feedback={feedback} field="point_count" />
             <span className="text-sm">
               {loadingPoints ? 'Checking available points…' : `${availablePoints.length} available points in this project site.`}
             </span>
             {assignProjectSiteId && !loadingPoints && availablePoints.length === 0 && (
               <span className="text-sm" role="status">No points are available to assign. Check Active Assignments to review existing allocations.</span>
             )}
-            {!loadingPoints && availablePoints.length > 0 && !validCount && requestedCount > 0 && <span className="assign-error">Choose a whole number up to {availablePoints.length}.</span>}
           </div>
 
           {selectedAssignmentPlanter && (
@@ -671,7 +687,8 @@ export default function PlanterManagement() {
               || assignBusy
               || !assignOrganizationId
               || !assignProjectSiteId
-              || pointIdsToAssign.length === 0
+              || loadingPoints
+              || availablePoints.length === 0
             }
           >
             {assignBusy
@@ -706,6 +723,7 @@ export default function PlanterManagement() {
 
       <PanelCard
         title="Active Assignments"
+        panelKey="assignments"
         headerRef={activeAssignmentsHeaderRef}
         badge={assignments.length}
         icon={
@@ -729,7 +747,7 @@ export default function PlanterManagement() {
                     >
                       <span className="assignment-title">{a.title || `Assignment #${a.id}`}</span>
                       <span className="assignment-meta">
-                        {a.planter_name} · {a.pending_points}/{a.total_points} pending
+                        {a.planter_name} · {a.pending_points}/{a.total_points} assigned, not planted
                         {a.species ? ` · ${a.species}` : ''}
                         {(a.project_site_name || a.site_name) ? ` · ${a.project_site_name || a.site_name}` : ''}
                       </span>

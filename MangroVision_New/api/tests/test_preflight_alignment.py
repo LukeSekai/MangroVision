@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+from fastapi import HTTPException
 from shapely.geometry import box, shape
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -89,6 +90,28 @@ class PreflightAlignmentTests(unittest.TestCase):
             result = {'status': 'no_gps'}
             self.assertIs(p._calibrate_preflight_footprint(Path('photo.jpg'), result), result)
             match.assert_not_called()
+
+    def test_upload_preflight_checks_the_calibrated_boundary_without_running_ai(self):
+        footprint = {'type': 'Polygon', 'coordinates': [[[122,10], [122.001,10.0001], [122.0012,10.001], [122,10]]]}
+        calibrated = {'can_process': True, 'map': {'analysis_footprint': footprint}}
+        with patch.object(p.ExifExtractor, 'extract_all_metadata', return_value={}), \
+             patch.object(p, '_build_image_location_preflight', return_value={'can_process': True}), \
+             patch.object(p, '_run_preflight', return_value=calibrated), \
+             patch.object(p, '_check_repeat_image', return_value=({'source_image_sha256': 'a'*64}, [])), \
+             patch.object(p, 'get_analysis_area_context', return_value={'saved_point_count': 7, 'analyses': []}) as context:
+            result = p._inspect_image_upload(Path('photo.jpg'), 'photo.jpg', 6, 'GENERIC_4K')
+        context.assert_called_once_with(footprint)
+        self.assertEqual(result['area_context']['saved_point_count'], 7)
+
+    def test_upload_preflight_does_not_hide_failed_area_checks(self):
+        with patch.object(p.ExifExtractor, 'extract_all_metadata', return_value={}), \
+             patch.object(p, '_build_image_location_preflight', return_value={'can_process': True}), \
+             patch.object(p, '_run_preflight', return_value={'map': {'analysis_footprint': {}}}), \
+             patch.object(p, 'get_analysis_area_context', side_effect=RuntimeError('private failure')):
+            with self.assertRaises(HTTPException) as raised:
+                p._inspect_image_upload(Path('photo.jpg'), 'photo.jpg', 6, 'GENERIC_4K')
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertNotIn('private failure', raised.exception.detail)
 
 
 if __name__ == '__main__':

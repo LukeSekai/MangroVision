@@ -328,6 +328,10 @@ export const useMapStore = create((set, get) => ({
       // separate, dynamic metric that excludes erosion-unavailable points.
       hexagon_count: metrics.hexagon_count ?? coords.length,
       plantable_area_m2: metrics.plantable_area_m2 ?? 0,
+      source_image_name: result.source_image_name || imageName,
+      canopy_area_m2: metrics.canopy_area_m2 ?? null,
+      canopy_coverage_pct: metrics.canopy_coverage_pct ?? null,
+      total_area_m2: metrics.total_area_m2 ?? null,
     };
 
     const synthesizedPoints = coords.map((row) => ({

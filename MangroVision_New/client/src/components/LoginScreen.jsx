@@ -3,6 +3,8 @@ import { useAuthStore } from '../stores/authStore';
 import { staffAuthRequest } from '../utils/staffAuth';
 import EmailCodeInput from './EmailCodeInput';
 import Logo from './Logo';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from './FormFeedback';
 import './LoginScreen.css';
 
 export default function LoginScreen() {
@@ -19,8 +21,16 @@ export default function LoginScreen() {
   const [notice, setNotice] = useState(() => sessionStorage.getItem('mv_auth_notice') || '');
   const login = useAuthStore((s) => s.login);
   const verifyLogin = useAuthStore((s) => s.verifyLogin);
+  const feedback = useFormFeedback({
+    username: { label: 'Username' },
+    password: { label: 'Password' },
+    code: { label: 'Email verification code', serverTerms: ['invalid code', 'code expired', 'code is invalid', 'code has expired', 'verification code'] },
+    newPassword: { label: 'New password', aliases: ['new_password'], serverTerms: ['password must'] },
+    confirmation: { label: 'Confirm new password', validate: (value) => value && value !== newPassword ? 'Enter the same password as the new password above.' : '' },
+  });
 
   const acceptChallenge = (data, nextStep) => {
+    feedback.clear();
     setChallenge(data);
     setReadyAt(Date.now() + data.resend_after * 1000);
     setCode('');
@@ -29,6 +39,7 @@ export default function LoginScreen() {
   };
 
   const reset = (nextStep = 'login') => {
+    feedback.clear();
     setStep(nextStep);
     setError('');
     setChallenge(null);
@@ -42,6 +53,7 @@ export default function LoginScreen() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (!feedback.validate()) return;
     setLoading(true);
     try {
       if (step === 'login') {
@@ -52,8 +64,6 @@ export default function LoginScreen() {
       } else if (step === 'recovery') {
         acceptChallenge(await staffAuthRequest('recovery/request', {}), 'recovery-code');
       } else {
-        if (!newPassword) throw new Error('Enter a new password.');
-        if (newPassword !== confirmation) throw new Error('The new passwords do not match.');
         const data = await staffAuthRequest('recovery/complete', {
           code, new_password: newPassword,
         });
@@ -61,7 +71,7 @@ export default function LoginScreen() {
         setNotice(data.message);
       }
     } catch (err) {
-      setError(err.message || 'Authentication failed');
+      if (!feedback.fromServer(err)) setError(err.message || 'Authentication failed. Check your connection and try again.');
       if (err.retryAfter) setReadyAt(Date.now() + err.retryAfter * 1000);
     } finally {
       setLoading(false);
@@ -117,11 +127,12 @@ export default function LoginScreen() {
               <p className="login-subtitle">{subtitle}</p>
             </div>
 
-            <form className="login-form" onSubmit={handleSubmit}>
+            <form className="login-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
+              <FormErrorSummary feedback={feedback} />
               {step === 'login' && <>
               <div className="form-group">
                 <label className="form-label" htmlFor="login-username">Username</label>
-                <input
+                <input {...feedback.props('username')}
                   id="login-username"
                   className="form-input"
                   type="text"
@@ -133,10 +144,11 @@ export default function LoginScreen() {
                   autoFocus
                   required
                 />
+              <FieldError feedback={feedback} field="username" />
               </div>
               <div className="form-group">
                 <label className="form-label" htmlFor="login-password">Password</label>
-                <input
+                <input {...feedback.props('password')}
                   id="login-password"
                   className="form-input"
                   type="password"
@@ -147,22 +159,25 @@ export default function LoginScreen() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
+              <FieldError feedback={feedback} field="password" />
               </div>
               </>}
 
-              {checkingCode && <EmailCodeInput code={code} onChange={setCode} readyAt={readyAt} onResend={resend} busy={loading} />}
+              {checkingCode && <EmailCodeInput code={code} onChange={setCode} readyAt={readyAt} onResend={resend} busy={loading} feedback={feedback} />}
 
               {step === 'recovery-code' && <>
                 <div className="form-group">
                   <label className="form-label" htmlFor="recovery-password">New password</label>
-                  <input id="recovery-password" className="form-input" type="password" autoComplete="new-password"
+                  <input {...feedback.props('newPassword')} id="recovery-password" className="form-input" type="password" autoComplete="new-password"
                     minLength={12} maxLength={128} placeholder="At least 12 characters" value={newPassword}
                     onChange={(event) => setNewPassword(event.target.value)} required disabled={loading} />
+              <FieldError feedback={feedback} field="newPassword" />
                 </div>
                 <div className="form-group">
                   <label className="form-label" htmlFor="recovery-confirm">Confirm new password</label>
-                  <input id="recovery-confirm" className="form-input" type="password" autoComplete="new-password"
+                  <input {...feedback.props('confirmation')} id="recovery-confirm" className="form-input" type="password" autoComplete="new-password"
                     value={confirmation} onChange={(event) => setConfirmation(event.target.value)} required disabled={loading} />
+              <FieldError feedback={feedback} field="confirmation" />
                 </div>
               </>}
 

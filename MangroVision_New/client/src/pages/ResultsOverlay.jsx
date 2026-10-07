@@ -172,11 +172,15 @@ export default function ResultsOverlay({
   saved,
   saveError,
   onClose,
+  onBack,
+  onViewMap,
+  canViewMap = false,
   onSave,
   onExport,
 }) {
-  const [visible, setVisible] = useState(false);
-  const [closing, setClosing] = useState(false);
+  const [visible, setVisible] = useState(open);
+  if (open && !visible) setVisible(true);
+  const closing = visible && !open;
   const [busyExport, setBusyExport] = useState(null);
   const [exportError, setExportError] = useState('');
   const [showCoords, setShowCoords] = useState(false);
@@ -188,18 +192,9 @@ export default function ResultsOverlay({
   const [completedExportFormat, setCompletedExportFormat] = useState(null);
 
   useEffect(() => {
-    if (open) {
-      setVisible(true);
-      setClosing(false);
-    } else if (visible) {
-      setClosing(true);
-      const timer = setTimeout(() => {
-        setVisible(false);
-        setClosing(false);
-      }, 220);
-      return () => clearTimeout(timer);
-    }
-    return undefined;
+    if (open || !visible) return undefined;
+    const timer = setTimeout(() => setVisible(false), 220);
+    return () => clearTimeout(timer);
   }, [open, visible]);
 
   useEffect(() => {
@@ -318,6 +313,18 @@ export default function ResultsOverlay({
           </svg>
         </button>
 
+        {(onBack || onViewMap) && <nav className="rs-history-navigation" aria-label="Analysis navigation">
+          {onBack && <button type="button" className="btn btn-ghost btn-sm" onClick={onBack}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m12 19-7-7 7-7M5 12h14" /></svg>
+            Back to history
+          </button>}
+          {onViewMap && <button type="button" className="btn btn-secondary btn-sm rs-view-map" onClick={onViewMap}
+            disabled={!canViewMap} aria-describedby={!canViewMap ? 'rs-map-unavailable' : undefined}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>
+            View area in map
+          </button>}
+          {onViewMap && !canViewMap && <span id="rs-map-unavailable" className="rs-map-unavailable">No map location was saved for this analysis.</span>}
+        </nav>}
         <header className="rs-header">
           <Logo variant="icon" size={32} className="rs-header-logo" alt="MangroVision" />
           <div>
@@ -392,7 +399,7 @@ export default function ResultsOverlay({
             <div className="metric-card metric-card-primary">
               <div className="metric-card-title">Planting</div>
               <div className="metric-grid metric-grid-primary">
-                <MetricItem icon={ICON_PIN} label="Safe Planting Points" primary>
+                <MetricItem icon={ICON_PIN} label={result.repeat_image?.points_not_added ? 'New Planting Points' : 'Safe Planting Points'} primary>
                   {metrics.safe_hexagon_count ?? metrics.hexagon_count ?? 0}
                 </MetricItem>
                 <MetricItem icon={ICON_LEAF} label="Plantable Area" primary>
@@ -561,6 +568,11 @@ export default function ResultsOverlay({
               </div>
             )}
 
+            {result.repeat_image?.points_not_added && <div className="rs-repeat-notice rs-full" role="status">
+              <strong>Repeat image analysis</strong>
+              <p>No planting points will be added. Existing planting records are kept. You can save this result in analysis history.</p>
+            </div>}
+
             {result.can_save && (
               <div className="rs-save-block rs-full">
                 {saved ? (
@@ -568,7 +580,7 @@ export default function ResultsOverlay({
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="20 6 9 17 4 12" />
                     </svg>
-                    Saved - this analysis is now in Image Processing history.
+                    Saved - this analysis is now in Analyze Image history.
                   </div>
                 ) : (
                   <>

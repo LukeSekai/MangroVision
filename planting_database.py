@@ -2484,8 +2484,8 @@ def _save_analysis_with_connection(
     """
     Persist an analysis and its planting points.
 
-    If an existing analysis covers the same area (centre within ~15 m),
-    that old row + points are **replaced** to avoid double-counting.
+    Repeat images save a separate result with zero new planting points.
+    Their earlier analyses, points, assignments and monitoring are preserved.
 
     Individual planting points are still deduplicated against points from
     *other* analyses using the same approximate spacing as the active
@@ -2512,26 +2512,7 @@ def _save_analysis_with_connection(
     if user_id is None:
         user_id = get_or_create_default_user()
 
-    # ── Replace previous analysis only when the SAME image is re-run
-    #    in the same area. Different images in the same area stay
-    #    side-by-side so their unique points are preserved. Per-point
-    #    dedup still prevents overlapping markers.
-    analysis_number = None
-    if center_lat is not None and center_lon is not None and image_name:
-        old_rows = conn.execute("""
-            SELECT id, analysis_number FROM analyses
-            WHERE COALESCE(analysis_detail_json ->> 'source_image_name', image_name) = ?
-              AND center_lat BETWEEN ? AND ?
-              AND center_lon BETWEEN ? AND ?
-        """, (
-            image_name,
-            center_lat - _ANALYSIS_MATCH_DEG, center_lat + _ANALYSIS_MATCH_DEG,
-            center_lon - _ANALYSIS_MATCH_DEG, center_lon + _ANALYSIS_MATCH_DEG,
-        )).fetchall()
-        for row in old_rows:
-            if analysis_number is None:
-                analysis_number = row['analysis_number']
-            _delete_analysis_rows(conn, row['id'])
+    # Repeat runs keep all earlier analyses and their planting records.
 
     # ── Insert new analysis row ───────────────────────────────────
     # Preserve source identity for reprocessing independently of the saved name.
@@ -2540,12 +2521,19 @@ def _save_analysis_with_connection(
         detail = json.loads(detail)
     detail = dict(detail)
     detail['source_image_name'] = image_name
-    # Reprocessing the same saved photo keeps its display number. Only new
-    # saved analyses consume this counter, independent of internal row IDs.
-    if analysis_number is None:
-        analysis_number = conn.execute(
-            "SELECT nextval('mangrovision.analysis_number_seq') AS number"
-        ).fetchone()['number']
+    repeats = _find_repeat_image_analyses(
+        conn, image_name, center_lat, center_lon,
+        detail.get('source_image_sha256'), detail.get('source_original_sha256'),
+    )
+    repeat_image = bool(repeats or detail.get('repeat_image'))
+    if repeat_image:
+        hexagons = []
+        detail['repeat_image'] = detail.get('repeat_image') or {
+            'analyses': repeats, 'points_not_added': True,
+        }
+    analysis_number = conn.execute(
+        "SELECT nextval('mangrovision.analysis_number_seq') AS number"
+    ).fetchone()['number']
     cur.execute("""
         INSERT INTO analyses
             (user_id, image_name, analysis_number, analyzed_at, center_lat, center_lon,
@@ -2612,7 +2600,8 @@ def _save_analysis_with_connection(
         _analysis_species,
         results.get('planting_distance_m'),
     )
-    _existing, _existing_species_spacing = _planting_spacing_indexes(conn, hexagons, results)
+    if not repeat_image:
+        _existing, _existing_species_spacing = _planting_spacing_indexes(conn, hexagons, results)
 
     new_count = 0
     skipped = 0
@@ -2663,8 +2652,9 @@ def _save_analysis_with_connection(
                 _analysis_spacing_m,
             )
 
-    _cleanup_same_species_spacing_conflicts(conn)
-    _cleanup_cross_species_spacing_conflicts(conn)
+    if not repeat_image:
+        _cleanup_same_species_spacing_conflicts(conn)
+        _cleanup_cross_species_spacing_conflicts(conn)
     count_row = conn.execute(
         """
         SELECT COUNT(*) AS cnt
@@ -2689,6 +2679,49 @@ def _save_analysis_with_connection(
 # ====================================================================
 #  Overlap / Nearby Detection
 # ====================================================================
+
+def _find_repeat_image_analyses(conn, image_name, center_lat, center_lon,
+                              source_image_sha256=None, source_original_sha256=None) -> List[dict]:
+    """Use content identity, with filename/location fallback for asset-less legacy rows."""
+    rows = conn.execute("""
+        SELECT a.id, a.image_name, a.analyzed_at,
+               COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name
+        FROM analyses a
+        WHERE (CAST(? AS TEXT) IS NOT NULL AND a.analysis_detail_json ->> 'source_image_sha256' = ?)
+           OR (CAST(? AS TEXT) IS NOT NULL AND (
+               a.analysis_detail_json ->> 'source_original_sha256' = ?
+               OR EXISTS (SELECT 1 FROM analysis_assets aa
+                          WHERE aa.analysis_id = a.id AND aa.kind = 'original'
+                            AND aa.lifecycle_state = 'ready' AND aa.sha256 = ?)
+           ))
+           OR (a.analysis_detail_json ->> 'source_image_sha256' IS NULL
+               AND NOT EXISTS (SELECT 1 FROM analysis_assets aa
+                               WHERE aa.analysis_id = a.id AND aa.kind = 'original'
+                                 AND aa.lifecycle_state = 'ready' AND aa.sha256 IS NOT NULL)
+               AND COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) = ?
+               AND a.center_lat BETWEEN ? AND ? AND a.center_lon BETWEEN ? AND ?)
+        ORDER BY a.analyzed_at DESC, a.id DESC
+    """, (
+        source_image_sha256, source_image_sha256,
+        source_original_sha256, source_original_sha256, source_original_sha256,
+        image_name,
+        center_lat - _ANALYSIS_MATCH_DEG if center_lat is not None else None,
+        center_lat + _ANALYSIS_MATCH_DEG if center_lat is not None else None,
+        center_lon - _ANALYSIS_MATCH_DEG if center_lon is not None else None,
+        center_lon + _ANALYSIS_MATCH_DEG if center_lon is not None else None,
+    )).fetchall()
+    return [dict(row) for row in rows]
+
+
+def find_repeat_image_analyses(image_name, center_lat, center_lon,
+                             source_image_sha256=None, source_original_sha256=None) -> List[dict]:
+    conn = _get_connection()
+    try:
+        return _find_repeat_image_analyses(conn, image_name, center_lat, center_lon,
+                                         source_image_sha256, source_original_sha256)
+    finally:
+        conn.close()
+
 
 def _nearby_search_deltas(center_lat: float, radius_m: float) -> tuple[float, float]:
     lat_delta = float(radius_m) / 111_320.0
@@ -2770,6 +2803,50 @@ def count_nearby_points(
     )).fetchone()
     conn.close()
     return int(row["point_count"] if row else 0)
+
+
+def get_analysis_area_context(footprint: dict) -> dict:
+    """Check saved analyses and current points inside the actual image boundary.
+
+    Touching photo edges alone do not constitute an overlapping analysis.
+    Points on the boundary count; deleted points do not. This is advisory and
+    does not replace the existing duplicate/spacing checks when saving points.
+    """
+    geometry = normalize_polygon(footprint)
+    bounds = shape(geometry).bounds
+    if not all(math.isfinite(value) for value in bounds) or not (
+        -180 <= bounds[0] <= bounds[2] <= 180
+        and -90 <= bounds[1] <= bounds[3] <= 90
+    ):
+        raise ValueError("Image boundary must contain valid longitude and latitude coordinates.")
+    conn = _get_connection()
+    try:
+        requested = """
+            WITH requested AS (
+                SELECT extensions.ST_SetSRID(extensions.ST_GeomFromGeoJSON(?), 4326) AS geometry
+            )
+        """
+        parameters = (json.dumps(geometry),)
+        analyses = conn.execute(requested + """
+            SELECT a.id, a.image_name, a.analyzed_at, a.footprint_quality,
+                   COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name
+            FROM analyses a CROSS JOIN requested
+            WHERE extensions.ST_Intersects(a.footprint, requested.geometry)
+              AND NOT extensions.ST_Touches(a.footprint, requested.geometry)
+            ORDER BY a.analyzed_at DESC, a.id DESC
+        """, parameters).fetchall()
+        points = conn.execute(requested + """
+            SELECT COUNT(*) AS saved_point_count
+            FROM planting_points pp CROSS JOIN requested
+            WHERE pp.deleted_at IS NULL
+              AND extensions.ST_Covers(requested.geometry, pp.location)
+        """, parameters).fetchone()
+    finally:
+        conn.close()
+    return {
+        "analyses": [dict(row) for row in analyses],
+        "saved_point_count": int(points["saved_point_count"] if points else 0),
+    }
 
 
 def get_saved_point_locations(
@@ -3203,7 +3280,9 @@ def get_all_stats() -> dict:
     # Per-analysis breakdown (with planner name)
     analyses = conn.execute("""
         SELECT a.id, a.image_name, a.analyzed_at, a.center_lat, a.center_lon,
-               a.canopy_count, a.polygon_count, a.hexagon_count,
+               a.canopy_count, a.canopy_area_m2, a.canopy_coverage_pct,
+               COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name,
+               a.polygon_count, a.hexagon_count,
                a.plantable_area_m2, a.plantable_pct,
                a.danger_area_m2, a.danger_pct,
                a.total_area_m2, a.gsd_cm,
@@ -3861,16 +3940,67 @@ def get_analysis_by_id(analysis_id: int) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def list_analysis_summaries() -> List[dict]:
-    """Return saved analyses for assignment selection."""
+def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
+    """Return lightweight summaries, optionally with private result previews.
+
+    History reads assets and earlier footprint overlaps in batches; it never
+    loads every analysis's points or full result payload. Assignment selection
+    does not need preview URLs or spatial history.
+    """
     conn = _get_connection()
-    rows = conn.execute("""
-        SELECT id, image_name, analyzed_at, hexagon_count, center_lat, center_lon
-        FROM analyses
-        ORDER BY analyzed_at DESC
-    """).fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    try:
+        area_columns = """,
+                   footprint IS NOT NULL AS area_history_available, footprint_quality,
+                   EXISTS (
+                       SELECT 1 FROM analyses earlier
+                       WHERE earlier.footprint IS NULL
+                         AND (earlier.analyzed_at, earlier.id) < (analyses.analyzed_at, analyses.id)
+                   ) AS area_history_incomplete
+        """ if include_previews else ""
+        rows = conn.execute(f"""
+            SELECT id, image_name, analyzed_at, hexagon_count, center_lat, center_lon,
+                   plantable_area_m2, canopy_area_m2, canopy_coverage_pct, total_area_m2,
+                   COALESCE(analysis_detail_json ->> 'source_image_name', image_name) AS source_image_name
+                   {area_columns}
+            FROM analyses
+            ORDER BY analyzed_at DESC, id DESC
+        """).fetchall()
+        prior_matches = conn.execute("""
+            SELECT current.id AS current_id, earlier.id, earlier.image_name,
+                   earlier.analyzed_at, earlier.footprint_quality,
+                   COALESCE(earlier.analysis_detail_json ->> 'source_image_name', earlier.image_name) AS source_image_name
+            FROM analyses current JOIN analyses earlier
+              ON (earlier.analyzed_at, earlier.id) < (current.analyzed_at, current.id)
+             AND extensions.ST_Intersects(current.footprint, earlier.footprint)
+             AND NOT extensions.ST_Touches(current.footprint, earlier.footprint)
+            ORDER BY earlier.analyzed_at DESC, earlier.id DESC
+        """).fetchall() if include_previews else []
+        assets = conn.execute("""
+            SELECT aa.analysis_id, aa.object_key
+            FROM analysis_assets aa
+            JOIN analyses a ON a.id = aa.analysis_id
+            WHERE aa.lifecycle_state = 'ready'
+              AND aa.kind IN ('visualization_preview', 'visualization')
+            ORDER BY CASE WHEN aa.kind = 'visualization_preview' THEN 0 ELSE 1 END
+        """).fetchall() if include_previews else []
+    finally:
+        conn.close()
+
+    preview_keys = {}
+    for asset in assets:
+        preview_keys.setdefault(asset['analysis_id'], asset['object_key'])
+    summaries = [dict(row) for row in rows]
+    if include_previews:
+        prior_by_id = {}
+        for match in prior_matches:
+            previous = dict(match)
+            current_id = previous.pop('current_id')
+            prior_by_id.setdefault(current_id, []).append(previous)
+        for summary in summaries:
+            key = preview_keys.get(summary['id'])
+            summary['result_preview_url'] = signed_download_url(key) if key else None
+            summary['previous_analyses'] = prior_by_id.get(summary['id'], [])
+    return summaries
 
 
 def list_analysis_points(analysis_id: int, only_unassigned: bool = False) -> List[dict]:

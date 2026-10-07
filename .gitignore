@@ -60,6 +60,9 @@ htmlcov/
 !MangroVision_New/client/src/pages/Dashboard.test.js
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
 !MangroVision_New/client/src/components/Panel.test.js
+!MangroVision_New/client/src/components/FormFeedback.test.js
+!MangroVision_New/client/src/utils/formValidation.test.js
+!MangroVision_New/client/src/utils/analysisHistory.test.js
 !MangroVision_New/client/src/stores/planterAuthStore.test.js
 !MangroVision_New/client/src/utils/fieldNavigation.test.js
 

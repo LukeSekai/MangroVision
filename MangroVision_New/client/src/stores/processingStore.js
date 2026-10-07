@@ -137,6 +137,7 @@ export const useProcessingStore = create((set, get) => ({
         'allow_partial_map_overlap',
         params.allow_partial_map_overlap ? 'true' : 'false',
       );
+      formData.append('allow_repeat_image_analysis', params.allow_repeat_image_analysis ? 'true' : 'false');
       if (params.species) {
         formData.append('species', String(params.species));
       }

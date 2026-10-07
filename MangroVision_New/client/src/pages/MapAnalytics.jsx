@@ -3,6 +3,7 @@ import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
 import { countMapPointStatuses } from '../utils/mapPointStats';
 import Modal from '../components/Modal';
+import { POINT_STATUS_COLORS } from '../utils/pointStatus';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
 
@@ -95,7 +96,7 @@ export default function MapAnalytics() {
   };
 
   return (
-    <Panel title="Map Analytics" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
+    <Panel title="Planting Map" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
       <PanelCard
         title="Overview"
         panelKey="overview"
@@ -140,7 +141,7 @@ export default function MapAnalytics() {
           <div className="legend-item"><span className="legend-dot" style={{ background: '#16a34a' }} /><span>Planned</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#db2777' }} /><span>Rhizophora</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#2563eb' }} /><span>Assigned</span></div>
-          <div className="legend-item"><span className="legend-dot" style={{ background: '#d97706' }} /><span>Planted</span></div>
+          <div className="legend-item"><span className="legend-dot" style={{ background: POINT_STATUS_COLORS.planted }} /><span>Planted</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#9ca3af' }} /><span>Skipped</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#f97316' }} /><span>Unavailable for planting (eroded zone)</span></div>
           <div className="legend-item"><span className="legend-dot" style={{ background: '#7f1d1d' }} /><span>Dead (review in Monitoring)</span></div>

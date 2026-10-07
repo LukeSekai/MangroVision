@@ -1,16 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import Modal from '../components/Modal';
 import { getPlanterColor } from '../utils/planterColors';
+import { ASSIGNMENT_STATUS_LABELS as STATUS_LABEL, pointStatusLabel } from '../utils/pointStatus';
 import './PlanterActivityReport.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const PLANTERS_PER_PAGE = 6;
-
-const STATUS_LABEL = {
-  active: 'Active',
-  completed: 'Completed',
-  archived: 'Archived',
-};
 
 function initialsFor(name = '') {
   const parts = name.trim().split(/\s+/).filter(Boolean);
@@ -48,7 +43,7 @@ function planterStatusFlavor(row) {
     return { key: 'completed', label: 'Completed', subLabel: 'All points planted', dotColor: '#16a34a' };
   }
   if (row.completedPoints > 0) {
-    return { key: 'in-progress', label: 'In Progress', subLabel: `${row.pendingPoints} still pending`, dotColor: '#eab308' };
+    return { key: 'in-progress', label: 'In progress', subLabel: `${row.pendingPoints} assigned, not planted`, dotColor: '#eab308' };
   }
   return { key: 'ready', label: 'Ready', subLabel: 'Ready to plant', dotColor: '#0d9488' };
 }
@@ -262,7 +257,7 @@ export default function PlanterActivityReport({ open, onClose }) {
                 <SummaryStat label="Total assignments" value={totals.totalAssignments} accent="blue"   />
                 <SummaryStat label="Total points"      value={totals.totalPoints}      accent="slate"  />
                 <SummaryStat label="Planted"           value={totals.completedPoints}  accent="amber"  />
-                <SummaryStat label="Pending"           value={totals.pendingPoints}    accent="indigo" />
+                <SummaryStat label={pointStatusLabel('pending')} value={totals.pendingPoints} accent="indigo" />
                 <SummaryStat label="Skipped"           value={totals.skippedPoints}    accent="gray"   />
               </section>
 
@@ -345,7 +340,7 @@ export default function PlanterActivityReport({ open, onClose }) {
               <strong>Total planting points:</strong> {detailsTarget.totalPoints}<br />
               <strong>Planted:</strong> {detailsTarget.completedPoints}
               {' '}({pct(detailsTarget.completedPoints, detailsTarget.totalPoints)}%)<br />
-              <strong>Pending:</strong> {detailsTarget.pendingPoints}<br />
+              <strong>{pointStatusLabel('pending')}:</strong> {detailsTarget.pendingPoints}<br />
               <strong>Skipped:</strong> {detailsTarget.skippedPoints}
             </p>
           </>

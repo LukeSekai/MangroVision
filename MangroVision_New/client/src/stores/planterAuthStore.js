@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { submissionError } from '../utils/formValidation';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -53,8 +54,9 @@ export const usePlanterAuthStore = create((set, get) => ({
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
-      set({ status: 'error', error: payload.detail || 'Registration failed' });
-      throw new Error(payload.detail || 'Registration failed');
+      const error = submissionError(payload.detail, 'Registration failed. Check the highlighted fields and try again.');
+      set({ status: 'error', error: error.message });
+      throw error;
     }
     const data = await res.json();
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
@@ -80,8 +82,9 @@ export const usePlanterAuthStore = create((set, get) => ({
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
-      set({ status: 'error', error: payload.detail || 'Login failed' });
-      throw new Error(payload.detail || 'Login failed');
+      const error = submissionError(payload.detail, 'Login failed. Check your shared username and password, then try again.');
+      set({ status: 'error', error: error.message });
+      throw error;
     }
     const data = await res.json();
     localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));

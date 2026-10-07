@@ -1,13 +1,17 @@
 """Analysis endpoints."""
 
 import json
+from typing import Optional
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, Field
 
 from planting_database import (
     count_nearby_points,
     delete_analysis,
     find_overlapping_analyses,
+    find_repeat_image_analyses,
+    get_analysis_area_context,
     get_analysis_asset_urls,
     get_all_stats,
     get_analysis_by_id,
@@ -51,9 +55,9 @@ def get_stats():
 
 # MIGRATED FROM app.py analysis history drawer
 @router.get("/")
-def list_analyses():
+def list_analyses(include_previews: bool = False):
     _require_lgu_user()
-    return list_analysis_summaries()
+    return list_analysis_summaries(include_previews=include_previews)
 
 
 @router.get("/overlapping")
@@ -66,6 +70,32 @@ def overlapping(lat: float, lon: float, radius: float = 15.0):
 def nearby_points_count(lat: float, lon: float, radius: float = 15.0):
     _require_lgu_user()
     return {"count": count_nearby_points(lat, lon, radius)}
+
+
+class AnalysisAreaRequest(BaseModel):
+    footprint: dict
+    image_name: Optional[str] = Field(default=None, max_length=255)
+    latitude: Optional[float] = Field(default=None, ge=-90, le=90)
+    longitude: Optional[float] = Field(default=None, ge=-180, le=180)
+    source_image_sha256: Optional[str] = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    source_original_sha256: Optional[str] = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+
+
+@router.post("/area-context")
+def analysis_area_context(request: AnalysisAreaRequest):
+    """Refresh the occupied-area advisory before starting image processing."""
+    _require_lgu_user()
+    try:
+        context = get_analysis_area_context(request.footprint)
+        context['repeat_analyses'] = find_repeat_image_analyses(
+            request.image_name, request.latitude, request.longitude,
+            request.source_image_sha256, request.source_original_sha256,
+        ) if request.image_name else []
+        return context
+    except (ValueError, TypeError, KeyError) as error:
+        raise HTTPException(status_code=400, detail="The image boundary could not be checked. Select the image again to verify its location.") from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Could not check existing planting data. Please try Run Analysis again.") from error
 
 
 # MIGRATED FROM app.py analysis detail view (points)
@@ -231,6 +261,7 @@ def analysis_detail(analysis_id: int):
         "analysis_key": None,
         "uploaded_file_name": image_name,
         "source_image_name": saved_detail.get("source_image_name") or image_name,
+        "repeat_image": saved_detail.get("repeat_image"),
         "detection_mode": detection_mode,
         "parameters": saved_parameters,
         "inputs": {},

@@ -11,6 +11,9 @@ import {
   YAxis,
 } from 'recharts';
 import Modal from '../components/Modal';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { submissionError } from '../utils/formValidation';
 import useTideForecasts from '../utils/useTideForecasts';
 import {
   PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, finiteNumber, forecastIssue,
@@ -109,7 +112,8 @@ async function fetchJson(path, options = {}) {
           return 'The server rejected one of the submitted values.';
         }
       });
-    throw new Error(messages.join('; ') || `Request failed (${response.status})`);
+    const error = submissionError(detail, messages.join('; ') || `Request failed (${response.status})`);
+    throw error;
   }
   return body && typeof body === 'object' ? body : {};
 }
@@ -263,7 +267,7 @@ function makeScheduleForm(schedule = null) {
 }
 
 function scheduleStatusLabel(value) {
-  if (String(value).toLowerCase() === 'requested') return 'Pending';
+  if (String(value).toLowerCase() === 'requested') return 'Pending confirmation';
   const clean = String(value || 'requested').replaceAll('_', ' ');
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
@@ -595,6 +599,19 @@ export default function Scheduling() {
   const [editingSchedule, setEditingSchedule] = useState(null);
   const [form, setForm] = useState(makeScheduleForm);
   const [formError, setFormError] = useState('');
+  const feedback = useFormFeedback({
+    organizationName: { label: 'Organization', aliases: ['organization', 'organization_id'], serverTerms: ['organization'] },
+    title: { label: 'Activity title' },
+    contact: { label: 'Contact' },
+    date: { label: 'Date' },
+    startTime: { label: 'Start time', aliases: ['start_time'] },
+    endTime: { label: 'End time', aliases: ['end_time'], serverTerms: ['end time', 'end_time'], validate: (value) => value && form.startTime && value <= form.startTime ? 'Choose an end time later than the start time on the same day.' : '' },
+    expectedParticipants: { label: 'Expected participants', aliases: ['expected_planters'] },
+    seedlings: { label: 'Expected seedlings', aliases: ['expected_seedlings'] },
+    status: { label: 'Activity status' },
+    notes: { label: 'Notes' },
+  });
+  const assignmentFeedback = useFormFeedback({ site: { label: 'Planting area', aliases: ['project_site_id'], serverTerms: ['planting area', 'project site'] } });
   const [saving, setSaving] = useState(false);
   const [timeCaution, setTimeCaution] = useState(null);
   const lastWarnedTime = useRef(null);
@@ -750,6 +767,7 @@ export default function Scheduling() {
   const selectedDateTides = form.date ? arrayOf(tidesByDate.get(form.date)) : [];
 
   const openCreate = () => {
+    feedback.clear();
     lastWarnedTime.current = null;
     acceptedUnsafeTime.current = null;
     setTimeCaution(null);
@@ -761,6 +779,7 @@ export default function Scheduling() {
   };
 
   const openEdit = (schedule) => {
+    feedback.clear();
     lastWarnedTime.current = null;
     acceptedUnsafeTime.current = null;
     setTimeCaution(null);
@@ -773,6 +792,7 @@ export default function Scheduling() {
 
   const closeForm = () => {
     if (saving) return;
+    feedback.clear();
     setFormOpen(false);
     setEditingSchedule(null);
     setFormError('');
@@ -796,7 +816,7 @@ export default function Scheduling() {
       setMonth(request.body.date.slice(0, 7));
       setReloadKey((value) => value + 1);
     } catch (saveError) {
-      setFormError(saveError.message || 'Could not save the planting schedule.');
+      if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save the planting schedule.');
     } finally {
       setTimeCaution(null);
       setSaving(false);
@@ -812,27 +832,24 @@ export default function Scheduling() {
       setFormError('Sign in as LGU staff to save planting schedules.');
       return;
     }
+    if (!feedback.validate()) return;
     const organizationName = form.organizationName.trim();
     const organization = organizations.find((option) => (
       option.name.trim().toLocaleLowerCase() === organizationName.toLocaleLowerCase()
     ));
-    if (!organizationName || !form.title.trim() || !form.date || !form.startTime || !form.endTime) {
-      setFormError('Enter the organization, activity title, date, and start and end times.');
-      return;
-    }
     if (form.endTime <= form.startTime) {
-      setFormError('End time must be later than the start time.');
+      feedback.reject({ endTime: 'Choose an end time later than the start time on the same day.' });
       return;
     }
     const intervalDays = 14;
     const participants = form.expectedParticipants === '' ? null : Number(form.expectedParticipants);
     const seedlings = form.seedlings === '' ? null : Number(form.seedlings);
     if (participants !== null && (!Number.isInteger(participants) || participants < 0)) {
-      setFormError('Expected participants must be a whole number or blank.');
+      feedback.reject({ expectedParticipants: 'Enter a whole number of 0 or more, or leave this blank.' });
       return;
     }
     if (seedlings !== null && (!Number.isInteger(seedlings) || seedlings < 0)) {
-      setFormError('Expected seedlings must be a whole number or blank.');
+      feedback.reject({ seedlings: 'Enter a whole number of 0 or more, or leave this blank.' });
       return;
     }
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
@@ -868,6 +885,7 @@ export default function Scheduling() {
   };
 
   const openAssignment = (schedule) => {
+    assignmentFeedback.clear();
     setAssigningSchedule(schedule);
     setAssignmentSiteId('');
     setAssignmentError('');
@@ -885,7 +903,7 @@ export default function Scheduling() {
     }
     const site = assignmentSites.find((option) => String(option.id) === String(assignmentSiteId));
     if (!site) {
-      setAssignmentError('Choose a planting area owned by this organization.');
+      assignmentFeedback.reject({ site: 'Choose a planting area owned by this organization. Add one in the Zone Editor if none are listed.' });
       return;
     }
     setAssignmentSaving(true);
@@ -900,7 +918,7 @@ export default function Scheduling() {
       setNotice(`Planting area â€œ${site.name}â€ assigned to the confirmed schedule.`);
       setReloadKey((value) => value + 1);
     } catch (saveError) {
-      setAssignmentError(saveError.message || 'Could not assign the planting area.');
+      if (!assignmentFeedback.fromServer(saveError)) setAssignmentError(saveError.message || 'Could not assign the planting area.');
     } finally {
       setAssignmentSaving(false);
     }
@@ -1051,7 +1069,8 @@ export default function Scheduling() {
         className="modal-card-wide schedule-form-modal"
         variant="info"
       >
-        <form className="schedule-form" onSubmit={saveSchedule}>
+        <form className="schedule-form" noValidate onChangeCapture={feedback.onChange} onSubmit={saveSchedule}>
+          <FormErrorSummary feedback={feedback} />
           {formError ? <Message>{formError}</Message> : null}
           <div className="schedule-form-assessment">
             <PlantingBadge assessment={assessmentFor({ ...editingSchedule,
@@ -1062,7 +1081,7 @@ export default function Scheduling() {
           <div className="schedule-form-grid">
             <label>
               <span>Organization *</span>
-              <input
+              <input {...feedback.props('organizationName')}
                 value={form.organizationName}
                 list="schedule-organizations"
                 maxLength="200"
@@ -1075,6 +1094,7 @@ export default function Scheduling() {
                 disabled={Boolean(editingSchedule?.project_site_id)}
                 required
               />
+              <FieldError feedback={feedback} field="organizationName" />
               <datalist id="schedule-organizations">
                 {organizations.map((organization) => <option key={organization.id} value={organization.name} />)}
               </datalist>
@@ -1083,31 +1103,38 @@ export default function Scheduling() {
             </label>
             <label>
               <span>Activity title *</span>
-              <input value={form.title} maxLength="180" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required />
+              <input {...feedback.props('title')} value={form.title} maxLength="180" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required />
+              <FieldError feedback={feedback} field="title" />
             </label>
             <label>
               <span>Contact</span>
-              <input value={form.contact} maxLength="160" placeholder="Name, phone, or email" onChange={(event) => setForm((current) => ({ ...current, contact: event.target.value }))} />
+              <input {...feedback.props('contact')} value={form.contact} maxLength="160" placeholder="Name, phone, or email" onChange={(event) => setForm((current) => ({ ...current, contact: event.target.value }))} />
+              <FieldError feedback={feedback} field="contact" />
             </label>
             <label>
               <span>Date *</span>
-              <input type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
+              <input {...feedback.props('date')} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
+              <FieldError feedback={feedback} field="date" />
             </label>
             <label>
               <span>Start time *</span>
-              <input type="time" value={form.startTime} onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value }))} required />
+              <input {...feedback.props('startTime')} type="time" value={form.startTime} onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value }))} required />
+              <FieldError feedback={feedback} field="startTime" />
             </label>
             <label>
               <span>End time *</span>
-              <input type="time" value={form.endTime} onChange={(event) => setForm((current) => ({ ...current, endTime: event.target.value }))} required />
+              <input {...feedback.props('endTime')} type="time" value={form.endTime} onChange={(event) => setForm((current) => ({ ...current, endTime: event.target.value }))} required />
+              <FieldError feedback={feedback} field="endTime" />
             </label>
             <label>
               <span>Expected participants</span>
-              <input type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
+              <input {...feedback.props('expectedParticipants')} type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
+              <FieldError feedback={feedback} field="expectedParticipants" />
             </label>
             <label>
               <span>Expected seedlings</span>
-              <input type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
+              <input {...feedback.props('seedlings')} type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
+              <FieldError feedback={feedback} field="seedlings" />
             </label>
             <label>
               <span>Days between plant checks</span>
@@ -1116,17 +1143,19 @@ export default function Scheduling() {
             </label>
             <label>
               <span>Status *</span>
-              <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>
-                <option value="requested">Pending</option>
+              <select {...feedback.props('status')} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>
+                <option value="requested">Pending confirmation</option>
                 <option value="confirmed">Confirmed</option>
                 {editingSchedule ? <option value="tentative">Tentative</option> : null}
                 {editingSchedule ? <option value="completed">Completed</option> : null}
                 {editingSchedule ? <option value="cancelled">Cancelled</option> : null}
               </select>
+              <FieldError feedback={feedback} field="status" />
             </label>
             <label className="schedule-form-notes">
               <span>Notes</span>
-              <textarea rows="3" maxLength="2000" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+              <textarea {...feedback.props('notes')} rows="3" maxLength="2000" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
+              <FieldError feedback={feedback} field="notes" />
             </label>
           </div>
           {form.date ? (
@@ -1153,15 +1182,17 @@ export default function Scheduling() {
         }}
         variant="success"
       >
-        <div className="schedule-assignment-form">
+        <div className="schedule-assignment-form" onChangeCapture={assignmentFeedback.onChange}>
+          <FormErrorSummary feedback={assignmentFeedback} />
           <p><strong>{assigningSchedule?.title}</strong> is confirmed for {assigningSchedule?.organization_name}.</p>
           {assignmentError ? <Message>{assignmentError}</Message> : null}
           <label>
             <span>Organization’s planting area *</span>
-            <select value={assignmentSiteId} onChange={(event) => setAssignmentSiteId(event.target.value)}>
+            <select {...assignmentFeedback.props('site')} required value={assignmentSiteId} onChange={(event) => setAssignmentSiteId(event.target.value)}>
               <option value="">Select a planting area</option>
               {assignmentSites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
             </select>
+            <FieldError feedback={assignmentFeedback} field="site" />
           </label>
           {!assignmentSites.length ? <small>This organization has no planting areas yet. Add one in the Zone Editor first.</small> : null}
         </div>

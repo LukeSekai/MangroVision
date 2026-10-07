@@ -14,6 +14,11 @@
   min-width: 0;
 }
 
+.dash > .next-actions {
+  max-width: 1680px;
+  margin: 16px auto;
+}
+
 .dash button,
 .dash input,
 .dash select,

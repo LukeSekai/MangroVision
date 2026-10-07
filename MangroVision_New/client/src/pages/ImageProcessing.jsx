@@ -1,13 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
+import ImageAnalysisHistory from '../components/ImageAnalysisHistory';
 import Logo from '../components/Logo';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
 import { readAnalysisResponse } from '../utils/processingJobs';
+import { canViewSavedAnalysisOnMap } from '../utils/analysisMapContext';
+import { formatAnalysisDate } from '../utils/analysisHistory';
 import ResultsOverlay from './ResultsOverlay';
+import NextActions from '../components/NextActions';
+import useFormFeedback from '../utils/useFormFeedback';
+import { FieldError, FormErrorSummary } from '../components/FormFeedback';
 import './ResultsOverlay.css';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
@@ -30,6 +37,11 @@ function downloadBlob(blob, fileName) {
 }
 
 export default function ImageProcessing() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const navigationType = useNavigationType();
+  const reviewNavigation = useRef(null);
+  const feedback = useFormFeedback({ canopy_buffer: { label: 'Danger buffer (m)' } });
   const user = useAuthStore((s) => s.user);
   const setCurrentAnalysis = useMapStore((s) => s.setCurrentAnalysis);
   const clearCurrentAnalysis = useMapStore((s) => s.clearCurrentAnalysis);
@@ -59,6 +71,7 @@ export default function ImageProcessing() {
   const fileRef = useRef(null);
   const pendingUploadRef = useRef(null);
   const preflightRequestRef = useRef(0);
+  const areaCheckRequestRef = useRef(null);
   const [file, setFile] = useState(null);
   const [locationCheck, setLocationCheck] = useState(null);
   const [locationChecking, setLocationChecking] = useState(false);
@@ -66,10 +79,14 @@ export default function ImageProcessing() {
   const [locationBlockModalOpen, setLocationBlockModalOpen] = useState(false);
   const [partialConfirmOpen, setPartialConfirmOpen] = useState(false);
   const [partialApproved, setPartialApproved] = useState(false);
+  const [areaChecking, setAreaChecking] = useState(false);
+  const [areaCheckError, setAreaCheckError] = useState('');
+  const [areaConfirmation, setAreaConfirmation] = useState(null);
   const [selectedAnalysis, setSelectedAnalysis] = useState(null);
   const [loadingAnalysisId, setLoadingAnalysisId] = useState(null);
   const [analysisLoadError, setAnalysisLoadError] = useState('');
   const [pendingDeleteId, setPendingDeleteId] = useState(null);
+  const [pendingDeleteAnalysis, setPendingDeleteAnalysis] = useState(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState('');
   // Species choice drives the planting-point spacing. The two supported
@@ -102,8 +119,36 @@ export default function ImageProcessing() {
   const preview = previewUrl;
   const displayedFileName = file?.name || storedFileName;
   const analyses = stats?.analyses || [];
+  const reviewedLocation = useRef(null);
+  useEffect(() => {
+    if (reviewNavigation.current || selectedAnalysis || location.state?.analysisReviewId) return;
+    if (new URLSearchParams(location.search).get('action') !== 'review' || reviewedLocation.current === location.key) return;
+    reviewedLocation.current = location.key;
+    if (result) setOverlayOpen(true);
+    else queueMicrotask(() => setHistoryOpen(true));
+  }, [location.key, location.search, location.state, selectedAnalysis, result, setOverlayOpen]);
+
+  useEffect(() => {
+    const review = reviewNavigation.current;
+    if (!review) return;
+    if (review.viewingMap) {
+      if (navigationType === 'POP' && location.key === review.returnKey) {
+        reviewNavigation.current = null;
+        queueMicrotask(() => setHistoryOpen(true));
+      }
+      return;
+    }
+    if (location.state?.analysisReviewId === review.id) {
+      review.entered = true;
+    } else if (review.entered && navigationType === 'POP' && location.key === review.returnKey) {
+      reviewNavigation.current = null;
+      queueMicrotask(() => {
+        setSelectedAnalysis(null);
+        setHistoryOpen(true);
+      });
+    }
+  }, [location.key, location.state, navigationType]);
   const loaded = useRef(false);
-  const pendingDeleteAnalysis = analyses.find((analysis) => analysis.id === pendingDeleteId);
 
   useEffect(() => {
     if (loaded.current) return;
@@ -112,6 +157,11 @@ export default function ImageProcessing() {
   }, [fetchStats]);
 
   const inspectSelectedImage = async (selectedFile) => {
+    areaCheckRequestRef.current?.abort();
+    areaCheckRequestRef.current = null;
+    setAreaChecking(false);
+    setAreaCheckError('');
+    setAreaConfirmation(null);
     const requestId = preflightRequestRef.current + 1;
     preflightRequestRef.current = requestId;
     setLocationChecking(true);
@@ -200,6 +250,11 @@ export default function ImageProcessing() {
 
   const clearUploadFields = () => {
     preflightRequestRef.current += 1;
+    areaCheckRequestRef.current?.abort();
+    areaCheckRequestRef.current = null;
+    setAreaChecking(false);
+    setAreaCheckError('');
+    setAreaConfirmation(null);
     setFile(null);
     setLocationCheck(null);
     setLocationChecking(false);
@@ -234,9 +289,11 @@ export default function ImageProcessing() {
     if (nextFile) selectImage(nextFile);
   };
 
-  const startConfirmedProcess = (allowPartialMapOverlap = false) => {
+  const startConfirmedProcess = (allowPartialMapOverlap = false, allowRepeatImageAnalysis = false) => {
     if (!file || processing) return;
+    if (!feedback.validate()) { setOpenPanel('configuration'); return; }
     setPartialConfirmOpen(false);
+    setAreaConfirmation(null);
     // Fire-and-forget: the store handles the fetch, the AbortController, and
     // updating processing/stage/progress/result/error in its own state. We do
     // not await this, so navigating away does NOT cancel the request.
@@ -250,6 +307,7 @@ export default function ImageProcessing() {
       ai_runtime_tuning: {},
       species,
       allow_partial_map_overlap: allowPartialMapOverlap,
+      allow_repeat_image_analysis: allowRepeatImageAnalysis,
     }).then(() => {
       // After processing settles, see if the result wants to live on the map.
       const finalResult = useProcessingStore.getState().result;
@@ -263,13 +321,45 @@ export default function ImageProcessing() {
     });
   };
 
-  const handleProcess = () => {
-    if (!file || processing || locationChecking || !locationCheck?.can_process) return;
+  const handleProcess = async () => {
+    if (!file || processing || locationChecking || areaCheckRequestRef.current || !locationCheck?.can_process) return;
+    if (!feedback.validate()) { setOpenPanel('configuration'); return; }
     if (locationCheck.status === 'partial' && !partialApproved) {
       setPartialConfirmOpen(true);
       return;
     }
-    startConfirmedProcess(locationCheck.status === 'partial');
+    const controller = new AbortController();
+    areaCheckRequestRef.current = controller;
+    setAreaChecking(true);
+    setAreaCheckError('');
+    setAreaConfirmation(null);
+    try {
+      const response = await fetch(`${API}/api/analyses/area-context`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ footprint: locationCheck.map?.analysis_footprint,
+          image_name: file.name, latitude: locationCheck.latitude, longitude: locationCheck.longitude,
+          ...locationCheck.image_identity,
+        }),
+        signal: controller.signal, cache: 'no-store',
+      });
+      const context = await readAnalysisResponse(response);
+      if (controller.signal.aborted) return;
+      if (!Array.isArray(context.analyses) || !Number.isInteger(context.saved_point_count) || context.saved_point_count < 0) {
+        throw new Error('Could not check existing planting data. Please try Run Analysis again.');
+      }
+      if (context.saved_point_count > 0 || context.analyses.length > 0 || context.repeat_analyses?.length > 0) {
+        setAreaConfirmation({ ...context, requestId: preflightRequestRef.current });
+      } else {
+        startConfirmedProcess(locationCheck.status === 'partial');
+      }
+    } catch (checkError) {
+      if (!controller.signal.aborted) setAreaCheckError(checkError.message || 'Could not check existing planting data. Please try Run Analysis again.');
+    } finally {
+      if (areaCheckRequestRef.current === controller) {
+        areaCheckRequestRef.current = null;
+        setAreaChecking(false);
+      }
+    }
   };
 
   const handleSaveToDatabase = async () => {
@@ -302,11 +392,35 @@ export default function ImageProcessing() {
       setHistoryOpen(false);
       setSelectedAnalysis(detail);
       setSavedAnalysisBoundary(detail);
+      reviewNavigation.current = { id: analysisId, returnKey: location.key, entered: false };
+      navigate(`${location.pathname}${location.search}${location.hash}`, {
+        state: { ...location.state, analysisReviewId: analysisId },
+      });
     } catch (openError) {
       setAnalysisLoadError(openError.message || 'Could not load analysis');
     } finally {
       setLoadingAnalysisId(null);
     }
+  };
+
+  const handleReturnToHistory = () => {
+    const review = reviewNavigation.current;
+    reviewNavigation.current = null;
+    setSelectedAnalysis(null);
+    setHistoryOpen(true);
+    if (review?.entered && location.state?.analysisReviewId === review.id) navigate(-1);
+  };
+
+  const handleViewAnalysisOnMap = () => {
+    if (!canViewSavedAnalysisOnMap(selectedAnalysis)) return;
+    setSavedAnalysisBoundary(selectedAnalysis, { preserveView: false });
+    const review = reviewNavigation.current;
+    reviewNavigation.current = review ? { ...review, viewingMap: true } : null;
+    setSelectedAnalysis(null);
+    setHistoryOpen(false);
+    setOverlayOpen(false);
+    // Replace the review entry so browser Back returns to the history list.
+    navigate('/', { replace: true });
   };
 
   const handleDeleteAnalysis = async (analysisId) => {
@@ -372,13 +486,20 @@ export default function ImageProcessing() {
     downloadBlob(blob, `mangrovision_${result.uploaded_file_name}.${extension}`);
   };
 
+  const confirmationAnalyses = areaConfirmation?.repeat_analyses?.length
+    ? areaConfirmation.repeat_analyses : areaConfirmation?.analyses || [];
+
   return (
     <Panel
-      title="Image Processing"
+      title="Analyze Image"
       subtitle={result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
       openKey={openPanel}
       onOpenKeyChange={setOpenPanel}
     >
+      {result && <NextActions compact actions={[
+        { label: 'Review analysis', onClick: () => setOverlayOpen(true), description: result.saved ? 'Open the saved analysis summary.' : 'Check the overlay and save the analysis.' },
+        ...(result.saved ? [{ label: 'Assign available points', to: '/planters?section=assign', description: 'Choose an organization and project site.' }] : []),
+      ]} />}
       <PanelCard
         title="Upload Image"
         panelKey="upload"
@@ -433,7 +554,11 @@ export default function ImageProcessing() {
             {locationChecking && (
               <p>Checking image location...</p>
             )}
-            {!locationChecking && locationCheckError && <p>{locationCheckError}</p>}
+            {!locationChecking && locationCheckError && <>
+              <p>{locationCheckError}</p>
+              <button type="button" className="btn btn-secondary btn-sm" disabled={processing || saving}
+                onClick={() => inspectSelectedImage(file)}>Retry location check</button>
+            </>}
             {!locationChecking && locationCheck && (
               <>
                 {locationCheck.status === 'no_gps' && <p>No GPS coordinates found in this image.</p>}
@@ -476,6 +601,7 @@ export default function ImageProcessing() {
           <div className="config-row config-row-input">
             <label className="config-label" htmlFor="canopy-buffer">Danger Buffer (m)</label>
             <input
+              {...feedback.props('canopy_buffer')}
               id="canopy-buffer"
               className="form-input config-input"
               type="number"
@@ -483,9 +609,11 @@ export default function ImageProcessing() {
               max="5.0"
               step="0.1"
               value={canopyBuffer}
-              onChange={(event) => setCanopyBuffer(Number(event.target.value))}
+              onChange={(event) => { feedback.onChange(event); setCanopyBuffer(event.target.value); }}
+              required
               disabled={processing || saving}
             />
+            <FieldError feedback={feedback} field="canopy_buffer" />
           </div>
           <div className="config-row config-row-input">
             <label className="config-label" htmlFor="species-select">Species</label>
@@ -505,6 +633,7 @@ export default function ImageProcessing() {
             <span className="config-value">{targetSpacingM.toFixed(1)} m</span>
           </div>
         </div>
+        <FormErrorSummary feedback={feedback} />
       </PanelCard>
 
       {processing && (
@@ -531,15 +660,17 @@ export default function ImageProcessing() {
             className="btn btn-primary btn-lg"
             style={{ width: '100%' }}
             onClick={handleProcess}
-            disabled={!file || locationChecking || !locationCheck?.can_process}
+            disabled={!file || locationChecking || areaChecking || !locationCheck?.can_process}
           >
             {locationChecking
               ? 'Checking Image Location...'
+              : areaChecking ? 'Checking Existing Planting Data...'
               : locationCheck?.status === 'partial' && !partialApproved
                 ? 'Review Partial Coverage'
                 : 'Run Analysis'}
           </button>
           {error && <div className="process-error">{error}</div>}
+          {areaCheckError && <div className="process-error" role="alert">{areaCheckError}</div>}
         </div>
       )}
 
@@ -551,7 +682,7 @@ export default function ImageProcessing() {
             style={{ width: '100%' }}
             onClick={() => setOverlayOpen(true)}
           >
-            Show Summary
+            Review analysis
           </button>
         </div>
       )}
@@ -577,76 +708,43 @@ export default function ImageProcessing() {
         </button>
       </div>
 
+      <ImageAnalysisHistory open={historyOpen} analyses={analyses}
+        onClose={() => setHistoryOpen(false)} onOpen={handleOpenAnalysis}
+        onDelete={(analysis) => {
+          setHistoryOpen(false);
+          setPendingDeleteId(analysis.id);
+          setPendingDeleteAnalysis(analysis);
+        }}
+        openingId={loadingAnalysisId} deleteBusy={deleteBusy} error={analysisLoadError || deleteError}
+      />
+
       {createPortal(<Modal
-        open={historyOpen}
-        title="Image Analysis History"
-        variant="info"
-        className="analysis-history-modal"
-        cancelLabel="Close"
-        onCancel={() => setHistoryOpen(false)}
-        icon={
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-            <path d="M3 3v5h5" />
-            <path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" />
-            <path d="M12 7v5l3 3" />
-          </svg>
-        }
+        open={Boolean(areaConfirmation)}
+        title={areaConfirmation?.repeat_analyses?.length ? 'This image has already been analyzed' : areaConfirmation?.saved_point_count ? 'Planting points already exist in this area' : 'This area has already been analyzed'}
+        variant="warning"
+        confirmLabel="Continue analysis"
+        cancelLabel="Cancel"
+        className="image-area-confirmation"
+        onConfirm={() => {
+          if (areaConfirmation?.requestId !== preflightRequestRef.current) return;
+          setAreaConfirmation(null);
+          startConfirmedProcess(locationCheck.status === 'partial', Boolean(areaConfirmation.repeat_analyses?.length));
+        }}
+        onCancel={() => setAreaConfirmation(null)}
       >
-        <p className="analysis-history-intro">
-          {analyses.length} saved {analyses.length === 1 ? 'analysis' : 'analyses'}
-        </p>
-        {deleteError && <div className="analytics-error">{deleteError}</div>}
-        {analysisLoadError && <div className="analytics-error">{analysisLoadError}</div>}
-        <div className="analytics-history-list">
-          {analyses.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No saved analyses yet.</p>
-          ) : (
-            analyses.map((analysis) => {
-              const isLoading = loadingAnalysisId === analysis.id;
-              return (
-                <div
-                  key={analysis.id}
-                  className={`analytics-history-item ${isLoading ? 'analytics-history-loading' : ''}`}
-                >
-                  <button
-                    type="button"
-                    className="analysis-history-open"
-                    onClick={() => handleOpenAnalysis(analysis.id)}
-                    disabled={Boolean(loadingAnalysisId)}
-                    aria-label={`Open summary for ${analysis.image_name}`}
-                  >
-                    <span className="analytics-history-main">
-                      <span className="analytics-history-title">{analysis.image_name}</span>
-                      <span className="analytics-history-meta">
-                        {analysis.analyzed_at?.slice(0, 10)} - {analysis.hexagon_count} pts - {analysis.plantable_area_m2?.toFixed(1)} m2
-                      </span>
-                    </span>
-                    <span className="analytics-history-hint" aria-hidden="true">
-                      {isLoading ? 'Loading...' : 'View details'}
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setHistoryOpen(false);
-                      setPendingDeleteId(analysis.id);
-                    }}
-                    title={`Delete ${analysis.image_name}`}
-                    aria-label={`Delete analysis ${analysis.image_name}`}
-                    disabled={Boolean(loadingAnalysisId) || deleteBusy}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                  </button>
-                </div>
-              );
-            })
-          )}
-        </div>
+        {areaConfirmation?.repeat_analyses?.length > 0 && <p><strong>No planting points will be added.</strong> You can run the analysis again and save its result. The earlier analysis and its planting records will be kept.</p>}
+        {areaConfirmation?.saved_point_count > 0 && <p><strong>{areaConfirmation.saved_point_count.toLocaleString()} saved planting {areaConfirmation.saved_point_count === 1 ? 'point is' : 'points are'}</strong> inside this image's mapped area.</p>}
+        {confirmationAnalyses.length > 0 && <>
+          <p>{areaConfirmation?.repeat_analyses?.length ? 'Previous runs of this image:' : 'Previous analyses covering this area:'}</p>
+          <ul className="image-area-previous-analyses">{confirmationAnalyses.map(item => (
+            <li key={item.id}>
+              <strong>{item.source_image_name || item.image_name}</strong>
+              <span>{item.image_name !== item.source_image_name && `${item.image_name} · `}{formatAnalysisDate(item.analyzed_at)}</span>
+            </li>
+          ))}</ul>
+        </>}
+        {!locationCheck?.footprint_calibrated && <p className="image-area-estimate">The image boundary is estimated. Review its position on the map if needed.</p>}
+        <p>{areaConfirmation?.repeat_analyses?.length ? 'Do you wish to run this image again?' : 'Do you wish to continue? Existing planting records will be kept, and duplicate planting points will still be excluded.'}</p>
       </Modal>, document.body)}
 
       <Modal
@@ -718,17 +816,20 @@ export default function ImageProcessing() {
         )}
       </Modal>
 
-      <ResultsOverlay
-        open={Boolean(selectedAnalysis)}
+      {selectedAnalysis && <ResultsOverlay
+        open
         result={selectedAnalysis}
         originalPreview={null}
         saving={false}
         saved
         saveError=""
-        onClose={() => setSelectedAnalysis(null)}
+        onClose={handleReturnToHistory}
+        onBack={handleReturnToHistory}
+        onViewMap={handleViewAnalysisOnMap}
+        canViewMap={canViewSavedAnalysisOnMap(selectedAnalysis)}
         onSave={() => {}}
         onExport={handleExportSelected}
-      />
+      />}
 
       <Modal
         open={Boolean(pendingDeleteId)}
