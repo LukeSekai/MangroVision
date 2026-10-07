@@ -100,6 +100,7 @@ export default function MapAnalytics() {
       <PanelCard
         title="Overview"
         panelKey="overview"
+        className="map-overview-card"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <rect x="3" y="3" width="7" height="7" rx="1" />
@@ -109,18 +110,17 @@ export default function MapAnalytics() {
           </svg>
         }
       >
-        <div className="stats-grid">
-          <div className="stat-card"><div className="stat-label">Analyses</div><div className="stat-value">{stats?.total_analyses ?? '-'}</div></div>
-          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{mapped}</div></div>
-          <div className="stat-card"><div className="stat-label">Planned</div><div className="stat-value" style={{ color: 'var(--color-planned)' }}>{planned}</div></div>
-          <div className="stat-card"><div className="stat-label">Assigned</div><div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{assigned}</div></div>
-          <div className="stat-card"><div className="stat-label">Planted</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{planted}</div></div>
-          <div className="stat-card"><div className="stat-label">Dead</div><div className="stat-value" style={{ color: '#7f1d1d' }}>{dead}</div></div>
-          <div className="stat-card"><div className="stat-label">Skipped</div><div className="stat-value" style={{ color: '#6b7280' }}>{skipped}</div></div>
+        <div className="map-overview-grid">
+          <div className="stat-card"><div className="stat-label">Analyses</div><div className="stat-value">{stats?.total_analyses?.toLocaleString() ?? '—'}</div></div>
+          <div className="stat-card"><div className="stat-label">Mapped Points</div><div className="stat-value">{mapped.toLocaleString()}</div></div>
+          <div className="stat-card"><div className="stat-label">Planned</div><div className="stat-value" style={{ color: 'var(--color-planned)' }}>{planned.toLocaleString()}</div></div>
+          <div className="stat-card"><div className="stat-label">Assigned</div><div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{assigned.toLocaleString()}</div></div>
+          <div className="stat-card"><div className="stat-label">Planted</div><div className="stat-value" style={{ color: 'var(--color-completed)' }}>{planted.toLocaleString()}</div></div>
+          <div className="stat-card"><div className="stat-label">Dead</div><div className="stat-value" style={{ color: '#7f1d1d' }}>{dead.toLocaleString()}</div></div>
+          <div className="stat-card"><div className="stat-label">Skipped</div><div className="stat-value" style={{ color: '#6b7280' }}>{skipped.toLocaleString()}</div></div>
           <div className="stat-card analytics-unavailable-stat">
             <div className="stat-label">Unavailable</div>
-            <div className="stat-value" style={{ color: '#f97316' }}>{unavailable}</div>
-            <div className="stat-sub">Points in eroded zones, unavailable for planting.</div>
+            <div className="stat-value" style={{ color: '#f97316' }}>{unavailable.toLocaleString()}</div>
           </div>
         </div>
       </PanelCard>

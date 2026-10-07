@@ -10,18 +10,25 @@ from urllib.request import Request, urlopen
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from dotenv import dotenv_values
 
 from api.site_access import access_for_destination, distance_m, inside_area, inside_or_near_area, path_distance, remaining_access_path
+from api.routing_usage import reserve_google_request
 
 router = APIRouter()
 
 _SECRETS_PATH = Path(__file__).resolve().parents[3] / ".streamlit" / "secrets.toml"
+_ENV_PATH = Path(__file__).resolve().parents[3] / '.env'
 
 
 def _load_google_routes_api_key() -> str:
     env_value = (os.getenv("GOOGLE_ROUTES_API_KEY") or "").strip()
     if env_value:
         return env_value
+    # A newly entered laptop key can be picked up without restarting the API.
+    local_value = (dotenv_values(_ENV_PATH).get('GOOGLE_ROUTES_API_KEY') or '').strip()
+    if local_value:
+        return local_value
     try:
         with _SECRETS_PATH.open("rb") as fh:
             return str(tomllib.load(fh).get("google_routes_api_key") or "").strip()
@@ -158,6 +165,7 @@ def _google_route(origin, destination, travel_mode):
         },
     )
 
+    reserve_google_request(api_key)
     try:
         with urlopen(http_request, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8"))

@@ -14,6 +14,7 @@ def routing(monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
     module = importlib.import_module('api.routes.routing')
     monkeypatch.setattr(module, '_load_google_routes_api_key', lambda: 'test-key')
+    monkeypatch.setattr(module, 'reserve_google_request', lambda key: None)
     return module
 
 
@@ -324,3 +325,81 @@ def test_invalid_gps_accuracy_rejected(routing, accuracy):
     with TestClient(app) as client:
         assert client.post('/compute', json=dict(origin_lat=10, origin_lon=122, dest_lat=10,
             dest_lon=122, origin_accuracy_m=accuracy)).status_code == 422
+
+
+def test_google_request_caps_persist_and_reset_by_date(routing, monkeypatch, tmp_path):
+    from api.routing_usage import reserve_google_request
+    from datetime import datetime, timezone
+    import sqlite3
+    monkeypatch.setenv('GOOGLE_ROUTES_DAILY_LIMIT', '2')
+    monkeypatch.setenv('GOOGLE_ROUTES_MONTHLY_LIMIT', '3')
+    path = tmp_path / 'usage.sqlite3'
+    def reserve(day):
+        reserve_google_request('test-key', usage_path=path,
+            now=datetime.fromisoformat(day).replace(tzinfo=timezone.utc))
+    reserve('2026-10-08')
+    reserve('2026-10-08')
+    with pytest.raises(HTTPException) as daily:
+        reserve('2026-10-08')
+    assert daily.value.status_code == 429
+    assert 'daily' in daily.value.detail
+    reserve('2026-10-09')
+    with pytest.raises(HTTPException) as monthly:
+        reserve('2026-10-09')
+    assert 'monthly' in monthly.value.detail
+    with sqlite3.connect(path) as connection:
+        assert dict(connection.execute('SELECT period, count FROM usage'))['2026-10'] == 3
+    assert b'test-key' not in path.read_bytes()
+    reserve('2026-11-01')
+
+
+def test_simultaneous_requests_cannot_exceed_the_limit(routing, monkeypatch, tmp_path):
+    from api.routing_usage import reserve_google_request
+    from concurrent.futures import ThreadPoolExecutor
+    monkeypatch.setenv('GOOGLE_ROUTES_DAILY_LIMIT', '3')
+    monkeypatch.setenv('GOOGLE_ROUTES_MONTHLY_LIMIT', '3')
+    path = tmp_path / 'usage.sqlite3'
+    def attempt(_):
+        try:
+            reserve_google_request('test-key', usage_path=path)
+            return 200
+        except HTTPException as error:
+            return error.status_code
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(attempt, range(8)))
+    assert results.count(200) == 3
+    assert results.count(429) == 5
+
+
+def test_usage_storage_failure_blocks_the_provider_request(routing, tmp_path):
+    from api.routing_usage import reserve_google_request
+    bad_directory = tmp_path / 'not-a-directory'
+    bad_directory.write_text('occupied', encoding='utf-8')
+    with pytest.raises(HTTPException) as unavailable:
+        reserve_google_request('test-key', usage_path=bad_directory / 'usage.sqlite3')
+    assert unavailable.value.status_code == 503
+
+
+def test_zero_limit_stops_google_before_sending_a_request(routing, monkeypatch, tmp_path):
+    from api.routing_usage import reserve_google_request
+    monkeypatch.setenv('GOOGLE_ROUTES_DAILY_LIMIT', '0')
+    monkeypatch.setattr(routing, 'reserve_google_request',
+        lambda key: reserve_google_request(key, usage_path=tmp_path / 'usage.sqlite3'))
+    monkeypatch.setattr(routing, 'urlopen', lambda *args, **kwargs: pytest.fail('Google was contacted after the cap'))
+    with pytest.raises(HTTPException) as capped:
+        routing._google_route([10.7,122.55], [10.78,122.62], 'walking')
+    assert capped.value.status_code == 429
+
+
+def test_laptop_key_is_read_from_private_env_and_hosted_key_takes_priority(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
+    routing = importlib.import_module('api.routes.routing')
+    monkeypatch.delenv('GOOGLE_ROUTES_API_KEY', raising=False)
+    environment = tmp_path / '.env'
+    environment.write_text('GOOGLE_ROUTES_API_KEY=local-test-key\n', encoding='utf-8')
+    monkeypatch.setattr(routing, '_ENV_PATH', environment)
+    assert routing._load_google_routes_api_key() == 'local-test-key'
+    environment.write_text('GOOGLE_ROUTES_API_KEY=updated-test-key\n', encoding='utf-8')
+    assert routing._load_google_routes_api_key() == 'updated-test-key'
+    monkeypatch.setenv('GOOGLE_ROUTES_API_KEY', 'hosted-test-key')
+    assert routing._load_google_routes_api_key() == 'hosted-test-key'

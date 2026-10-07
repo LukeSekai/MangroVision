@@ -16,18 +16,44 @@
 .analytics-replanting-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
 .analytics-brush-modes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 
-.stats-grid {
+.map-overview-card {
+  flex-shrink: 0;
+}
+
+.map-overview-card .panel-card-body {
+  max-height: none;
+  overflow: visible;
+  scrollbar-gutter: auto;
+}
+
+.map-overview-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: 1fr;
+  gap: 8px;
 }
 
-.stat-card {
+.map-overview-grid .stat-card {
+  min-width: 0;
   padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
 }
 
-.analytics-unavailable-stat {
-  grid-column: 1 / -1;
+.map-overview-grid .stat-card:hover {
+  border-color: var(--border-light);
+  box-shadow: none;
+  transform: none;
+}
+
+.map-overview-grid .stat-label {
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.map-overview-grid .stat-value {
+  font-variant-numeric: tabular-nums;
 }
 
 /* Legend */

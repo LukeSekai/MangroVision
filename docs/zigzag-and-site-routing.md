@@ -93,6 +93,38 @@ To support a different physical site, add its mapped access road and footprint
 to the JSON file, add a routing regression, and restart the API. Do not enlarge
 the local GPS snap tolerance to bypass a missing mapped road.
 
+## Google Routes configuration for laptop testing
+
+Set `GOOGLE_ROUTES_API_KEY` in the repository-root private `.env`. Do not put
+it in a `VITE_` variable or commit it. A hosted environment variable takes
+priority. When the running process has no key, the API also checks the private
+`.env` at request time, so a newly entered key can be used without another
+restart after this code update is running.
+
+Google Routes attempts are capped at 100 per UTC day and 1,000 per UTC month
+by default. Configure `GOOGLE_ROUTES_DAILY_LIMIT` and
+`GOOGLE_ROUTES_MONTHLY_LIMIT` on the backend to change those limits; zero stops
+all Google calls. Counts persist across API restarts in the ignored
+`MangroVision_New/run_logs/google_routes_usage.sqlite3`. Attempts are counted
+before Google is contacted, including failed calls. The file stores only a
+credential fingerprint and counts, with no key, coordinates, or route content.
+Calls stop if the counter cannot be checked. Simultaneous requests share the
+same counter transaction.
+
+These are local request limits, not a guarantee about a Google bill: other
+servers and projects may use the same billing account. Review the account's
+actual usage, restrict the key to Routes API, and configure Google Cloud
+quotas for each project using the key. Budget alerts do not stop charges.
+See [Google's pricing](https://developers.google.com/maps/billing-and-pricing/pricing)
+and [cost controls](https://developers.google.com/maps/billing-and-pricing/manage-costs).
+
+On 2026-10-08, a walking-route check using the private `.env` credential
+returned 372 road coordinates after billing was activated. The laptop API
+was ready, while the saved Vercel tunnel was unreachable. For remote testing,
+start `MangroVision_New/start_testing.py --deploy` with the workspace's venv
+as described in [user-testing.md](user-testing.md); local development alone
+does not reconnect Vercel to the laptop.
+
 ## Spatial allocation verification (2026-09-13)
 
 - 45 Python checks passed: geometric shares, pending-assignment repair guards,
