@@ -101,14 +101,22 @@ photos are included in Git and copied into production builds. Images use
 descriptive alternative text and crop to fill their frames; the main banner
 loads immediately and the other photos load as visitors approach them.
 
-The Past activities section replaces the former staff profile. Its four cards
-are placeholders until actual event details are supplied. Edit `pastActivities`
-in `LikeWebsite.jsx` with each activity's title, `date` (YYYY-MM-DD), short recap,
-`photo` filename, and descriptive `alt` text. Use three or four entries. Place
-activity photos in `MangroVision_New/client/public/like/`, for example
-`activity-01.jpg` through `activity-04.jpg`, and set the corresponding `photo`
-field to that filename. Leave `photo` and `date` as `null` to keep placeholders.
-Do not present example events or dates as actual activity history.
+The Past activities section replaces the former staff profile. Its four photos
+are connected from the same folder, with titles taken from their filenames
+without the `.jpg` extension:
+
+- `NGO Love Our Own Brethren (LOOB) Inc. Field Visit.jpg`
+- `University of the Philippines Visayas Field Visit.jpg`
+- `UPV IFPDS Field Visit.jpg`
+- `ZSL - Mangrove Caravan.jpg`
+
+Activity images show the entire photo, including group members and event text.
+Edit `pastActivities` in `LikeWebsite.jsx` with each activity's `date`
+(YYYY-MM-DD), short recap, `photo` filename, and descriptive `alt` text. Titles
+automatically follow the configured filenames. Use three or four entries.
+Dates and recaps remain placeholders until supplied. Leave `photo` and `date`
+as `null` to keep their placeholders. Do not present example events or dates as
+actual activity history.
 
 Supply official contact information, hours, visitor guidelines, and approved
 activity content before publishing.

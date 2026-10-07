@@ -118,6 +118,9 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-activity-card { overflow: hidden; border: 1px solid #dde6d6; border-radius: 12px; background: #fff; transition: transform .3s, box-shadow .3s; }
 .like-activity-card:hover { transform: translateY(-5px); box-shadow: 0 12px 28px #1637230a; }
 .like-activity-card .like-photo { min-height: 0; aspect-ratio: 4 / 3; border-radius: 0; }
+.like-activity-card .like-photo.has-image { background: #e4eedc; }
+.like-activity-card .like-photo.has-image::after { content: none; }
+.like-activity-card .like-photo > img { object-fit: contain; }
 .like-activity-card .like-photo-label { font-size: 7px; letter-spacing: 1.3px; left: 20px; top: 20px; }
 .like-activity-card .like-photo-caption { left: 20px; bottom: 20px; }
 .like-activity-card .like-photo-caption > span { font-size: 14px; }

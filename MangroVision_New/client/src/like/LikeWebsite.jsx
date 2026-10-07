@@ -33,34 +33,34 @@ function PhotoPlaceholder({ label, className = '', number }) {
 
 function Photo({ file, alt, label, className = '', priority = false }) {
   return <div className={`like-photo has-image ${className}`}>
-    <img src={`${import.meta.env.BASE_URL}like/${file}`} alt={alt} loading={priority ? 'eager' : 'lazy'} decoding="async" />
-    <div className="like-photo-caption"><span>{label}</span></div>
+    <img src={`${import.meta.env.BASE_URL}like/${encodeURIComponent(file)}`} alt={alt} loading={priority ? 'eager' : 'lazy'} decoding="async" />
+    {label ? <div className="like-photo-caption"><span>{label}</span></div> : null}
   </div>;
 }
 
-// Add each activity's approved details and photo filename when available.
+// Activity titles use the supplied photo filenames without their extensions.
 const pastActivities = [
   {
-    id: '01', title: 'Activity title to be added', date: null,
-    description: 'Photos and a short recap of this activity will be added here.',
-    photo: null, alt: '',
+    id: '01', photo: 'NGO Love Our Own Brethren (LOOB) Inc. Field Visit.jpg', date: null,
+    description: 'A short recap of this activity will be added here.',
+    alt: 'Visitors wearing yellow shirts posing together inside an ecopark viewing tower',
   },
   {
-    id: '02', title: 'Activity title to be added', date: null,
-    description: 'Photos and a short recap of this activity will be added here.',
-    photo: null, alt: '',
+    id: '02', photo: 'University of the Philippines Visayas Field Visit.jpg', date: null,
+    description: 'A short recap of this activity will be added here.',
+    alt: 'A group posing indoors beside the LIKE sign with a green ecotourism banner',
   },
   {
-    id: '03', title: 'Activity title to be added', date: null,
-    description: 'Photos and a short recap of this activity will be added here.',
-    photo: null, alt: '',
+    id: '03', photo: 'UPV IFPDS Field Visit.jpg', date: null,
+    description: 'A short recap of this activity will be added here.',
+    alt: 'Visitors gathered in a viewing tower beneath a painted ceiling, with an IFPDS banner along the bottom',
   },
   {
-    id: '04', title: 'Activity title to be added', date: null,
-    description: 'Photos and a short recap of this activity will be added here.',
-    photo: null, alt: '',
+    id: '04', photo: 'ZSL - Mangrove Caravan.jpg', date: null,
+    description: 'A short recap of this activity will be added here.',
+    alt: 'A group outside LIKE holding certificates beneath the Mangrove Caravan event heading',
   },
-];
+].map((activity) => ({ ...activity, title: activity.photo ? activity.photo.replace(/\.[^.]+$/, '') : 'Activity title to be added' }));
 
 const initialForm = {
   organization: '', contact_name: '', phone: '', email: '', title: '',
@@ -220,7 +220,7 @@ export default function LikeWebsite() {
       <section className="like-section like-activities" id="activities" aria-labelledby="like-activities-heading"><div className="like-container">
         <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">MOMENTS FROM LIKE</span><h2 id="like-activities-heading">Past activities.<br /><em>Lasting</em> memories.</h2></div><p>A space for the planting days, visits, and community activities at the ecopark.</p></div>
         <div className="like-activities-grid">{pastActivities.map((activity) => <article className="like-activity-card" key={activity.id} data-reveal>
-          {activity.photo ? <Photo file={activity.photo} alt={activity.alt} label={activity.title} /> : <PhotoPlaceholder label="Activity photo" number={activity.id} />}
+          {activity.photo ? <Photo file={activity.photo} alt={activity.alt} /> : <PhotoPlaceholder label="Activity photo" number={activity.id} />}
           <div className="like-activity-text"><div className="like-activity-meta"><span>ACTIVITY {activity.id}</span><span><Icon name="calendar" size={13} />{activity.date ? <time dateTime={activity.date}>{new Date(`${activity.date}T00:00:00+08:00`).toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Manila' })}</time> : 'Date to be added'}</span></div><h3>{activity.title}</h3><p>{activity.description}</p></div>
         </article>)}</div>
       </div></section>
