@@ -87,8 +87,11 @@ the request tables have RLS enabled and no `anon` or `authenticated` access.
 Public content lives in `client/src/like/LikeWebsite.jsx`; its gradients and
 animations live in `client/src/like/like.css`. Replace `PhotoPlaceholder` elements
 with approved photos and descriptive alternative text. Supply the official staff
-names/roles, contact information, hours, and visitor guidelines before publishing.
-The current personnel categories are layout placeholders, not a verified roster.
+member's name and profile, contact information, hours, and visitor guidelines before publishing.
+LIKE has one official staff member, so the website has a single profile placeholder.
+A staff portrait is optional for now; if available later, use `public/like/staff.jpg`
+instead of the previously suggested three staff image files. Photo paths still
+need to be connected in the component before added files appear on the website.
 Animations honor the visitor's reduced-motion preference.
 
 ## Verification

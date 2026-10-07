@@ -148,7 +148,7 @@ export default function LikeWebsite() {
       <Brand />
       <button className="like-menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="like-navigation" onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
       <nav id="like-navigation" className={menuOpen ? 'is-open' : ''} aria-label="Main navigation">
-        <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#team" onClick={closeMenu}>Our people</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
+        <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#team" onClick={closeMenu}>Our staff</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
         <a className="like-button is-small" href="#appointment" onClick={closeMenu}>Plant with us <Icon name="arrow" size={16} /></a>
       </nav>
     </div></header>
@@ -187,17 +187,17 @@ export default function LikeWebsite() {
       <section className="like-invitation"><div className="like-container" data-reveal><span className="like-eyebrow">LET’S GROW SOMETHING GOOD</span><h2>The next chapter of the coast<br />could start with <em>you.</em></h2><a className="like-button is-white" href="#appointment">Request a planting appointment <Icon name="arrow" size={18} /></a><span className="like-invitation-leaf" aria-hidden="true"><Icon size={240} /></span></div></section>
 
       <section className="like-section like-team" id="team"><div className="like-container">
-        <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">THE PEOPLE BEHIND THE ROOTS</span><h2>A shared place.<br />A <em>dedicated</em> team.</h2></div><p>Meet the assigned personnel who help care for LIKE and coordinate your activities.</p></div>
-        <div className="like-team-grid">{['Facility management', 'Planting coordination', 'Community support'].map((role, index) => <article className="like-team-card" key={role} data-reveal><PhotoPlaceholder label="Staff portrait" number={`0${index + 6}`} /><div><span className="like-eyebrow">{role}</span><h3>Staff name to be added</h3><p>Approved personnel details coming soon.</p></div></article>)}</div>
-        <p className="like-content-note">Personnel names, roles, and photos will be updated with the facility’s approved information.</p>
+        <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">THE PERSON BEHIND THE ROOTS</span><h2>A familiar face.<br />A <em>shared</em> purpose.</h2></div><p>Meet the official staff member at Leganes Integrated Katunggan Ecopark.</p></div>
+        <div className="like-team-grid"><article className="like-team-card" data-reveal><PhotoPlaceholder label="Staff portrait" number="06" /><div><span className="like-eyebrow">Official LIKE staff member</span><h3>Staff name to be added</h3><p>Profile details coming soon.</p></div></article></div>
+        <p className="like-content-note">Staff name and portrait will be added when available.</p>
       </div></section>
 
       <section className="like-section like-guidelines" id="guidelines"><div className="like-container like-guidelines-grid">
-        <div data-reveal><span className="like-eyebrow">A LITTLE PREPARATION GOES A LONG WAY</span><h2>Plan a visit.<br />Make it <em>count.</em></h2><p>Our team will help coordinate your planting activity. Start with a request, and we’ll work out the details together.</p><div className="like-walk-in"><Icon name="people" /><div><strong>Prefer a little help?</strong><p>You can still arrange an activity directly with LGU staff. They can enter your schedule for you in MangroVision.</p></div></div></div>
+        <div data-reveal><span className="like-eyebrow">A LITTLE PREPARATION GOES A LONG WAY</span><h2>Plan a visit.<br />Make it <em>count.</em></h2><p>LIKE and the LGU will help coordinate your planting activity. Start with a request, and we’ll work out the details together.</p><div className="like-walk-in"><Icon name="people" /><div><strong>Prefer a little help?</strong><p>You can still arrange an activity directly with LGU staff. They can enter your schedule for you in MangroVision.</p></div></div></div>
         <div className="like-faq" data-reveal>{[
           ['Is my appointment confirmed when I submit?', 'Your submission is a request. The LGU reviews your preferred time, staff availability, existing activities, and planting conditions before contacting you for confirmation.'],
           ['Can we choose our preferred planting time?', 'Yes. Tell us your preferred date, start time, and end time. Planting depends on conditions, including the tide, so staff may suggest a different time.'],
-          ['What should our group prepare?', 'Ask the team about appropriate clothing, footwear, materials, and any activity requirements when they confirm your appointment. Final visitor guidelines will be added here once approved.'],
+          ['What should our group prepare?', 'Ask LGU staff about appropriate clothing, footwear, materials, and any activity requirements when they confirm your appointment. Final visitor guidelines will be added here once approved.'],
           ['Do we need an account to send a request?', 'No account is needed. Provide your group and contact details so the LGU can coordinate with you.'],
         ].map(([question, answer], index) => <details key={question} open={index === 0}><summary>{question}<span aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</div>
       </div></section>
@@ -208,6 +208,6 @@ export default function LikeWebsite() {
       </div></section>
     </main>
 
-    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#team">Our people</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
+    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#team">Our staff</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
   </div>;
 }

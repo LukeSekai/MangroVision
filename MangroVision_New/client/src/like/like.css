@@ -109,11 +109,12 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-invitation h2 { font-size: clamp(30px, 3.5vw, 45px); letter-spacing: -1.6px; margin: 21px 0 30px; }
 .like-invitation h2 em { color: #a9d897; }
 .like-invitation-leaf { position: absolute; right: 10px; top: 0; color: #ffffff10; transform: rotate(-20deg); }
-.like-team-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 26px; }
+.like-team-grid { display: grid; grid-template-columns: 1fr; max-width: 800px; }
+.like-team-card { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 34px; align-items: center; padding: 26px; background: #ffffff80; border: 1px solid #dde6d6; border-radius: 14px; }
 .like-team-card .like-photo { min-height: 290px; border-radius: 10px; background: linear-gradient(155deg, #e4ebdf, #bfceba, #9bac96); }
 .like-team-card .like-photo-caption { color: #4d644a; }
 .like-team-card .like-photo-label { color: #647d5b; }
-.like-team-card > div:last-child { padding: 22px 0 0; }
+.like-team-card > div:last-child { padding: 0; }
 .like-team-card h3 { font-size: 17px; font-weight: 600; margin: 12px 0 5px; letter-spacing: -.5px; }
 .like-team-card p { font-size: 11px; margin: 0; }
 .like-team-card .like-eyebrow { font-size: 8px; letter-spacing: 1.6px; }
@@ -232,7 +233,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
   .like-experience-card .like-photo { min-height: 255px; }
   .like-experience-text p { font-size: 13px; }
   .like-team-grid { gap: 20px; grid-template-columns: 1fr; }
-  .like-team-card { display: grid; grid-template-columns: 135px 1fr; gap: 20px; align-items: center; }
+  .like-team-card { grid-template-columns: 120px minmax(0, 1fr); gap: 16px; padding: 16px; }
   .like-team-card .like-photo { min-height: 170px; }
   .like-team-card .like-photo-label { font-size: 6px; left: 13px; top: 15px; letter-spacing: .6px; gap: 5px; }
   .like-team-card .like-photo-caption { left: 13px; bottom: 18px; }
