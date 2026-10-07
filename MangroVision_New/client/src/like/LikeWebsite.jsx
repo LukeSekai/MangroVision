@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { bookingPayload, manilaToday, submitBooking } from './booking';
 import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes';
+import LikeMapDialog from './LikeMapDialog';
 
 function Icon({ name = 'leaf', size = 24, ...props }) {
   const paths = {
     leaf: <><path d="M20 4C9 3 3 8 5 15c2 7 13 6 15-11Z" /><path d="M4 21 15 10M9 16l-1-5m5 1 5 1" /></>,
     arrow: <><path d="M5 12h14m-6-6 6 6-6 6" /></>,
     pin: <><path d="M20 10c0 6-8 11-8 11S4 16 4 10a8 8 0 1 1 16 0Z" /><circle cx="12" cy="10" r="2.5" /></>,
+    map: <><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z" /><path d="M9 3v15m6-12v15" /></>,
     people: <><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2" /></>,
     calendar: <><rect x="3" y="5" width="18" height="16" rx="3" /><path d="M7 3v4m10-4v4M3 11h18m-13 4h2m4 0h2" /></>,
     check: <path d="m5 12 4 4L19 6" />,
@@ -163,6 +165,7 @@ function AppointmentForm() {
 
 export default function LikeWebsite() {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [mapOpen, setMapOpen] = useState(false);
   const root = useRef(null);
   useEffect(() => {
     if (!('IntersectionObserver' in window)) return;
@@ -184,6 +187,7 @@ export default function LikeWebsite() {
       <button className="like-menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="like-navigation" onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
       <nav id="like-navigation" className={menuOpen ? 'is-open' : ''} aria-label="Main navigation">
         <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#activities" onClick={closeMenu}>Past activities</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
+        <button className="like-nav-map" type="button" aria-haspopup="dialog" onClick={() => { closeMenu(); setMapOpen(true); }}>View map</button>
         <a className="like-button is-small" href="#appointment" onClick={closeMenu}>Book an appointment <Icon name="arrow" size={16} /></a>
       </nav>
     </div></header>
@@ -193,7 +197,7 @@ export default function LikeWebsite() {
         <div className="like-hero-copy"><span className="like-eyebrow"><span className="like-live-dot" /> ROOTED IN LEGANES. GROWING TOGETHER.</span>
           <h1>A little seedling.<br />A <em>greener</em><br />tomorrow.</h1>
           <p>Welcome to Leganes Integrated Katunggan Ecopark. Discover the mangroves, meet the community, and be part of something that grows.</p>
-          <div className="like-hero-actions"><a className="like-button" href="#appointment">Book an appointment <Icon name="arrow" size={19} /></a><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
+          <div className="like-hero-actions"><a className="like-button" href="#appointment">Book an appointment <Icon name="arrow" size={19} /></a><button className="like-button is-secondary" type="button" aria-haspopup="dialog" onClick={() => setMapOpen(true)}>View map <Icon name="map" size={19} /></button><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
           <div className="like-hero-location"><span><Icon name="pin" size={18} /></span><div><strong>A greener corner of Leganes</strong><small>Leganes, Iloilo · Philippines</small></div></div>
         </div>
         <div className="like-hero-visual"><Photo className="like-hero-photo" file="hero.jpg" alt="Aerial view of LIKE's mangrove forest, elevated walkways, viewing towers, and coastal pavilions" label="The mangroves of LIKE" priority />
@@ -245,6 +249,7 @@ export default function LikeWebsite() {
         <AppointmentForm />
       </div></section>
     </main>
+    {mapOpen ? <LikeMapDialog onClose={() => setMapOpen(false)} /> : null}
 
     <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#activities">Past activities</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/dashboard">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
   </div>;

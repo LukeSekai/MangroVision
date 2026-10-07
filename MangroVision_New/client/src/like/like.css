@@ -38,8 +38,9 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-brand small { display: block; font-size: 7px; letter-spacing: 2px; font-weight: 650; margin-top: 5px; }
 .like-brand-dot { color: #16a34a; }
 .like-header nav { display: flex; gap: 28px; align-items: center; }
-.like-header nav > a:not(.like-button) { color: #566059; font-size: 11px; font-weight: 550; transition: color .2s; }
-.like-header nav > a:hover { color: #166534; }
+.like-header nav > a:not(.like-button), .like-nav-map { color: #566059; font-size: 11px; font-weight: 550; transition: color .2s; }
+.like-nav-map { background: transparent; padding: 0; text-align: left; }
+.like-header nav > a:hover, .like-nav-map:hover { color: #166534; }
 .like-menu-toggle { display: none; background: transparent; color: #166534; padding: 8px; }
 .like-hero { overflow: hidden; position: relative; padding: 62px 0 22px; background: radial-gradient(ellipse at 0% 10%, #d8e8ceaa, transparent 55%), linear-gradient(150deg, #eaf2e3, #f3f7ed 75%); }
 .like-hero-grid { display: grid; grid-template-columns: 1fr 1.03fr; gap: 60px; align-items: center; }
@@ -218,7 +219,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
   .like-menu-toggle { display: block; }
   .like-header nav { display: none; position: absolute; left: 0; right: 0; top: 74px; padding: 24px; background: #f6faf1; border-bottom: 1px solid #e0e9d8; box-shadow: 0 15px 25px #1736220a; flex-direction: column; align-items: stretch; gap: 23px; }
   .like-header nav.is-open { display: flex; }
-  .like-header nav > a:not(.like-button) { font-size: 14px; }
+  .like-header nav > a:not(.like-button), .like-nav-map { font-size: 14px; }
   .like-hero { padding-top: 35px; }
   .like-hero-grid { grid-template-columns: 1fr; gap: 28px; }
   .like-hero-copy { padding: 10px 0 0; }

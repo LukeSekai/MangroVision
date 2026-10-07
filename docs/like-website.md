@@ -2,7 +2,7 @@
 
 The public LIKE website is a separate React entry at `/like.html`. It uses the
 same frontend package and FastAPI backend as MangroVision, with its own CSS and
-no staff workspace, map, or chart imports. Visiting `/` or `/index.html` opens
+no staff workspace, staff map, or chart imports. Visiting `/` or `/index.html` opens
 the public website. Staff use `/dashboard`; Map Analytics is at `/map`.
 Staff-assisted scheduling remains available.
 
@@ -22,6 +22,29 @@ submission: unavailable API/database errors appear in the form.
 The normal managed development stack also serves `/like.html` on port 5173.
 Use the existing launcher after configuring a separate development database;
 do not start a second API process on an occupied port.
+
+## Public map viewer
+
+The **View map** buttons in the navigation and main banner open an interactive
+map dialog without a login. It shows the same Google satellite background and
+orthophoto as the staff map, using the shared bounds, native zoom limit, and
+`VITE_TILE_SERVER` / `VITE_TILESET_PATH` configuration. Visitors can pan, zoom,
+and reset the view. There are no planting points, zones, filters, or editing
+controls, and opening the map makes no staff/account/database API requests.
+
+The mapping library loads only when the dialog opens. Closing it preserves the
+visitor's scroll position and appointment form; Escape and the close button both
+work. Loading failures show a Retry button.
+
+The existing backend must serve the orthophoto at `/tiles/FINAL/{z}/{x}/{y}.png`
+(or the configured tile URL). The Vite development proxy already forwards
+`/tiles` to the backend. Production hosting needs the same tile proxy or a public
+tile host with the exported `MAP/FINAL` pyramid. This feature needs no database
+migration, email settings, or private `.env` changes. The existing orthophoto
+asset is reused; no map data is copied into the frontend build.
+
+The viewer is implemented in `client/src/like/LikeMapDialog.jsx` and
+`client/src/like/publicMap.js`; its styles are in `LikeMapDialog.css`.
 
 ## Database and staff workflow
 
