@@ -38,6 +38,30 @@ function Photo({ file, alt, label, className = '', priority = false }) {
   </div>;
 }
 
+// Add each activity's approved details and photo filename when available.
+const pastActivities = [
+  {
+    id: '01', title: 'Activity title to be added', date: null,
+    description: 'Photos and a short recap of this activity will be added here.',
+    photo: null, alt: '',
+  },
+  {
+    id: '02', title: 'Activity title to be added', date: null,
+    description: 'Photos and a short recap of this activity will be added here.',
+    photo: null, alt: '',
+  },
+  {
+    id: '03', title: 'Activity title to be added', date: null,
+    description: 'Photos and a short recap of this activity will be added here.',
+    photo: null, alt: '',
+  },
+  {
+    id: '04', title: 'Activity title to be added', date: null,
+    description: 'Photos and a short recap of this activity will be added here.',
+    photo: null, alt: '',
+  },
+];
+
 const initialForm = {
   organization: '', contact_name: '', phone: '', email: '', title: '',
   date: '', start_time: '', end_time: '', participants: '', notes: '', consent: false, website: '',
@@ -155,7 +179,7 @@ export default function LikeWebsite() {
       <Brand />
       <button className="like-menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="like-navigation" onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
       <nav id="like-navigation" className={menuOpen ? 'is-open' : ''} aria-label="Main navigation">
-        <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#team" onClick={closeMenu}>Our staff</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
+        <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#activities" onClick={closeMenu}>Past activities</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
         <a className="like-button is-small" href="#appointment" onClick={closeMenu}>Plant with us <Icon name="arrow" size={16} /></a>
       </nav>
     </div></header>
@@ -193,10 +217,12 @@ export default function LikeWebsite() {
 
       <section className="like-invitation"><div className="like-container" data-reveal><span className="like-eyebrow">LET’S GROW SOMETHING GOOD</span><h2>The next chapter of the coast<br />could start with <em>you.</em></h2><a className="like-button is-white" href="#appointment">Request a planting appointment <Icon name="arrow" size={18} /></a><span className="like-invitation-leaf" aria-hidden="true"><Icon size={240} /></span></div></section>
 
-      <section className="like-section like-team" id="team"><div className="like-container">
-        <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">THE PERSON BEHIND THE ROOTS</span><h2>A familiar face.<br />A <em>shared</em> purpose.</h2></div><p>Meet the official staff member at Leganes Integrated Katunggan Ecopark.</p></div>
-        <div className="like-team-grid"><article className="like-team-card" data-reveal><PhotoPlaceholder label="Staff portrait" number="06" /><div><span className="like-eyebrow">Official LIKE staff member</span><h3>Staff name to be added</h3><p>Profile details coming soon.</p></div></article></div>
-        <p className="like-content-note">Staff name and portrait will be added when available.</p>
+      <section className="like-section like-activities" id="activities" aria-labelledby="like-activities-heading"><div className="like-container">
+        <div className="like-section-heading" data-reveal><div><span className="like-eyebrow">MOMENTS FROM LIKE</span><h2 id="like-activities-heading">Past activities.<br /><em>Lasting</em> memories.</h2></div><p>A space for the planting days, visits, and community activities at the ecopark.</p></div>
+        <div className="like-activities-grid">{pastActivities.map((activity) => <article className="like-activity-card" key={activity.id} data-reveal>
+          {activity.photo ? <Photo file={activity.photo} alt={activity.alt} label={activity.title} /> : <PhotoPlaceholder label="Activity photo" number={activity.id} />}
+          <div className="like-activity-text"><div className="like-activity-meta"><span>ACTIVITY {activity.id}</span><span><Icon name="calendar" size={13} />{activity.date ? <time dateTime={activity.date}>{new Date(`${activity.date}T00:00:00+08:00`).toLocaleDateString('en-PH', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Manila' })}</time> : 'Date to be added'}</span></div><h3>{activity.title}</h3><p>{activity.description}</p></div>
+        </article>)}</div>
       </div></section>
 
       <section className="like-section like-guidelines" id="guidelines"><div className="like-container like-guidelines-grid">
@@ -215,6 +241,6 @@ export default function LikeWebsite() {
       </div></section>
     </main>
 
-    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#team">Our staff</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
+    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#activities">Past activities</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
   </div>;
 }

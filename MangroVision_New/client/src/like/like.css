@@ -114,16 +114,20 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-invitation h2 { font-size: clamp(30px, 3.5vw, 45px); letter-spacing: -1.6px; margin: 21px 0 30px; }
 .like-invitation h2 em { color: #a9d897; }
 .like-invitation-leaf { position: absolute; right: 10px; top: 0; color: #ffffff10; transform: rotate(-20deg); }
-.like-team-grid { display: grid; grid-template-columns: 1fr; max-width: 800px; }
-.like-team-card { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 34px; align-items: center; padding: 26px; background: #ffffff80; border: 1px solid #dde6d6; border-radius: 14px; }
-.like-team-card .like-photo { min-height: 290px; border-radius: 10px; background: linear-gradient(155deg, #e4ebdf, #bfceba, #9bac96); }
-.like-team-card .like-photo-caption { color: #4d644a; }
-.like-team-card .like-photo-label { color: #647d5b; }
-.like-team-card > div:last-child { padding: 0; }
-.like-team-card h3 { font-size: 17px; font-weight: 600; margin: 12px 0 5px; letter-spacing: -.5px; }
-.like-team-card p { font-size: 11px; margin: 0; }
-.like-team-card .like-eyebrow { font-size: 8px; letter-spacing: 1.6px; }
-.like-content-note { font-size: 10px; margin: 24px 0 0; }
+.like-activities-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.like-activity-card { overflow: hidden; border: 1px solid #dde6d6; border-radius: 12px; background: #fff; transition: transform .3s, box-shadow .3s; }
+.like-activity-card:hover { transform: translateY(-5px); box-shadow: 0 12px 28px #1637230a; }
+.like-activity-card .like-photo { min-height: 0; aspect-ratio: 4 / 3; border-radius: 0; }
+.like-activity-card .like-photo-label { font-size: 7px; letter-spacing: 1.3px; left: 20px; top: 20px; }
+.like-activity-card .like-photo-caption { left: 20px; bottom: 20px; }
+.like-activity-card .like-photo-caption > span { font-size: 14px; }
+.like-activity-card .like-photo-caption small { display: none; }
+.like-activity-text { padding: 22px 20px; }
+.like-activity-meta { display: flex; flex-wrap: wrap; gap: 10px 14px; justify-content: space-between; align-items: center; color: #6b7c63; font-size: 9px; }
+.like-activity-meta > span:first-child { color: #166534; font-size: 8px; font-weight: 650; letter-spacing: 1.5px; }
+.like-activity-meta > span:last-child { display: inline-flex; align-items: center; gap: 5px; }
+.like-activity-text h3 { margin: 16px 0 9px; font-size: 17px; font-weight: 650; letter-spacing: -.4px; line-height: 1.4; }
+.like-activity-text p { margin: 0; font-size: 12px; }
 .like-guidelines { background: linear-gradient(145deg, #edf4e7, #e6efde); border-block: 1px solid #dce7d4; }
 .like-guidelines-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 110px; }
 .like-guidelines-grid > div > p { font-size: 13px; max-width: 360px; }
@@ -203,6 +207,7 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
   .like-hero-actions { gap: 17px; }
   .like-hero-actions .like-text-link { font-size: 10px; }
   .like-booking-card { padding: 26px; }
+  .like-activities-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 780px) {
   .like-container { width: calc(100% - 40px); }
@@ -238,15 +243,8 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
   .like-experience-grid { grid-template-columns: 1fr; gap: 22px; }
   .like-experience-card .like-photo { min-height: 255px; }
   .like-experience-text p { font-size: 13px; }
-  .like-team-grid { gap: 20px; grid-template-columns: 1fr; }
-  .like-team-card { grid-template-columns: 120px minmax(0, 1fr); gap: 16px; padding: 16px; }
-  .like-team-card .like-photo { min-height: 170px; }
-  .like-team-card .like-photo-label { font-size: 6px; left: 13px; top: 15px; letter-spacing: .6px; gap: 5px; }
-  .like-team-card .like-photo-caption { left: 13px; bottom: 18px; }
-  .like-team-card .like-photo-caption > span { font-size: 12px; }
-  .like-team-card .like-photo-caption small { display: none; }
-  .like-team-card > div:last-child { padding: 0; }
-  .like-team-card h3 { font-size: 17px; }
+  .like-activities-grid { grid-template-columns: 1fr; }
+  .like-activity-card .like-photo { aspect-ratio: 16 / 10; }
   .like-invitation { padding: 56px 0; }
   .like-invitation h2 { font-size: 33px; }
   .like-invitation-leaf { right: -60px; top: 40px; pointer-events: none; }

@@ -101,11 +101,17 @@ photos are included in Git and copied into production builds. Images use
 descriptive alternative text and crop to fill their frames; the main banner
 loads immediately and the other photos load as visitors approach them.
 
-Supply the official staff member's name and profile, contact information,
-hours, and visitor guidelines before publishing. LIKE has one official staff
-member, so the website retains a single profile placeholder. A staff portrait
-is optional for now; if available later, use `public/like/staff.jpg` and replace
-that profile's `PhotoPlaceholder` with a `Photo` component.
+The Past activities section replaces the former staff profile. Its four cards
+are placeholders until actual event details are supplied. Edit `pastActivities`
+in `LikeWebsite.jsx` with each activity's title, `date` (YYYY-MM-DD), short recap,
+`photo` filename, and descriptive `alt` text. Use three or four entries. Place
+activity photos in `MangroVision_New/client/public/like/`, for example
+`activity-01.jpg` through `activity-04.jpg`, and set the corresponding `photo`
+field to that filename. Leave `photo` and `date` as `null` to keep placeholders.
+Do not present example events or dates as actual activity history.
+
+Supply official contact information, hours, visitor guidelines, and approved
+activity content before publishing.
 Animations honor the visitor's reduced-motion preference.
 
 ## Verification
