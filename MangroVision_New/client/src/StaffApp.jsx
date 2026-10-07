@@ -15,7 +15,7 @@ import LoginScreen from './components/LoginScreen';
 import AccountSettings from './pages/AccountSettings';
 import { useAuthStore } from './stores/authStore';
 
-const WORKSPACE_PAGES = ['/', '/dashboard', '/scheduling', '/activity', '/account',
+const WORKSPACE_PAGES = ['/map', '/dashboard', '/scheduling', '/activity', '/account',
   '/monitoring', '/monitoring/map', '/planters', '/processing', '/zones'];
 
 export default function StaffApp() {
@@ -37,7 +37,8 @@ export default function StaffApp() {
   return (
     <AppShell>
       <RetainedRoutes key={userId} paths={WORKSPACE_PAGES}>
-        <Route path="/" element={<MapAnalytics />} />
+        <Route path="/" element={<Navigate to="/map" replace />} />
+        <Route path="/map" element={<MapAnalytics />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/scheduling" element={<Scheduling />} />
         <Route path="/activity" element={<ActivityLog />} />
@@ -48,7 +49,7 @@ export default function StaffApp() {
         <Route path="/planters" element={<PlanterManagement />} />
         <Route path="/processing" element={<ImageProcessing />} />
         <Route path="/zones" element={<ErodedZoneEditor />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </RetainedRoutes>
     </AppShell>
   );

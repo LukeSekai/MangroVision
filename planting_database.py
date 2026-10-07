@@ -3706,6 +3706,7 @@ def create_planter(
     organization_id: Optional[int] = None,
     participant_count: int = 1,
     created_by_user_id: Optional[int] = None,
+    _connection: Any = None,
 ) -> int:
     """Create a planter record and return the new id."""
     full_name = full_name.strip()
@@ -3727,7 +3728,7 @@ def create_planter(
     if organization_id is None:
         raise ValueError("Select an organization for the shared account.")
     password_hash = _hash_password(password)
-    conn = _get_connection()
+    conn = _connection if _connection is not None else _get_connection()
     try:
         clean_organization_id = None
         if organization_id is not None:
@@ -3768,7 +3769,8 @@ def create_planter(
                 organization_id=clean_organization_id,
                 summary=f"Registered the organization account for {full_name} with its reserved points.",
                 details={"planter_id": planter_id, "participant_count": participant_count})
-            conn.commit()
+            if _connection is None:
+                conn.commit()
             return planter_id
 
         cur = conn.execute("""
@@ -3800,10 +3802,16 @@ def create_planter(
             summary=f"Created the organization account for {full_name}.",
             details={"planter_id": planter_id, "participant_count": participant_count},
         )
-        conn.commit()
+        if _connection is None:
+            conn.commit()
         return planter_id
+    except Exception:
+        if _connection is None:
+            conn.rollback()
+        raise
     finally:
-        conn.close()
+        if _connection is None:
+            conn.close()
 
 
 def list_planters(include_inactive: bool = True) -> List[dict]:
@@ -6944,6 +6952,7 @@ def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
         ),
         "contact": row["contact"],
         "title": row["title"],
+        "appointment_type": row.get("appointment_type", "tree_planting"),
         "start_at": start_at.isoformat(timespec="seconds") if start_at else row["start_at"],
         "end_at": end_at.isoformat(timespec="seconds") if end_at else row["end_at"],
         # Calendar aliases keep simple single-day form clients backward-compatible.
@@ -7170,6 +7179,8 @@ def update_planting_schedule(
             if project_site_id in (None, ""):
                 values["project_site_id"] = None
             else:
+                if values.get("appointment_type", "tree_planting") != "tree_planting":
+                    raise ValueError("Only tree-planting appointments can be assigned a planting area.")
                 if current_status != "confirmed" or values["status"] != "confirmed":
                     raise ValueError(
                         "Confirm and save the schedule before assigning a project site in a separate step."

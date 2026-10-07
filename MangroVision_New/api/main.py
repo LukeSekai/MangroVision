@@ -7,6 +7,8 @@ waypoint_export) as a REST API consumed by the React frontend.
 
 import sys
 import os
+import asyncio
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 # Add parent MangroVision directory to sys.path so we can import existing modules
@@ -51,14 +53,31 @@ from api.routes import (
     tides,
     zones,
 )
+from mangrovision_db.appointment_email import run_delivery_cycle
 
 _EXPECTED_DB_REVISION = ScriptDirectory(_PARENT_DIR / "alembic").get_current_head()
+
+@asynccontextmanager
+async def lifespan(_app):
+    async def deliver_emails():
+        while True:
+            await asyncio.sleep(60)
+            await asyncio.to_thread(run_delivery_cycle)
+    worker = asyncio.create_task(deliver_emails())
+    try:
+        yield
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
+
 
 app = FastAPI(
     title="MangroVision API",
     version="2.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
 install_error_responses(app)
 

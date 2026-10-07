@@ -1,3 +1,5 @@
+import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes.js';
+
 export function manilaToday(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -7,9 +9,11 @@ export function manilaToday(now = new Date()) {
 }
 
 export function bookingPayload(form, submissionKey) {
-  if (!form.organization.trim() || !form.contact_name.trim() || !form.phone.trim()) {
-    throw new Error('Enter your organization, contact person, and phone number.');
+  if (!form.organization.trim() || !form.contact_name.trim() || !form.phone.trim() || !form.email.trim()) {
+    throw new Error('Enter your organization, contact person, email, and phone number.');
   }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) throw new Error('Enter an email address you can access.');
+  if (!APPOINTMENT_TYPES.some((type) => type.value === form.appointment_type)) throw new Error('Choose an appointment type.');
   if (!form.date || !form.start_time || !form.end_time) {
     throw new Error('Choose your preferred date, start time, and end time.');
   }
@@ -23,8 +27,8 @@ export function bookingPayload(form, submissionKey) {
   if (!form.consent) throw new Error('Please acknowledge how your contact details will be used.');
   return {
     organization: form.organization.trim(), contact_name: form.contact_name.trim(),
-    phone: form.phone.trim(), email: form.email.trim() || null,
-    title: form.title.trim() || 'Mangrove planting activity',
+    phone: form.phone.trim(), email: form.email.trim(), appointment_type: form.appointment_type,
+    title: form.title.trim() || appointmentTypeLabel(form.appointment_type),
     start_at: `${form.date}T${form.start_time}:00+08:00`,
     end_at: `${form.date}T${form.end_time}:00+08:00`,
     participants: Number(form.participants), notes: form.notes.trim() || null,

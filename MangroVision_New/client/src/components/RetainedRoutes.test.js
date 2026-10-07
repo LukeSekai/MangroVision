@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
 let server, dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling;
-let requests, scheduleRows;
+let requests, scheduleRows, appointmentRows, approvals, useAuthStore;
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
   analysis_id: id, analysis_number: id, image_name: `Analysis ${id}`,
@@ -16,6 +16,8 @@ const rows = [1, 2].map((id) => ({
 
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://workspace.example', pretendToBeVisual: true });
+  dom.window.HTMLElement.prototype.scrollIntoView = function () {};
+  dom.window.HTMLElement.prototype.scrollTo = function () {};
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true,
@@ -26,7 +28,7 @@ before(async () => {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   originalGlobals.set('fetch', Object.getOwnPropertyDescriptor(globalThis, 'fetch'));
-  window.fetch = async (input) => {
+  window.fetch = async (input, options = {}) => {
     const url = new URL(input instanceof Request ? input.url : input, window.location.origin);
     requests.push(url.pathname + url.search);
     if (url.pathname === '/api/dashboard/settings') return Response.json({ year: Number(url.searchParams.get('year')), annual_planting_target: 4000, min_survival_target_pct: 80 });
@@ -37,6 +39,14 @@ before(async () => {
       id: 1, summary: 'A retained activity record', created_at: '2026-10-06T01:00:00Z', actor_type: 'system',
     }] });
     if (url.pathname === '/api/planting-schedules') return Response.json({ schedules: scheduleRows, organizations: [], project_sites: [] });
+    if (url.pathname === '/api/like-appointments/summary') return Response.json({ pending_count: appointmentRows.filter((row) => row.status === 'pending').length });
+    if (url.pathname === '/api/like-appointments') return Response.json({ requests: appointmentRows });
+    if (url.pathname.endsWith('/review') && url.pathname.startsWith('/api/like-appointments/')) {
+      const decision = JSON.parse(options.body || '{}');
+      approvals.push(decision);
+      appointmentRows[0] = { ...appointmentRows[0], status: 'confirmed', schedule_id: 11, email_status: 'pending' };
+      return Response.json({ status: 'confirmed' });
+    }
     if (url.pathname === '/api/tides/forecast') return Response.json({ available: false, message: 'Forecast unavailable', events: [] });
     throw new Error(`Unexpected test request: ${url.pathname}`);
   };
@@ -49,7 +59,7 @@ before(async () => {
   ({ default: Dashboard } = await server.ssrLoadModule('/src/pages/Dashboard.jsx'));
   ({ default: ActivityFeed } = await server.ssrLoadModule('/src/components/ActivityFeed.jsx'));
   ({ default: Scheduling } = await server.ssrLoadModule('/src/pages/Scheduling.jsx'));
-  const { useAuthStore } = await server.ssrLoadModule('/src/stores/authStore.js');
+  ({ useAuthStore } = await server.ssrLoadModule('/src/stores/authStore.js'));
   useAuthStore.setState({ token: 'cookie', hydrated: true, isAuthenticated: true });
   const { installSecureFetch } = await server.ssrLoadModule('/src/utils/secureFetch.js');
   installSecureFetch();
@@ -68,6 +78,9 @@ after(async () => {
 beforeEach(() => {
   requests = [];
   scheduleRows = [];
+  appointmentRows = [];
+  approvals = [];
+  useAuthStore.setState({ user: null });
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
 });
@@ -131,7 +144,7 @@ test('matching calendar activities open all organizations and edit the selected 
   await click(organizations[1].querySelector('.schedule-group-edit'));
   assert.equal(document.querySelector('.schedule-form input[list="schedule-organizations"]').value, 'Organization 2');
   assert.equal(document.querySelector('.schedule-form input[maxlength="180"]').value, 'Tentative follow-up planting activity');
-  assert.equal(requests.filter((url) => !url.startsWith('/api/planting-schedules') && !url.startsWith('/api/tides/forecast')).length, 0);
+  assert.equal(requests.filter((url) => !url.startsWith('/api/planting-schedules') && !url.startsWith('/api/tides/forecast') && !url.startsWith('/api/like-appointments')).length, 0);
 });
 
 test('dashboard tabs and sidebar navigation retain the selected analysis, filters and DOM', async () => {
@@ -241,4 +254,35 @@ test('Scheduling retains its calendar and tide forecast when returning, and Refr
   await click('.schedule-refresh');
   assert.equal(count('/api/planting-schedules'), 2);
   assert.equal(count('/api/tides/forecast'), 2);
+});
+
+test('LGU dashboard button opens pending website requests and approval stays in Scheduling', async () => {
+  useAuthStore.setState({ user: { id: 1, role: 'lgu' } });
+  const start = new Date(Date.now() + 3 * 86400000);
+  start.setUTCHours(0, 0, 0, 0);
+  appointmentRows = [{ id: 1, reference: 'LIKE-TEST', organization: 'Test school', contact_name: 'Coordinator',
+    phone: '09123456789', email: 'test@example.org', appointment_type: 'field_visit', title: 'Field visit',
+    start_at: start.toISOString(), end_at: new Date(start.getTime() + 7200000).toISOString(), participants: 20, status: 'pending' }];
+  await render();
+  const notice = document.querySelector('.appointment-notice');
+  assert.match(notice.textContent, /1 pending request/);
+  assert.equal(notice.getAttribute('href'), '/scheduling?requests=pending');
+  assert.equal(document.querySelector('.website-review'), null);
+  await click(notice);
+  assert.match(document.querySelector('#website-requests').textContent, /LIKE-TEST/);
+  assert.equal(document.activeElement.id, 'website-requests');
+  await click('.website-review-button');
+  assert.match(document.querySelector('.website-request-advice').textContent, /staff availability/);
+  assert.equal(document.querySelector('.website-request-advice .planting-badge'), null);
+  await click('input[name="contacted"]');
+  const confirm = [...document.querySelectorAll('.modal-card button')].find((button) => button.textContent === 'Confirm and create schedule');
+  await click(confirm);
+  assert.equal(approvals.length, 1);
+  assert.equal(approvals[0].email, 'test@example.org');
+  assert.equal(approvals[0].contacted, true);
+  assert.match(document.querySelector('.website-request-notice').textContent, /email is queued/);
+  await click('[data-page="dashboard"]');
+  assert.match(document.querySelector('.appointment-notice').textContent, /0 pending requests/);
+  await click('.appointment-notice');
+  assert.equal(document.querySelector('.website-request-toolbar .is-active').textContent, 'Pending requests');
 });

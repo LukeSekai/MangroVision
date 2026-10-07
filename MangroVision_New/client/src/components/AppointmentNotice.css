@@ -1,0 +1,8 @@
+.appointment-notice { display: flex; align-items: center; gap: 13px; padding: 15px 18px; margin: 0 0 20px; border: 1px solid #dce6dc; border-radius: 12px; background: #f5faf3; color: #166534; text-decoration: none; transition: border-color .2s, background .2s; }
+.appointment-notice:hover { background: #edf7e9; border-color: #8bb68d; }
+.appointment-notice:focus-visible { outline: 3px solid #166534; outline-offset: 3px; }
+.appointment-notice.has-pending { background: #e8f5e3; border-color: #a9cda4; }
+.appointment-notice-icon { display: grid; place-items: center; width: 34px; height: 34px; flex-shrink: 0; border-radius: 9px; background: #166534; color: white; font-size: 20px; }
+.appointment-notice strong { display: block; font-size: 13px; }
+.appointment-notice small { display: block; font-size: 11px; color: #526952; margin-top: 4px; }
+.appointment-notice-count { display: grid; place-items: center; min-width: 30px; height: 30px; padding: 0 8px; margin-left: auto; border-radius: 20px; background: #166534; color: white; font-size: 12px; font-weight: 700; }

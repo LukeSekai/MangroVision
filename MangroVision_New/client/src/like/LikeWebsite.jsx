@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { bookingPayload, manilaToday, submitBooking } from './booking';
+import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes';
 
 function Icon({ name = 'leaf', size = 24, ...props }) {
   const paths = {
@@ -64,6 +65,7 @@ const pastActivities = [
 
 const initialForm = {
   organization: '', contact_name: '', phone: '', email: '', title: '',
+  appointment_type: '',
   date: '', start_time: '', end_time: '', participants: '', notes: '', consent: false, website: '',
 };
 
@@ -116,12 +118,12 @@ function AppointmentForm() {
     <h3>Request received.</h3>
     <p>Thank you for wanting to be part of LIKE. Save your reference number below.</p>
     <strong className="like-reference">{receipt.reference}</strong>
-    <p><b>Your appointment is pending LGU confirmation.</b> Staff will contact you using the details you provided to confirm your schedule or discuss another time.</p>
+    <p><b>Your appointment is pending LGU confirmation.</b> Staff will contact you to agree on the schedule. After approval, your confirmed date and time will be emailed to you. Tree planting appointments also include planter access details.</p>
     <button className="like-button is-secondary" type="button" onClick={() => { setReceipt(null); setForm(initialForm); setStep(1); attempt.current = null; }}>Make another request <Icon name="arrow" size={18} /></button>
   </div>;
 
   return <div className="like-booking-card">
-    <div className="like-form-heading"><span className="like-eyebrow">LET’S PLAN YOUR VISIT</span><h3>A small step.<br />A lasting difference.</h3><p>Tell us about your group and preferred planting time.</p></div>
+    <div className="like-form-heading"><span className="like-eyebrow">LET’S PLAN YOUR VISIT</span><h3>A small step.<br />A lasting difference.</h3><p>Choose an activity and tell us about your group and preferred time.</p></div>
     <ol className="like-form-steps" aria-label="Appointment request steps">
       <li className={step >= 1 ? 'is-current' : ''}><span>{step === 2 ? <Icon name="check" size={14} /> : '1'}</span>Your group</li>
       <li className={step === 2 ? 'is-current' : ''}><span>2</span>Your preferred schedule</li>
@@ -129,12 +131,14 @@ function AppointmentForm() {
     <form onSubmit={step === 1 ? next : submit}>
       {error ? <p className="like-form-error" role="alert">{error}</p> : null}
       {step === 1 ? <div className="like-form-fields" key="group">
+        <label>Appointment type <span>*</span><select name="appointment_type" value={form.appointment_type} onChange={update} required><option value="" disabled>Choose your activity</option>{APPOINTMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
         <label>Organization or group name <span>*</span><input name="organization" value={form.organization} onChange={update} required maxLength={200} autoComplete="organization" placeholder="e.g. Your school, company, or community" /></label>
         <label>Contact person <span>*</span><input name="contact_name" value={form.contact_name} onChange={update} required maxLength={100} autoComplete="name" placeholder="Full name" /></label>
         <div className="like-form-row">
           <label>Phone number <span>*</span><input name="phone" type="tel" value={form.phone} onChange={update} required minLength={7} maxLength={32} autoComplete="tel" placeholder="09XX XXX XXXX" /></label>
-          <label>Email <small>optional</small><input name="email" type="email" value={form.email} onChange={update} maxLength={254} autoComplete="email" placeholder="you@example.com" /></label>
+          <label>Email <span>*</span><input name="email" type="email" value={form.email} onChange={update} required maxLength={254} autoComplete="email" placeholder="you@example.com" /></label>
         </div>
+        <p className="like-field-hint">Use an email address you can access. Your appointment confirmation will be sent here.</p>
         <button className="like-button" type="submit">Continue to schedule <Icon name="arrow" size={18} /></button>
       </div> : <div className="like-form-fields" key="schedule">
         <label>Preferred date <span>*</span><input ref={firstField} name="date" type="date" value={form.date} onChange={update} required min={manilaToday()} /></label>
@@ -145,7 +149,7 @@ function AppointmentForm() {
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
         <div className="like-form-row">
           <label>Participants <span>*</span><input name="participants" type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /></label>
-          <label>Activity name <small>optional</small><input name="title" value={form.title} onChange={update} maxLength={200} placeholder="Mangrove planting activity" /></label>
+          <label>Activity name <small>optional</small><input name="title" value={form.title} onChange={update} maxLength={200} placeholder={appointmentTypeLabel(form.appointment_type)} /></label>
         </div>
         <label>Anything we should know? <small>optional</small><textarea name="notes" value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /></label>
         <label className="like-honeypot" aria-hidden="true">Website<input name="website" value={form.website} onChange={update} tabIndex={-1} autoComplete="off" /></label>
@@ -180,7 +184,7 @@ export default function LikeWebsite() {
       <button className="like-menu-toggle" type="button" aria-label={menuOpen ? 'Close navigation' : 'Open navigation'} aria-expanded={menuOpen} aria-controls="like-navigation" onClick={() => setMenuOpen((open) => !open)}><Icon name={menuOpen ? 'close' : 'menu'} /></button>
       <nav id="like-navigation" className={menuOpen ? 'is-open' : ''} aria-label="Main navigation">
         <a href="#about" onClick={closeMenu}>About LIKE</a><a href="#experience" onClick={closeMenu}>The experience</a><a href="#activities" onClick={closeMenu}>Past activities</a><a href="#guidelines" onClick={closeMenu}>Plan your visit</a>
-        <a className="like-button is-small" href="#appointment" onClick={closeMenu}>Plant with us <Icon name="arrow" size={16} /></a>
+        <a className="like-button is-small" href="#appointment" onClick={closeMenu}>Book an appointment <Icon name="arrow" size={16} /></a>
       </nav>
     </div></header>
 
@@ -189,7 +193,7 @@ export default function LikeWebsite() {
         <div className="like-hero-copy"><span className="like-eyebrow"><span className="like-live-dot" /> ROOTED IN LEGANES. GROWING TOGETHER.</span>
           <h1>A little seedling.<br />A <em>greener</em><br />tomorrow.</h1>
           <p>Welcome to Leganes Integrated Katunggan Ecopark. Discover the mangroves, meet the community, and be part of something that grows.</p>
-          <div className="like-hero-actions"><a className="like-button" href="#appointment">Plant with us <Icon name="arrow" size={19} /></a><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
+          <div className="like-hero-actions"><a className="like-button" href="#appointment">Book an appointment <Icon name="arrow" size={19} /></a><a className="like-text-link" href="#about">Get to know LIKE <span>↗</span></a></div>
           <div className="like-hero-location"><span><Icon name="pin" size={18} /></span><div><strong>A greener corner of Leganes</strong><small>Leganes, Iloilo · Philippines</small></div></div>
         </div>
         <div className="like-hero-visual"><Photo className="like-hero-photo" file="hero.jpg" alt="Aerial view of LIKE's mangrove forest, elevated walkways, viewing towers, and coastal pavilions" label="The mangroves of LIKE" priority />
@@ -229,18 +233,19 @@ export default function LikeWebsite() {
         <div data-reveal><span className="like-eyebrow">A LITTLE PREPARATION GOES A LONG WAY</span><h2>Plan a visit.<br />Make it <em>count.</em></h2><p>LIKE and the LGU will help coordinate your planting activity. Start with a request, and we’ll work out the details together.</p><div className="like-walk-in"><Icon name="people" /><div><strong>Prefer a little help?</strong><p>You can still arrange an activity directly with LGU staff. They can enter your schedule for you in MangroVision.</p></div></div></div>
         <div className="like-faq" data-reveal>{[
           ['Is my appointment confirmed when I submit?', 'Your submission is a request. The LGU reviews your preferred time, staff availability, existing activities, and planting conditions before contacting you for confirmation.'],
-          ['Can we choose our preferred planting time?', 'Yes. Tell us your preferred date, start time, and end time. Planting depends on conditions, including the tide, so staff may suggest a different time.'],
+          ['What appointments can we request?', 'Choose a field visit, clean-up drive, or tree planting activity. Each request is reviewed by the LGU before confirmation.'],
+          ['Can we choose our preferred time?', 'Yes. Tell us your preferred date, start time, and end time. Staff check availability and site conditions. For tree planting, this includes the tide, so they may suggest a different time.'],
           ['What should our group prepare?', 'Ask LGU staff about appropriate clothing, footwear, materials, and any activity requirements when they confirm your appointment. Final visitor guidelines will be added here once approved.'],
           ['Do we need an account to send a request?', 'No account is needed. Provide your group and contact details so the LGU can coordinate with you.'],
         ].map(([question, answer], index) => <details key={question} open={index === 0}><summary>{question}<span aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</div>
       </div></section>
 
       <section className="like-section like-appointment" id="appointment"><div className="like-container like-appointment-grid">
-        <div className="like-appointment-copy" data-reveal><span className="like-eyebrow">FROM INTEREST TO IMPACT</span><h2>Bring your people.<br />We’ll help with<br />the <em>next step.</em></h2><p>Request a mangrove planting appointment for your group. The LGU will review your preferred schedule and contact you to coordinate.</p><ol className="like-process"><li><span>01</span><div><h3>Tell us about your group</h3><p>A few details and a way to reach you.</p></div></li><li><span>02</span><div><h3>Choose a preferred schedule</h3><p>Pick a date and time that work for you.</p></div></li><li><span>03</span><div><h3>Hear from the LGU</h3><p>Staff review, contact you, and confirm the details.</p></div></li></ol><div className="like-contact-card"><Icon name="pin" /><div><strong>Leganes, Iloilo, Philippines</strong><p>Official contact number, email, and visiting hours will be added here.</p></div></div></div>
+        <div className="like-appointment-copy" data-reveal><span className="like-eyebrow">FROM INTEREST TO IMPACT</span><h2>Bring your people.<br />We’ll help with<br />the <em>next step.</em></h2><p>Request a field visit, clean-up drive, or tree planting activity for your group. The LGU will review your preferred schedule and contact you to coordinate.</p><ol className="like-process"><li><span>01</span><div><h3>Tell us about your group</h3><p>A few details and a way to reach you.</p></div></li><li><span>02</span><div><h3>Choose a preferred schedule</h3><p>Pick a date and time that work for you.</p></div></li><li><span>03</span><div><h3>Hear from the LGU</h3><p>Staff review, contact you, and confirm the details.</p></div></li></ol><div className="like-contact-card"><Icon name="pin" /><div><strong>Leganes, Iloilo, Philippines</strong><p>Official contact number, email, and visiting hours will be added here.</p></div></div></div>
         <AppointmentForm />
       </div></section>
     </main>
 
-    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#activities">Past activities</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
+    <footer className="like-footer"><div className="like-container"><div className="like-footer-top"><div><Brand light /><p>Small roots. Shared responsibility.<br />A greener tomorrow for Leganes.</p></div><div><span>EXPLORE</span><a href="#about">About the ecopark</a><a href="#activities">Past activities</a><a href="#guidelines">Visitor information</a></div><div><span>TAKE PART</span><a href="#appointment">Request an appointment</a><a href="#guidelines">Staff-assisted scheduling</a><a href="/dashboard">MangroVision staff sign-in ↗</a></div></div><div className="like-footer-bottom"><span>© {new Date().getFullYear()} LIKE · Leganes Integrated Katunggan Ecopark</span><span>GROWING TOGETHER, ONE SEEDLING AT A TIME.</span></div></div></footer>
   </div>;
 }

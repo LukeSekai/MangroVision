@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import {
   CartesianGrid,
   Line,
@@ -19,6 +20,7 @@ import {
 } from '../utils/plantingTides';
 import { useAuthStore } from '../stores/authStore';
 import { groupCalendarSchedules } from '../utils/calendarScheduleGroups';
+import { appointmentTypeLabel, isPlantingAppointment } from '../utils/appointmentTypes';
 import './Scheduling.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -352,9 +354,10 @@ function ScheduleCalendarEvent({ group, assessment, onOpen }) {
     : schedule.organization_name || 'Organization not set';
   const state = PLANTING_STATES[assessment.status] || PLANTING_STATES.unknown;
   return <button type="button" className={`schedule-calendar-event planting-${assessment.status}`} onClick={() => onOpen(group)}
-    aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${organizationLabel}. ${state.label}. View activity details.`}>
+    aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${organizationLabel}. ${isPlantingAppointment(schedule) ? state.label : appointmentTypeLabel(schedule.appointment_type)}. View activity details.`}>
     <span className="schedule-entry-top"><time>{scheduleStartTime(schedule) ? formatClock(scheduleStartTime(schedule)) : 'Time not set'}</time></span>
     <strong className="schedule-entry-title">{schedule.title}</strong>
+    <small>{appointmentTypeLabel(schedule.appointment_type)}</small>
     <span className="schedule-entry-organizations">{organizationLabel}</span>
   </button>;
 }
@@ -401,13 +404,14 @@ function HighTideCaution({ selection, onContinue, onBack }) {
 
 function ScheduleDetails({ schedule, showOrganization = true }) {
   return <dl>
+    <div><dt>Appointment type</dt><dd>{appointmentTypeLabel(schedule.appointment_type)}</dd></div>
     <div><dt>Status</dt><dd>{scheduleStatusLabel(schedule.status)}</dd></div>
     <div><dt>Source</dt><dd>{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</dd></div>
     {showOrganization ? <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
-    <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div>
+    {isPlantingAppointment(schedule) ? <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div> : null}
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
-    <div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
-    <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div>
+    {isPlantingAppointment(schedule) ? <><div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
+    <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div></> : null}
     {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
     {schedule.notes ? <div><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
   </dl>;
@@ -431,7 +435,7 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
         <span>{schedule ? formatDate(`${scheduleDate(schedule)}T12:00:00+08:00`) : formatDate(tide.occurred_at)} · Philippine time</span>
       </div>
       <div className="schedule-detail-advice">
-        <PlantingBadge assessment={advice} />
+        {schedule && !isPlantingAppointment(schedule) ? <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong> : <PlantingBadge assessment={advice} />}
         <p>{schedule ? assessment.reason : 'Uses the same estimated planting limit as the graph. Check your planting area before going.'}</p>
       </div>
       {grouped ? <>
@@ -582,6 +586,7 @@ function TideForecast({ payload, tides, loading, error, site, onRetry }) {
 }
 
 export default function Scheduling() {
+  const location = useLocation();
   const token = useAuthStore((state) => state.token);
   const [apiData, setApiData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -610,6 +615,16 @@ export default function Scheduling() {
   const [assignmentSiteId, setAssignmentSiteId] = useState('');
   const [assignmentError, setAssignmentError] = useState('');
   const [assignmentSaving, setAssignmentSaving] = useState(false);
+
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('requests') !== 'pending') return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const panel = document.getElementById('website-requests');
+      panel?.scrollIntoView({ block: 'start' });
+      panel?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [location.key, location.search, loading]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -696,7 +711,7 @@ export default function Scheduling() {
     return forecastPlantingGuide({ payload: tidePayload, now, allowOutdated: true });
   }, [tidePayload, now]);
   useEffect(() => {
-    if (!formOpen || saving) return;
+    if (!formOpen || saving || !isPlantingAppointment(editingSchedule || {})) return;
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const assessment = assessSelectedTime(selection, tidePayload, now);
     if (assessment.status !== 'unsafe') {
@@ -713,7 +728,7 @@ export default function Scheduling() {
       setTimeCaution({ ...selection, assessment });
     });
     return () => { cancelled = true; };
-  }, [formOpen, saving, tidePayload, now, form.date, form.startTime, form.endTime]);
+  }, [formOpen, saving, editingSchedule, tidePayload, now, form.date, form.startTime, form.endTime]);
   const tides = useMemo(() => normalizeTideEvents(tidePayload), [tidePayload]);
   const tidesByDate = useMemo(() => {
     const grouped = new Map();
@@ -725,6 +740,7 @@ export default function Scheduling() {
     return grouped;
   }, [tides]);
   const assessmentFor = (schedule) => {
+    if (schedule && !isPlantingAppointment(schedule)) return { status: 'unknown', label: appointmentTypeLabel(schedule.appointment_type), reason: 'Check staff availability and site conditions with LIKE.' };
     if (!tidePayload && tideLoading) return { status: 'unknown', label: 'Loading tide forecast...', reason: 'Checking the same water levels shown in the graph.' };
     if (!tidePayload && tideError) return { status: 'unknown', label: 'Refresh tides to check this activity', reason: tideError };
     return assessPlantingTime({ payload: tidePayload, now,
@@ -851,7 +867,7 @@ export default function Scheduling() {
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const timeAssessment = assessSelectedTime(selection, tidePayload, now);
     const unsafeKey = selectionKey(selection);
-    if (requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
+    if (isPlantingAppointment(editingSchedule || {}) && requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
       lastWarnedTime.current = unsafeKey;
       setTimeCaution({ ...selection, assessment: timeAssessment });
       return;
@@ -881,6 +897,7 @@ export default function Scheduling() {
   };
 
   const openAssignment = (schedule) => {
+    if (!isPlantingAppointment(schedule)) return;
     setAssigningSchedule(schedule);
     setAssignmentSiteId('');
     setAssignmentError('');
@@ -890,6 +907,10 @@ export default function Scheduling() {
     setAssignmentError('');
     if (!token || !assigningSchedule) {
       setAssignmentError('Please sign in again.');
+      return;
+    }
+    if (!isPlantingAppointment(assigningSchedule)) {
+      setAssignmentError('Only tree-planting appointments need a planting area.');
       return;
     }
     if (String(assigningSchedule.status).toLowerCase() !== 'confirmed' || assigningSchedule.project_site_id) {
@@ -942,9 +963,9 @@ export default function Scheduling() {
     <main className="scheduling-page">
       <header className="schedule-header">
         <div>
-          <div className="schedule-eyebrow">Community planting</div>
+          <div className="schedule-eyebrow">LIKE activities and community planting</div>
           <h1>Scheduling</h1>
-          <p>Check the water levels, then plan planting activities with your partner organizations.</p>
+          <p>Review website appointments and coordinate field visits, clean-up drives, and tree planting with partner organizations.</p>
         </div>
         <button type="button" className="schedule-refresh" onClick={refreshSchedules} disabled={loading}>â†» {loading ? 'Refreshingâ€¦' : 'Refresh schedules'}</button>
       </header>
@@ -955,8 +976,8 @@ export default function Scheduling() {
         <div className="schedule-panel-head schedule-toolbar">
           <div>
             <span className="schedule-step">Plan a date, confirm it, then choose a planting area</span>
-            <h2 id="organization-schedules-title">Organization planting schedules</h2>
-            <p>After confirming an activity, choose one of the organization’s planting areas. You can add planting areas in the Zone Editor.</p>
+            <h2 id="organization-schedules-title">Organization schedules</h2>
+            <p>Review all confirmed activities here. For tree planting, choose an organization planting area after confirmation. Add areas in the Zone Editor.</p>
           </div>
           <button type="button" className="schedule-primary" onClick={openCreate}>+ Add new schedule</button>
         </div>
@@ -966,7 +987,7 @@ export default function Scheduling() {
 
         <div className="schedule-kpis">
           <article><span>Upcoming schedules</span><strong>{formatCount(upcoming.length)}</strong><small>By organization</small></article>
-          <article><span>Confirmed schedules</span><strong>{formatCount(confirmed)}</strong><small>Ready to choose a planting area</small></article>
+          <article><span>Confirmed schedules</span><strong>{formatCount(confirmed)}</strong><small>LGU-approved activities</small></article>
           <article><span>Expected participants</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.expected_participants) || 0), 0))}</strong><small>Across upcoming activities</small></article>
           <article><span>Expected seedlings</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.seedlings) || 0), 0))}</strong><small>Across upcoming activities</small></article>
         </div>
@@ -1002,7 +1023,7 @@ export default function Scheduling() {
                     <article className={`schedule-calendar-day${cell.inMonth ? '' : ' is-outside'}${cell.date === today ? ' is-today' : ''}`} role="gridcell" key={cell.date}>
                       <time dateTime={cell.date}>{cell.day}</time>
                       <div className="schedule-calendar-events">
-                        {arrayOf(requestsByDate.get(cell.date)).map((request) => <button type="button" className="schedule-calendar-request" key={`request-${request.id}`} onClick={() => setReviewRequest(request)} aria-haspopup="dialog"><span>Website request · Pending</span><strong>{request.organization}</strong><small>{formatDate(request.start_at, true)} · {request.participants} participants</small></button>)}
+                        {arrayOf(requestsByDate.get(cell.date)).map((request) => <button type="button" className="schedule-calendar-request" key={`request-${request.id}`} onClick={() => setReviewRequest(request)} aria-haspopup="dialog"><span>{appointmentTypeLabel(request.appointment_type)} · Pending</span><strong>{request.organization}</strong><small>{formatDate(request.start_at, true)} · {request.participants} participants</small></button>)}
                         {daySchedules.map((group) => <ScheduleCalendarEvent key={group.key} group={group} assessment={assessmentFor(group.schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item.schedule, schedules: item.schedules })} />)}
                         {dayTides.slice(0, 4).map((tide) => (
                           <TideTime key={`${tide.occurred_at}-${tideKind(tide)}`} tide={tide} guide={calendarGuide} onOpen={(item) => setCalendarEntry({ kind: 'tide', tide: item })} />
@@ -1017,18 +1038,19 @@ export default function Scheduling() {
         ) : schedules.length ? (
           <div className="schedule-table-wrap">
             <table>
-              <caption className="sr-only">Organization planting schedules</caption>
-              <thead><tr><th scope="col">Date</th><th scope="col">Activity</th><th scope="col">Planting area</th><th scope="col">Days between plant checks</th><th scope="col">Status</th><th scope="col">Planting advice</th><th scope="col">Actions</th></tr></thead>
+              <caption className="sr-only">Organization schedules</caption>
+              <thead><tr><th scope="col">Date</th><th scope="col">Activity</th><th scope="col">Planting area</th><th scope="col">Days between plant checks</th><th scope="col">Status</th><th scope="col">Activity guidance</th><th scope="col">Actions</th></tr></thead>
               <tbody>{schedules.map((schedule) => {
-                const canAssign = String(schedule.status).toLowerCase() === 'confirmed' && !schedule.project_site_id;
+                const planting = isPlantingAppointment(schedule);
+                const canAssign = planting && String(schedule.status).toLowerCase() === 'confirmed' && !schedule.project_site_id;
                 return (
                   <tr key={schedule.id}>
                     <td><strong>{formatDate(`${schedule.scheduled_date}T12:00:00+08:00`)}</strong><small>{scheduleTimeLabel(schedule)}</small></td>
                     <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
-                    <td>{schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen')}</td>
-                    <td>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</td>
+                    <td>{planting ? schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen') : 'Not needed'}</td>
+                    <td>{planting ? schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set' : 'Not applicable'}</td>
                     <td><span className={`schedule-status is-${String(schedule.status).toLowerCase()}`}>{scheduleStatusLabel(schedule.status)}</span></td>
-                    <td><PlantingBadge assessment={assessmentFor(schedule)} /><small>{assessmentFor(schedule).reason}</small></td>
+                    <td>{planting ? <PlantingBadge assessment={assessmentFor(schedule)} /> : <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong>}<small>{assessmentFor(schedule).reason}</small></td>
                     <td><div className="schedule-row-actions">
                       {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
                       <button type="button" onClick={() => openEdit(schedule)}>Edit</button>
@@ -1061,7 +1083,7 @@ export default function Scheduling() {
 
       <Modal
         open={formOpen && !timeCaution}
-        title={editingSchedule ? 'Edit planting schedule' : 'Add new planting schedule'}
+        title={editingSchedule ? 'Edit appointment' : 'Add new planting schedule'}
         confirmLabel={editingSchedule ? 'Save changes' : 'Create schedule'}
         cancelLabel="Close"
         busy={saving}
@@ -1072,12 +1094,12 @@ export default function Scheduling() {
       >
         <form className="schedule-form" onSubmit={saveSchedule}>
           {formError ? <Message>{formError}</Message> : null}
-          <div className="schedule-form-assessment">
+          {isPlantingAppointment(editingSchedule || {}) ? <div className="schedule-form-assessment">
             <PlantingBadge assessment={assessmentFor({ ...editingSchedule,
               start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00`,
             })} />
             <p>{assessmentFor({ ...editingSchedule, start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00` }).reason}</p>
-          </div>
+          </div> : <p>{appointmentTypeLabel(editingSchedule.appointment_type)}: check staff availability and site conditions with LIKE.</p>}
           <div className="schedule-form-grid">
             <label>
               <span>Organization *</span>
@@ -1124,7 +1146,7 @@ export default function Scheduling() {
               <span>Expected participants</span>
               <input type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
             </label>
-            <label>
+            {isPlantingAppointment(editingSchedule || {}) ? <><label>
               <span>Expected seedlings</span>
               <input type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
             </label>
@@ -1132,7 +1154,7 @@ export default function Scheduling() {
               <span>Days between plant checks</span>
               <input type="number" value="14" readOnly aria-readonly="true" />
               <small>Monitoring is due every 14 days from the actual planting date.</small>
-            </label>
+            </label></> : null}
             <label>
               <span>Status *</span>
               <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>
@@ -1148,7 +1170,7 @@ export default function Scheduling() {
               <textarea rows="3" maxLength="2000" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
             </label>
           </div>
-          {form.date ? (
+          {form.date && isPlantingAppointment(editingSchedule || {}) ? (
             <div className="schedule-form-tides">
               <span>Tide forecast for {formatDate(`${form.date}T12:00:00+08:00`)}</span>
               {selectedDateTides.length ? selectedDateTides.map((tide) => (
@@ -1156,7 +1178,7 @@ export default function Scheduling() {
               )) : <small>High and low tide times are not available for this date yet.</small>}
             </div>
           ) : null}
-          <p className="schedule-form-footnote">Choose a planting area after confirming the activity. All times are Philippine time.</p>
+          <p className="schedule-form-footnote">{isPlantingAppointment(editingSchedule || {}) ? 'Choose a planting area after confirming the activity. ' : ''}All times are Philippine time.</p>
         </form>
       </Modal>
 

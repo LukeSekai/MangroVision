@@ -1,6 +1,7 @@
 import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
+import AppointmentNotice from '../components/AppointmentNotice';
 import RestorationReportDialog from '../components/RestorationReportDialog';
 import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses';
 import { DASHBOARD_ENDPOINTS, dashboardSectionsForTab } from '../utils/dashboardLoading';
@@ -1533,6 +1534,8 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+
+      <AppointmentNotice />
 
       {goalsVisited && <Activity mode={goalsOpen ? 'visible' : 'hidden'}>
         <section id="dashboard-planting-goals" className="dash-goals-panel" aria-label="Planting goals">
