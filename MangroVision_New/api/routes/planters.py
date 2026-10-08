@@ -8,7 +8,7 @@ from shapely.geometry import Point
 from shapely.prepared import prep
 from api.routes.monitoring import _require_lgu_user
 from pydantic import BaseModel, Field
-from mangrovision_db.organization_accounts import reset_participant_device
+from mangrovision_db.organization_accounts import list_participant_devices, reset_participant_device
 
 from api.runtime_state import is_processing_active
 from planting_database import (
@@ -306,6 +306,14 @@ def field_points(planter_id: int):
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
     return get_planter_field_points(planter_id)
+
+
+@router.get("/{planter_id}/participants")
+def participant_devices(planter_id: int):
+    try:
+        return list_participant_devices(planter_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/{planter_id}/participants/{slot}/reset-device")

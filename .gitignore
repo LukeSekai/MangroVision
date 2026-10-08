@@ -43,6 +43,7 @@ htmlcov/
 /tests/*
 !/tests/test_project_site_deletion_postgres.py
 !/tests/test_planter_device_progress_postgres.py
+!/tests/test_participant_devices_api.py
 !/tests/test_quick_assign_postgres.py
 !/tests/test_project_site_counts.py
 !/tests/test_field_routing.py
@@ -64,6 +65,8 @@ htmlcov/
 !MangroVision_New/client/src/utils/formValidation.test.js
 !MangroVision_New/client/src/utils/analysisHistory.test.js
 !MangroVision_New/client/src/stores/planterAuthStore.test.js
+!MangroVision_New/client/src/components/ParticipantDevices.test.js
+!MangroVision_New/client/src/components/SeedlingLocations.test.js
 !MangroVision_New/client/src/utils/fieldNavigation.test.js
 
 # Data and logs

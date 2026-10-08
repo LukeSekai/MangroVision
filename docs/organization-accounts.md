@@ -5,10 +5,31 @@ password, and participant count. Each device uses that login and receives a
 persistent numbered participant slot. Logging out does not release the slot.
 
 Registration records the first device as participant 1. The browser keeps a
-random device key across logout, and the database stores its hash against the
-organization account and participant number. Returning through the same browser
-and field-link origin reuses that number. Point statuses and planting events are
-stored in the database, so a new session restores the same points and progress.
+random device key across logout in local storage and a one-year cookie backup;
+the database stores only its hash against the organization and participant number.
+Existing browser keys are retained. Returning through the same browser and field
+link reuses that number. Point statuses and planting events live in the database,
+so a new session restores the same points and progress. Ordinary return visits
+use only the shared username and password, even after a login session expires:
+the browser reuses its saved identity automatically. Recovery codes are optional
+backup tools, separate from normal sign-in. Sign-in stops before
+claiming a slot if neither browser storage nor cookies can persist the identity.
+
+This tracks browser identities, not physical hardware. A different browser,
+private browsing session, cleared site data, or a new shared-link domain can look
+like a new device. In particular, a restarted Cloudflare quick tunnel can produce
+a new domain, and that domain cannot read the previous link's browser storage.
+Prefer one permanent field address; `MANGROVISION_PUBLIC_FRONTEND_URL` makes the
+share panel reuse a configured hosted frontend. A cookie backup can restore lost
+local storage on the same host, but cannot cross unrelated shared-link domains.
+
+Before a field link changes, participants open their account menu and save their
+private **Device recovery code**. On the next link, choose **I have a device recovery
+code** and enter it with the organization's username and password. The code proves
+which existing participant to resume; it does not replace the password. Incorrect
+or reset codes never allocate another slot. After successful recovery, that
+organization's identity is saved on the new link without changing identities
+for other organizations. Keep each participant's code private and separate.
 
 For an organization with 10 participants, assigning 100 points allocates
 10 distinct points per participant. Points are stored with their
@@ -64,12 +85,22 @@ an unsafe reset; hashes of all records outside the captured scope must remain
 unchanged before the transaction commits. Normal site deletion does not perform
 this organization reset.
 
-If a device is replaced or its browser storage is cleared, staff select the
-organization and open **Participant device recovery**. Reset the participant's
-number, then select **I am replacing a device after an LGU reset** on the
-replacement device and enter that number. Normal sign-in needs only the shared
-username and password and automatically chooses a free participant slot. Reset
-revokes existing sessions for that slot and preserves its assigned points.
+If the original browser identity and recovery code are both unavailable, staff
+select the organization in Planting Assignments and open **Participant devices**.
+The list shows occupied slots, each slot's last activity, and its assigned/planted
+point counts. Device counts use occupied slots, not the number of login sessions.
+Activity timestamps describe the slot's history, including earlier devices after
+a reset; they do not identify a physical phone. No keys or session tokens are
+returned to staff.
+
+Identify the replaced or duplicate browser before resetting its participant
+number. Confirm the reset, then select **I am replacing a device after an LGU
+reset** on the replacement browser and enter that number. Reset revokes sessions
+and invalidates the old recovery code while preserving assigned points and
+planting history. A browser already bound to another participant is rejected
+instead of silently resuming the wrong participant; staff must first reset that
+known duplicate slot too. Normal sign-in automatically chooses a free slot.
+Nothing automatically resets or merges old occupied slots.
 
 ## Existing-account conversion
 
@@ -110,5 +141,9 @@ one username/password, all ten sessions remaining valid, and an eleventh device
 being rejected. The registration-to-logout-to-login check reserves 100 points,
 registers 10 participants, records three planted points for the first device,
 and verifies that its original 10 points and progress return after sign-in.
-Browser checks cover device identity after logout, a fresh app load, and session
-expiry. Tests use temporary tables and leave live accounts unchanged.
+Browser checks cover logout, a fresh app load, session expiry, cookie restoration,
+blocked storage, recovery on a different domain, and preserving other organizations'
+identities. PostgreSQL checks cover resumed planting progress on a new origin even
+when all slots are full, invalid codes leaving free slots untouched, device
+summaries, and revoked recovery codes after reset. Tests use temporary tables and
+leave live accounts unchanged.

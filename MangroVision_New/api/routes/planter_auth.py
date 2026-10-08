@@ -71,6 +71,7 @@ class PlanterLoginRequest(BaseModel):
     device_key: str = Field(min_length=16, max_length=200)
     participant_slot: Optional[int] = Field(default=None, ge=1, le=10000)
     recover_slot: bool = False
+    resume_device: bool = False
 
 
 def _planter_public_dict(planter: dict) -> dict:
@@ -121,7 +122,8 @@ def planter_login(body: PlanterLoginRequest, response: Response):
     if planter.get("status") != "active":
         raise HTTPException(status_code=403, detail="This planter account is inactive.")
     try:
-        slot = claim_participant_slot(planter["id"], body.device_key, body.participant_slot, recover_slot=body.recover_slot)
+        slot = claim_participant_slot(planter["id"], body.device_key, body.participant_slot,
+                                      recover_slot=body.recover_slot, resume_device=body.resume_device)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
     planter["participant_slot"] = slot

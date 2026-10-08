@@ -1,11 +1,12 @@
 import { create } from 'zustand';
 import { submissionError } from '../utils/formValidation';
+import { participantDeviceKey, parseParticipantRecoveryCode, rememberParticipantDeviceKey } from '../utils/participantDevice';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
 const PLANTER_USER_KEY = 'mv_planter_user';
 
-localStorage.removeItem('mv_planter_token');
+try { localStorage.removeItem('mv_planter_token'); } catch { /* Browser storage may be disabled. */ }
 
 function readStoredPlanter() {
   try {
@@ -15,14 +16,18 @@ function readStoredPlanter() {
   }
 }
 
-// This random identity survives logout so the same device resumes its own slot.
-function deviceKey() {
-  let key = localStorage.getItem('mv_participant_device');
-  if (!key) {
-    key = Array.from(crypto.getRandomValues(new Uint8Array(24)), (byte) => byte.toString(16).padStart(2, '0')).join('');
-    localStorage.setItem('mv_participant_device', key);
-  }
-  return key;
+function storePlanter(planter) {
+  try {
+    if (planter) localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(planter));
+    else localStorage.removeItem(PLANTER_USER_KEY);
+  } catch { /* The server session remains authoritative. */ }
+}
+
+function welcome(kind) {
+  try {
+    sessionStorage.setItem('mv_field_show_welcome', '1');
+    sessionStorage.setItem('mv_field_welcome_kind', kind);
+  } catch { /* A welcome message is optional when storage is disabled. */ }
 }
 
 const initialPlanter = readStoredPlanter();
@@ -36,6 +41,9 @@ export const usePlanterAuthStore = create((set, get) => ({
 
   register: async ({ full_name, username, password, organization_id, participant_count, phone, base_label, base_lat, base_lon }) => {
     set({ status: 'loading', error: '' });
+    let identity;
+    try { identity = participantDeviceKey(username); }
+    catch (error) { set({ status: 'error', error: error.message }); throw error; }
     const res = await fetch(`${API}/api/planter-auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -45,7 +53,7 @@ export const usePlanterAuthStore = create((set, get) => ({
         password,
         organization_id,
         participant_count,
-        device_key: deviceKey(),
+        device_key: identity,
         phone: phone || '',
         base_label: base_label || '',
         base_lat: base_lat ?? null,
@@ -59,10 +67,8 @@ export const usePlanterAuthStore = create((set, get) => ({
       throw error;
     }
     const data = await res.json();
-    localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
-    sessionStorage.setItem('mv_field_show_welcome', '1');
-    // First-time entry — UI greets with "Welcome", not "Welcome back".
-    sessionStorage.setItem('mv_field_welcome_kind', 'register');
+    storePlanter(data.planter);
+    welcome('register');
     set({
       token: 'cookie',
       planter: data.planter,
@@ -73,12 +79,17 @@ export const usePlanterAuthStore = create((set, get) => ({
     return data.planter;
   },
 
-  login: async (username, password, participantSlot = null, recoverSlot = false) => {
+  login: async (username, password, participantSlot = null, recoverSlot = false, recoveryCode = '') => {
     set({ status: 'loading', error: '' });
+    let identity;
+    try {
+      const savedIdentity = participantDeviceKey(username);
+      identity = recoveryCode ? parseParticipantRecoveryCode(recoveryCode) : savedIdentity;
+    } catch (error) { set({ status: 'error', error: error.message }); throw error; }
     const res = await fetch(`${API}/api/planter-auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, device_key: deviceKey(), participant_slot: recoverSlot ? participantSlot : null, recover_slot: recoverSlot }),
+      body: JSON.stringify({ username, password, device_key: identity, participant_slot: recoverSlot ? participantSlot : null, recover_slot: recoverSlot, resume_device: Boolean(recoveryCode) }),
     });
     if (!res.ok) {
       const payload = await res.json().catch(() => ({}));
@@ -87,10 +98,9 @@ export const usePlanterAuthStore = create((set, get) => ({
       throw error;
     }
     const data = await res.json();
-    localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
-    sessionStorage.setItem('mv_field_show_welcome', '1');
-    // Returning planter — UI greets with "Welcome back".
-    sessionStorage.setItem('mv_field_welcome_kind', 'login');
+    rememberParticipantDeviceKey(identity, username);
+    storePlanter(data.planter);
+    welcome('login');
     set({
       token: 'cookie',
       planter: data.planter,
@@ -111,7 +121,7 @@ export const usePlanterAuthStore = create((set, get) => ({
         // Ignore network errors on logout — local state still clears.
       }
     }
-    localStorage.removeItem(PLANTER_USER_KEY);
+    storePlanter(null);
     set({ token: null, planter: null, isAuthenticated: false, status: 'idle', error: '' });
   },
 
@@ -121,12 +131,12 @@ export const usePlanterAuthStore = create((set, get) => ({
         `${API}/api/planter-auth/session`,
       );
       if (!res.ok) {
-        localStorage.removeItem(PLANTER_USER_KEY);
+        storePlanter(null);
         set({ token: null, planter: null, isAuthenticated: false });
         return;
       }
       const data = await res.json();
-      localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
+      storePlanter(data.planter);
       set({ token: 'cookie', planter: data.planter, isAuthenticated: true });
     } catch {
       // Preserve cached session on transient network issues.
@@ -144,7 +154,7 @@ export const usePlanterAuthStore = create((set, get) => ({
     }
     const data = await res.json();
     if (data.planter) {
-      localStorage.setItem(PLANTER_USER_KEY, JSON.stringify(data.planter));
+      storePlanter(data.planter);
       set({ planter: data.planter });
     }
     const projectSitePayload = data.project_sites;

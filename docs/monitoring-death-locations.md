@@ -13,8 +13,16 @@ visits remain supported, with all reported deaths initially unlocated.
    area**. The numbered map and checklist contain the same locations, with
    analysis/point references, coordinates, planting dates, and observation space.
 2. After the visit, enter **Newly dead seedlings** and **Cause of death**, then
-   identify their locations on the visit map. Selection stops at the entered total.
-   Deselect locations before reducing the total below the selected count.
+   identify their locations on the visit map. For many deaths, choose **Brush select**
+   and hover across the points inside the circular brush (drag on touch screens).
+   Fast sweeps include points along the full path. Repeated passes keep points
+   selected; grey, unavailable locations are skipped. Selection stops at the
+   entered death total. Use **Brush erase** to remove several selections, or
+   **Move / click** for individual corrections and map navigation. **Esc** returns
+   to Move / click without closing the visit dialog. Deselect locations before
+   reducing the total below the selected count. Selections are saved with the
+   visit; moving the brush does not save a death immediately. These controls also
+   work when identifying remaining locations in visit history.
    The selected cause applies to the new deaths in this visit, including deaths
    whose locations are unknown. Optional notes describe the observed evidence.
    The visit map has no site/assignment filters, search, checklist or print toolbar;

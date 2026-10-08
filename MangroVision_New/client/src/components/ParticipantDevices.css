@@ -1,0 +1,41 @@
+.participant-devices {
+  display: grid;
+  gap: 10px;
+}
+
+.participant-device-summary,
+.participant-device-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.participant-device-summary {
+  font-size: 0.8125rem;
+}
+
+.participant-device-list {
+  display: grid;
+  gap: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.participant-device-list li {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+.participant-device-heading strong {
+  color: var(--text-primary);
+}

@@ -6,6 +6,7 @@ import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
+import ParticipantDevices from '../components/ParticipantDevices';
 import { getPlanterColor } from '../utils/planterColors';
 import { POINT_STATUS_LABELS as STATUS_LABEL } from '../utils/pointStatus';
 import { useLocation } from 'react-router-dom';
@@ -57,8 +58,6 @@ export default function PlanterManagement() {
   const [assignments, setAssignments] = useState([]);
   const [dashStats, setDashStats] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [resetSlot, setResetSlot] = useState(1);
-  const [deviceMessage, setDeviceMessage] = useState('');
 
   // One unified assign form: one clicked point and many clicked points share
   // the same selected-id list and batch endpoint.
@@ -434,7 +433,7 @@ export default function PlanterManagement() {
   };
 
   return (
-    <Panel title="Organizations & Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
+    <Panel title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
       {dashStats && (
         <PanelCard
           title="Dashboard"
@@ -550,6 +549,7 @@ export default function PlanterManagement() {
             )}
           </div>
 
+          {!shareHosted && <p className="text-sm">Keep the current link while participants are working. A newly generated link needs their saved device recovery codes to restore the same participant numbers.</p>}
           {shareError && <div className="assign-message assign-error">{shareError}</div>}
           {shareCopied && <div className="assign-message assign-success">{shareCopied}</div>}
         </div>
@@ -593,8 +593,6 @@ export default function PlanterManagement() {
                 const siteId = site?.id ?? site?.properties?.id ?? null;
                 setAssignProjectSiteId(siteId);
                 warnIfNoAvailablePoints(nextPlanter, site);
-                setResetSlot(1);
-                setDeviceMessage('');
                 clearAssignmentSelection();
                 setAssignmentScope(nextPlanter?.organization_id ?? null, siteId);
               }}
@@ -703,21 +701,8 @@ export default function PlanterManagement() {
       </PanelCard>
 
       {selectedAssignmentPlanter && !selectedAssignmentPlanter.registration_pending && (
-        <PanelCard title="Participant device recovery" defaultOpen={false}>
-          <p className="text-sm">If a participant changes phones, reset their slot, then sign in on the replacement phone. Their assigned points stay the same.</p>
-          <label className="form-label" htmlFor="participant-reset-slot">Participant number</label>
-          <input id="participant-reset-slot" className="form-input" type="number" min="1" max={selectedAssignmentPlanter.participant_count} value={resetSlot} onChange={(event) => setResetSlot(Number(event.target.value))} />
-          <button className="btn btn-secondary btn-sm" disabled={assignBusy || resetSlot < 1 || resetSlot > selectedAssignmentPlanter.participant_count || !Number.isInteger(resetSlot)} onClick={async () => {
-            setAssignBusy(true);
-            try {
-              const response = await fetch(`${API}/api/planters/${selectedAssignmentPlanter.id}/participants/${resetSlot}/reset-device`, { method: 'POST' });
-              const result = await response.json();
-              if (!response.ok) throw new Error(result.detail || 'Could not reset device.');
-              setDeviceMessage(`Participant ${resetSlot} can now sign in on a replacement device.`);
-            } catch (error) { setDeviceMessage(error.message); }
-            finally { setAssignBusy(false); }
-          }}>Reset device slot</button>
-          {deviceMessage && <p role="status" className="text-sm">{deviceMessage}</p>}
+        <PanelCard title="Participant devices" defaultOpen={false}>
+          <ParticipantDevices key={selectedAssignmentPlanter.id} planter={selectedAssignmentPlanter} />
         </PanelCard>
       )}
 

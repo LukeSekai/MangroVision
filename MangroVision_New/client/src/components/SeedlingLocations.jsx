@@ -4,6 +4,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ORTHOPHOTO_TILE_URL, ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM } from '../config/mapTiles';
 import { filterSeedlings, seedlingMarkerStyle, toggleSeedling, visibleSeedlings } from '../utils/monitoringLocations';
+import { paintReplantingSelection } from '../utils/replantingBrush';
+import { attachSeedlingBrush } from '../utils/seedlingBrush';
 import './SeedlingLocations.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -44,12 +46,22 @@ function FieldSheet({ snapshot, onDone }) {
   </section>, document.body);
 }
 
-export function SeedlingMap({ points, selected = [], onToggle, onBounds }) {
+function markerAppearance(point, zoom, chosen) {
+  const color = chosen ? '#7c3aed' : REPLACEMENT_COLORS[point.replanting_status]
+    || (point.selectable === false ? '#64748b' : '#166534');
+  return { ...seedlingMarkerStyle(zoom, chosen), color: chosen ? '#5b21b6' : color,
+    fillColor: color, fillOpacity: point.selectable === false && !chosen ? 0.55 : 0.88 };
+}
+
+export function SeedlingMap({ points, selected = [], onToggle, onBounds, selectionMode = 'click', onPaint, onStopPainting }) {
   const container = useRef(null);
   const mapRef = useRef(null);
   const layer = useRef(null);
   const callback = useRef(onBounds);
+  const actions = useRef({ onToggle, selectionMode, selected });
+  const brushCleanup = useRef(null);
   useEffect(() => { callback.current = onBounds; }, [onBounds]);
+  useEffect(() => { actions.current = { onToggle, selectionMode, selected }; }, [onToggle, selectionMode, selected]);
   useEffect(() => {
     const map = L.map(container.current).fitBounds(ORTHOPHOTO_BOUNDS);
     mapRef.current = map;
@@ -69,47 +81,83 @@ export function SeedlingMap({ points, selected = [], onToggle, onBounds }) {
     map.on('zoomend', resizeMarkers);
     const observer = new ResizeObserver(() => map.invalidateSize());
     observer.observe(container.current);
-    return () => { observer.disconnect(); map.remove(); mapRef.current = null; layer.current = null; };
+    return () => {
+      brushCleanup.current?.();
+      observer.disconnect();
+      map.remove();
+      mapRef.current = null;
+      layer.current = null;
+    };
   }, []);
   useEffect(() => {
     const group = layer.current;
     group.clearLayers();
-    visibleSeedlings(points).forEach((p) => {
-      const chosen = selected.includes(p.planting_event_id);
-      const color = chosen ? '#7c3aed' : REPLACEMENT_COLORS[p.replanting_status]
-        || (p.selectable === false ? '#64748b' : '#166534');
-      const marker = L.circleMarker([p.latitude, p.longitude], {
-        ...seedlingMarkerStyle(mapRef.current.getZoom(), chosen),
-        color: chosen ? '#5b21b6' : color,
-        fillColor: color,
-        fillOpacity: p.selectable === false && !chosen ? 0.55 : 0.88,
-        mvSelected: chosen,
+    visibleSeedlings(points).forEach((point) => {
+      const chosen = actions.current.selected.includes(point.planting_event_id);
+      const marker = L.circleMarker([point.latitude, point.longitude], {
+        ...markerAppearance(point, mapRef.current.getZoom(), chosen),
+        mvSelected: chosen, mvPoint: point,
       });
       const label = document.createElement('span');
-      label.textContent = reference(p);
+      label.textContent = reference(point);
       marker.bindTooltip(label);
-      marker.on('click', () => { if (p.selectable !== false || chosen) onToggle?.(p.planting_event_id); });
+      const toggle = () => {
+        const current = actions.current;
+        if (point.selectable !== false || current.selected.includes(point.planting_event_id)) {
+          current.onToggle?.(point.planting_event_id);
+        }
+      };
+      marker.on('click', () => { if (actions.current.selectionMode === 'click') toggle(); });
       marker.on('add', () => {
         const element = marker.getElement();
-        if (!element || !onToggle || (p.selectable === false && !chosen)) return;
-        element.setAttribute('tabindex', '0');
-        element.setAttribute('role', 'button');
-        element.setAttribute('aria-label', reference(p));
-        element.setAttribute('aria-pressed', String(chosen));
+        if (!element) return;
+        element.setAttribute('aria-label', reference(point));
         element.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault();
-            onToggle(p.planting_event_id);
+            toggle();
           }
         });
       });
       group.addLayer(marker);
+    });
+  }, [points]);
+  useEffect(() => {
+    const chosenIds = new Set(selected);
+    layer.current.eachLayer((marker) => {
+      const point = marker.options.mvPoint;
+      const chosen = chosenIds.has(point.planting_event_id);
+      if (marker.options.mvSelected !== chosen) {
+        marker.options.mvSelected = chosen;
+        const style = markerAppearance(point, mapRef.current.getZoom(), chosen);
+        marker.setRadius(style.radius);
+        marker.setStyle(style);
+      }
+      const element = marker.getElement();
+      if (!element) return;
+      const interactive = Boolean(onToggle) && (point.selectable !== false || chosen);
+      element.setAttribute('tabindex', interactive ? '0' : '-1');
+      if (onToggle) {
+        element.setAttribute('role', 'button');
+        element.setAttribute('aria-pressed', String(chosen));
+        element.setAttribute('aria-disabled', String(!interactive));
+      } else {
+        element.removeAttribute('role');
+        element.removeAttribute('aria-pressed');
+        element.removeAttribute('aria-disabled');
+      }
     });
   }, [points, selected, onToggle]);
   useEffect(() => {
     const valid = visibleSeedlings(points);
     if (valid.length) mapRef.current.fitBounds(L.latLngBounds(valid.map((p) => [p.latitude, p.longitude])), { padding: [30, 30], maxZoom: 22 });
   }, [points]);
+  useEffect(() => {
+    if (selectionMode === 'click' || !onPaint) return undefined;
+    const cleanup = attachSeedlingBrush(mapRef.current, points, selectionMode, onPaint, onStopPainting);
+    brushCleanup.current = cleanup;
+    return cleanup;
+  }, [points, selectionMode, onPaint, onStopPainting]);
   return <div ref={container} className="seedling-location-map" aria-label="Mapped seedling locations" />;
 }
 
@@ -119,6 +167,10 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const loadedLocations = useRef(null);
+  const selectedRef = useRef(selected);
+  const [selectionMode, setSelectionMode] = useState('click');
+  const stopPainting = useCallback(() => setSelectionMode('click'), []);
+  useEffect(() => { selectedRef.current = selected; }, [selected]);
   const [filters, setFilters] = useState({ site: '', assignment: '', search: '' });
   const [bounds, setBounds] = useState(null);
   const [printSnapshot, setPrintSnapshot] = useState(null);
@@ -145,7 +197,23 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
   }, [organizationId, monitoredAt, recordId, retry]);
   const filtered = useMemo(() => filterSeedlings(points, filters), [points, filters]);
   const visible = visibleSeedlings(filtered, bounds);
-  const toggle = (id) => { if (!disabled) onChange?.(toggleSeedling(selected, id, maxSelected)); };
+  const toggle = useCallback((id) => {
+    if (disabled || !onChange) return;
+    const next = toggleSeedling(selectedRef.current, id, maxSelected);
+    if (next !== selectedRef.current) {
+      selectedRef.current = next;
+      onChange(next);
+    }
+  }, [disabled, onChange, maxSelected]);
+  const paint = useCallback((ids, mode) => {
+    if (disabled || !onChange) return;
+    const next = paintReplantingSelection(selectedRef.current, ids, mode, maxSelected);
+    if (next !== selectedRef.current) {
+      selectedRef.current = next;
+      onChange(next);
+    }
+  }, [disabled, onChange, maxSelected]);
+  const activeMode = readOnly || disabled || (selectionMode === 'select' && maxSelected <= 0) ? 'click' : selectionMode;
   const choices = (key, labelKey) => [...new Map(points.filter((p) => p[key] != null).map((p) => [p[key], p[labelKey] || String(p[key])])).entries()];
   return <div className="seedling-locations">
     {readOnly ? <div className="seedling-location-filters">
@@ -153,9 +221,23 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
       <label>Assignment<select value={filters.assignment} onChange={(e) => setFilters({ ...filters, assignment: e.target.value })}><option value="">All assignments</option>{choices('assignment_id', 'assignment_title').map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
     </div> : null}
     {loading ? <p role="status">Loading planting locations…</p> : error ? <p role="alert">{error} <button type="button" onClick={() => setRetry(retry + 1)}>Retry</button></p> : <>
-      {!readOnly ? <p>Click dead seedlings on the map. Purple means selected; click again to deselect. Grey points are unavailable for this visit.</p> : <p>Zoom to a small section, then print its numbered map and matching checklist.</p>}
+      {!readOnly ? <>
+        <div className="seedling-selection-tools" role="group" aria-label="Dead seedling selection tool">
+          {[['click', 'Move / click'], ['select', 'Brush select'], ['deselect', 'Brush erase']].map(([mode, label]) => <button key={mode} type="button"
+            className={activeMode === mode ? 'is-active' : ''} aria-pressed={activeMode === mode}
+            disabled={disabled || (mode === 'select' && maxSelected <= 0) || (mode === 'deselect' && !selected.length)}
+            onClick={() => setSelectionMode(mode)}>{label}</button>)}
+        </div>
+        <p className="seedling-selection-help">{activeMode === 'click'
+          ? 'Click a dead seedling to select it, or use Brush select to sweep over several. Click a purple point again to deselect it.'
+          : activeMode === 'select'
+            ? 'Hover over dead seedlings to select points inside the circular brush. On a touch screen, drag across them. Press Esc or choose Move / click to finish.'
+            : 'Hover over purple points to remove them from the selection. On a touch screen, drag across them. Press Esc or choose Move / click to finish.'}
+          {' '}Purple means selected. Grey points are unavailable for this visit.</p>
+      </> : <p>Zoom to a small section, then print its numbered map and matching checklist.</p>}
       {!readOnly && Number.isFinite(maxSelected) ? <p role="status">{maxSelected === 0 ? 'Enter the total deaths above before selecting locations.' : `${selected.length} of ${maxSelected} deaths identified.${selected.length >= maxSelected ? ' All reported deaths are located. Deselect a point to choose another.' : ''}`}</p> : null}
-      <SeedlingMap points={filtered} selected={selected} onToggle={readOnly ? undefined : toggle} onBounds={setBounds} />
+      <SeedlingMap points={filtered} selected={selected} onToggle={readOnly || disabled ? undefined : toggle} onBounds={setBounds}
+        selectionMode={activeMode} onPaint={readOnly || disabled ? undefined : paint} onStopPainting={stopPainting} />
       {readOnly ? <><div className="seedling-location-toolbar"><span>{visible.length} points in this map view</span>
         <button type="button" disabled={!bounds || !visible.length} onClick={() => setPrintSnapshot({ bounds, points: visible })}>Print visible area</button></div>
       <div className="seedling-location-checklist">

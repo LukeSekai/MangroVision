@@ -1258,3 +1258,17 @@
     gap: 5px;
   }
 }
+
+.field-recovery-options {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.field-recovery-options summary {
+  cursor: pointer;
+}
+
+.field-recovery-options[open] {
+  display: grid;
+  gap: 12px;
+}

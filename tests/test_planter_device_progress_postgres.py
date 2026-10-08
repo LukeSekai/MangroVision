@@ -11,6 +11,7 @@ from sqlalchemy import text
 
 import planting_database as db
 from mangrovision_db.compat import CompatConnection, get_engine
+from mangrovision_db.organization_accounts import list_participant_devices, reset_participant_device
 
 pytestmark = pytest.mark.skipif(
     os.getenv("MANGROVISION_RUN_TEMP_ACCOUNT_TESTS") != "1",
@@ -120,6 +121,13 @@ def test_registration_ten_devices_logout_and_login_restore_points_and_progress(w
         assert registered.status_code == 200, registered.text
         assert registered.json()["planter"]["participant_slot"] == 1
         assert connection.scalar(text("SELECT COUNT(*) FROM planters")) == 1
+        unknown = post(clients[10], "/login", {
+            "username": "device_progress_test", "password": "test-password",
+            "device_key": "unknown-recovery-device-key", "resume_device": True,
+        })
+        assert unknown.status_code == 409
+        assert "recovery code" in unknown.json()["detail"]
+        assert connection.scalar(text("SELECT COUNT(*) FROM organization_participants WHERE device_key_hash IS NOT NULL")) == 1
         for number, client in enumerate(clients[1:10], start=2):
             response = login(client, number)
             assert response.status_code == 200, response.text
@@ -159,21 +167,89 @@ def test_registration_ten_devices_logout_and_login_restore_points_and_progress(w
         assert len(bindings) == 10
         assert all(device_hash for _, device_hash in bindings)
 
-        assert post(first, "/logout").status_code == 200
-        assert first.get("/api/planter-auth/me/field-points").status_code == 401
-        response = login(first, 1)
-        assert response.status_code == 200, response.text
-        assert response.json()["planter"]["participant_slot"] == 1
-        restored = first.get("/api/planter-auth/me/field-points").json()["points"]
-        assert {point["assignment_point_id"] for point in restored} == original_ids[0]
-        assert Counter(point["assignment_status"] for point in restored) == {"completed": 3, "pending": 7}
+        # Repeated sessions on the same device never allocate another slot,
+        # even when the organization's device limit is already full.
+        for _ in range(5):
+            assert post(first, "/logout").status_code == 200
+            assert first.get("/api/planter-auth/me/field-points").status_code == 401
+            response = login(first, 1)
+            assert response.status_code == 200, response.text
+            assert response.json()["planter"]["participant_slot"] == 1
+            restored = first.get("/api/planter-auth/me/field-points").json()["points"]
+            assert {point["assignment_point_id"] for point in restored} == original_ids[0]
+            assert Counter(point["assignment_status"] for point in restored) == {"completed": 3, "pending": 7}
+            assert connection.execute(text(
+                "SELECT slot, device_key_hash FROM organization_participants ORDER BY slot"
+            )).all() == bindings
+        # A return visit after the server session expires uses ordinary login,
+        # with the browser's saved identity and no recovery code or slot number.
+        connection.execute(text("""
+            UPDATE auth_sessions SET expires_at = CURRENT_TIMESTAMP - INTERVAL '1 day'
+            WHERE subject_type = 'planter' AND subject_id = :id
+              AND participant_slot = 1 AND revoked_at IS NULL
+        """), {"id": registered.json()["planter"]["id"]})
+        assert first.get("/api/planter-auth/session").status_code == 401
+        returning = login(first, 1)
+        assert returning.status_code == 200, returning.text
+        assert returning.json()["planter"]["participant_slot"] == 1
+        continued = first.get("/api/planter-auth/me/field-points").json()["points"]
+        assert {point["assignment_point_id"] for point in continued} == original_ids[0]
+        assert Counter(point["assignment_status"] for point in continued) == {"completed": 3, "pending": 7}
         assert connection.execute(text(
             "SELECT slot, device_key_hash FROM organization_participants ORDER BY slot"
         )).all() == bindings
+        summary = list_participant_devices(registered.json()["planter"]["id"])
+        assert summary["registered_devices"] == 10
+        assert summary["available_devices"] == 0
+        assert summary["devices"][0]["assigned_points"] == 10
+        assert summary["devices"][0]["completed_points"] == 3
+        assert summary["devices"][0]["active_sessions"] == 1
+        assert summary["devices"][0]["last_seen_at"]
+        assert all("device_key_hash" not in device and "token_hash" not in device for device in summary["devices"])
+        # A new shared-link origin has no original cookies. Password + the
+        # original device key must resume the same slot even when all are full.
+        with TestClient(app, base_url="https://changed-field.example.test",
+                        headers={"Origin": "https://changed-field.example.test"}) as changed_link:
+            credentials = {"username": "device_progress_test", "password": "test-password",
+                           "device_key": "persistent-test-device-001", "resume_device": True}
+            response = post(changed_link, "/login", {**credentials, "password": "incorrect"})
+            assert response.status_code == 401
+            response = post(changed_link, "/login", credentials)
+            assert response.status_code == 200, response.text
+            assert response.json()["planter"]["participant_slot"] == 1
+            resumed = changed_link.get("/api/planter-auth/me/field-points").json()["points"]
+            assert {point["assignment_point_id"] for point in resumed} == original_ids[0]
+            assert Counter(point["assignment_status"] for point in resumed) == {"completed": 3, "pending": 7}
+            assert list_participant_devices(registered.json()["planter"]["id"])["registered_devices"] == 10
+            assert connection.execute(text(
+                "SELECT slot, device_key_hash FROM organization_participants ORDER BY slot"
+            )).all() == bindings
         for index, client in enumerate(clients[1:10], start=1):
             points = client.get("/api/planter-auth/me/field-points").json()["points"]
             assert {point["assignment_point_id"] for point in points} == original_ids[index]
             assert {point["assignment_status"] for point in points} == {"pending"}
+        reset_participant_device(registered.json()["planter"]["id"], 1)
+        assert list_participant_devices(registered.json()["planter"]["id"])["registered_devices"] == 9
+        assert post(first, "/login", {
+            "username": "device_progress_test", "password": "test-password",
+            "device_key": "persistent-test-device-001", "resume_device": True,
+        }).status_code == 409
+        wrong_participant = post(clients[1], "/login", {
+            "username": "device_progress_test", "password": "test-password",
+            "device_key": "persistent-test-device-002", "participant_slot": 1, "recover_slot": True,
+        })
+        assert wrong_participant.status_code == 409
+        assert "already Participant 2" in wrong_participant.json()["detail"]
+        replacement = post(first, "/login", {
+            "username": "device_progress_test", "password": "test-password",
+            "device_key": "replacement-test-device-001", "participant_slot": 1, "recover_slot": True,
+        })
+        assert replacement.status_code == 200, replacement.text
+        assert replacement.json()["planter"]["participant_slot"] == 1
+        recovered = first.get("/api/planter-auth/me/field-points").json()["points"]
+        assert {point["assignment_point_id"] for point in recovered} == original_ids[0]
+        assert Counter(point["assignment_status"] for point in recovered) == {"completed": 3, "pending": 7}
+        assert connection.scalar(text("SELECT COUNT(*) FROM planting_events")) == 3
     finally:
         for client in clients:
             client.close()

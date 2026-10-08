@@ -7,6 +7,7 @@ import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
+import ParticipantRecovery from '../components/ParticipantRecovery';
 import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
@@ -124,6 +125,7 @@ function AuthScreen() {
     password: { label: 'Password', serverTerms: ['password must', 'password should'] },
     participant_count: { label: 'Number of participants', serverTerms: ['participant count', 'participant_count'] },
     participant_slot: { label: 'Participant number', serverTerms: ['participant number', 'participant slot', 'participant_slot'] },
+    recovery_code: { label: 'Device recovery code', serverTerms: ['recovery code'] },
     phone: { label: 'Phone' },
     base_label: { label: 'Home base label' },
   });
@@ -133,6 +135,8 @@ function AuthScreen() {
     participant_count: 1,
     participant_slot: '',
     recover_slot: false,
+    use_recovery_code: false,
+    recovery_code: '',
     organization_id: '',
     username: '',
     password: '',
@@ -167,7 +171,7 @@ function AuthScreen() {
     if (!feedback.validate()) return;
     try {
       if (mode === 'login') {
-        await login(form.username.trim(), form.password, Number(form.participant_slot) || null, form.recover_slot);
+        await login(form.username.trim(), form.password, Number(form.participant_slot) || null, form.recover_slot, form.use_recovery_code ? form.recovery_code.trim() : '');
       } else {
         if (!form.organization_id) {
           feedback.reject({ organization_id: 'Choose your organization. Ask the LGU to add it through Scheduling if it is missing.' });
@@ -252,9 +256,25 @@ function AuthScreen() {
 
           {mode === 'login' && (
             <>
-              <small className="field-label-help">Use your organization's shared login. The same browser and field link on this device restore your points and saved planting progress. A new device receives the next free participant number.</small>
+              <small className="field-label-help">Return on this device using the same browser and field link. Your participant number, assigned points, and saved planting progress return automatically after sign-in.</small>
+              <details className="field-recovery-options" onToggle={(event) => {
+                if (!event.currentTarget.open) setForm((current) => ({ ...current, use_recovery_code: false, recover_slot: false }));
+              }}>
+                <summary>Recover access to previous points</summary>
+                <p className="field-label-help">Use these options if the field link changed, your browser data was cleared, or the LGU reset your participant slot.</p>
               <label className="field-label">
-                <span><input type="checkbox" checked={form.recover_slot} onChange={(event) => setForm((current) => ({ ...current, recover_slot: event.target.checked }))} /> I am replacing a device after an LGU reset</span>
+                <span><input type="checkbox" checked={form.use_recovery_code} onChange={(event) => setForm((current) => ({ ...current, use_recovery_code: event.target.checked, recover_slot: false }))} /> I have a device recovery code</span>
+              </label>
+              {form.use_recovery_code && (
+                <label className="field-label">
+                  Device recovery code
+                  <input {...feedback.props('recovery_code')} className="field-input" type="text" required value={form.recovery_code} onChange={update('recovery_code')} placeholder="MV1-…" autoComplete="off" spellCheck={false} />
+                  <FieldError feedback={feedback} field="recovery_code" />
+                  <small className="field-label-help">Use the private code saved for your participant number on the previous link.</small>
+                </label>
+              )}
+              <label className="field-label">
+                <span><input type="checkbox" checked={form.recover_slot} onChange={(event) => setForm((current) => ({ ...current, recover_slot: event.target.checked, use_recovery_code: false }))} /> I am replacing a device after an LGU reset</span>
               </label>
               {form.recover_slot && (
                 <label className="field-label">
@@ -264,6 +284,7 @@ function AuthScreen() {
                   <small className="field-label-help">Only use this to recover your previous points on a replacement phone.</small>
                 </label>
               )}
+              </details>
             </>
           )}
           <label className="field-label">
@@ -851,6 +872,7 @@ export default function FieldApp() {
 
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const avatarMenuRef = useRef(null);
   const reloadSequence = useRef(0);
 
@@ -1216,6 +1238,10 @@ export default function FieldApp() {
                 onClick={() => { setAvatarMenuOpen(false); setActivityOpen(true); }}>
                 Activity Logs
               </button>
+              <button type="button" role="menuitem" className="field-avatar-menu-item"
+                onClick={() => { setAvatarMenuOpen(false); setRecoveryOpen(true); }}>
+                Device recovery code
+              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -1410,6 +1436,8 @@ export default function FieldApp() {
         routeBusy={routeBusy}
         routeError={routeError}
       />}
+
+      {recoveryOpen && <ParticipantRecovery planter={planter} onClose={() => setRecoveryOpen(false)} />}
 
       <Modal
         open={welcomeOpen}

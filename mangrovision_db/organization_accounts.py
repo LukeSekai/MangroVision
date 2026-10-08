@@ -42,7 +42,7 @@ def allocation_slots(point_count, participant_count, existing_counts=None):
     return sorted(slots)
 
 
-def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recover_slot=False):
+def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recover_slot=False, resume_device=False):
     from planting_database import _get_connection
     if not device_key or not 16 <= len(device_key) <= 200:
         raise ValueError('A persistent device identity is required. Please reload and sign in again.')
@@ -56,7 +56,11 @@ def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recov
         existing = conn.execute('SELECT slot FROM organization_participants WHERE planter_id = ? AND device_key_hash = ? AND slot <= ?',
                                 (planter_id, device_hash, limit)).fetchone()
         if existing:
+            if recover_slot and requested_slot != existing['slot']:
+                raise ValueError(f'This browser is already Participant {existing["slot"]}. Ask the LGU to reset that device slot before recovering Participant {requested_slot}.')
             return existing['slot']
+        if resume_device:
+            raise ValueError('This recovery code is not linked to this organization. Check the code or ask the LGU to recover your participant number.')
         if recover_slot and (requested_slot is None or not 1 <= requested_slot <= limit):
             raise ValueError(f'Enter the participant number reset by the LGU, between 1 and {limit}.')
         # Older forms sent a participant number on normal sign-in. Treat it as
@@ -74,6 +78,48 @@ def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recov
                      (device_hash, planter_id, slot['slot']))
         conn.commit()
         return slot['slot']
+    finally:
+        conn.close()
+
+
+def list_participant_devices(planter_id):
+    """Report occupied browser slots and their history without exposing keys."""
+    from planting_database import _get_connection
+    conn = _get_connection()
+    try:
+        account = conn.execute('SELECT participant_count, merged_into_planter_id FROM planters WHERE id = ?',
+                               (planter_id,)).fetchone()
+        if not account or account['merged_into_planter_id'] is not None:
+            raise ValueError('Organization account not found.')
+        rows = conn.execute('''WITH session_activity AS (
+                SELECT participant_slot, MIN(created_at) AS first_login_at,
+                       MAX(last_seen_at) AS last_seen_at,
+                       COUNT(*) FILTER (WHERE revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP) AS active_sessions
+                FROM auth_sessions WHERE subject_type = 'planter' AND subject_id = ?
+                GROUP BY participant_slot
+            ), point_counts AS (
+                SELECT pap.participant_slot, COUNT(*) AS assigned_points,
+                       COUNT(*) FILTER (WHERE pap.status = 'completed') AS completed_points
+                FROM planter_assignment_points pap
+                JOIN planter_assignments pa ON pa.id = pap.assignment_id
+                WHERE pa.planter_id = ? AND pa.status IN ('active', 'completed')
+                  AND pap.released_at IS NULL
+                GROUP BY pap.participant_slot
+            )
+            SELECT op.slot, op.device_key_hash IS NOT NULL AS registered,
+                   sa.first_login_at, sa.last_seen_at,
+                   COALESCE(sa.active_sessions, 0) AS active_sessions,
+                   COALESCE(pc.assigned_points, 0) AS assigned_points,
+                   COALESCE(pc.completed_points, 0) AS completed_points
+            FROM organization_participants op
+            LEFT JOIN session_activity sa ON sa.participant_slot = op.slot
+            LEFT JOIN point_counts pc ON pc.participant_slot = op.slot
+            WHERE op.planter_id = ? AND op.slot <= ? ORDER BY op.slot''',
+                            (planter_id, planter_id, planter_id, account['participant_count'])).fetchall()
+        devices = [dict(row) for row in rows]
+        registered = sum(device['registered'] for device in devices)
+        return {'participant_count': account['participant_count'], 'registered_devices': registered,
+                'available_devices': len(devices) - registered, 'devices': devices}
     finally:
         conn.close()
 
