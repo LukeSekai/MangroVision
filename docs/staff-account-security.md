@@ -12,6 +12,12 @@ existing login flow.
 2. Check your registered email for the six-digit sign-in code.
 3. Enter the code to open the workspace.
 
+The initial button is labelled **Sign in**. Missing inputs and rejected
+credentials show a correction beside the relevant username or password field.
+An unrecognized username is distinguished from an incorrect password. The form
+uses a staff username; the registered email receives the verification code.
+Code-delivery failures and account-change conflicts stay at form level.
+
 Entering a password alone creates no staff session. Each code expires after
 10 minutes, can be consumed once, and permits five incorrect attempts. Resends
 require 60 seconds and invalidate the previous code. An email address may

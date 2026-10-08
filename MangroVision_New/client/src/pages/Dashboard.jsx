@@ -61,12 +61,6 @@ const COLORS = {
   missing: '#94a3b8',
 };
 
-const ATTENTION_REASON_LABELS = {
-  survival_below_target: 'Fewer seedlings alive than the target',
-  overdue_inspections: 'Inspections are past due',
-  warning_exposure: 'Planting points are inside a risk area',
-};
-
 const LIFECYCLE_LABELS = POINT_STATUS_LABELS;
 
 const LIFECYCLE_HINTS = {
@@ -181,23 +175,6 @@ function formatArea(value) {
 
 function formatSquareMetres(value) {
   return numberOrNull(value) === null ? '—' : `${formatDecimal(value)} m²`;
-}
-
-function formatPlantingAge(row) {
-  const ageDays = firstNumber(row?.planting_age_days, row?.age_days);
-  if (ageDays !== null) return `${formatCount(ageDays)} days`;
-  if (row?.age_band) return String(row.age_band);
-  const interval = firstNumber(row?.inspection_interval_days, row?.interval_days);
-  return interval === null ? '—' : `${formatCount(interval)}-day inspection`;
-}
-
-function formatCoverageContext(row) {
-  const coverage = firstNumber(row?.coverage_pct, row?.inspection_coverage_pct);
-  if (coverage !== null) return formatPercent(coverage);
-  const inspected = firstNumber(row?.inspected, row?.sample_size);
-  const due = firstNumber(row?.due, row?.due_total);
-  if (inspected !== null && due !== null) return `${formatCount(inspected)} of ${formatCount(due)}`;
-  return '—';
 }
 
 function formatDate(value, includeTime = false) {
@@ -391,25 +368,6 @@ function ChartCard({
   );
 }
 
-function InspectionRoundSelect({ id, rounds, value, onChange }) {
-  return (
-    <label className="dash-card-round-filter" htmlFor={id}>
-      <span>Show results from</span>
-      <select
-        id={id}
-        value={value === null ? '' : String(value)}
-        onChange={(event) => onChange(event.target.value)}
-        disabled={!rounds.length}
-      >
-        {!rounds.length ? <option value="">No inspections available</option> : null}
-        {rounds.map((round) => (
-          <option key={round} value={round}>{formatCount(round)} days after planting</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
 function KpiCard({ label, value, hint, tone = 'green', progress = null }) {
   const safeProgress = firstNumber(progress);
   return (
@@ -525,8 +483,6 @@ function OverviewTab({ data }) {
   const progressHasActivity = progress.length > 0 && (
     annualTarget !== null || progress.some((row) => firstNumber(row.planted, row.cumulative_planted, 0) > 0)
   );
-  const siteAttention = arrayOf(data?.site_attention);
-  const actionSites = siteAttention.filter((row) => arrayOf(row.reasons).length > 0);
   const plantingScope = planted.scope || 'year_to_date';
   const plantingHint = plantingScope === 'year_to_date'
     ? numberOrNull(planted.target) === null
@@ -600,23 +556,6 @@ function OverviewTab({ data }) {
           </ResponsiveContainer>
         </ChartCard>
 
-        <Card
-          title="Project sites that need follow-up"
-          subtitle="A project site appears here when fewer seedlings are alive than planned, an inspection is late, or planting points are inside a risk area."
-          className="dash-card-full"
-        >
-          {actionSites.length ? (
-            <DataTable
-              caption="Project sites that need follow-up"
-              rows={actionSites}
-              columns={[
-                { key: 'site_name', label: 'Project site', render: (row) => <strong>{row.site_name || `Site ${row.site_id ?? '—'}`}</strong> },
-                { key: 'reasons', label: 'What needs follow-up', render: (row) => arrayOf(row.reasons).map((reason) => ATTENTION_REASON_LABELS[reason] || String(reason).replaceAll('_', ' ')).join(' · ') || 'Review this project site' },
-                { key: 'overdue_inspections', label: 'Inspections past due', render: (row) => formatCount(row.overdue_inspections) },
-              ]}
-            />
-          ) : <EmptyState title="All project sites are on track">A project site will appear here when it needs a monitoring or planting follow-up.</EmptyState>}
-        </Card>
       </div>
     </div>
   );
@@ -790,208 +729,142 @@ function OperationsTab({ data }) {
   );
 }
 
-function OutcomesChart({ rows, labelKey = 'name' }) {
+function StackedColumnCountLabel({ x, y, width, height, value }) {
+  if (!value || height < 18) return null;
+  return (
+    <text x={x + width / 2} y={y + height / 2} textAnchor="middle" dominantBaseline="central" fill="#ffffff" fontSize={11} fontWeight={700}>
+      {formatCount(value)}
+    </text>
+  );
+}
+
+function OutcomesChart({ rows, labelKey = 'name', verticalBars = false }) {
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={rows} layout="vertical" stackOffset="expand" margin={{ top: 8, right: 16, bottom: 8, left: -14 }}>
-        <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-        <XAxis type="number" domain={[0, 1]} tickFormatter={(value) => `${Math.round(value * 100)}%`} />
-        <YAxis type="category" dataKey={labelKey} width={112} interval={0} tick={<WrappedCategoryTick />} />
+      <BarChart data={rows} layout={verticalBars ? 'horizontal' : 'vertical'} margin={verticalBars ? { top: 24, right: 20, bottom: 8, left: 0 } : { top: 8, right: 28, bottom: 8, left: -14 }}>
+        <CartesianGrid strokeDasharray="3 3" horizontal={verticalBars} vertical={!verticalBars} />
+        {verticalBars ? <XAxis type="category" dataKey={labelKey} interval={0} tickMargin={10} height={40} /> : <XAxis type="number" allowDecimals={false} />}
+        {verticalBars ? <YAxis type="number" allowDecimals={false} tickFormatter={formatCount} width={54} /> : <YAxis type="category" dataKey={labelKey} width={150} interval={0} tick={<WrappedCategoryTick />} />}
         <Tooltip formatter={(value, name) => [formatCount(value), name]} />
         <Legend verticalAlign="top" height={34} />
-        <Bar dataKey="alive" name="Alive" stackId="outcome" fill={COLORS.alive}>
-          <LabelList dataKey="alive" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />
+        <Bar dataKey="planted" name="Planted" stackId="outcome" fill={COLORS.planted} maxBarSize={verticalBars ? 90 : undefined}>
+          {verticalBars ? <LabelList dataKey="planted" content={<StackedColumnCountLabel />} /> : <LabelList dataKey="planted" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />}
         </Bar>
-        <Bar dataKey="dead" name="Dead" stackId="outcome" fill={COLORS.dead} radius={[0, 4, 4, 0]}>
-          <LabelList dataKey="dead" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />
+        <Bar dataKey="dead" name="Dead" stackId="outcome" fill={COLORS.dead} radius={verticalBars ? [4, 4, 0, 0] : [0, 4, 4, 0]} maxBarSize={verticalBars ? 90 : undefined}>
+          {verticalBars ? <LabelList dataKey="dead" content={<StackedColumnCountLabel />} /> : <LabelList dataKey="dead" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />}
+          {verticalBars ? <LabelList dataKey="total" position="top" fill="#14532d" fontSize={12} fontWeight={700} formatter={formatCount} /> : null}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
-function EcologyTab({ data, settings }) {
+function EcologyTab({ data }) {
   const summary = data?.summary || {};
-  const cohorts = arrayOf(data?.survival_cohorts).map((row) => ({ ...row, interval_label: `${row.interval_days ?? '—'} days` }));
-  const cohortsHaveData = cohorts.some((row) => (
-    firstNumber(row.due, 0) + firstNumber(row.inspected, row.inspected_due, 0)
-  ) > 0 || numberOrNull(row.survival_rate_pct) !== null);
-  const allSpecies = arrayOf(data?.species_outcomes).map((row) => {
-    const baseName = row.name || row.species_name || row.species || row.key || 'Unknown species';
-    return { ...row, name: baseName };
-  });
-  const allSites = arrayOf(data?.site_outcomes).map((row) => {
-    const baseName = row.name || row.site_name || row.key || 'Unknown site';
-    return { ...row, name: baseName };
-  });
-  const inspectionRounds = [...new Set([
-    ...cohorts.map((row) => firstNumber(row.interval_days)),
-    ...allSpecies.map((row) => firstNumber(row.interval_days, row.planting_age_days)),
-    ...allSites.map((row) => firstNumber(row.interval_days, row.planting_age_days)),
-  ].filter((value) => value !== null))].sort((a, b) => a - b);
-  const speciesInspectionRounds = inspectionRounds.filter((round) => allSpecies.some(
-    (row) => firstNumber(row.interval_days, row.planting_age_days) === round,
-  ));
-  const siteInspectionRounds = inspectionRounds.filter((round) => allSites.some(
-    (row) => firstNumber(row.interval_days, row.planting_age_days) === round,
-  ));
-  const [speciesRoundValue, setSpeciesRoundValue] = useState('');
-  const [siteRoundValue, setSiteRoundValue] = useState('');
-  const requestedSpeciesRound = numberOrNull(speciesRoundValue);
-  const requestedSiteRound = numberOrNull(siteRoundValue);
-  const speciesRound = requestedSpeciesRound !== null && speciesInspectionRounds.includes(requestedSpeciesRound)
-    ? requestedSpeciesRound
-    : speciesInspectionRounds[0] ?? firstNumber(summary.interval_days);
-  const siteRound = requestedSiteRound !== null && siteInspectionRounds.includes(requestedSiteRound)
-    ? requestedSiteRound
-    : siteInspectionRounds[0] ?? firstNumber(summary.interval_days);
-  const species = allSpecies.filter((row) => (
-    speciesRound === null
-    || firstNumber(row.interval_days, row.planting_age_days) === speciesRound
-  ));
-  const sites = allSites.filter((row) => (
-    siteRound === null
-    || firstNumber(row.interval_days, row.planting_age_days) === siteRound
-  ));
-  const summaryRound = firstNumber(summary.interval_days);
-  const selectedSummary = summary;
-  const speciesChart = species.filter((row) => (firstNumber(row.alive, 0) + firstNumber(row.dead, 0)) > 0);
-  const siteChart = sites.filter((row) => numberOrNull(row.survival_rate_pct) !== null);
+  const species = arrayOf(data?.species_outcomes);
+  const sites = arrayOf(data?.site_outcomes);
+  const speciesChart = species.filter((row) => firstNumber(row.total, 0) > 0);
+  const siteChart = sites.filter((row) => firstNumber(row.total, 0) > 0);
+  const healthRows = [
+    { name: 'Planted', value: firstNumber(summary.planted, 0), color: COLORS.planted },
+    { name: 'Dead', value: firstNumber(summary.dead, 0), color: COLORS.dead },
+  ];
   const mortality = arrayOf(data?.mortality_causes).map((row) => ({ ...row, name: row.label || row.cause || 'Other' }));
   const seedlingGrowthGroups = arrayOf(data?.organization_growth?.growth_groups);
   const planterOutcomes = arrayOf(data?.planter_outcomes)
     .map((row) => ({ ...row, name: row.planter_name || row.name || `Planter ${row.planter_id ?? ''}` }));
-  const target = firstNumber(settings?.min_survival_target_pct);
 
-  const outcomeColumns = [
-    { key: 'name', label: 'Group' },
-    { key: 'interval_days', label: 'Inspected after planting', render: formatPlantingAge },
-    { key: 'survival_rate_pct', label: 'Seedlings alive', render: (row) => formatPercent(row.survival_rate_pct) },
-    { key: 'alive', label: 'Alive', render: (row) => formatCount(row.alive) },
+  const healthColumns = [
+    { key: 'total', label: 'Total seedlings', render: (row) => formatCount(row.total) },
+    { key: 'planted', label: 'Planted', render: (row) => formatCount(row.planted) },
     { key: 'dead', label: 'Dead', render: (row) => formatCount(row.dead) },
-    { key: 'sample_size', label: 'Seedlings included', render: (row) => <>{formatCount(row.sample_size ?? row.inspected)}{row.small_sample ? <span className="dash-sample-flag"> few records</span> : null}</> },
+    { key: 'survival_rate_pct', label: 'Survival rate', render: (row) => formatPercent(row.survival_rate_pct) },
   ];
+  const outcomeColumns = [{ key: 'name', label: 'Group' }, ...healthColumns];
   const planterOutcomeColumns = [
     { key: 'name', label: 'Planter' },
-    { key: 'site_name', label: 'Project site', render: (row) => row.site_name || row.project_site_name || row.site?.name || 'Not linked' },
-    { key: 'species', label: 'Species', render: (row) => row.species || row.species_name || row.scientific_name || 'Not recorded' },
-    { key: 'planting_age_days', label: 'Inspected after planting', render: formatPlantingAge },
-    { key: 'survival_rate_pct', label: 'Seedlings alive', render: (row) => formatPercent(row.survival_rate_pct) },
-    { key: 'coverage_pct', label: 'Inspections completed', render: formatCoverageContext },
-    { key: 'sample_size', label: 'Seedlings included', render: (row) => <>{formatCount(row.sample_size ?? row.inspected)}{row.small_sample ? <span className="dash-sample-flag"> few records</span> : null}</> },
+    { key: 'site_name', label: 'Project site', render: (row) => row.site_name || 'Not linked' },
+    { key: 'species', label: 'Species', render: (row) => row.species || 'Not recorded' },
+    ...healthColumns,
   ];
 
   return (
     <div className="dash-tab-panel">
       <div className="dash-method-note">
-        <strong>How these results are counted.</strong> The percentage alive compares seedlings recorded as alive with all seedlings recorded as alive or dead. Seedlings that have not been inspected are not included.
+        <strong>Overall seedling totals.</strong> Counts cover all planting dates in the selected project site. Each current planting location is counted once. Date filters apply to the history below.
       </div>
       <KpiStrip>
-        <KpiCard label="Percentage alive" value={formatPercent(selectedSummary.survival_rate_pct ?? selectedSummary.verified_survival_rate_pct)} hint={`${formatCount(selectedSummary.alive)} alive out of ${formatCount((firstNumber(selectedSummary.alive, 0) ?? 0) + (firstNumber(selectedSummary.dead, 0) ?? 0))} seedlings included`} tone="emerald" />
-        <KpiCard label="Alive" value={formatCount(selectedSummary.alive)} hint={summaryRound === null ? 'Recorded during inspection' : `Checked ${formatCount(summaryRound)} days after planting`} />
-        <KpiCard label="Dead" value={formatCount(selectedSummary.dead)} hint="Recorded during the same inspection time" tone="red" />
-        <KpiCard label="Inspections completed" value={formatPercent(selectedSummary.coverage_pct)} hint={`${formatCount(selectedSummary.inspected_due ?? selectedSummary.inspected)} of ${formatCount(selectedSummary.due_total ?? selectedSummary.due)} seedlings checked`} tone="blue" progress={selectedSummary.coverage_pct} />
+        <KpiCard label="Total seedlings" value={formatCount(summary.total)} hint="Planted and dead locations combined" tone="blue" />
+        <KpiCard label="Planted" value={formatCount(summary.planted)} hint="Current planted locations, matching the map" />
+        <KpiCard label="Dead" value={formatCount(summary.dead)} hint="Current dead locations, matching the map" tone="red" />
+        <KpiCard label="Survival rate" value={formatPercent(summary.survival_rate_pct)} hint={`${formatCount(summary.planted)} planted out of ${formatCount(summary.total)} total seedlings`} tone="emerald" progress={summary.survival_rate_pct} />
       </KpiStrip>
 
       <div className="dash-grid">
         <ChartCard
-          title="Seedlings alive over time"
-          subtitle="Compare the percentage of seedlings alive and the percentage of scheduled inspections completed at each inspection time."
-          data={cohortsHaveData ? cohorts : []}
-          tableData={cohorts}
-          chartLabel="Lines showing seedlings alive and inspections completed at each time after planting"
-          xLabel="Days after planting"
-          yLabel="Percentage of seedlings (%)"
+          title="Overall seedling status"
+          subtitle="Current planted and dead locations across all planting dates. Total seedlings is the sum of these two groups."
+          data={healthRows.some((row) => row.value > 0) ? healthRows : []}
+          tableData={healthRows}
+          chartLabel="Counts of current planted and dead seedlings"
+          xLabel="Number of seedlings"
+          yLabel="Planting status"
           className="dash-card-full"
           columns={[
-            { key: 'interval_days', label: 'Days after planting', render: (row) => `${formatCount(row.interval_days)} days` },
-            { key: 'survival_rate_pct', label: 'Seedlings alive', render: (row) => formatPercent(row.survival_rate_pct) },
-            { key: 'coverage_pct', label: 'Inspections completed', render: (row) => formatPercent(row.coverage_pct) },
-            { key: 'due', label: 'Scheduled inspections', render: (row) => formatCount(row.due) },
-            { key: 'inspected', label: 'Inspection records', render: (row) => formatCount(row.inspected) },
+            { key: 'name', label: 'Planting status' },
+            { key: 'value', label: 'Seedlings', render: (row) => formatCount(row.value) },
           ]}
-          emptyHint="This graph will appear after seedlings reach an inspection time and inspection results are recorded."
+          emptyHint="Record a planting to see overall seedling totals."
         >
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={cohorts} margin={{ top: 16, right: 16, bottom: 8, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="interval_label" />
-              <YAxis domain={[0, 100]} unit="%" width={52} />
-              <Tooltip formatter={(value, name) => [formatPercent(value), name]} />
-              <Legend verticalAlign="top" height={34} />
-              {target !== null ? <ReferenceLine y={target} stroke={COLORS.target} strokeDasharray="6 4" label={{ value: `Goal ${formatPercent(target)}`, fill: COLORS.target, fontSize: 11 }} /> : null}
-              <Line type="monotone" dataKey="survival_rate_pct" name="Seedlings alive" stroke={COLORS.alive} strokeWidth={3} connectNulls />
-              <Line type="monotone" dataKey="coverage_pct" name="Inspections completed" stroke={COLORS.coverage} strokeWidth={2} strokeDasharray="5 4" connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard
-          title="Seedlings alive and dead by species"
-          subtitle={speciesRound === null
-            ? 'Shows the share of inspected seedlings recorded as alive or dead.'
-            : `Results from inspections made ${formatCount(speciesRound)} days after planting.`}
-          actions={(
-            <InspectionRoundSelect
-              id="species-inspection-round"
-              rounds={speciesInspectionRounds}
-              value={speciesRound}
-              onChange={setSpeciesRoundValue}
-            />
-          )}
-          data={speciesChart}
-          tableData={species}
-          chartLabel="Bars comparing the share of seedlings alive and dead for each species"
-          xLabel="Share of inspected seedlings (%)"
-          yLabel="Species"
-          height={Math.max(280, Math.min(520, species.length * 42 + 80))}
-          columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Species' } : column)}
-          emptyHint="Record the species and inspection result to compare seedlings here."
-        >
-          <OutcomesChart rows={speciesChart} />
-        </ChartCard>
-
-        <ChartCard
-          title="Seedlings alive by project site"
-          subtitle={siteRound === null
-            ? 'Shows the percentage of inspected seedlings recorded as alive in each project site.'
-            : `Results from inspections made ${formatCount(siteRound)} days after planting.`}
-          actions={(
-            <InspectionRoundSelect
-              id="site-inspection-round"
-              rounds={siteInspectionRounds}
-              value={siteRound}
-              onChange={setSiteRoundValue}
-            />
-          )}
-          data={siteChart}
-          tableData={sites}
-          chartLabel="Bars showing the percentage of seedlings alive in each project site"
-          xLabel="Seedlings alive (%)"
-          yLabel="Project site"
-          height={Math.max(300, Math.min(560, sites.length * 70 + 90))}
-          columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Project site' } : column)}
-          emptyHint="Complete inspections linked to project sites to compare seedlings here."
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={siteChart} layout="vertical" margin={{ top: 8, right: 42, bottom: 8, left: -14 }}>
+            <BarChart data={healthRows} layout="vertical" margin={{ top: 12, right: 42, bottom: 8, left: 0 }}>
               <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-              <XAxis type="number" domain={[0, 100]} unit="%" />
-              <YAxis type="category" dataKey="name" width={164} interval={0} tick={<WrappedCategoryTick />} />
-              <Tooltip formatter={(value) => [formatPercent(value), 'Seedlings alive']} />
-              {target !== null ? <ReferenceLine x={target} stroke={COLORS.target} strokeDasharray="6 4" label={{ value: `Goal ${formatPercent(target)}`, fill: COLORS.target, fontSize: 11, position: 'insideTopRight' }} /> : null}
-              <Bar dataKey="survival_rate_pct" name="Seedlings alive" fill={COLORS.alive} radius={[0, 5, 5, 0]} maxBarSize={46}>
-                <LabelList dataKey="survival_rate_pct" content={<PercentageBarLabel />} />
+              <XAxis type="number" allowDecimals={false} />
+              <YAxis type="category" dataKey="name" width={160} interval={0} tick={<WrappedCategoryTick />} />
+              <Tooltip formatter={(value) => [formatCount(value), 'Seedlings']} />
+              <Bar dataKey="value" name="Seedlings" radius={[0, 5, 5, 0]} maxBarSize={38}>
+                {healthRows.map((row) => <Cell key={row.name} fill={row.color} />)}
+                <LabelList dataKey="value" position="right" formatter={formatCount} />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
 
         <ChartCard
+          title="Seedlings by species"
+          subtitle="Current planted and dead locations for each species, across all planting dates."
+          data={speciesChart}
+          tableData={species}
+          chartLabel="Vertical stacked columns showing planted and dead seedling counts for each species"
+          xLabel="Species"
+          yLabel="Number of seedlings"
+          height={420}
+          columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Species' } : column)}
+          emptyHint="Record plantings with a species to compare totals here."
+        >
+          <OutcomesChart rows={speciesChart} verticalBars />
+        </ChartCard>
+
+        <ChartCard
+          title="Seedlings by project site"
+          subtitle="Current planted and dead locations in each project site, counted once."
+          data={siteChart}
+          tableData={sites}
+          chartLabel="Counts of planted and dead seedlings in each project site"
+          xLabel="Number of seedlings"
+          yLabel="Project site"
+          height={Math.max(300, Math.min(560, sites.length * 70 + 90))}
+          columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Project site' } : column)}
+          emptyHint="Record plantings linked to project sites to compare totals here."
+        >
+          <OutcomesChart rows={siteChart} />
+        </ChartCard>
+
+        <ChartCard
           title="Why seedlings died"
           subtitle={`Deaths reported during the selected period, counted once across monitoring visits and identified plants. ${data?.mortality_includes_unlocated === false ? 'Deaths without identified locations are excluded while location or species filters apply.' : 'Includes deaths whose locations are still unknown.'}`}
           data={mortality}
-          chartLabel="Bars showing recorded causes of seedling death and a line showing their combined share"
+          chartLabel="Bars showing deaths by cause and a line showing each cause's percentage of all deaths"
           xLabel="Number of dead seedlings and share of all deaths (%)"
           yLabel="Cause"
           className="dash-card-full"
@@ -1000,7 +873,6 @@ function EcologyTab({ data, settings }) {
             { key: 'name', label: 'Cause' },
             { key: 'deaths', label: 'Seedlings recorded dead', render: (row) => formatCount(row.deaths) },
             { key: 'percent_of_deaths', label: 'Share of all deaths', render: (row) => formatPercent(row.percent_of_deaths) },
-            { key: 'cumulative_pct', label: 'Share after adding this cause', render: (row) => formatPercent(row.cumulative_pct) },
           ]}
           emptyHint="This graph will appear after an inspector records a dead seedling and selects a cause."
         >
@@ -1010,10 +882,10 @@ function EcologyTab({ data, settings }) {
               <XAxis xAxisId="count" type="number" allowDecimals={false} />
               <XAxis xAxisId="percent" type="number" orientation="top" domain={[0, 100]} unit="%" />
               <YAxis type="category" dataKey="name" width={124} tick={{ fontSize: 11 }} />
-              <Tooltip formatter={(value, name) => [name === 'Share of deaths so far' ? formatPercent(value) : formatCount(value), name]} />
+              <Tooltip formatter={(value, name, item) => [item.dataKey === 'percent_of_deaths' ? formatPercent(value) : formatCount(value), name]} />
               <Legend verticalAlign="top" height={34} />
               <Bar xAxisId="count" dataKey="deaths" name="Seedlings recorded dead" fill={COLORS.dead} radius={[0, 5, 5, 0]} />
-              <Line xAxisId="percent" type="monotone" dataKey="cumulative_pct" name="Share of deaths so far" stroke={COLORS.target} strokeWidth={2.5} />
+              <Line xAxisId="percent" type="linear" dataKey="percent_of_deaths" name="Share of all deaths" stroke={COLORS.target} strokeWidth={2.5} />
             </ComposedChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -1061,11 +933,11 @@ function EcologyTab({ data, settings }) {
           <summary>More information about planting results</summary>
           <div className="dash-insight-drawer-body">
             <p className="dash-caveat">
-              Do not use these results to rank planters. The number of seedlings alive can also be affected by the project site, species, planting time, inspection time, and the number of seedlings checked.
+              Planting conditions, species, and planting dates affect outcomes. Use these totals to review work at each project site.
             </p>
             {planterOutcomes.length ? (
-              <DataTable caption="Planting results with planter, project site, species, and inspection information" rows={planterOutcomes} columns={planterOutcomeColumns} />
-            ) : <EmptyState title="No planting results yet">Results will appear here after inspections are recorded.</EmptyState>}
+              <DataTable caption="Overall seedling totals by planter, project site, and species" rows={planterOutcomes} columns={planterOutcomeColumns} />
+            ) : <EmptyState title="No planting results yet">Results will appear here after plantings are recorded.</EmptyState>}
           </div>
         </details>
       </div>

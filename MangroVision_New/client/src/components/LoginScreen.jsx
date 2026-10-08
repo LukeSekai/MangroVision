@@ -4,7 +4,7 @@ import { staffAuthRequest } from '../utils/staffAuth';
 import EmailCodeInput from './EmailCodeInput';
 import Logo from './Logo';
 import useFormFeedback from '../utils/useFormFeedback';
-import { FieldError, FormErrorSummary } from './FormFeedback';
+import { FieldError } from './FormFeedback';
 import './LoginScreen.css';
 
 export default function LoginScreen() {
@@ -57,7 +57,7 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       if (step === 'login') {
-        acceptChallenge(await login(username, password), 'login-code');
+        acceptChallenge(await login(username.trim(), password), 'login-code');
       } else if (step === 'login-code') {
         await verifyLogin(code);
         sessionStorage.removeItem('mv_auth_notice');
@@ -96,13 +96,17 @@ export default function LoginScreen() {
 
   const checkingCode = step.endsWith('-code');
   const recovering = step.startsWith('recovery');
-  const title = checkingCode ? (recovering ? 'Set a new password' : 'Check your email') : (recovering ? 'Reset your password' : 'Sign In');
+  const title = checkingCode ? (recovering ? 'Set a new password' : 'Check your email') : (recovering ? 'Reset your password' : 'Sign in');
   const subtitle = step === 'login-code'
     ? `Enter the code sent to ${challenge?.email_hint}.`
     : step === 'recovery-code'
       ? 'Enter the recovery code sent to mangrovision.lgu@gmail.com and your new password.'
       : recovering ? 'We’ll send a recovery code to mangrovision.lgu@gmail.com to reset your password.'
-        : 'Enter your credentials. We’ll email you a code to verify your sign-in.';
+        : 'Enter your staff username and password. Then verify your sign-in with the code sent to your registered email.';
+  const submitLabel = step === 'login' ? (loading ? 'Signing in…' : 'Sign in')
+    : step === 'login-code' ? (loading ? 'Verifying…' : 'Verify and sign in')
+      : step === 'recovery' ? (loading ? 'Sending code…' : 'Send recovery code')
+        : (loading ? 'Resetting password…' : 'Verify and reset password');
 
   return (
     <div className="login-screen">
@@ -128,7 +132,6 @@ export default function LoginScreen() {
             </div>
 
             <form className="login-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
-              <FormErrorSummary feedback={feedback} />
               {step === 'login' && <>
               <div className="form-group">
                 <label className="form-label" htmlFor="login-username">Username</label>
@@ -136,11 +139,14 @@ export default function LoginScreen() {
                   id="login-username"
                   className="form-input"
                   type="text"
-                  placeholder="Enter your username"
+                  placeholder="Enter your staff username"
                   value={username}
                   autoComplete="username"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  maxLength={100}
                   disabled={loading}
-                  onChange={(e) => setUsername(e.target.value)}
+                  onChange={(e) => { setUsername(e.target.value); setError(''); }}
                   autoFocus
                   required
                 />
@@ -155,8 +161,9 @@ export default function LoginScreen() {
                   placeholder="Enter your password"
                   value={password}
                   autoComplete="current-password"
+                  maxLength={256}
                   disabled={loading}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => { setPassword(e.target.value); setError(''); }}
                   required
                 />
               <FieldError feedback={feedback} field="password" />
@@ -189,8 +196,7 @@ export default function LoginScreen() {
                 className="btn btn-primary btn-lg login-submit"
                 disabled={loading}
               >
-                {loading ? 'Please wait…' : step === 'login' ? 'Send sign-in code'
-                  : step === 'login-code' ? 'Verify and sign in' : step === 'recovery' ? 'Send recovery code' : 'Verify and reset password'}
+                {submitLabel}
               </button>
               <button type="button" className="auth-text-button" disabled={loading} onClick={() => {
                 reset(step === 'login' ? 'recovery' : 'login');

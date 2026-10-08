@@ -90,34 +90,33 @@ test('planting wording and month labels agree in the preview data, CSV and PDF s
   }
 });
 
-test('survival excludes missing and uninspected seedlings and does not invent zero survival', () => {
-  const ecology = { ...envelope, summary: { interval_days: 14 }, survival_cohorts: [
-    { interval_days: 14, alive: 6, dead: 2, missing: 1, due: 20, inspected: 9 },
-    { interval_days: 28, alive: 0, dead: 0, missing: 0, due: 3, inspected: 0 },
-  ] };
+test('overall report uses current planting counts and ignores age-specific health results', () => {
+  const ecology = { ...envelope,
+    summary: { total: 20, planted: 18, alive: 6, dead: 2, missing: 1, uninspected: 11 },
+    survival_cohorts: [{ interval_days: 30, alive: 60, dead: 20, due: 200, inspected: 90 }],
+  };
   const report = buildRestorationReport('monitoring', { ecology }, filters);
-  assert.equal(report.stats[0].value, 75);
-  assert.equal(report.stats[1].value, 45);
-  assert.equal(report.stats[2].value, 11);
-  assert.equal(report.sections[0].rows[0].sample, 8);
-  assert.equal(report.sections[0].rows[1].survival, null);
-  assert.match(report.notes.join(' '), /excluded from this rate/);
-  assert.match(report.notes.join(' '), /scheduled number of days after planting/);
+  assert.deepEqual(report.stats.map((row) => row.value), [20, 18, 2, 90]);
+  assert.deepEqual(report.stats.map((row) => row.label), ['Total seedlings', 'Planted', 'Dead', 'Survival rate']);
+  assert.equal(report.sections[0].columns.length, 4);
+  assert.match(report.notes.join(' '), /all planting dates/);
+  assert.doesNotMatch(JSON.stringify(report), /30-day|Inspection age|Recorded survival|Awaiting health record|Health recorded/);
   assert.equal(formatReportValue(null, 'percent'), 'N/A');
   assert.equal(formatReportValue(0, 'percent'), '0%');
 });
 
-test('carried deaths affect survival but are not counted as new inspections', () => {
-  const ecology = { ...envelope, summary: { interval_days: 28 },
-    survival_cohorts: [{ interval_days: 28, alive: 6, dead: 4, missing: 1, due: 12, inspected: 8, carried_dead: 3 }],
-    site_outcomes: [{ site_name: 'Nasugban', interval_days: 28, alive: 6, dead: 4, missing: 1, due: 12, inspected: 11, inspected_due: 8, carried_dead: 3 }],
+test('overall site results do not add historical deaths or repeat inspection rounds', () => {
+  const current = { total: 12, planted: 8, dead: 4 };
+  const ecology = { ...envelope, summary: current,
+    survival_cohorts: [{ interval_days: 28, alive: 60, dead: 40, carried_dead: 30 }],
+    site_outcomes: [{ site_name: 'Nasugban', ...current }],
   };
   const report = buildRestorationReport('monitoring', { ecology }, filters);
-  assert.equal(report.stats[0].value, 60);
-  assert.equal(report.sections[1].rows[0].completed, 8);
-  assert.equal(report.sections[1].rows[0].uninspected, 4);
-  assert.equal(report.sections[1].rows[0].coverage, 8 / 12 * 100);
-  assert.match(report.notes.join(' '), /already included in the dead seedling count/);
+  assert.equal(report.stats[0].value, 12);
+  assert.equal(report.sections[1].rows[0].dead, 4);
+  assert.equal(report.sections[1].rows[0].planted, 8);
+  assert.match(report.notes.join(' '), /Each currently planted or dead mapped location counts once/);
+  assert.doesNotMatch(JSON.stringify(report.sections), /28-day|Earlier deaths/);
 });
 
 test('height annex appears only for recorded measurements with a sample', () => {
@@ -129,13 +128,13 @@ test('height annex appears only for recorded measurements with a sample', () => 
 });
 
 test('organization visit balances stay separate from verified survival and are excluded for a selected site', () => {
-  const ecology = { ...envelope, summary: { interval_days: 14 }, survival_cohorts: [{ interval_days: 14, alive: 6, dead: 2, missing: 1, due: 20, inspected: 9 }] };
+  const ecology = { ...envelope, summary: { total: 20, planted: 18, alive: 6, dead: 2, missing: 1, uninspected: 11 } };
   const organizationVisits = { records: [
     { organization_name: 'Nasugban', monitored_at: '2026-09-15', alive_count: 80, dead_count: 20, reported_dead_count: 3, health_status: 'fair', actions_taken: 'Inspect erosion', inspector_name: 'Officer' },
     { organization_name: 'Nasugban', monitored_at: '2026-06-15', alive_count: 90, dead_count: 10 },
   ] };
   const report = buildRestorationReport('monitoring', { ecology, organizationVisits }, filters);
-  assert.equal(report.stats[0].value, 75);
+  assert.equal(report.stats[0].value, 20);
   const visits = report.sections.find((section) => section.title === 'Organization-level monitoring visits');
   assert.equal(visits.rows.length, 1);
   assert.equal(visits.rows[0].alive_count, 80);
@@ -200,15 +199,14 @@ test('CSV handles Unicode, quotes and newlines while neutralizing spreadsheet fo
   assert.equal(csv.endsWith('\r\n'), true);
 });
 
-test('PDF exports the displayed snapshot with formatted dates, N/A and optional remarks', () => {
+test('PDF exports overall totals with formatted dates and optional remarks', () => {
   const report = buildRestorationReport('monitoring', { ecology: { ...envelope,
-    summary: { interval_days: 14 }, survival_cohorts: [{ interval_days: 14, alive: 0, dead: 0, missing: 1, due: 20, inspected: 1 }],
+    summary: { total: 20, planted: 20, alive: 0, dead: 0, missing: 1, uninspected: 19 },
   } }, filters);
   const payload = reportPdfPayload(report, { preparedBy: 'LGU Staff', generatedAt: 'Oct 4, 2026', remarks: 'Inspect erosion.\nFollow up next week.' });
   assert.equal(payload.report_type, 'monitoring');
   assert.equal(payload.period_from, '2026-07-01');
-  assert.equal(payload.stats[0].value, 'N/A');
-  assert.equal(payload.stats[1].value, '5%');
+  assert.deepEqual(payload.stats.map((row) => row.value), ['20', '20', '0', '100%']);
   assert.equal(payload.remarks, 'Inspect erosion.\nFollow up next week.');
   assert.deepEqual(payload.sections[0].rows[0], report.sections[0].columns.map((column) => formatReportValue(report.sections[0].rows[0][column.key], column.type)));
 });
@@ -253,4 +251,12 @@ test('a PDF download through the shared fetch wrapper does not trigger a record 
   // Genuine writes still notify pages to refresh their records.
   await cache.fetch('/api/assignments', { method: 'POST' });
   assert.equal(changes, 1);
+});
+
+
+test('overall survival uses map totals, shows no rate for empty data and allows zero survival', () => {
+  const report = (summary) => buildRestorationReport('monitoring', { ecology: { ...envelope, summary } }, filters);
+  assert.equal(report({ planted: 860, dead: 285 }).stats[3].value, 75.11);
+  assert.equal(report({ planted: 0, dead: 0 }).stats[3].value, null);
+  assert.equal(report({ planted: 0, dead: 10 }).stats[3].value, 0);
 });

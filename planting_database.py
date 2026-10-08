@@ -23,6 +23,7 @@ from mangrovision_db.config import get_settings
 from mangrovision_db.monitoring_progress import age_snapshot, carried_counts
 from mangrovision_db.passwords import hash_password, verify_password
 from mangrovision_db.point_status import current_point_status
+from mangrovision_db.health_summary import summarize_current_health
 from mangrovision_db.request_context import planter_session_token, staff_session_token
 from mangrovision_db.storage import (
     StoredAsset,
@@ -37,6 +38,14 @@ from mangrovision_db.zones import normalize_polygon
 
 class OutsideVisibleMapError(ValueError):
     """A planting point would be stored outside the active visible map."""
+
+
+class StaffCredentialError(ValueError):
+    """A staff sign-in correction, optionally tied to an input field."""
+
+    def __init__(self, field: str | None, message: str):
+        super().__init__(message)
+        self.field = field
 
 try:
     from shapely.geometry import Point, shape
@@ -1413,29 +1422,37 @@ def ensure_admin_user() -> int:
     return int(row["id"])
 
 
-def authenticate_user(username: str, password: str, *, record_login: bool = True) -> Optional[dict]:
+def authenticate_user(username: str, password: str, *, record_login: bool = True,
+                      explain_errors: bool = False) -> Optional[dict]:
     """Authenticate using full_name + password. Returns user dict on success."""
-    if not username or not password:
+
+    def reject(field, message):
+        if explain_errors:
+            raise StaffCredentialError(field, message)
         return None
+
+    if not username or not username.strip():
+        return reject('username', 'Enter your staff username.')
+    if not password:
+        return reject('password', 'Enter your password.')
 
     conn = _get_connection()
-    row = conn.execute(
-        "SELECT * FROM users WHERE lower(full_name) = lower(?)",
-        (username.strip(),),
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE lower(full_name) = lower(?)",
+            (username.strip(),),
+        ).fetchone()
+        if not row:
+            return reject('username', 'Username not recognized. Check the username provided by your administrator.')
 
-    if not row:
-        conn.close()
-        return None
+        user = dict(row)
+        stored_hash = user.get('password_hash') or ''
+        if not stored_hash:
+            return reject('password', 'This account has no password configured. Contact your administrator.')
 
-    user = dict(row)
-    stored_hash = user.get('password_hash') or ''
-    if not stored_hash:
-        conn.close()
-        return None
-
-    valid, upgraded_hash = verify_password(stored_hash, password)
-    if valid:
+        valid, upgraded_hash = verify_password(stored_hash, password)
+        if not valid:
+            return reject('password', 'Incorrect password. Try again or use Forgot password.')
         updated = conn.execute(
             "UPDATE users SET password_hash = ?, last_login = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_login END WHERE id = ? AND password_hash = ?",
             (upgraded_hash or stored_hash, record_login, user["id"], stored_hash),
@@ -1443,15 +1460,12 @@ def authenticate_user(username: str, password: str, *, record_login: bool = True
         if not updated.rowcount:
             # A concurrent recovery must not be overwritten by this old login.
             conn.rollback()
-            conn.close()
-            return None
+            return reject(None, 'Your account changed during sign-in. Please try again.')
         conn.commit()
-        conn.close()
         user["password_hash"] = upgraded_hash or stored_hash
         return user
-
-    conn.close()
-    return None
+    finally:
+        conn.close()
 
 
 def create_user_session(user_id: int) -> str:
@@ -10016,56 +10030,43 @@ def get_dashboard_ecology(
             conn, start, end, as_of_dt, clean_bucket,
             site_id, assignment_id, species, planter_id,
         )
+        all_events = _load_dashboard_events(conn)
         events = _filter_dashboard_events(
-            _load_dashboard_events(conn), start, end,
+            all_events, start, end,
             site_id, assignment_id, species, planter_id,
         )
         observations = _load_dashboard_observations(conn)
-        intervals = get_dashboard_settings(end.year)["inspection_intervals_days"]
-        rollup = _monitoring_rollup(events, observations, intervals, end)
-        primary_interval = intervals[0] if intervals else None
-        primary_cohort = next(
-            (
-                cohort for cohort in rollup["cohorts"]
-                if cohort["interval_days"] == primary_interval
-            ),
-            {
-                "interval_days": primary_interval,
-                "due": 0,
-                "inspected": 0,
-                "alive": 0,
-                "dead": 0,
-                "missing": 0,
-                "coverage_pct": None,
-                "survival_rate_pct": None,
-            },
+        event_ids = {int(event["id"]) for event in events}
+        current_points = [
+            point for point in _load_current_dashboard_points(conn)
+            if _matches_dashboard_dimensions(point, site_id, assignment_id, species, planter_id)
+        ]
+        health = summarize_current_health(
+            current_points, all_events, as_of_dt,
+            site_names={int(site["id"]): site["name"] for site in envelope["filter_options"]["sites"]},
+            species_labels=_ASSIGNMENT_SPECIES_BY_KEY,
         )
-        event_by_id = {int(event["id"]): event for event in events}
-
-        species_outcomes = _ecology_outcomes(events, rollup, "species")
-        site_outcomes = _ecology_outcomes(events, rollup, "site_id", "site_name")
 
         from mangrovision_db.mortality import mortality_cause_counts
         cause_counts = mortality_cause_counts(conn, start, min(end, as_of_dt),
             site_id=site_id, assignment_id=assignment_id, species=species, planter_id=planter_id)
         total_deaths = sum(cause_counts.values())
-        cumulative = 0
         mortality_causes = []
         for cause, deaths in sorted(cause_counts.items(), key=lambda item: (-item[1], item[0])):
-            cumulative += deaths
             mortality_causes.append({
                 "cause": cause,
                 "label": DEATH_REASON_CATEGORIES.get(cause, cause.replace("_", " ").title()),
                 "deaths": deaths,
                 "percent_of_deaths": round(deaths / total_deaths * 100.0, 2) if total_deaths else None,
-                "cumulative_pct": round(cumulative / total_deaths * 100.0, 2) if total_deaths else None,
             })
 
         growth_buckets = {
             row["period_start"]: {"values": [], "period_start": row["period_start"]}
             for row in _blank_bucket_series(start, end, clean_bucket)
         }
-        for observation in rollup["observations"]:
+        for observation in observations:
+            if int(observation["planting_event_id"]) not in event_ids:
+                continue
             if observation["status"] != "alive" or observation.get("height_cm") is None:
                 continue
             inspected_at = _parse_dashboard_datetime(observation["inspected_at"])
@@ -10084,92 +10085,13 @@ def get_dashboard_ecology(
                     "sample_size": len(values),
                 })
 
-        # Planter outcomes are deliberately contextual: every row retains
-        # site, species, planting age/inspection round, and coverage.
-        contextual: dict[tuple, dict] = {}
-        for event in events:
-            for interval in intervals:
-                key = (
-                    event.get("planter_id"), event.get("site_id"),
-                    event.get("species") or "Unspecified", interval,
-                )
-                row = contextual.setdefault(key, {
-                    "planter_id": int(event["planter_id"]) if event.get("planter_id") is not None else None,
-                    "planter_name": event.get("planter_name") or "Unattributed",
-                    "site_id": int(event["site_id"]) if event.get("site_id") is not None else None,
-                    "site_name": event.get("site_name") or "Unassigned site",
-                    "project_site_name": event.get("site_name") or "Unassigned site",
-                    "species": event.get("species") or "Unspecified",
-                    "species_name": event.get("species") or "Unspecified",
-                    "planting_age_days": interval,
-                    "age_band": f"{interval}-day inspection",
-                    "interval_days": interval,
-                    "alive": 0,
-                    "dead": 0,
-                    "missing": 0,
-                    "carried_dead": 0,
-                    "due": 0,
-                    "inspected_due": 0,
-                })
-        for event, interval, _, observation in rollup["due_slots"]:
-            key = (
-                event.get("planter_id"), event.get("site_id"),
-                event.get("species") or "Unspecified", interval,
-            )
-            if key in contextual:
-                if observation is not None:
-                    contextual[key][observation["status"]] += 1
-                    if observation.get("carried_forward"):
-                        contextual[key]["carried_dead"] += 1
-                carried_forward = bool(observation and observation.get("carried_forward"))
-                if not carried_forward:
-                    contextual[key]["due"] += 1
-                if observation is not None and not carried_forward:
-                    contextual[key]["inspected_due"] += 1
-        planter_outcomes = []
-        for row in contextual.values():
-            inspected = row["alive"] + row["dead"] + row["missing"]
-            sample = row["alive"] + row["dead"]
-            if not row["due"] and not inspected:
-                continue
-            row["inspected"] = inspected
-            row["sample_size"] = sample
-            row["coverage_pct"] = (
-                round(row["inspected_due"] / row["due"] * 100.0, 2)
-                if row["due"] else None
-            )
-            row["survival_rate_pct"] = (
-                round(row["alive"] / sample * 100.0, 2) if sample else None
-            )
-            row["small_sample"] = sample < 10
-            row["contextual_only"] = True
-            planter_outcomes.append(row)
-        planter_outcomes.sort(key=lambda row: (
-            row["planter_name"].casefold(), row["site_name"].casefold(),
-            row["species"].casefold(), row["interval_days"],
-        ))
-
         envelope.update({
-            "summary": {
-                "interval_days": primary_interval,
-                "verified_survival_rate_pct": primary_cohort["survival_rate_pct"],
-                "alive": primary_cohort["alive"],
-                "dead": primary_cohort["dead"],
-                "missing": primary_cohort["missing"],
-                "inspected": primary_cohort["inspected"],
-                "coverage_pct": primary_cohort["coverage_pct"],
-                "inspected_due": primary_cohort["inspected"],
-                "due_total": primary_cohort["due"],
-            },
-            "survival_cohorts": rollup["cohorts"],
-            "species_outcomes": species_outcomes,
-            "site_outcomes": site_outcomes,
-            "planter_outcomes": planter_outcomes,
+            **health,
             "mortality_causes": mortality_causes,
             "mortality_includes_unlocated": site_id is None and assignment_id is None and not species and planter_id is None,
             "growth": growth,
             # This chart always combines the latest monitoring visit from every organization.
-            "organization_growth": _organization_growth_dashboard(conn, min(end, as_of_dt)),
+            "organization_growth": _organization_growth_dashboard(conn, as_of_dt),
         })
         return envelope
     finally:

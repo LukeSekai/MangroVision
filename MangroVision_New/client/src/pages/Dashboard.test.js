@@ -4,7 +4,11 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
-import { createServer } from 'vite';
+import { build } from 'vite';
+import { writeFile, unlink } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import process from 'node:process';
 import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses.js';
 import { dashboardSectionsForTab } from '../utils/dashboardLoading.js';
 
@@ -17,7 +21,7 @@ const rows = Array.from({ length: 10 }, (_, i) => ({
   total_area_m2: 1000, plantable_area_m2: 600, danger_area_m2: 200,
   canopy_coverage_pct: i === 5 ? null : 20,
 }));
-let server;
+const bundlePath = resolve(`node_modules/.dashboard-health-${process.pid}.mjs`);
 let previousStorage;
 let SitesTab;
 let Dashboard, OverviewTab, OperationsTab, EcologyTab, PlantingGoalsForm, PlantingGoalsPanel;
@@ -27,21 +31,23 @@ before(async () => {
   Object.defineProperty(globalThis, 'localStorage', {
     configurable: true, value: { getItem: () => null, removeItem: () => {} },
   });
-  server = await createServer({
-    configFile: false, appType: 'custom',
-    server: { middlewareMode: true, hmr: false, watch: null },
-    cacheDir: 'node_modules/.vite-dashboard-tests',
-    optimizeDeps: { noDiscovery: true, include: [] },
-    plugins: [{ name: 'expose-sites-tab', enforce: 'pre', transform(code, id) {
+  const bundle = await build({
+    configFile: false, logLevel: 'silent',
+    ssr: { external: ['react', 'react/jsx-runtime', 'react-dom', 'react-router-dom', 'zustand', 'recharts'] },
+    build: { ssr: resolve('src/pages/Dashboard.jsx'), write: false, minify: false,
+      rollupOptions: { output: { format: 'es' } },
+    },
+    plugins: [{ name: 'expose-dashboard-tabs', enforce: 'pre', transform(code, id) {
       if (id.replaceAll('\\', '/').endsWith('/pages/Dashboard.jsx')) return `${code}\nexport { SitesTab, OverviewTab, OperationsTab, EcologyTab, PlantingGoalsForm, PlantingGoalsPanel };`;
     } }],
   });
-  const module = await server.ssrLoadModule('/src/pages/Dashboard.jsx');
+  await writeFile(bundlePath, bundle.output.find((item) => item.type === 'chunk' && item.isEntry).code);
+  const module = await import(pathToFileURL(bundlePath).href);
   ({ SitesTab, OverviewTab, OperationsTab, EcologyTab, PlantingGoalsForm, PlantingGoalsPanel } = module);
   Dashboard = module.default;
 });
 after(async () => {
-  await server?.close();
+  await unlink(bundlePath).catch(() => {});
   if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage);
   else delete globalThis.localStorage;
 });
@@ -119,14 +125,13 @@ test('dashboard report tabs no longer show Information to complete notices', () 
   }
 });
 
-test('overview focuses on progress and follow-up without repeating health comparisons', () => {
+test('overview keeps progress and follow-up totals without the follow-up table or health comparisons', () => {
   const html = render(OverviewTab, { data: {
     kpis: { sites_requiring_attention: { total: 5, value: 2 } },
     site_attention: [{ site_name: 'Site A', reasons: ['overdue_inspections'], overdue_inspections: 3 }],
   } });
   assert.match(html, /Sites needing follow-up/);
-  assert.match(html, /Site A/);
-  assert.match(html, /Inspections are past due/);
+  assert.doesNotMatch(html, /Project sites that need follow-up|Site A|Inspections are past due/);
   assert.doesNotMatch(html, /Seedlings alive after inspection by project site|Seedlings alive after \d+ days/);
   assert.doesNotMatch(render(OperationsTab, { data: {} }), /class="dash-kpis"/);
 });
@@ -199,4 +204,22 @@ test('goal editing waits for saved targets and disables saving while loading', (
     year: 2026, loading: true, settings: { year: 2026, annual_planting_target: 2000 },
   });
   assert.match(refreshing, /disabled=""[^>]*>Save planting goals/);
+});
+
+
+test('Seedling Health shows four overall cards including map-based survival', () => {
+  const html = render(EcologyTab, { data: {
+    summary: { total: 1145, planted: 860, dead: 285, survival_rate_pct: 75.11 },
+    survival_cohorts: [{ interval_days: 30, alive: 496, dead: 234 }],
+    species_outcomes: [{ name: 'Mangrove', total: 1145, planted: 860, dead: 285 }],
+  } });
+  assert.match(html, /Overall seedling totals/);
+  assert.match(html, /all planting dates/);
+  for (const value of ['1,145', '860', '285']) assert.match(html, new RegExp(value));
+  assert.equal((html.match(/class="dash-kpi dash-kpi-/g) || []).length, 4);
+  assert.match(html, /75.1%/);
+  for (const label of ['Total seedlings', 'Planted', 'Dead', 'Survival rate']) assert.match(html, new RegExp(label));
+  assert.doesNotMatch(html, /Recorded survival|Awaiting health record|Recorded alive|Health recorded/);
+  assert.doesNotMatch(html, /Checked 30 days|days after planting|Show results from|Inspection age|species-inspection-round|site-inspection-round/);
+  assert.doesNotMatch(html, /496 alive|234<|Inspections completed/);
 });

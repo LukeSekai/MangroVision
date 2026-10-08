@@ -53,7 +53,7 @@ function markerAppearance(point, zoom, chosen) {
     fillColor: color, fillOpacity: point.selectable === false && !chosen ? 0.55 : 0.88 };
 }
 
-export function SeedlingMap({ points, selected = [], onToggle, onBounds, selectionMode = 'click', onPaint, onStopPainting }) {
+export function SeedlingMap({ points, selected = [], onToggle, onBounds, selectionMode = 'click', onPaint, onStopPainting, onPaintingChange }) {
   const container = useRef(null);
   const mapRef = useRef(null);
   const layer = useRef(null);
@@ -154,10 +154,10 @@ export function SeedlingMap({ points, selected = [], onToggle, onBounds, selecti
   }, [points]);
   useEffect(() => {
     if (selectionMode === 'click' || !onPaint) return undefined;
-    const cleanup = attachSeedlingBrush(mapRef.current, points, selectionMode, onPaint, onStopPainting);
+    const cleanup = attachSeedlingBrush(mapRef.current, points, selectionMode, onPaint, onStopPainting, onPaintingChange);
     brushCleanup.current = cleanup;
     return cleanup;
-  }, [points, selectionMode, onPaint, onStopPainting]);
+  }, [points, selectionMode, onPaint, onStopPainting, onPaintingChange]);
   return <div ref={container} className="seedling-location-map" aria-label="Mapped seedling locations" />;
 }
 
@@ -169,6 +169,7 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
   const loadedLocations = useRef(null);
   const selectedRef = useRef(selected);
   const [selectionMode, setSelectionMode] = useState('click');
+  const [painting, setPainting] = useState(false);
   const stopPainting = useCallback(() => setSelectionMode('click'), []);
   useEffect(() => { selectedRef.current = selected; }, [selected]);
   const [filters, setFilters] = useState({ site: '', assignment: '', search: '' });
@@ -228,16 +229,17 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
             disabled={disabled || (mode === 'select' && maxSelected <= 0) || (mode === 'deselect' && !selected.length)}
             onClick={() => setSelectionMode(mode)}>{label}</button>)}
         </div>
-        <p className="seedling-selection-help">{activeMode === 'click'
+        <p className="seedling-selection-help" aria-live="polite">{activeMode === 'click'
           ? 'Click a dead seedling to select it, or use Brush select to sweep over several. Click a purple point again to deselect it.'
-          : activeMode === 'select'
-            ? 'Hover over dead seedlings to select points inside the circular brush. On a touch screen, drag across them. Press Esc or choose Move / click to finish.'
-            : 'Hover over purple points to remove them from the selection. On a touch screen, drag across them. Press Esc or choose Move / click to finish.'}
+          : <><strong>{painting ? 'Brush active.' : 'Brush ready.'}</strong>{' '}{painting
+            ? `Move over ${activeMode === 'select' ? 'dead seedlings to select them' : 'purple points to erase them'}. Click the map again to stop.`
+            : `Click the map to start ${activeMode === 'select' ? 'selecting dead seedlings' : 'erasing selected points'}; click again to stop.`}
+            {' '}On a touch screen, drag across points and lift your finger to stop. Press Esc or choose Move / click to finish.</>}
           {' '}Purple means selected. Grey points are unavailable for this visit.</p>
       </> : <p>Zoom to a small section, then print its numbered map and matching checklist.</p>}
       {!readOnly && Number.isFinite(maxSelected) ? <p role="status">{maxSelected === 0 ? 'Enter the total deaths above before selecting locations.' : `${selected.length} of ${maxSelected} deaths identified.${selected.length >= maxSelected ? ' All reported deaths are located. Deselect a point to choose another.' : ''}`}</p> : null}
       <SeedlingMap points={filtered} selected={selected} onToggle={readOnly || disabled ? undefined : toggle} onBounds={setBounds}
-        selectionMode={activeMode} onPaint={readOnly || disabled ? undefined : paint} onStopPainting={stopPainting} />
+        selectionMode={activeMode} onPaint={readOnly || disabled ? undefined : paint} onStopPainting={stopPainting} onPaintingChange={setPainting} />
       {readOnly ? <><div className="seedling-location-toolbar"><span>{visible.length} points in this map view</span>
         <button type="button" disabled={!bounds || !visible.length} onClick={() => setPrintSnapshot({ bounds, points: visible })}>Print visible area</button></div>
       <div className="seedling-location-checklist">

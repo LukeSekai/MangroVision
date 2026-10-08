@@ -26,10 +26,12 @@ MAX_ATTEMPTS = 5
 
 
 class AuthError(Exception):
-    def __init__(self, message: str, status: int = 400, retry_after: int | None = None):
+    def __init__(self, message: str, status: int = 400, retry_after: int | None = None,
+                 *, field: str | None = None):
         super().__init__(message)
         self.status = status
         self.retry_after = retry_after
+        self.field = field
 
 
 def _now():
@@ -179,7 +181,10 @@ def _mark_delivery(token_hash: str, success: bool) -> None:
 def begin_login(username: str, password: str, address: str) -> tuple[str, dict]:
     import planting_database as db
     check_request_limit(username, address)
-    user = db.authenticate_user(username, password, record_login=False)
+    try:
+        user = db.authenticate_user(username, password, record_login=False, explain_errors=True)
+    except db.StaffCredentialError as error:
+        raise AuthError(str(error), 401, field=error.field) from None
     if not user:
         raise AuthError('Invalid username or password.', 401)
     return _issue(user, 'login', email=user['email'])

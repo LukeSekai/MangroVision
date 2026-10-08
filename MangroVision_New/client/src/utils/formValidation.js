@@ -35,6 +35,7 @@ export function serverFieldErrors(error, fields) {
       const label = fields[field].label.toLowerCase();
       const ctx = issue.ctx || {};
       if (issue.type === 'missing') result[field] = `Enter ${label}.`;
+      else if (issue.type === 'credential_error') result[field] = String(issue.msg || `Check ${label}.`);
       else if (ctx.ge !== undefined) result[field] = `Enter ${ctx.ge} or more for ${label}.`;
       else if (ctx.le !== undefined) result[field] = `Enter ${ctx.le} or less for ${label}.`;
       else if (ctx.min_length !== undefined) result[field] = `Use at least ${ctx.min_length} characters for ${label}.`;

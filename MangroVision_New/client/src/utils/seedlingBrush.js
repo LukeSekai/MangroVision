@@ -2,7 +2,7 @@ import { visibleSeedlings } from './monitoringLocations';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from './replantingBrush';
 
 // Keep screen-space painting independent of React renders and marker updates.
-export function attachSeedlingBrush(map, points, mode, onPaint, onStop) {
+export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPaintingChange) {
   const container = map.getContainer();
   const brush = document.createElement('div');
   brush.className = 'seedling-selection-brush is-' + mode;
@@ -20,7 +20,14 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop) {
   let previous = null;
   let moving = false;
   let activeTouch = null;
+  let painting = false;
+  let touchClick = false;
   const reset = () => { previous = null; brush.style.display = 'none'; };
+  const setPainting = (active) => {
+    painting = active;
+    reset();
+    onPaintingChange?.(active);
+  };
   const project = () => {
     projected = eligible.map((point) => ({ id: point.planting_event_id,
       ...map.latLngToContainerPoint([point.latitude, point.longitude]) }));
@@ -39,50 +46,66 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop) {
     brush.style.display = 'block';
     brush.style.left = position.x + 'px';
     brush.style.top = position.y + 'px';
+    if (!painting) { previous = null; return; }
     const ids = pointsAlongBrush(projected, previous || position, position);
     previous = position;
     if (ids.length) onPaint(ids, mode);
   };
   const down = (event) => {
-    if (event.target.closest?.('.leaflet-control') || event.button !== 0) return;
+    if (moving || event.target.closest?.('.leaflet-control') || event.button !== 0) return;
+    touchClick = event.pointerType === 'touch';
     if (event.pointerType === 'touch') {
       if (activeTouch !== null) return;
       activeTouch = event.pointerId;
       container.setPointerCapture(event.pointerId);
       event.preventDefault();
+      setPainting(true);
+      sweep(event);
     }
-    previous = null;
-    sweep(event);
+  };
+  const click = (event) => {
+    // Touch drags have their own start/stop and may emit a compatibility click.
+    if (moving || touchClick || event.pointerType === 'touch' || activeTouch !== null
+        || event.target.closest?.('.leaflet-control') || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPainting(!painting);
+    if (painting) sweep(event);
   };
   const up = (event) => {
-    if (activeTouch !== null) {
-      if (activeTouch !== event.pointerId) return;
-      if (container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
-      activeTouch = null;
-    }
-    reset();
+    if (activeTouch === null || activeTouch !== event.pointerId) return;
+    if (container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
+    activeTouch = null;
+    setPainting(false);
   };
   const blur = () => {
     if (activeTouch !== null && container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
     activeTouch = null;
-    reset();
+    setPainting(false);
+  };
+  const cancel = (event) => {
+    if (event.pointerType === 'touch' && event.pointerId !== activeTouch) return;
+    blur();
   };
   const escape = (event) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
     // Finish the brush before the containing monitoring dialog handles Escape.
     event.stopPropagation();
+    blur();
     onStop();
   };
-  const movingStart = () => { moving = true; reset(); };
+  const movingStart = () => { moving = true; blur(); };
   const movingEnd = () => { moving = false; project(); };
   project();
   map.on('movestart zoomstart', movingStart);
   map.on('moveend zoomend resize', movingEnd);
   container.addEventListener('pointermove', sweep);
   container.addEventListener('pointerdown', down);
+  // Capture marker clicks too, before Leaflet stops them from bubbling.
+  container.addEventListener('click', click, true);
   container.addEventListener('pointerup', up);
-  container.addEventListener('pointercancel', up);
+  container.addEventListener('pointercancel', cancel);
   container.addEventListener('pointerleave', reset);
   document.addEventListener('keydown', escape, true);
   window.addEventListener('blur', blur);
@@ -95,8 +118,9 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop) {
     map.off('moveend zoomend resize', movingEnd);
     container.removeEventListener('pointermove', sweep);
     container.removeEventListener('pointerdown', down);
+    container.removeEventListener('click', click, true);
     container.removeEventListener('pointerup', up);
-    container.removeEventListener('pointercancel', up);
+    container.removeEventListener('pointercancel', cancel);
     container.removeEventListener('pointerleave', reset);
     document.removeEventListener('keydown', escape, true);
     window.removeEventListener('blur', blur);

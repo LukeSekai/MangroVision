@@ -41,7 +41,8 @@ def _call(action: Callable):
         return action()
     except staff_auth.AuthError as error:
         headers = {'Retry-After':str(error.retry_after)} if error.retry_after else None
-        raise HTTPException(status_code=error.status, detail=str(error), headers=headers) from None
+        detail = [{'loc': ['body', error.field], 'type': 'credential_error', 'msg': str(error)}] if error.field else str(error)
+        raise HTTPException(status_code=error.status, detail=detail, headers=headers) from None
 
 
 def _address(request: Request) -> str:

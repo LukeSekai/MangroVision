@@ -4,7 +4,7 @@ const TIMEZONE = 'Asia/Manila';
 
 export const REPORT_TYPES = [
   { id: 'planting', title: 'Planting accomplishment', description: 'Seedlings planted during the reporting period, including replacement seedlings.' },
-  { id: 'monitoring', title: 'Survival and monitoring', description: 'Seedling inspection results, monitoring visits and recorded height measurements.' },
+  { id: 'monitoring', title: 'Survival and monitoring', description: 'Current seedling health, monitoring visits and recorded height measurements.' },
   { id: 'mortality', title: 'Mortality and replanting', description: 'Reported seedling deaths and replanting progress at identified locations.' },
   { id: 'organizations', title: 'Organization activity', description: 'Planted and skipped points, with current assigned work.' },
 ];
@@ -120,21 +120,14 @@ export function formatReportValue(value, type = 'text') {
 const rowsOf = (value) => Array.isArray(value) ? value : [];
 const column = (key, label, type = 'text') => ({ key, label, type });
 const stat = (label, value, type = 'count', hint = '') => ({ label, value: reportNumber(value), type, hint });
-const percent = (numerator, denominator) => denominator > 0 ? numerator / denominator * 100 : null;
 const sum = (rows, key) => rows.reduce((total, row) => total + (reportNumber(row[key]) ?? 0), 0);
 
-function inspectionRow(row) {
-  const alive = reportNumber(row.alive) ?? 0;
+function currentSeedlingRow(row = {}) {
+  const planted = reportNumber(row.planted) ?? 0;
   const dead = reportNumber(row.dead) ?? 0;
-  const due = reportNumber(row.due) ?? 0;
-  const completed = reportNumber(row.inspected_due ?? row.inspected) ?? 0;
-  return {
-    ...row, alive, dead, missing: reportNumber(row.missing) ?? 0,
-    round: `${row.interval_days}-day`, due, completed,
-    uninspected: Math.max(0, due - completed), sample: alive + dead,
-    survival: percent(alive, alive + dead), coverage: percent(completed, due),
-    carried_dead: reportNumber(row.carried_dead) ?? 0,
-  };
+  const total = planted + dead;
+  const survival_rate_pct = total > 0 ? Math.round(planted / total * 10000) / 100 : null;
+  return { ...row, planted, dead, total, survival_rate_pct };
 }
 
 const REPLANTING_LABELS = {
@@ -177,26 +170,28 @@ export function buildRestorationReport(type, data, filters) {
   }
 
   if (type === 'monitoring') {
-    const cohorts = rowsOf(source.survival_cohorts).map(inspectionRow);
-    const primary = cohorts.find((row) => row.interval_days === source.summary?.interval_days);
+    const summary = currentSeedlingRow(source.summary);
+    const healthColumns = [
+      column('total', 'Total seedlings', 'count'),
+      column('planted', 'Planted', 'count'), column('dead', 'Dead', 'count'),
+      column('survival_rate_pct', 'Survival rate', 'percent'),
+    ];
     report.stats = [
-      stat('Observed survival rate', primary?.survival, 'percent', primary ? `${primary.round} inspection · ${primary.sample} alive or dead seedlings` : 'No inspection data available'),
-      stat('Inspection completion rate', primary?.coverage, 'percent', primary ? `${primary.round} inspection · ${primary.completed} of ${primary.due} due inspections completed` : 'No inspection data available'),
-      stat('Seedlings awaiting inspection', primary?.uninspected, 'count', primary ? `${primary.round} inspection · at the reporting period end` : 'No inspection data available'),
-      stat('Missing seedlings', primary?.missing, 'count', primary ? `${primary.round} inspection` : 'No inspection data available'),
+      stat('Total seedlings', summary.total, 'count', 'Planted and dead locations combined'),
+      stat('Planted', summary.planted, 'count', 'Current planted locations, matching the Planting Map'),
+      stat('Dead', summary.dead, 'count', 'Current dead locations, matching the Planting Map'),
+      stat('Survival rate', summary.survival_rate_pct, 'percent', 'Planted divided by total seedlings, using current map status'),
     ];
     report.sections = [{
-      title: 'Seedling inspection results by age',
-      columns: [column('round', 'Inspection age'), column('alive', 'Alive', 'count'), column('dead', 'Dead', 'count'), column('missing', 'Missing', 'count'), column('due', 'Inspections due', 'count'), column('completed', 'Inspections completed', 'count'), column('uninspected', 'Awaiting inspection', 'count'), column('sample', 'Alive + dead', 'count'), column('survival', 'Survival rate', 'percent'), column('coverage', 'Completion rate', 'percent'), column('carried_dead', 'Earlier deaths', 'count')],
-      rows: cohorts,
+      title: 'Overall seedling totals', columns: healthColumns, rows: [summary],
     }, {
-      title: 'Seedling inspection results by project site',
-      columns: [column('site_name', 'Project site'), column('round', 'Inspection age'), column('alive', 'Alive', 'count'), column('dead', 'Dead', 'count'), column('missing', 'Missing', 'count'), column('uninspected', 'Awaiting inspection', 'count'), column('sample', 'Alive + dead', 'count'), column('survival', 'Survival rate', 'percent'), column('coverage', 'Completion rate', 'percent')],
-      rows: rowsOf(source.site_outcomes).map(inspectionRow),
+      title: 'Overall seedling totals by project site',
+      columns: [column('site_name', 'Project site'), ...healthColumns],
+      rows: rowsOf(source.site_outcomes).map(currentSeedlingRow),
     }, {
-      title: 'Seedling inspection results by species',
-      columns: [column('species_name', 'Species'), column('round', 'Inspection age'), column('alive', 'Alive', 'count'), column('dead', 'Dead', 'count'), column('missing', 'Missing', 'count'), column('uninspected', 'Awaiting inspection', 'count'), column('sample', 'Alive + dead', 'count'), column('survival', 'Survival rate', 'percent'), column('coverage', 'Completion rate', 'percent')],
-      rows: rowsOf(source.species_outcomes).map(inspectionRow),
+      title: 'Overall seedling totals by species',
+      columns: [column('species_name', 'Species'), ...healthColumns],
+      rows: rowsOf(source.species_outcomes).map(currentSeedlingRow),
     }];
     const growth = rowsOf(source.growth).filter((row) => reportNumber(row.average_height_cm) !== null && reportNumber(row.sample_size) > 0);
     if (growth.length) report.sections.push({
@@ -205,10 +200,10 @@ export function buildRestorationReport(type, data, filters) {
       rows: growth,
     });
     report.notes = [
-      'Results cover seedlings planted in the selected dates, using LGU inspections recorded through the reporting period end. Inspection age is the scheduled number of days after planting; actual visits may occur later. Keep each age separate when reading the totals.',
-      'Alive, dead and missing are seedling counts. Observed survival rate = alive ÷ (alive + dead) × 100. Missing seedlings and those awaiting inspection are excluded from this rate. N/A means the rate cannot be calculated from the available records.',
-      'Inspection completion rate = inspections completed ÷ inspections due × 100. It measures how much inspection work was completed by the reporting period end.',
-      'Earlier deaths are already included in the dead seedling count at later inspection ages. They are excluded from inspections due and completed; do not add them to the dead count again.',
+      'Overall totals cover all planting dates for the selected project site. Each currently planted or dead mapped location counts once. Date filters apply to visit and measurement history.',
+      'Total seedlings = Planted + Dead. Both groups use the current Planting Map status. Planted includes uninspected locations. Dead includes located deaths from individual records and organization visits, counted once.',
+      'Overall survival rate = Planted divided by Total seedlings, multiplied by 100. It uses current map status across all planting dates. N/A means no current seedlings are recorded.',
+      'Locations released for replanting return to Planned and leave the current seedling totals. Earlier deaths and inspections remain in history and are not added to the replacement seedling.',
     ];
     if (growth.length) report.notes.push('Height figures use recorded measurements of alive seedlings, grouped by inspection month. They are measured heights, not growth forecasts; repeated observations may include the same seedling.');
     if (!filters.siteId && data.organizationVisits) {
