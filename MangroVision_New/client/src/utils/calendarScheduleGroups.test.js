@@ -26,6 +26,7 @@ test('different dates, times, durations, titles and statuses remain separate', (
     schedule(4, { end_at: '2026-10-14T12:30:14+08:00' }),
     schedule(5, { title: 'Shoreline cleanup' }),
     schedule(6, { status: 'confirmed' }),
+    schedule(7, { appointment_type: 'field_visit' }),
   ];
   assert.equal(groupCalendarSchedules(rows).length, rows.length);
 });

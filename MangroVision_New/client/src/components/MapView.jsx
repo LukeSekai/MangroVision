@@ -199,7 +199,7 @@ export default function MapView() {
   const toggleReplantingPoint = useMapStore((s) => s.toggleReplantingPoint);
   const replantingSelectedPointIds = useMapStore((s) => s.replantingSelectedPointIds);
   const replantingSelectionMode = useMapStore((s) => s.replantingSelectionMode);
-  const isAnalyticsMode = location.pathname === '/';
+  const isAnalyticsMode = location.pathname === '/map';
   const isMonitoringMapMode = location.pathname === '/monitoring/map';
   // On /planters the admin needs to see WHO owns each assigned point at a
   // glance, so we colour assigned points by organization instead of the single

@@ -52,6 +52,7 @@ _ACTIVITIES = {
     ("POST", "/api/monitoring/observations"): ("monitoring.seedling_inspected", "Recorded a seedling inspection."),
     ("POST", "/api/notifications/{id}/read"): ("notification.read", "Marked a notification as read."),
     ("POST", "/api/planting-schedules"): ("schedule.created", "Created a planting schedule."),
+    ("POST", "/api/like-appointments/{id}/review"): ("appointment.reviewed", "Reviewed a LIKE website appointment request."),
     ("PUT", "/api/planting-schedules/{id}"): ("schedule.updated", "Updated a planting schedule."),
     ("PATCH", "/api/planting-schedules/{id}"): ("schedule.updated", "Updated a planting schedule."),
     ("DELETE", "/api/planting-schedules/{id}"): ("schedule.deleted", "Deleted a planting schedule."),

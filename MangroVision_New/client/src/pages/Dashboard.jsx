@@ -1,6 +1,7 @@
 import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
+import AppointmentNotice from '../components/AppointmentNotice';
 import RestorationReportDialog from '../components/RestorationReportDialog';
 import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses';
 import { DASHBOARD_ENDPOINTS, dashboardSectionsForTab } from '../utils/dashboardLoading';
@@ -1069,7 +1070,7 @@ function SitesTab({ data }) {
                     </div>
                     <Link
                       className="dash-table-map-link"
-                      to={`/?project_site_id=${encodeURIComponent(site.id)}&focus=risk_areas`}
+                      to={`/map?project_site_id=${encodeURIComponent(site.id)}&focus=risk_areas`}
                       state={{ mapFocusSite: site }}
                       aria-label={`View ${site.name || `Site ${site.id}`} risk areas on the map`}
                     >
@@ -1119,7 +1120,7 @@ function SitesTab({ data }) {
                 render: (row) => (
                   <Link
                     className="dash-table-map-link"
-                    to={`/?project_site_id=${encodeURIComponent(row.id)}&focus=site_points`}
+                    to={`/map?project_site_id=${encodeURIComponent(row.id)}&focus=site_points`}
                     state={{ mapFocusSite: row }}
                     aria-label={`View planting points for ${row.name || `Site ${row.id}`} on the map`}
                   >
@@ -1390,6 +1391,8 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+
+      <AppointmentNotice />
 
       <NextActions actions={[
         { label: 'Review analysis', to: '/processing?action=review', description: 'Review the current result or open image analysis history.' },

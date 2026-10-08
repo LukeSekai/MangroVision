@@ -7,7 +7,7 @@ import './Sidebar.css';
 
 const NAV_ITEMS = [
   {
-    to: '/',
+    to: '/map',
     label: 'Planting Map',
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -158,7 +158,7 @@ export default function Sidebar() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === '/'}
+                end={item.to === '/map'}
                 aria-disabled={locked}
                 onClick={(event) => {
                   if (locked) event.preventDefault();

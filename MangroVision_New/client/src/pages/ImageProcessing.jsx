@@ -420,7 +420,7 @@ export default function ImageProcessing() {
     setHistoryOpen(false);
     setOverlayOpen(false);
     // Replace the review entry so browser Back returns to the history list.
-    navigate('/', { replace: true });
+    navigate('/map', { replace: true });
   };
 
   const handleDeleteAnalysis = async (analysisId) => {

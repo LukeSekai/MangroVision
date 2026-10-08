@@ -48,6 +48,8 @@ htmlcov/
 !/tests/test_project_site_counts.py
 !/tests/test_field_routing.py
 !/tests/test_organization_reset_postgres.py
+!/tests/test_like_appointments.py
+!/tests/test_like_appointments_postgres.py
 *.test.js
 *.test.mjs
 *.spec.js
@@ -64,6 +66,7 @@ htmlcov/
 !MangroVision_New/client/src/components/FormFeedback.test.js
 !MangroVision_New/client/src/utils/formValidation.test.js
 !MangroVision_New/client/src/utils/analysisHistory.test.js
+!MangroVision_New/client/src/like/booking.test.js
 !MangroVision_New/client/src/stores/planterAuthStore.test.js
 !MangroVision_New/client/src/components/ParticipantDevices.test.js
 !MangroVision_New/client/src/components/SeedlingLocations.test.js
@@ -134,6 +137,8 @@ TestImages/
 # Keep the UI's shipped brand and login imagery visible to Git.
 !MangroVision_New/client/public/*.jpg
 !MangroVision_New/client/public/*.png
+# Keep the public LIKE website's approved photos with the feature.
+!MangroVision_New/client/public/like/*.jpg
 !README_assets/*.png
 
 # Local orthophotos and generated tiles. Share MAP/FINAL/final_orthophoto.tif

@@ -11,7 +11,7 @@ export function groupCalendarSchedules(schedules = []) {
     const start = Date.parse(schedule.start_at || `${date}T${schedule.start_time}+08:00`);
     const end = Date.parse(schedule.end_at || `${date}T${schedule.end_time}+08:00`);
     const key = date && title && Number.isFinite(start) && Number.isFinite(end)
-      ? JSON.stringify([date, title, start, end, normalizedText(schedule.status)])
+      ? JSON.stringify([date, title, start, end, normalizedText(schedule.status), schedule.appointment_type || 'tree_planting'])
       : JSON.stringify(['schedule', schedule.id ?? index]);
     if (!groups.has(key)) groups.set(key, { key, schedule, schedules: [] });
     groups.get(key).schedules.push(schedule);

@@ -1,17 +1,6 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
-import App from './App.jsx';
-import { installSecureFetch } from './utils/secureFetch.js';
-import 'leaflet/dist/leaflet.css';
-import './index.css';
-
-installSecureFetch();
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </StrictMode>
-);
+// The public root opens LIKE without loading staff maps, charts, or styles.
+if (window.location.pathname === '/' || window.location.pathname === '/index.html') {
+  window.location.replace(`${import.meta.env.BASE_URL}like.html${window.location.search}${window.location.hash}`);
+} else {
+  void import('./workspace-main.jsx');
+}
