@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
+import { bindProjectSiteInfo } from '../utils/projectSiteInfo';
+import './ProjectSiteInfo.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const siteStyle = { color: '#15803d', weight: 2, fillColor: '#22c55e', fillOpacity: 0.16 };
@@ -74,16 +76,7 @@ export default function MonitoringMap() {
       const key = String(index);
       try {
         const layer = L.geoJSON(site, { style: { ...siteStyle, weight: selected === key ? 4 : 2, fillOpacity: selected === key ? 0.25 : 0.1 } });
-        const label = document.createElement('div');
-        const name = document.createElement('strong');
-        name.textContent = site.properties?.name || `Project site ${index + 1}`;
-        label.append(name);
-        if (site.properties?.organization_name) {
-          const owner = document.createElement('div');
-          owner.textContent = site.properties.organization_name;
-          label.append(owner);
-        }
-        layer.bindPopup(label);
+        bindProjectSiteInfo(layer, site);
         layer.on('click', () => setSelected(key));
         group.addLayer(layer);
         if (selected === key) selectedLayer = layer;
@@ -108,7 +101,7 @@ export default function MonitoringMap() {
           </option>)}
         </select>
       </label>
-      <p>Select a site or click its green boundary to see where it is.</p>
+      <p>Hover a site to see its information, or select or tap its boundary for details.</p>
     </div>
     {loading ? <p role="status">Loading project sites...</p> : null}
     {error ? <div className="org-monitoring-message is-error" role="alert">{error} <button type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div> : null}

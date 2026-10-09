@@ -9,10 +9,12 @@ import { getPlanterColor, getPlanterTint } from '../utils/planterColors';
 import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
 import { getMapPointStatus } from '../utils/mapPointStats';
+import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSitePointCounts } from '../utils/projectSiteInfo';
 import { POINT_STATUS_COLORS as STATUS_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
 import './MapView.css';
+import './ProjectSiteInfo.css';
 
 // Fix Leaflet default icon paths
 delete L.Icon.Default.prototype._getIconUrl;
@@ -175,6 +177,8 @@ export default function MapView() {
   const center = useMapStore((s) => s.center);
   const zoom = useMapStore((s) => s.zoom);
   const points = useMapStore((s) => s.points);
+  const pointsLoaded = useMapStore((s) => s.pointsLoaded);
+  const sitePointCounts = useMemo(() => projectSitePointCounts(points), [points]);
   // Species spacing is independent of selection and page mode. Calculate it
   // once per dataset, rather than repeating pairwise checks on each selection.
   const spacedPoints = useMemo(() => filterCrossSpeciesDisplayPoints(points), [points]);
@@ -348,18 +352,10 @@ export default function MapView() {
       style: { color: '#475569', weight: 2, fillColor: '#475569', fillOpacity: 0.10 },
     });
     const projectSiteLayer = L.geoJSON(null, {
-      pane: 'zonesPane',
+      // Share the points' canvas so Leaflet can hit-test both. A canvas in a
+      // separate lower pane cannot receive events through the point canvas.
+      pane: 'overlayPane',
       style: PROJECT_SITE_STYLE,
-      onEachFeature: (feature, layer) => {
-        const props = feature?.properties || {};
-        layer.bindTooltip(
-          `<div class="zone-tooltip-inner">
-            <div class="zone-tooltip-title">${escapeHtml(props.name || 'Project site')}</div>
-            <div class="zone-tooltip-detail">${escapeHtml(props.notes || 'Stable LGU project boundary')}</div>
-          </div>`,
-          { className: 'zone-tooltip zone-tooltip-project-site', sticky: true, direction: 'top' },
-        );
-      },
     });
 
     // Bottom-left legend so admins can read what each dashed colour means
@@ -479,6 +475,12 @@ export default function MapView() {
       useMapStore.getState().setMapInstance(null);
     };
   }, []);
+
+  // Leaflet adds its own classes to this element. Toggle the page class
+  // directly so React does not replace those classes during route changes.
+  useEffect(() => {
+    containerRef.current?.classList.toggle('monitoring-map-container', isMonitoringMapMode);
+  }, [isMonitoringMapMode]);
 
   // When the store's view changes, bring this map to the same view. The skip
   // ref + a rough equality check below prevent feedback loops with the
@@ -949,8 +951,18 @@ export default function MapView() {
     const visibleProjectSites = isMonitoringMapMode
       ? filterMonitoringFeatures(projectSites, monitoringOrganizationId)
       : projectSites;
-    try { projectSiteLayer.addData(visibleProjectSites); } catch { /* skip malformed site */ }
-  }, [projectSites, isMonitoringMapMode, monitoringOrganizationId]);
+    for (const feature of visibleProjectSites.features) {
+      try { projectSiteLayer.addData(feature); } catch { /* skip malformed site */ }
+    }
+    projectSiteLayer.eachLayer((layer) => {
+      bindProjectSiteInfo(layer, layer.feature, {
+        counts: pointsLoaded
+          ? (sitePointCounts.get(String(projectSiteId(layer.feature))) || emptyProjectSiteCounts())
+          : null,
+      });
+      layer.bringToBack();
+    });
+  }, [projectSites, sitePointCounts, pointsLoaded, isMonitoringMapMode, monitoringOrganizationId]);
 
   // Sync the preview, or retain just the projected photo boundary after save.
   useEffect(() => {
@@ -1267,7 +1279,8 @@ export default function MapView() {
       const layerSiteId = siteLayer.feature?.id ?? siteLayer.feature?.properties?.id;
       const isFocused = String(layerSiteId ?? '') === String(projectSiteId);
       siteLayer.setStyle(isFocused ? FOCUSED_PROJECT_SITE_STYLE : PROJECT_SITE_STYLE);
-      if (isFocused && typeof siteLayer.bringToFront === 'function') siteLayer.bringToFront();
+      // Keep the boundary behind point markers even when it is highlighted.
+      siteLayer.bringToBack();
     });
 
     const sitePoints = spacedPoints.filter((point) => (
@@ -1353,5 +1366,5 @@ export default function MapView() {
     }
   }, [location.key, location.search, showLayers, warningZones]);
 
-  return <div ref={containerRef} className={`map-container${isMonitoringMapMode ? ' monitoring-map-container' : ''}`} />;
+  return <div ref={containerRef} className="map-container" />;
 }

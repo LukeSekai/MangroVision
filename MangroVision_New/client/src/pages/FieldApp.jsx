@@ -8,6 +8,9 @@ import Modal from '../components/Modal';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
 import ParticipantRecovery from '../components/ParticipantRecovery';
+import GuideButton from '../components/GuideButton';
+import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
+import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts } from '../utils/projectSiteInfo';
 import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
@@ -15,6 +18,7 @@ import { usePlanterAuthStore } from '../stores/planterAuthStore';
 import { ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { createGoogleSatelliteLayer } from '../config/googleBasemap';
 import './FieldApp.css';
+import '../components/ProjectSiteInfo.css';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -197,6 +201,7 @@ function AuthScreen() {
   return (
     <div className="field-auth-screen">
       <div className="field-auth-card">
+        {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="field-login" /></div>}
         <div className="field-auth-brand">
           <Logo variant="lockup" size={44} alt="MangroVision" />
           <span className="field-auth-brand-suffix">Field</span>
@@ -452,6 +457,7 @@ function PointsMap({
     markersRef.current.clear();
 
     const siteBoundaries = [];
+    const sitePointCounts = projectSitePointCounts(points, { scope: 'participant' });
     projectSites.forEach((feature) => {
       const properties = feature?.properties || {};
       const siteId = feature?.id ?? properties.id;
@@ -466,10 +472,11 @@ function PointsMap({
           dashArray: '7 5',
         },
       }).addTo(zoneLayer);
-      boundary.bindTooltip(
-        `${properties.name || 'Organization zone'}${properties.organization_name ? ` · ${properties.organization_name}` : ''}`,
-        { sticky: true },
-      );
+      bindProjectSiteInfo(boundary, { ...feature, geometry }, {
+        counts: sitePointCounts.get(String(siteId)) || emptyProjectSiteCounts(),
+        scope: 'participant',
+        popupOptions: { autoPanPaddingTopLeft: [12, 120] },
+      });
       siteBoundaries.push(boundary);
     });
 
@@ -1211,6 +1218,7 @@ export default function FieldApp() {
           <span className="field-header-brand-name">MangroVision</span>
         </div>
         <div className="field-header-actions" ref={avatarMenuRef}>
+          <GuideButton mode="field" />
           <button
             type="button"
             className={`field-avatar-button${avatarMenuOpen ? ' field-avatar-button-open' : ''}`}

@@ -51,7 +51,7 @@ export const useMapStore = create((set, get) => ({
 
   // Stats
   resetWorkspaceData: () => set({
-    stats: null, points: [], loadingStats: false, loadingPoints: false,
+    stats: null, points: [], pointsLoaded: false, loadingStats: false, loadingPoints: false,
     forbiddenZones: null, erodedZones: null, siteZones: null,
     projectSites: null, siteZoneMortality: null, warningZones: null,
     selectedPointId: null, assignmentSelectedPointIds: [],
@@ -77,6 +77,7 @@ export const useMapStore = create((set, get) => ({
 
   // Map points (all planting points with assignment info)
   points: [],
+  pointsLoaded: false,
   loadingPoints: false,
   fetchPoints: async ({ force = false } = {}) => {
     set({ loadingPoints: true });
@@ -84,7 +85,7 @@ export const useMapStore = create((set, get) => ({
       const res = await fetch(`${API}/api/planters/map-points`, { cache: force ? 'reload' : 'default' });
       if (!res.ok) throw new Error(`Could not load map points (${res.status}).`);
       const data = await res.json();
-      set({ points: data, loadingPoints: false });
+      set({ points: data, pointsLoaded: true, loadingPoints: false });
     } catch (err) {
       console.error('Failed to fetch points:', err);
       set({ loadingPoints: false });

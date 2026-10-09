@@ -6,6 +6,7 @@ import Modal from './Modal';
 import Logo from './Logo';
 import ProcessingIndicator from './ProcessingIndicator';
 import NotificationBell from './NotificationBell';
+import GuideButton from './GuideButton';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
 import './AppShell.css';
@@ -63,7 +64,10 @@ export default function AppShell({ children }) {
       <main className="app-main">
         <header className="workspace-header">
           <span>MangroVision workspace</span>
-          <NotificationBell />
+          <div className="workspace-header-actions">
+            <GuideButton />
+            <NotificationBell />
+          </div>
         </header>
         {mapVisited && <div className="map-layer" style={{ display: showMap ? undefined : 'none' }}>
           <MapView />

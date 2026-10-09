@@ -74,7 +74,7 @@ export function Panel({
         <span>{hidden ? 'Show' : 'Hide'}</span>
       </button>
 
-      <div className={`floating-panel ${className} ${hidden ? 'floating-panel-hidden' : ''}`.trim()}>
+      <div data-guide-panel={title} className={`floating-panel ${className} ${hidden ? 'floating-panel-hidden' : ''}`.trim()}>
         <div className="floating-panel-header">
           <div>
             <h2 className="floating-panel-title">{title}</h2>
@@ -179,7 +179,7 @@ export function PanelCard({
   }, [open]);
 
   return (
-    <div className={`panel-card ${className} ${open ? 'panel-card-open' : ''}`.trim()}>
+    <div data-guide-card={panelKey || title} className={`panel-card ${className} ${open ? 'panel-card-open' : ''}`.trim()}>
       <button type="button" ref={headerRef} className="panel-card-header" aria-expanded={open}
         aria-controls={`${generatedKey}-body`} onClick={toggleOpen}>
         <div className="panel-card-header-left">

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useAuthStore } from '../stores/authStore';
 import { staffAuthRequest } from '../utils/staffAuth';
 import EmailCodeInput from './EmailCodeInput';
+import GuideButton from './GuideButton';
+import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
 import Logo from './Logo';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError } from './FormFeedback';
@@ -123,6 +125,7 @@ export default function LoginScreen() {
         </div>
         <div className="login-form-side">
           <div className="login-form-inner">
+            {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="staff-login" /></div>}
             <div className="login-form-header">
               <div className="login-logo">
                 <Logo variant="lockup" size={120} alt="MangroVision" />

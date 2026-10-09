@@ -1,0 +1,109 @@
+.leaflet-tooltip.project-site-tooltip {
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 26px rgba(15, 23, 42, 0.2);
+  white-space: normal;
+  max-width: min(320px, calc(100vw - 88px));
+}
+
+.project-site-info {
+  width: 320px;
+  max-width: calc(100vw - 88px);
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-top: 3px solid #0d9488;
+  border-radius: 12px;
+  color: #0f172a;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.project-site-info-kind {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.project-site-info .project-site-info-title {
+  margin: 2px 0 3px;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.project-site-info-owner { color: #64748b; font-size: 11px; line-height: 1.4; }
+
+.project-site-info-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 11px 0 0;
+  padding: 9px 10px;
+  border: 1px solid #edf0f3;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+.project-site-info-detail dt { font-size: 10px; }
+.project-site-info-detail dd { margin-top: 2px; font-size: 13px; text-align: left; }
+.project-site-info-detail.is-area,
+.project-site-info-detail.is-linked { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.project-site-info-detail.is-area { padding-bottom: 7px; border-bottom: 1px solid #e2e8f0; }
+.project-site-info-detail.is-area dd,
+.project-site-info-detail.is-linked dd { margin: 0; font-size: 11px; text-align: right; }
+.project-site-info dt { color: #475569; }
+.project-site-info dd { margin-left: 0; margin-bottom: 0; font-weight: 700; }
+
+.project-site-info-analytics {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 8px;
+}
+.project-site-info-chart { position: relative; flex: 0 0 116px; width: 116px; height: 116px; }
+.project-site-info-donut { display: block; width: 100%; height: 100%; }
+.project-site-info-total { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; text-align: center; }
+.project-site-info-total strong { font-size: 23px; font-weight: 800; letter-spacing: -0.04em; line-height: 1.1; }
+.project-site-info-total span { max-width: 72px; color: #64748b; font-size: 9px; line-height: 1.25; }
+.project-site-info-stats { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 6px; margin: 0; }
+.project-site-info-stat { display: flex; justify-content: space-between; align-items: center; gap: 6px; font-size: 11px; line-height: 1.3; }
+.project-site-info-stat dt { display: flex; align-items: center; gap: 6px; }
+.project-site-info-stat dt::before { content: ''; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--site-status-color); }
+.project-site-info-stat dd { margin-top: 0; text-align: right; }
+.project-site-info-stat.is-zero { opacity: 0.5; }
+.project-site-info p { margin: 7px 0 0; }
+.project-site-info-scope { color: #64748b; font-size: 10px; }
+.project-site-info-notes {
+  color: #475569;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  white-space: pre-line;
+}
+
+.project-site-popup .leaflet-popup-content-wrapper { padding: 0; border-radius: 12px; }
+/* The app's global Leaflet content margins are also marked important. */
+.project-site-popup .leaflet-popup-content { margin: 0 !important; }
+.project-site-popup .project-site-info { width: 320px; }
+.project-site-popup .project-site-info-kind { padding-right: 12px; }
+.project-site-popup .project-site-info-notes { display: block; max-height: 110px; overflow-y: auto; }
+
+@media (max-width: 420px) {
+  .project-site-info-chart { flex-basis: 104px; width: 104px; height: 104px; }
+  .project-site-info-analytics { gap: 12px; }
+  .project-site-info-total strong { font-size: 21px; }
+  .project-site-info-total span { max-width: 65px; }
+}
+
+@media (max-width: 360px) {
+  .project-site-info-analytics { flex-direction: column; }
+  .project-site-info-stats { display: grid; grid-template-columns: 1fr 1fr; width: 100%; gap: 6px 12px; }
+}
