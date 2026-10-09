@@ -73,6 +73,7 @@ class CreateAssignmentRequest(BaseModel):
     notes: str = ""
     species: str = ""
     site_zone_id: Optional[int] = None
+    planting_schedule_id: Optional[int] = Field(default=None, ge=1)
 
 
 class MarkDeadRequest(BaseModel):
@@ -90,6 +91,7 @@ def create_organization_assignment_endpoint(organization_id: int, body: CreateAs
             assigned_by_user_id=int(user["id"]), title=body.title,
             assignment_date=body.assignment_date, travel_mode=body.travel_mode,
             notes=body.notes, species=body.species, site_zone_id=body.site_zone_id,
+            planting_schedule_id=body.planting_schedule_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -293,6 +295,7 @@ def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest,
             notes=body.notes,
             species=body.species,
             site_zone_id=body.site_zone_id,
+            planting_schedule_id=body.planting_schedule_id,
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

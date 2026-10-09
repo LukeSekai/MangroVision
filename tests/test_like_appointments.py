@@ -26,10 +26,63 @@ def api(monkeypatch):
     app = FastAPI()
     app.include_router(routes.public_router, prefix='/api/public/like')
     app.include_router(routes.staff_router, prefix='/api/like-appointments')
+    app.include_router(staff.router, prefix='/api/planting-schedules')
     monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: None)
     monkeypatch.setattr(routes, 'run_delivery_cycle', lambda **kwargs: {'configured': False, 'sent': 0, 'failed': 0})
     with TestClient(app) as client:
         yield client, routes, staff
+
+
+@pytest.mark.parametrize('method', ['put', 'patch'])
+def test_locked_activity_returns_conflict_without_sending_email(api, monkeypatch, method):
+    from mangrovision_db.activity_rules import ActivityConflict
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'get_planting_schedule', lambda _: {'id': 1})
+    def locked(*args, **kwargs):
+        raise ActivityConflict('Planting has already been recorded for this activity.')
+    monkeypatch.setattr(staff, 'update_planting_schedule', locked)
+    monkeypatch.setattr(staff, 'run_delivery_cycle', lambda **kwargs: pytest.fail('Rejected change started email delivery'))
+    response = getattr(client, method)('/api/planting-schedules/1', json={'title': 'New title'})
+    assert response.status_code == 409
+    assert 'already been recorded' in response.json()['detail']
+
+
+def test_schedule_revision_runs_queued_delivery_after_success(api, monkeypatch):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'get_planting_schedule', lambda _: {'id': 1})
+    updates, deliveries = [], []
+    def revise(schedule_id, **values):
+        updates.append((schedule_id, values))
+        return {'id': schedule_id, 'email_update': {'request_id': 7, 'kind': 'update', 'status': 'queued'}}
+    monkeypatch.setattr(staff, 'update_planting_schedule', revise)
+    monkeypatch.setattr(staff, 'run_delivery_cycle', lambda **kwargs: deliveries.append(kwargs))
+    response = client.patch('/api/planting-schedules/1', json={'title': 'Agreed revision'})
+    assert response.status_code == 200
+    assert updates == [(1, {'title': 'Agreed revision', 'updated_by_user_id': 1})]
+    assert deliveries == [{'request_id': 7}]
+
+
+def test_notes_update_does_not_run_delivery(api, monkeypatch):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'get_planting_schedule', lambda _: {'id': 1})
+    monkeypatch.setattr(staff, 'update_planting_schedule', lambda *args, **kwargs: {'id': 1, 'email_update': None})
+    monkeypatch.setattr(staff, 'run_delivery_cycle', lambda **kwargs: pytest.fail('Notes change started email delivery'))
+    assert client.patch('/api/planting-schedules/1', json={'notes': 'Corrected note'}).status_code == 200
+
+
+def test_recorded_activity_delete_returns_conflict(api, monkeypatch):
+    from mangrovision_db.activity_rules import ActivityConflict
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    def locked(schedule_id, **kwargs):
+        assert schedule_id == 1 and kwargs['deleted_by_user_id'] == 1
+        raise ActivityConflict('This activity has recorded planting and cannot be deleted.')
+    monkeypatch.setattr(staff, 'delete_planting_schedule', locked)
+    response = client.delete('/api/planting-schedules/1')
+    assert response.status_code == 409 and 'cannot be deleted' in response.json()['detail']
 
 
 def test_public_receipt_and_timezone(api, monkeypatch):

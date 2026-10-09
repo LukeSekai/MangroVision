@@ -11,6 +11,7 @@ import process from 'node:process';
 
 let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, useMapStore;
 let requests, scheduleRows, mapPoints, appointmentRows, approvals, useAuthStore;
+let goalSaves, goalSaveFailure, savedGoalSettings;
 const bundlePath = resolve(`node_modules/.retained-routes-${process.pid}.mjs`);
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
@@ -52,7 +53,17 @@ before(async () => {
     }
     if (url.pathname === '/api/planters/map-points') return Response.json(mapPoints);
     if (url.pathname === '/api/analyses/stats') return Response.json({ total_analyses: 1, points: mapPoints });
-    if (url.pathname === '/api/dashboard/settings') return Response.json({ year: Number(url.searchParams.get('year')), annual_planting_target: 4000, min_survival_target_pct: 80 });
+    if (url.pathname === '/api/dashboard/settings') {
+      if (options.method === 'PUT') {
+        const settings = JSON.parse(options.body);
+        goalSaves.push(settings);
+        if (goalSaveFailure) return Response.json({ detail: 'Please try saving again.' }, { status: 503 });
+        savedGoalSettings.set(settings.year, settings);
+        return Response.json(settings);
+      }
+      const year = Number(url.searchParams.get('year'));
+      return Response.json(savedGoalSettings.get(year) || { year, annual_planting_target: 4000, min_survival_target_pct: 80 });
+    }
     if (url.pathname.startsWith('/api/dashboard/')) return Response.json({
       as_of: '2026-10-06T01:00:00Z', filter_options: { sites: [{ id: 1, name: 'Test Site' }] }, suitability: rows,
       lifecycle: mapPoints.map((point) => ({
@@ -119,6 +130,9 @@ beforeEach(() => {
   mapPoints = [];
   appointmentRows = [];
   approvals = [];
+  goalSaves = [];
+  goalSaveFailure = false;
+  savedGoalSettings = new Map();
   useAuthStore.setState({ user: null });
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
@@ -311,6 +325,54 @@ test('unsaved planting goals survive closing the panel, changing tabs and return
   assert.equal(document.querySelector('.dash-goals input').value, '4999');
 });
 
+test('planting goals appear first, close after saving and reopen with saved values', async () => {
+  useAuthStore.setState({ user: { id: 1, role: 'lgu' } });
+  await render();
+  await click('.dash-goals-button');
+  const goals = document.querySelector('#dashboard-planting-goals');
+  const appointmentNotice = document.querySelector('.appointment-notice');
+  const nextActions = document.querySelector('.dash > .next-actions');
+  const follows = window.Node.DOCUMENT_POSITION_FOLLOWING;
+  assert.ok(goals.compareDocumentPosition(appointmentNotice) & follows);
+  assert.ok(appointmentNotice.compareDocumentPosition(nextActions) & follows);
+  const year = document.querySelector('.dash-goals-year select');
+  await act(async () => { year.value = '2025'; year.dispatchEvent(new Event('change', { bubbles: true })); });
+  await settle();
+  const target = document.querySelector('.dash-goals input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(target, '4999');
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('.dash-goals button[type="submit"]');
+  assert.deepEqual(goalSaves, [{ year: 2025, annual_planting_target: 4999, min_survival_target_pct: 80 }]);
+  assert.equal(document.querySelector('.dash-goals-button').getAttribute('aria-expanded'), 'false');
+  assert.equal(goals.style.display, 'none');
+  assert.match(document.querySelector('.dash > [role="status"]').textContent, /2025 were saved/);
+  assert.equal(document.activeElement, document.querySelector('.dash-goals-button'));
+  await click('.dash-goals-button');
+  assert.equal(goals.style.display, '');
+  assert.equal(document.querySelector('.dash-goals input').value, '4999');
+  assert.equal(document.querySelector('.dash-goals-notice'), null);
+});
+
+test('a failed planting goals save keeps the panel open and preserves the draft', async () => {
+  goalSaveFailure = true;
+  await render();
+  await click('.dash-goals-button');
+  const target = document.querySelector('.dash-goals input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(target, '4999');
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click('.dash-goals button[type="submit"]');
+  assert.equal(goalSaves.length, 1);
+  assert.equal(document.querySelector('.dash-goals-button').getAttribute('aria-expanded'), 'true');
+  assert.equal(document.querySelector('#dashboard-planting-goals').style.display, '');
+  assert.equal(document.querySelector('.dash-goals input').value, '4999');
+  assert.match(document.querySelector('.dash-goals').textContent, /Planting goals not saved/);
+  assert.equal(document.querySelector('.dash-goals-notice'), null);
+});
+
 test('Activity keeps its loaded history on return and its manual Refresh loads again', async () => {
   await render('activity');
   const feed = document.querySelector('.activity-feed');
@@ -339,6 +401,30 @@ test('Scheduling retains its calendar and tide forecast when returning, and Refr
   await click('.schedule-refresh');
   assert.equal(count('/api/planting-schedules'), 2);
   assert.equal(count('/api/tides/forecast'), 2);
+});
+
+test('recorded planting locks planning inputs and deletion but permits notes and progress', async () => {
+  useAuthStore.setState({ user: { id: 1, role: 'lgu' } });
+  scheduleRows = [{ id: 12, title: 'Demo planting', organization: 'Demo group', organization_id: 4,
+    start_at: '2090-01-01T08:00:00+08:00', end_at: '2090-01-01T10:00:00+08:00',
+    date: '2090-01-01', start_time: '08:00', end_time: '10:00', inspection_interval_days: 14,
+    status: 'confirmed', source: 'staff', appointment_type: 'tree_planting', planting_started: true,
+    recorded_planting_count: 1, linked_assignment_count: 1, edit_lock_reason: 'Planting recorded.' }];
+  await render('scheduling');
+  const view = [...document.querySelectorAll('button')].find((button) => button.textContent === 'List');
+  await click(view);
+  const remove = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Delete');
+  assert.ok(remove.disabled);
+  await click([...document.querySelectorAll('button')].find((button) => button.textContent === 'Update notes / status'));
+  const form = document.querySelector('.schedule-form');
+  for (const field of ['organizationName', 'title', 'date', 'startTime', 'endTime', 'expectedParticipants', 'seedlings']) {
+    const input = [...form.querySelectorAll('input')].find((element) => element.name === field);
+    assert.ok(input?.disabled, `${field} must be locked`);
+  }
+  assert.equal(form.querySelector('textarea').disabled, false);
+  const status = form.querySelector('select');
+  assert.deepEqual([...status.options].map((option) => option.value), ['confirmed', 'in_progress', 'completed']);
+  assert.match(form.textContent, /Planning details are locked/);
 });
 
 test('LGU dashboard button opens pending website requests and approval stays in Scheduling', async () => {

@@ -1,6 +1,7 @@
 """Quick Assign regressions using temporary PostGIS tables, never live rows."""
 import importlib
 import os
+from datetime import datetime, timedelta, timezone
 from collections import Counter
 from pathlib import Path
 
@@ -24,14 +25,23 @@ def workspace(monkeypatch):
     with get_engine().connect() as connection:
         transaction = connection.begin()
         try:
+            connection.execute(text("SET LOCAL statement_timeout = '20s'"))
             for table in ('organizations', 'planters', 'organization_participants',
                           'planter_assignments', 'planter_assignment_points',
                           'planting_events', 'point_death_records', 'auth_sessions',
                           'project_sites', 'analyses', 'planting_points', 'users',
                           'map_zones', 'replanting_requests', 'activity_logs', 'planting_schedules'):
                 connection.execute(text(f'CREATE TEMP TABLE {table} (LIKE mangrovision.{table} INCLUDING ALL)'))
+            connection.execute(text('ALTER TABLE pg_temp.planter_assignments ADD COLUMN IF NOT EXISTS planting_schedule_id BIGINT'))
             connection.execute(text('SET LOCAL search_path = pg_temp, mangrovision, extensions, public'))
             connection.execute(text('CREATE TEMP VIEW site_zones AS SELECT * FROM pg_temp.project_sites'))
+            # Clone the real completion trigger, with every reference isolated.
+            trigger_sql = connection.scalar(text(
+                "SELECT pg_get_functiondef('mangrovision.maintain_planting_event()'::regprocedure)"))
+            connection.execute(text(trigger_sql.replace('mangrovision', 'pg_temp')))
+            connection.execute(text('''CREATE TRIGGER test_planting_event AFTER UPDATE OF status
+                ON pg_temp.planter_assignment_points FOR EACH ROW
+                EXECUTE FUNCTION pg_temp.maintain_planting_event()'''))
 
             class TempConnection(CompatConnection):
                 def __init__(self):
@@ -88,6 +98,24 @@ def test_linked_image_does_not_expand_saved_boundary(workspace):
         db.create_organization_assignment(1, [96], species='Rhizophora', site_zone_id=1)
     # A failed batch must not leave a reservation account behind.
     assert db.list_planters() == []
+
+
+def test_assignment_links_to_activity_then_field_planting_locks_it(workspace):
+    from mangrovision_db.activity_rules import ActivityConflict
+    start = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=3)
+    activity = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Demo activity', start_at=start,
+        end_at=start + timedelta(hours=2), status='confirmed')
+    db.update_planting_schedule(activity['id'], project_site_id=1)
+    assignment_id = db.create_organization_assignments(1, [1, 2], site_zone_id=1, planting_schedule_id=activity['id'])[0]
+    linked = workspace.execute(text('SELECT planting_schedule_id, assignment_date, planter_id FROM planter_assignments WHERE id = :id'), {'id': assignment_id}).one()
+    assert linked.planting_schedule_id == activity['id'] and linked.assignment_date == start.date()
+    point = workspace.execute(text('SELECT id FROM planter_assignment_points WHERE assignment_id = :id ORDER BY id LIMIT 1'), {'id': assignment_id}).scalar_one()
+    db.mark_planter_points_completed(linked.planter_id, [point])
+    assert db.get_planting_schedule(activity['id'])['planting_started']
+    with pytest.raises(ActivityConflict, match='already been recorded'):
+        db.update_planting_schedule(activity['id'], title='Must remain unchanged')
+    assert db.update_planting_schedule(activity['id'], notes='Corrected note')['notes'] == 'Corrected note'
 
 
 def test_reserve_then_register_and_open_field_account(workspace, monkeypatch):

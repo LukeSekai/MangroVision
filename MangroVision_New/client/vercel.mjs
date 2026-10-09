@@ -28,6 +28,7 @@ export const config = {
       dest: '$MANGROVISION_BACKEND_URL/monitoring_uploads/$1',
       env: ['MANGROVISION_BACKEND_URL'],
     },
+    { src: '^/landing-page/?$', dest: '/like.html' },
     { handle: 'filesystem' },
     {
       src: '^/((?!api(?:/|$)|tiles(?:/|$)|monitoring_uploads(?:/|$)|assets(?:/|$)).*)$',

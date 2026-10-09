@@ -9,8 +9,8 @@ geotagged drone imagery, keeps eroded-area planting points visible but
 dynamically unavailable, manages planting assignments, and records aggregate
 organization monitoring visits for LGU staff.
 
-The LIKE public website and planting appointment intake are available at
-`/like.html`. See [LIKE website development and integration](docs/like-website.md)
+MangroVision opens at `/`. The LIKE public website and planting appointment intake
+are available separately at `/landing-page`. See [LIKE website development and integration](docs/like-website.md)
 for preview instructions, placeholders, and the separate development database setup.
 
 ## Supported production application

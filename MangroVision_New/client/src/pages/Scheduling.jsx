@@ -728,7 +728,7 @@ export default function Scheduling() {
     return forecastPlantingGuide({ payload: tidePayload, now, allowOutdated: true });
   }, [tidePayload, now]);
   useEffect(() => {
-    if (!formOpen || saving || !isPlantingAppointment(editingSchedule || {})) return;
+    if (!formOpen || saving || editingSchedule?.planting_started || !isPlantingAppointment(editingSchedule || {})) return;
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const assessment = assessSelectedTime(selection, tidePayload, now);
     if (assessment.status !== 'unsafe') {
@@ -834,12 +834,16 @@ export default function Scheduling() {
     saveInFlight.current = true;
     setSaving(true);
     try {
-      await fetchJson(request.path, {
+      const saved = await fetchJson(request.path, {
         method: request.method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request.body),
       });
-      setNotice(request.method === 'PUT' ? 'Planting schedule updated.' : 'Planting schedule created. Once confirmed, you can choose a planting area for it.');
+      const emailNotice = saved?.email_update
+        ? (saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the requester.'
+          : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the requester.'
+            : ' The queued confirmation now contains the revised details.') : '';
+      setNotice((request.method === 'PUT' ? 'Planting schedule updated.' : 'Planting schedule created. Once confirmed, you can choose a planting area for it.') + emailNotice);
       setFormOpen(false);
       setEditingSchedule(null);
       setMonth(request.body.date.slice(0, 7));
@@ -870,7 +874,7 @@ export default function Scheduling() {
       feedback.reject({ endTime: 'Choose an end time later than the start time on the same day.' });
       return;
     }
-    const intervalDays = 14;
+    const intervalDays = editingSchedule?.inspection_interval_days ?? 14;
     const participants = form.expectedParticipants === '' ? null : Number(form.expectedParticipants);
     const seedlings = form.seedlings === '' ? null : Number(form.seedlings);
     if (participants !== null && (!Number.isInteger(participants) || participants < 0)) {
@@ -884,7 +888,7 @@ export default function Scheduling() {
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const timeAssessment = assessSelectedTime(selection, tidePayload, now);
     const unsafeKey = selectionKey(selection);
-    if (isPlantingAppointment(editingSchedule || {}) && requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
+    if (!editingSchedule?.planting_started && isPlantingAppointment(editingSchedule || {}) && requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
       lastWarnedTime.current = unsafeKey;
       setTimeCaution({ ...selection, assessment: timeAssessment });
       return;
@@ -1071,8 +1075,8 @@ export default function Scheduling() {
                     <td>{planting ? <PlantingBadge assessment={assessmentFor(schedule)} /> : <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong>}<small>{assessmentFor(schedule).reason}</small></td>
                     <td><div className="schedule-row-actions">
                       {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
-                      <button type="button" onClick={() => openEdit(schedule)}>Edit</button>
-                      <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id)}>{String(deletingId) === String(schedule.id) ? 'Deletingâ€¦' : 'Delete'}</button>
+                      <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
+                      <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
                     </div></td>
                   </tr>
                 );
@@ -1113,6 +1117,8 @@ export default function Scheduling() {
         <form className="schedule-form" noValidate onChangeCapture={feedback.onChange} onSubmit={saveSchedule}>
           <FormErrorSummary feedback={feedback} />
           {formError ? <Message>{formError}</Message> : null}
+          {editingSchedule?.planting_started ? <p role="status">Planting has been recorded for this activity. Planning details are locked. You can correct contact details and notes, or update progress.</p> : null}
+          {editingSchedule?.source === 'website' ? <p>Agree on revised details with the requester before saving. Changing the date, time, title, or expected participants queues an email. Cancelling queues a cancellation notice.</p> : null}
           {isPlantingAppointment(editingSchedule || {}) ? <div className="schedule-form-assessment">
             <PlantingBadge assessment={assessmentFor({ ...editingSchedule,
               start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00`,
@@ -1132,7 +1138,7 @@ export default function Scheduling() {
                   const matching = organizations.find((organization) => organization.name.trim().toLocaleLowerCase() === value.trim().toLocaleLowerCase());
                   setForm((current) => ({ ...current, organizationName: value, organizationId: matching ? String(matching.id) : '' }));
                 }}
-                disabled={Boolean(editingSchedule?.project_site_id)}
+                disabled={Boolean(editingSchedule?.project_site_id || editingSchedule?.planting_started || editingSchedule?.source === 'website')}
                 required
               />
               <FieldError feedback={feedback} field="organizationName" />
@@ -1144,7 +1150,7 @@ export default function Scheduling() {
             </label>
             <label>
               <span>Activity title *</span>
-              <input {...feedback.props('title')} value={form.title} maxLength="180" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('title')} value={form.title} maxLength="180" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required />
               <FieldError feedback={feedback} field="title" />
             </label>
             <label>
@@ -1154,42 +1160,44 @@ export default function Scheduling() {
             </label>
             <label>
               <span>Date *</span>
-              <input {...feedback.props('date')} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('date')} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
               <FieldError feedback={feedback} field="date" />
             </label>
             <label>
               <span>Start time *</span>
-              <input {...feedback.props('startTime')} type="time" value={form.startTime} onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value }))} required />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('startTime')} type="time" value={form.startTime} onChange={(event) => setForm((current) => ({ ...current, startTime: event.target.value }))} required />
               <FieldError feedback={feedback} field="startTime" />
             </label>
             <label>
               <span>End time *</span>
-              <input {...feedback.props('endTime')} type="time" value={form.endTime} onChange={(event) => setForm((current) => ({ ...current, endTime: event.target.value }))} required />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('endTime')} type="time" value={form.endTime} onChange={(event) => setForm((current) => ({ ...current, endTime: event.target.value }))} required />
               <FieldError feedback={feedback} field="endTime" />
             </label>
             <label>
               <span>Expected participants</span>
-              <input {...feedback.props('expectedParticipants')} type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('expectedParticipants')} type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
               <FieldError feedback={feedback} field="expectedParticipants" />
             </label>
             {isPlantingAppointment(editingSchedule || {}) ? <><label>
               <span>Expected seedlings</span>
-              <input {...feedback.props('seedlings')} type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('seedlings')} type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
               <FieldError feedback={feedback} field="seedlings" />
             </label>
             <label>
               <span>Days between plant checks</span>
-              <input type="number" value="14" readOnly aria-readonly="true" />
+              <input type="number" value={editingSchedule?.inspection_interval_days ?? 14} readOnly aria-readonly="true" />
               <small>Monitoring is due every 14 days from the actual planting date.</small>
             </label></> : null}
             <label>
               <span>Status *</span>
               <select {...feedback.props('status')} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>
-                <option value="requested">Pending confirmation</option>
-                <option value="confirmed">Confirmed</option>
-                {editingSchedule ? <option value="tentative">Tentative</option> : null}
+                {!editingSchedule?.planting_started ? <option value="requested">Pending confirmation</option> : null}
+                {!editingSchedule?.planting_started || editingSchedule.status === 'confirmed' ? <option value="confirmed">Confirmed</option> : null}
+                {editingSchedule && !editingSchedule.planting_started ? <option value="tentative">Tentative</option> : null}
+                {editingSchedule && editingSchedule.status !== 'completed' ? <option value="in_progress">In progress</option> : null}
+                {editingSchedule && !['requested', 'confirmed', 'tentative', 'in_progress', 'completed', 'cancelled'].includes(editingSchedule.status) ? <option value={editingSchedule.status}>{scheduleStatusLabel(editingSchedule.status)}</option> : null}
                 {editingSchedule ? <option value="completed">Completed</option> : null}
-                {editingSchedule ? <option value="cancelled">Cancelled</option> : null}
+                {editingSchedule && !editingSchedule.planting_started ? <option value="cancelled">Cancelled</option> : null}
               </select>
               <FieldError feedback={feedback} field="status" />
             </label>

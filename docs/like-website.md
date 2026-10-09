@@ -1,10 +1,11 @@
 # LIKE website and appointment requests
 
-The public LIKE website is a separate React entry at `/like.html`. It uses the
+The public LIKE website is a separate React entry at `/landing-page`. It uses the
 same frontend package and FastAPI backend as MangroVision, with its own CSS and
 no staff workspace, staff map, or chart imports. Visiting `/` or `/index.html` opens
-the public website. Staff use `/dashboard`; Map Analytics is at `/map`.
-Staff-assisted scheduling remains available.
+the MangroVision workspace. Staff can also use `/dashboard`; Map Analytics is at
+`/map`. Staff-assisted scheduling remains available. The older `/like.html` URL
+continues to open the public website.
 
 ## Preview the website
 
@@ -14,12 +15,13 @@ From the repository root:
 npm --prefix MangroVision_New/client run dev:like
 ```
 
-Open `http://127.0.0.1:5174/like.html`. This previews the website. Appointment
+Open `http://127.0.0.1:5174/landing-page`. This previews the website. Appointment
 submission needs the FastAPI server on port 8000 and the new migration installed
 in a separate development database. The frontend never simulates a successful
 submission: unavailable API/database errors appear in the form.
 
-The normal managed development stack also serves `/like.html` on port 5173.
+The normal managed development stack serves MangroVision at
+`http://localhost:5173/` and LIKE at `http://localhost:5173/landing-page`.
 Use the existing launcher after configuring a separate development database;
 do not start a second API process on an occupied port.
 
@@ -71,6 +73,33 @@ target, run Alembic there and start the managed development stack:
 .\venv\Scripts\python.exe MangroVision_New/start_dev.py
 ```
 
+### Missing booking tables after merging
+
+If `/api/like-appointments/summary` reports that `like_appointment_requests`
+does not exist, the code has been updated but the booking migrations have not
+been applied to the database used by FastAPI.
+
+For an existing database, create and verify an
+[encrypted backup](production-database.md#encrypted-backup-and-restore) first.
+Set `MIGRATION_DATABASE_URL` in the private root `.env` to the owner/admin
+connection for the same database as `DATABASE_URL`. Keep `DATABASE_URL` on the
+restricted application account. If the migration URL is missing, the tools
+fall back to the application connection, which cannot change the schema and
+can cause `pg_dump` to fail on row-level security.
+
+Once the backup is verified, apply the booking and activity-protection migrations
+required by this version and restart FastAPI:
+
+```powershell
+.\venv\Scripts\python.exe -m alembic upgrade 20261009_0015
+```
+
+These migrations create three booking tables and add schedule fields, the
+assignment activity link, and the booking email kind. Existing schedules default
+to `staff` and `tree_planting`. Confirmation emails additionally need the private
+settings described below. See [activity protection and booking updates](activity-and-booking-protection.md)
+for the latest migration's safeguards and activation checks.
+
 The required public appointment choices are **Field visit**, **Clean-up drive**,
 and **Tree planting**. Organization, contact person, email, phone, date, time,
 participant count, and consent are required. Email syntax is validated; this
@@ -98,23 +127,30 @@ account. Field visits and clean-up drives create no planter account and cannot
 be assigned a planting area. Planting area assignment and later schedule changes
 use the existing staff workflow.
 Declined/cancelled pending requests require a reason and create no schedule.
-Deleting a linked schedule retains the request history and does not allow a
-repeated approval to recreate the deleted schedule.
+Confirmed website schedules are retained and can be cancelled before planting
+starts. Deletion is blocked so their request and email history remain connected.
 
 ## Confirmation email configuration
 
 Install the updated Python dependencies, then configure these **server-only**
 values in the private `.env` for the development environment:
 
-- `SMTP_HOST`, `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, and `SMTP_PASSWORD`:
-  the existing SMTP sender settings. Cloud verification-email settings are
-  separate and do not send appointment confirmations.
+- `BREVO_API_KEY` and `SMTP_FROM`: use a Brevo API key and a verified sender
+  for confirmation delivery over HTTPS. This works with the web port when SMTP
+  connections are blocked. Copy an API key from Brevo's **SMTP & API → API keys**
+  page and keep it in the private root `.env`. The sender uses the
+  [Brevo transactional email API](https://developers.brevo.com/reference/send-transac-email).
+- When `BREVO_API_KEY` is empty, confirmations use the existing `SMTP_HOST`,
+  `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, and `SMTP_PASSWORD` settings.
+  Cloud verification-email settings are separate from booking confirmations.
 - `LIKE_EMAIL_ENCRYPTION_KEY`: a dedicated, stable Fernet key for the email queue.
   Generate it locally with the following command and copy its output into the
   private `.env`. Never commit it or prefix it with `VITE_`.
 - `MANGROVISION_PUBLIC_URL`: the frontend's reachable base URL, for example
-  `http://localhost:5174` during development or the public HTTPS domain when hosted.
-  Planting emails link to this URL plus `/field`.
+  `http://localhost:5173` during local development or the public HTTPS domain when
+  hosted. Planting emails link to this URL plus `/field`. A localhost link only
+  works on the computer running MangroVision; use a reachable address for planters
+  opening the email on other devices.
 
 ```powershell
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
@@ -125,7 +161,7 @@ Keep the same encryption key in every API/worker process and across restarts.
 Changing it while messages are queued makes those messages unreadable.
 Missing encryption configuration blocks approval with a clear error and rolls
 back account/schedule creation. Planting approval also requires the public URL.
-SMTP downtime leaves an approved appointment queued for retry.
+Email-provider downtime leaves an approved appointment queued for retry.
 
 After approval, FastAPI attempts delivery in the background. While the API is
 running, a worker retries due messages every minute, with backoff after failures.
@@ -143,13 +179,16 @@ receive instructions to use their existing password. Staff can manage existing
 account access through the current organization-account workflow.
 
 Passwords are hashed in account records. Queued message contents are encrypted,
-never returned by the API, and erased after successful SMTP submission. Scheduling
-shows whether the email is queued, awaiting retry, or sent. SMTP acceptance does
+never returned by the API, and erased after successful provider submission. Scheduling
+shows whether the email is queued, awaiting retry, or sent. Provider acceptance does
 not guarantee inbox delivery. Delivery retries can resend an email if a process
 stops after sending but before recording success; the schedule and account remain
-unique. Cancelled or removed schedules are excluded from delivery.
-Emails describe the agreed schedule at approval time; later schedule edits still
-require staff coordination with the organization.
+unique. Cancelled schedules only deliver a queued cancellation notice; removed
+schedules are excluded from delivery.
+Emails use the agreed schedule details. Before planting starts, revising the
+date, time, title, or participant count refreshes an unsent confirmation or queues
+an update after earlier delivery. Eligible cancellations queue a cancellation
+notice. Staff still coordinate these changes with the organization.
 
 ## API and hosting
 
@@ -170,8 +209,11 @@ and 100 per minute globally. Identical retries do not consume another slot.
 Client IPs are hashed with the hourly bucket and are not stored as plain text.
 
 Build both entry points with `npm --prefix MangroVision_New/client run build`.
-Host `like.html` and the generated assets with a same-origin `/api` proxy to
-FastAPI. The separate preview port uses the existing Vite proxy. If hosting the
+Host both HTML entry points and the generated assets with a same-origin `/api`
+proxy to FastAPI. Rewrite `/landing-page` (including its trailing-slash variant)
+to `like.html` before the staff SPA fallback. Vite development, Vite preview, and
+the included Vercel configuration already provide this rewrite. The separate
+preview port uses the existing Vite proxy. If hosting the
 website on a separate origin, set its API base at build time and add that exact
 origin to the backend's trusted-origin and CORS configuration. Keep staff cookie
 and CSRF protection in place. Public submission omits session cookies.
@@ -225,7 +267,7 @@ Animations honor the visitor's reduced-motion preference.
 ## Verification
 
 ```powershell
-.\venv\Scripts\python.exe -m pytest tests/test_like_appointments.py -q
+.\venv\Scripts\python.exe -m pytest tests/test_like_appointments.py tests/test_appointment_email_transport.py -q
 node --test MangroVision_New/client/src/like/booking.test.js
 ```
 

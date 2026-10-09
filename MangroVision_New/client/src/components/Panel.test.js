@@ -26,6 +26,7 @@ before(async () => {
         const value = responses.get(path);
         return typeof value === 'function' ? value(options) : value instanceof Response ? value : Response.json(value);
       }
+      if (path === '/api/planting-schedules') return Response.json({ schedules: [] });
       if (['/api/planters/', '/api/assignments/'].includes(path)) return Response.json([]);
       if (path === '/api/planters/dashboard') return Response.json({ active_planters: 0 });
       if (path === '/api/planter-auth/organizations') return Response.json({ organizations: [] });
@@ -94,10 +95,10 @@ async function settle(ms = 25) {
 async function render(Component, entry = '/page') {
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [entry] },
     createElement(Navigation),
-    createElement(RetainedRoutes, { paths: ['/page', '/away', '/'] },
+    createElement(RetainedRoutes, { paths: ['/page', '/away', '/map'] },
       createElement(Route, { path: '/page', element: createElement(Component) }),
       createElement(Route, { path: '/away', element: createElement('p', null, 'Another page') }),
-      createElement(Route, { path: '/', element: createElement('section', { id: 'planting-map-route' }, createElement(pages.get('MapAnalytics'))) }),
+      createElement(Route, { path: '/map', element: createElement('section', { id: 'planting-map-route' }, createElement(pages.get('MapAnalytics'))) }),
     ))));
   await settle();
 }
@@ -110,6 +111,37 @@ async function click(button) {
 
 const headers = () => [...document.querySelectorAll('.panel-card-header')];
 const expanded = () => headers().filter((header) => header.getAttribute('aria-expanded') === 'true');
+
+test('assignment overview uses current map statuses and updates when a planted point dies', async () => {
+  responses.set('/api/planters/dashboard', {
+    active_planters: 9, active_assignments: 10, pending_assigned_points: 517,
+    completed_assigned_points: 1145, skipped_assigned_points: 1,
+  });
+  const points = [
+    ...Array.from({ length: 840 }, () => ({ map_status: 'planted', assignment_status: 'completed' })),
+    ...Array.from({ length: 305 }, () => ({ map_status: 'dead', planting_status: 'planted', assignment_status: 'completed', death_at: '2026-10-09' })),
+    ...Array.from({ length: 517 }, () => ({ map_status: 'assigned', assignment_status: 'pending' })),
+    ...Array.from({ length: 1511 }, () => ({ map_status: 'planned' })),
+    ...Array.from({ length: 21 }, () => ({ map_status: 'skipped', assignment_status: 'skipped' })),
+    ...Array.from({ length: 246 }, () => ({ map_status: 'unavailable', eroded_unavailable: true })),
+    { map_status: 'dead', deleted_at: '2026-10-09' },
+  ].map((point, index) => ({ ...point, id: index + 1 }));
+  useMapStore.setState({ points });
+  await render(pages.get('PlanterManagement'));
+  await click(headers().find((header) => header.textContent.includes('Overview')));
+  const summary = () => Object.fromEntries([...document.querySelectorAll('.planter-stats-grid .stat-card')]
+    .map((card) => [card.querySelector('.stat-label').textContent, card.querySelector('.stat-value').textContent]));
+  assert.deepEqual(summary(), {
+    'Active organizations': '9', 'Active assignments': '10',
+    Planned: '1,511', Assigned: '517', Planted: '840', Dead: '305', Skipped: '21', Unavailable: '246',
+  });
+  await act(async () => useMapStore.setState({
+    points: points.map((point) => point.id === 1 ? { ...point, map_status: 'dead', death_at: '2026-10-09' } : point),
+  }));
+  assert.equal(summary().Planted, '839');
+  assert.equal(summary().Dead, '306');
+  assert.equal(summary().Skipped, '21');
+});
 
 test('Quick Assign shows available points and explains invalid counts only when assigning', async () => {
   responses.set('/api/planters/', [{ id: 23, organization_id: 21, organization_name: 'OTON',
@@ -195,13 +227,34 @@ test('Quick Assign submits CICT mixed species together using their recorded spec
   assert.match(document.body.textContent, /Assigned 103 points to CICT/);
 });
 
-test('record-planting links open the active assignments panel', async () => {
-  await render(pages.get('PlanterManagement'), '/page?section=assignments');
-  assert.equal(expanded().length, 1);
-  assert.match(expanded()[0].textContent, /Active Assignments/);
-  const assign = headers().find((header) => header.textContent.includes('Assign available points'));
-  assert.equal(assign.getAttribute('aria-expanded'), 'false');
+test('Quick Assign links points to the selected planting activity and requires a choice when ambiguous', async () => {
+  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
+  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
+  responses.set('/api/planting-schedules', { schedules: [31, 32].map((id) => ({
+    id, organization_id: 22, project_site_id: 15, appointment_type: 'tree_planting',
+    status: 'confirmed', title: `Activity ${id}`, date: '2090-01-01',
+  })) });
+  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1] });
+  useMapStore.setState({ projectSites: { features: [{ id: 15, properties: { name: 'Demo site', organization_id: 22 } }] },
+    points: [{ id: 1, point_num: 1, analysis_id: 1, latitude: 10.5, longitude: 122.5,
+      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
+  await render(pages.get('PlanterManagement'));
+  await act(async () => {
+    const organization = document.getElementById('assign-organization');
+    organization.value = '22'; organization.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+  await settle();
+  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 1 Point/.test(button.textContent));
+  await click(assign);
   assert.equal(mutations.length, 0);
+  assert.match(document.body.textContent, /Choose the planting activity/);
+  await act(async () => {
+    const activity = document.getElementById('assign-activity');
+    activity.value = '32'; activity.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+  await click(assign);
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].body.planting_schedule_id, 32);
 });
 
 test('review-analysis links open history when there is no current result', async () => {
@@ -475,7 +528,7 @@ test(`View area in map opens the exact saved footprint from the ${source} withou
   if (source === 'review link') {
     await render(pages.get('ImageProcessing'), '/page?action=review');
   } else {
-    await render(pages.get('ImageProcessing'), '/');
+    await render(pages.get('ImageProcessing'), '/map');
     await click(document.querySelector('[data-nav="back"]'));
     await click(document.querySelector('.analysis-history-trigger'));
   }

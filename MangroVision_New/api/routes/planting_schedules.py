@@ -2,8 +2,10 @@
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict
+from mangrovision_db.activity_rules import ActivityConflict
+from mangrovision_db.appointment_email import run_delivery_cycle
 
 from planting_database import (
     create_planting_schedule,
@@ -34,7 +36,7 @@ def _schedule_error(error: ValueError) -> HTTPException:
     return HTTPException(
         status_code=(
             404 if "not found" in detail.lower()
-            else 409 if "cadence conflict" in detail.lower()
+            else 409 if isinstance(error, ActivityConflict) or "cadence conflict" in detail.lower()
             else 400
         ),
         detail=detail,
@@ -224,6 +226,7 @@ def add_planting_schedule(body: PlantingScheduleCreate):
 def _edit_planting_schedule(
     schedule_id: int,
     body: PlantingScheduleUpdate,
+    background_tasks: BackgroundTasks,
 ):
     user = _require_lgu_user()
     try:
@@ -236,6 +239,8 @@ def _edit_planting_schedule(
         raise _schedule_error(error) from error
     if result is None:
         raise HTTPException(status_code=404, detail="Planting schedule not found.")
+    if result.get('email_update'):
+        background_tasks.add_task(run_delivery_cycle, request_id=result['email_update']['request_id'])
     return result
 
 
@@ -243,21 +248,27 @@ def _edit_planting_schedule(
 def replace_planting_schedule(
     schedule_id: int,
     body: PlantingScheduleUpdate,
+    background_tasks: BackgroundTasks,
 ):
-    return _edit_planting_schedule(schedule_id, body)
+    return _edit_planting_schedule(schedule_id, body, background_tasks)
 
 
 @router.patch("/{schedule_id}")
 def edit_planting_schedule(
     schedule_id: int,
     body: PlantingScheduleUpdate,
+    background_tasks: BackgroundTasks,
 ):
-    return _edit_planting_schedule(schedule_id, body)
+    return _edit_planting_schedule(schedule_id, body, background_tasks)
 
 
 @router.delete("/{schedule_id}")
 def remove_planting_schedule(schedule_id: int):
-    _require_lgu_user()
-    if not delete_planting_schedule(schedule_id):
+    user = _require_lgu_user()
+    try:
+        removed = delete_planting_schedule(schedule_id, deleted_by_user_id=int(user['id']))
+    except ValueError as error:
+        raise _schedule_error(error) from error
+    if not removed:
         raise HTTPException(status_code=404, detail="Planting schedule not found.")
     return {"status": "deleted", "id": schedule_id}

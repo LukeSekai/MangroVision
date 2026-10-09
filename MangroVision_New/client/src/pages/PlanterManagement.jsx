@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { availableOrganizationPoints } from '../utils/organizationAssignment';
+import { countMapPointStatuses } from '../utils/mapPointStats';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
 import { useAuthStore } from '../stores/authStore';
@@ -32,16 +33,18 @@ function normalizeAssignmentSpecies(species) {
 export default function PlanterManagement() {
   const location = useLocation();
   const requestedSection = new URLSearchParams(location.search).get('section');
-  const [openPanel, setOpenPanel] = useState(requestedSection === 'assignments' ? 'assignments' : 'assign');
+  const [openPanel, setOpenPanel] = useState('assign');
   const feedback = useFormFeedback({
     organization: { label: 'Organization', aliases: ['organization_id'] },
     site: { label: 'Project site', aliases: ['site_zone_id'], serverTerms: ['project site'] },
+    activity: { label: 'Planting activity', aliases: ['planting_schedule_id'], serverTerms: ['planting activity'] },
     point_count: { label: 'Number of points', serverTerms: ['point count'] },
   });
   useEffect(() => {
-    if (requestedSection === 'assign' || requestedSection === 'assignments') queueMicrotask(() => setOpenPanel(requestedSection));
+    if (requestedSection === 'assign') queueMicrotask(() => setOpenPanel(requestedSection));
   }, [requestedSection, location.key]);
   const points = useMapStore((s) => s.points);
+  const pointCounts = useMemo(() => countMapPointStatuses(points), [points]);
   const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const fetchZones = useMapStore((s) => s.fetchZones);
@@ -55,7 +58,8 @@ export default function PlanterManagement() {
 
   const [planters, setPlanters] = useState([]);
   const [organizations, setOrganizations] = useState([]);
-  const [assignments, setAssignments] = useState([]);
+  const [plantingSchedules, setPlantingSchedules] = useState([]);
+  const [assignmentActivityChoice, setAssignmentActivityChoice] = useState('');
   const [dashStats, setDashStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -68,7 +72,6 @@ export default function PlanterManagement() {
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
   const [noAvailableSite, setNoAvailableSite] = useState(null);
-  const activeAssignmentsHeaderRef = useRef(null);
 
   const [reportOpen, setReportOpen] = useState(false);
 
@@ -78,18 +81,9 @@ export default function PlanterManagement() {
   const [shareCopied, setShareCopied] = useState('');
   const shareCopiedTimerRef = useRef(null);
 
-  // Archive assignment confirmation modal state
-  const [archiveTarget, setArchiveTarget] = useState(null);
-  const [archiveBusy, setArchiveBusy] = useState(false);
-
-  // Per-assignment point-status drill down
-  const [assignmentPointsCache, setAssignmentPointsCache] = useState({});
-  const assignmentPointsRef = useRef({});
   const loadSequence = useRef(0);
   const dataLoaded = useRef(false);
   const shareLoaded = useRef(null);
-  useEffect(() => { assignmentPointsRef.current = assignmentPointsCache; }, [assignmentPointsCache]);
-  const [pointStatusBusyId, setPointStatusBusyId] = useState(null);
 
   const showShareCopied = (message) => {
     setShareCopied(message);
@@ -137,28 +131,19 @@ export default function PlanterManagement() {
     const sequence = ++loadSequence.current;
     setLoading(true);
     try {
-      const [pRes, dRes, aRes, oRes] = await Promise.all([
+      const [pRes, dRes, oRes, sRes] = await Promise.all([
         fetch(`${API}/api/planters/?include_inactive=true`),
         fetch(`${API}/api/planters/dashboard`),
-        fetch(`${API}/api/assignments/?active_only=true`),
         fetch(`${API}/api/planter-auth/organizations`),
+        fetch(`${API}/api/planting-schedules`),
       ]);
-      if (![pRes, dRes, aRes, oRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
-      const [nextPlanters, nextStats, nextAssignments, nextOrganizations] = await Promise.all([pRes.json(), dRes.json(), aRes.json(), oRes.json()]);
+      if (![pRes, dRes, oRes, sRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
+      const [nextPlanters, nextStats, nextOrganizations, nextSchedules] = await Promise.all([pRes.json(), dRes.json(), oRes.json(), sRes.json()]);
       if (sequence !== loadSequence.current) return;
       setPlanters(nextPlanters);
       setOrganizations(nextOrganizations.organizations);
       setDashStats(nextStats);
-      setAssignments(nextAssignments);
-      const openIds = Object.keys(assignmentPointsRef.current).filter((id) => assignmentPointsRef.current[id]);
-      await Promise.all(openIds.map(async (id) => {
-        const response = await fetch(`${API}/api/assignments/${id}/points`);
-        if (!response.ok) return;
-        const rows = await response.json();
-        if (sequence === loadSequence.current) setAssignmentPointsCache((current) => (
-          current[id] ? { ...current, [id]: rows } : current
-        ));
-      }));
+      setPlantingSchedules(nextSchedules.schedules || []);
     } catch (err) {
       console.error('Failed to load planter data:', err);
     } finally {
@@ -212,6 +197,13 @@ export default function PlanterManagement() {
   const defaultSiteId = organizationProjectSites[0]?.id ?? organizationProjectSites[0]?.properties?.id ?? null;
   const assignProjectSiteId = organizationProjectSites.some((site) => Number(site.id ?? site.properties?.id) === Number(assignProjectSiteChoice))
     ? assignProjectSiteChoice : defaultSiteId;
+  const activityOptions = plantingSchedules.filter((activity) =>
+    Number(activity.organization_id) === Number(assignOrganizationId)
+    && Number(activity.project_site_id) === Number(assignProjectSiteId)
+    && activity.appointment_type === 'tree_planting'
+    && ['confirmed', 'in_progress'].includes(activity.status));
+  const assignmentActivity = activityOptions.find((activity) => String(activity.id) === String(assignmentActivityChoice))
+    || (activityOptions.length === 1 ? activityOptions[0] : null);
   useEffect(() => {
     setAssignmentScope(selectedAssignmentPlanter?.organization_id ?? null, assignProjectSiteId);
   }, [assignProjectSiteId, selectedAssignmentPlanter?.organization_id, setAssignmentScope]);
@@ -251,16 +243,6 @@ export default function PlanterManagement() {
     );
   };
 
-  const showActiveAssignments = () => {
-    setNoAvailableSite(null);
-    window.requestAnimationFrame(() => {
-      const header = activeAssignmentsHeaderRef.current;
-      if (header?.getAttribute('aria-expanded') === 'false') header.click();
-      header?.focus();
-      header?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    });
-  };
-
   const handleAssign = async () => {
     setAssignError('');
     setAssignSuccess('');
@@ -276,6 +258,10 @@ export default function PlanterManagement() {
       feedback.reject({ site: 'Choose a project site owned by this organization.' });
       return;
     }
+    if (activityOptions.length && !assignmentActivity) {
+      feedback.reject({ activity: 'Choose the planting activity receiving these points.' });
+      return;
+    }
     if (!pointIdsToAssign.length) {
       feedback.reject({ point_count: `Enter a whole number from 1 to ${availablePoints.length}.` });
       return;
@@ -289,6 +275,7 @@ export default function PlanterManagement() {
         body: JSON.stringify({
           planting_point_ids: pointIdsToAssign,
           site_zone_id: assignProjectSiteId,
+          ...(assignmentActivity ? { planting_schedule_id: assignmentActivity.id } : {}),
         }),
       });
       const payload = await res.json().catch(() => ({}));
@@ -379,88 +366,47 @@ export default function PlanterManagement() {
     }
   };
 
-  const handleArchive = async (id) => {
-    setArchiveBusy(true);
-    try {
-      await fetch(`${API}/api/assignments/${id}/archive`, { method: 'POST' });
-      setArchiveTarget(null);
-      loadData();
-      fetchPoints();
-      fetchZones();
-    } catch (err) {
-      console.error('Archive failed:', err);
-    } finally {
-      setArchiveBusy(false);
-    }
-  };
-
-  const loadAssignmentPoints = async (assignmentId) => {
-    if (assignmentPointsCache[assignmentId]) {
-      setAssignmentPointsCache((prev) => ({ ...prev, [assignmentId]: undefined }));
-      return;
-    }
-    try {
-      const res = await fetch(`${API}/api/assignments/${assignmentId}/points`);
-      if (!res.ok) throw new Error('Could not load points');
-      const data = await res.json();
-      setAssignmentPointsCache((prev) => ({ ...prev, [assignmentId]: data }));
-    } catch (err) {
-      console.error('Load assignment points failed:', err);
-    }
-  };
-
-  const updateAssignmentPointStatus = async (assignmentId, pointRow, status) => {
-    setPointStatusBusyId(pointRow.assignment_point_id);
-    try {
-      const res = await fetch(
-        `${API}/api/assignments/points/${pointRow.assignment_point_id}/status`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status }),
-        },
-      );
-      if (!res.ok) throw new Error('Status update failed');
-      const refreshed = await fetch(`${API}/api/assignments/${assignmentId}/points`).then((r) => r.json());
-      setAssignmentPointsCache((prev) => ({ ...prev, [assignmentId]: refreshed }));
-      fetchPoints();
-      loadData();
-    } catch (err) {
-      console.error('Point status update failed:', err);
-    } finally {
-      setPointStatusBusyId(null);
-    }
-  };
-
   return (
     <Panel title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
       {dashStats && (
         <PanelCard
-          title="Dashboard"
+          title="Overview"
           icon={
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
           }
         >
           <div className="planter-stats-grid">
             <div className="stat-card">
-              <div className="stat-label">Organizations</div>
+              <div className="stat-label">Active organizations</div>
               <div className="stat-value">{dashStats.active_planters}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">Assignments</div>
+              <div className="stat-label">Active assignments</div>
               <div className="stat-value">{dashStats.active_assignments}</div>
             </div>
             <div className="stat-card">
+              <div className="stat-label">Planned</div>
+              <div className="stat-value" style={{ color: 'var(--color-planned)' }}>{pointCounts.planned.toLocaleString()}</div>
+            </div>
+            <div className="stat-card">
               <div className="stat-label">Assigned</div>
-              <div className="stat-value">{dashStats.pending_assigned_points}</div>
+              <div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{pointCounts.assigned.toLocaleString()}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">{STATUS_LABEL.completed}</div>
-              <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{dashStats.completed_assigned_points}</div>
+              <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{pointCounts.planted.toLocaleString()}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Dead</div>
+              <div className="stat-value" style={{ color: '#7f1d1d' }}>{pointCounts.dead.toLocaleString()}</div>
             </div>
             <div className="stat-card">
               <div className="stat-label">Skipped</div>
-              <div className="stat-value" style={{ color: '#6b7280' }}>{dashStats.skipped_assigned_points || 0}</div>
+              <div className="stat-value" style={{ color: '#6b7280' }}>{pointCounts.skipped.toLocaleString()}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Unavailable</div>
+              <div className="stat-value" style={{ color: '#f97316' }}>{pointCounts.unavailable.toLocaleString()}</div>
             </div>
           </div>
           <button
@@ -588,6 +534,7 @@ export default function PlanterManagement() {
                 feedback.clear();
                 const nextPlanter = assignmentOrganizations.find((organization) => Number(organization.organization_id) === nextPlanterId);
                 setAssignOrganizationId(nextPlanterId);
+                setAssignmentActivityChoice('');
                 setAssignmentCount(null);
                 const site = (projectSites?.features || []).find((feature) => Number(feature.properties?.organization_id) === Number(nextPlanter?.organization_id));
                 const siteId = site?.id ?? site?.properties?.id ?? null;
@@ -627,6 +574,7 @@ export default function PlanterManagement() {
                 const nextSiteId = Number(e.target.value) || null;
                 feedback.clear();
                 setAssignProjectSiteId(nextSiteId);
+                setAssignmentActivityChoice('');
                 setAssignmentCount(null);
                 warnIfNoAvailablePoints(selectedAssignmentPlanter, organizationProjectSites.find((site) => Number(site.id ?? site.properties?.id) === nextSiteId));
                 clearAssignmentSelection();
@@ -654,6 +602,23 @@ export default function PlanterManagement() {
           </div>
 
           <div className="form-group" style={{ marginTop: 10 }}>
+            <label className="form-label" htmlFor="assign-activity">Planting activity</label>
+            <select {...feedback.props('activity')} id="assign-activity" className="form-select"
+              value={assignmentActivity?.id || ''} required={activityOptions.length > 0}
+              onChange={(event) => setAssignmentActivityChoice(event.target.value)}
+              disabled={assignmentLocked || assignBusy || loading || !activityOptions.length}>
+              <option value="">{activityOptions.length ? 'Select a planting activity' : 'Unscheduled planting'}</option>
+              {activityOptions.map((activity) => <option key={activity.id} value={activity.id}>
+                {activity.title} · {activity.date}
+              </option>)}
+            </select>
+            <FieldError feedback={feedback} field="activity" />
+            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              {activityOptions.length ? 'These points belong to the selected activity.' : 'No confirmed planting activity is available for this site.'}
+            </span>
+          </div>
+
+          <div className="form-group" style={{ marginTop: 10 }}>
             <label className="form-label" htmlFor="organization-point-count">Number of points to assign</label>
             <input {...feedback.props('point_count')} id="organization-point-count" className="form-input" type="number" required min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked || loadingPoints || availablePoints.length === 0} />
               <FieldError feedback={feedback} field="point_count" />
@@ -661,7 +626,7 @@ export default function PlanterManagement() {
               {loadingPoints ? 'Checking available points…' : `${availablePoints.length} available points in this project site.`}
             </span>
             {assignProjectSiteId && !loadingPoints && availablePoints.length === 0 && (
-              <span className="text-sm" role="status">No points are available to assign. Check Active Assignments to review existing allocations.</span>
+              <span className="text-sm" role="status">No points are available to assign. Choose another project site with available points.</span>
             )}
           </div>
 
@@ -706,132 +671,17 @@ export default function PlanterManagement() {
         </PanelCard>
       )}
 
-      <PanelCard
-        title="Active Assignments"
-        panelKey="assignments"
-        headerRef={activeAssignmentsHeaderRef}
-        badge={assignments.length}
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-        }
-        defaultOpen={false}
-      >
-        <div className="assignment-list">
-          {assignments.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No active assignments</p>
-          ) : (
-            assignments.map((a) => {
-              const expandedRows = assignmentPointsCache[a.id];
-              const isExpanded = Array.isArray(expandedRows);
-              return (
-                <div key={a.id} className="assignment-row-group">
-                  <div className="assignment-row">
-                    <button
-                      className="assignment-info assignment-info-button"
-                      onClick={() => loadAssignmentPoints(a.id)}
-                    >
-                      <span className="assignment-title">{a.title || `Assignment #${a.id}`}</span>
-                      <span className="assignment-meta">
-                        {a.planter_name} · {a.pending_points}/{a.total_points} assigned, not planted
-                        {a.species ? ` · ${a.species}` : ''}
-                        {(a.project_site_name || a.site_name) ? ` · ${a.project_site_name || a.site_name}` : ''}
-                      </span>
-                    </button>
-                    <button
-                      className="btn btn-ghost btn-sm btn-icon"
-                      onClick={() => setArchiveTarget(a)}
-                      title={`Archive ${a.title || `Assignment #${a.id}`}`}
-                      aria-label={`Archive ${a.title || `Assignment #${a.id}`}`}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" />
-                      </svg>
-                    </button>
-                  </div>
-                  {isExpanded && (
-                    <div className="assignment-point-list">
-                      {expandedRows.length === 0 ? (
-                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No points on this assignment.</p>
-                      ) : (
-                        expandedRows.map((row) => {
-                          const busy = pointStatusBusyId === row.assignment_point_id;
-                          const lifecycleStatus = row.assignment_status || row.status;
-                          const isPlanted = lifecycleStatus === 'planted' || lifecycleStatus === 'completed';
-                          const isSkipped = lifecycleStatus === 'skipped';
-                          const isUnavailable = Boolean(row.eroded_unavailable) && !isPlanted && !isSkipped;
-                          const rowStatus = isUnavailable ? 'eroded_unavailable' : lifecycleStatus;
-                          const hasWarning = Boolean(row.survival_warning);
-                          return (
-                            <div key={row.assignment_point_id} className="assignment-point-row">
-                              <div className="assignment-point-info">
-                                <span className="assignment-point-title">Point #{row.point_num}</span>
-                                <span className="assignment-point-meta">
-                                  {STATUS_LABEL[rowStatus] || rowStatus}
-                                  {row.released_at ? ' · Location released for replacement' : ''}
-                                  {hasWarning ? ` - Warning: ${row.warning_severity || 'medium'}` : ''}
-                                  {isSkipped && row.skip_reason ? ` - ${row.skip_reason}` : ''}
-                                </span>
-                              </div>
-                              <div className="assignment-point-actions">
-                                {!row.released_at && !isPlanted && !isUnavailable && (
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    disabled={busy}
-                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'completed')}
-                                  >
-                                    Mark planted
-                                  </button>
-                                )}
-                                {!row.released_at && !isSkipped && !isUnavailable && (
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    disabled={busy}
-                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'skipped')}
-                                  >
-                                    Skip
-                                  </button>
-                                )}
-                                {!row.released_at && (isPlanted || isSkipped) && (
-                                  <button
-                                    className="btn btn-ghost btn-sm"
-                                    disabled={busy}
-                                    onClick={() => updateAssignmentPointStatus(a.id, row, 'pending')}
-                                  >
-                                    Reset
-                                  </button>
-                                )}
-                                {isUnavailable && (
-                                  <span className="text-sm" style={{ color: '#c2410c' }}>
-                                    Remove the eroded zone to return this point to Planned.
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-      </PanelCard>
-
       <Modal
         open={Boolean(noAvailableSite)}
         title="No available points"
         variant="warning"
-        confirmLabel="View Active Assignments"
         cancelLabel="Close"
-        onConfirm={showActiveAssignments}
         onCancel={() => setNoAvailableSite(null)}
       >
         <p>
           No points are available to assign in <strong>{noAvailableSite?.siteName}</strong> for <strong>{noAvailableSite?.organizationName}</strong>.
         </p>
-        <p>Check Active Assignments to review points that have already been allocated, or choose another project site with available points.</p>
+        <p>Choose another project site with available points.</p>
       </Modal>
 
       <PlanterActivityReport
@@ -839,21 +689,6 @@ export default function PlanterManagement() {
         onClose={() => setReportOpen(false)}
       />
 
-      <Modal
-        open={Boolean(archiveTarget)}
-        title={`Archive "${archiveTarget?.title || `Assignment #${archiveTarget?.id}`}"?`}
-        variant="warning"
-        confirmLabel="Archive assignment"
-        cancelLabel="Cancel"
-        busy={archiveBusy}
-        onConfirm={() => handleArchive(archiveTarget.id)}
-        onCancel={() => { if (!archiveBusy) setArchiveTarget(null); }}
-      >
-        <p>
-          This archives the assignment for <strong>{archiveTarget?.planter_name}</strong>. The
-          planter will no longer see it in the field app. Existing planting point records are not deleted.
-        </p>
-      </Modal>
     </Panel>
   );
 }

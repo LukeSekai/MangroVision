@@ -1146,7 +1146,6 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   const appliedSettings = useRef(JSON.stringify(settings));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
-  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     // Cached API reads create fresh objects even when saved values are unchanged.
@@ -1161,7 +1160,6 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   const save = async (event) => {
     event.preventDefault();
     setFormError('');
-    setNotice('');
     if (!feedback.validate()) return;
     const annualTarget = form.annualTarget === '' ? null : Number(form.annualTarget);
     const survivalTarget = form.survivalTarget === '' ? null : Number(form.survivalTarget);
@@ -1185,7 +1183,6 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
         }),
       });
       onSaved(result);
-      setNotice(`Planting and survival goals for ${year} were saved.`);
     } catch (saveError) {
       if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save planting goals.');
     } finally {
@@ -1200,7 +1197,6 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
       <FormErrorSummary feedback={feedback} />
       {error ? <ErrorBanner compact message={error} /> : null}
       {formError ? <ErrorBanner compact title="Planting goals not saved." message={formError} /> : null}
-      {notice ? <div className="dash-success" role="status">{notice}</div> : null}
       <div className="dash-goals-grid">
         <label>
           <span>Seedlings to plant this year</span>
@@ -1247,6 +1243,8 @@ export default function Dashboard() {
   const [goalsYear, setGoalsYear] = useState(() => Number(dateInManila().slice(0, 4)));
   const [goalsOpen, setGoalsOpen] = useState(false);
   const [goalsVisited, setGoalsVisited] = useState(false);
+  const [goalsNotice, setGoalsNotice] = useState('');
+  const goalsButton = useRef(null);
   const [filters, setFilters] = useState(makeYtdFilters);
   const [datasets, setDatasets] = useState({ overview: null, operations: null, ecology: null, sites: null });
   const [loading, setLoading] = useState({ overview: true, operations: false, ecology: false, sites: false });
@@ -1382,8 +1380,9 @@ export default function Dashboard() {
         </div>
         <div className="dash-header-meta">
           <span>{asOf ? `Updated ${formatDate(asOf, true)}` : `Reporting in ${TIMEZONE}`}</span>
-          <button type="button" className="dash-goals-button" aria-expanded={goalsOpen}
+          <button ref={goalsButton} type="button" className="dash-goals-button" aria-expanded={goalsOpen}
             aria-controls="dashboard-planting-goals" onClick={() => {
+              setGoalsNotice('');
               setGoalsVisited(true);
               setGoalsOpen((current) => !current);
             }}>
@@ -1392,23 +1391,28 @@ export default function Dashboard() {
         </div>
       </header>
 
-      <AppointmentNotice />
-
-      <NextActions actions={[
-        { label: 'Review analysis', to: '/processing?action=review', description: 'Review the current result or open image analysis history.' },
-        { label: 'Assign available points', to: '/planters?section=assign', description: 'Choose an organization and reserve planting locations.' },
-        { label: 'Record planting', to: '/planters?section=assignments', description: 'Mark the assigned locations actually planted.' },
-        { label: 'Inspect plants due', to: '/monitoring?filter=due', description: 'Find organizations due for a monitoring visit.' },
-      ]} />
-
       {goalsVisited && <Activity mode={goalsOpen ? 'visible' : 'hidden'}>
         <section id="dashboard-planting-goals" className="dash-goals-panel" aria-label="Planting goals">
           <PlantingGoalsPanel year={goalsYear} onYearChange={setGoalsYear} settings={goalsRecord?.data || null}
             loading={goalsRecord?.loading ?? true} error={goalsRecord?.error || ''} onSaved={(saved) => {
               setAnnualGoals((current) => ({ ...current, [goalsYear]: { data: saved, error: '', loading: false } }));
+              setGoalsNotice(`Planting and survival goals for ${goalsYear} were saved.`);
+              setGoalsOpen(false);
+              goalsButton.current?.focus({ preventScroll: true });
             }} />
         </section>
       </Activity>}
+
+      {goalsNotice && <div className="dash-success dash-goals-notice" role="status">{goalsNotice}</div>}
+
+      <AppointmentNotice />
+
+      <NextActions actions={[
+        { label: 'Review analysis', to: '/processing?action=review', description: 'Review the current result or open image analysis history.' },
+        { label: 'Assign available points', to: '/planters?section=assign', description: 'Choose an organization and reserve planting locations.' },
+        { label: 'Record planting', to: '/field', reloadDocument: true, description: 'Open the planter page to record assigned locations as planted.' },
+        { label: 'Inspect plants due', to: '/monitoring?filter=due', description: 'Find organizations due for a monitoring visit.' },
+      ]} />
 
       <section className="dash-filter-shell" aria-labelledby="dashboard-filters-title">
         <div className="dash-filter-head">

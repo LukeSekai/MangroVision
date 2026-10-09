@@ -50,6 +50,7 @@ htmlcov/
 !/tests/test_organization_reset_postgres.py
 !/tests/test_like_appointments.py
 !/tests/test_like_appointments_postgres.py
+!/tests/test_appointment_email_transport.py
 *.test.js
 *.test.mjs
 *.spec.js

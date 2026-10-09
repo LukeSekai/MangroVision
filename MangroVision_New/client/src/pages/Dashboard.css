@@ -1144,8 +1144,10 @@
 
 /* Planting goals */
 
-.dash-goals-panel {
-  margin-bottom: 20px;
+.dash-goals-panel,
+.dash > .appointment-notice {
+  max-width: 1680px;
+  margin: 0 auto 20px;
 }
 
 .dash-goals-year {

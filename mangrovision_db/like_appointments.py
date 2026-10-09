@@ -31,7 +31,7 @@ def _staff_row(row):
 def _row(conn, request_id):
     row = conn.execute("""
         SELECT r.*, s.status AS schedule_status, e.status AS email_status,
-               e.sent_at AS email_sent_at, e.last_error AS email_error
+               e.sent_at AS email_sent_at, e.last_error AS email_error, e.message_kind AS email_kind
         FROM like_appointment_requests r
         LEFT JOIN planting_schedules s ON s.id = r.schedule_id
         LEFT JOIN like_appointment_emails e ON e.request_id = r.id
@@ -121,7 +121,7 @@ def list_appointments() -> list[dict]:
     try:
         rows = conn.execute("""
             SELECT r.*, s.status AS schedule_status, e.status AS email_status,
-                   e.sent_at AS email_sent_at, e.last_error AS email_error
+                   e.sent_at AS email_sent_at, e.last_error AS email_error, e.message_kind AS email_kind
             FROM like_appointment_requests r
             LEFT JOIN planting_schedules s ON s.id = r.schedule_id
             LEFT JOIN like_appointment_emails e ON e.request_id = r.id

@@ -19,6 +19,10 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from mangrovision_db import DatabaseError, get_connection as _postgres_connection
 from mangrovision_db.activity import append_activity
+from mangrovision_db.activity_rules import (
+    ActivityConflict, activity_work, lock_assignment_activity,
+    resolve_assignment_activity, validate_activity_change,
+)
 from mangrovision_db.config import get_settings
 from mangrovision_db.monitoring_progress import age_snapshot, carried_counts
 from mangrovision_db.passwords import hash_password, verify_password
@@ -4224,13 +4228,14 @@ def create_planter_assignment(
     species: str = "",
     site_zone_id: Optional[int] = None,
     connection: Any = None,
+    planting_schedule_id: Optional[int] = None,
 ) -> int:
     """Create a batch atomically; a supplied connection belongs to its caller."""
     conn = connection or _get_connection()
     try:
         assignment_id = _create_planter_assignment(
             planter_id, planting_point_ids, assigned_by_user_id, title,
-            assignment_date, travel_mode, notes, species, site_zone_id, conn)
+            assignment_date, travel_mode, notes, species, site_zone_id, conn, planting_schedule_id)
         if connection is None:
             conn.commit()
         return assignment_id
@@ -4254,6 +4259,7 @@ def _create_planter_assignment(
     species: str = "",
     site_zone_id: Optional[int] = None,
     connection: Any = None,
+    planting_schedule_id: Optional[int] = None,
 ) -> int:
     """Create one assignment batch and attach ordered planting points."""
     try:
@@ -4313,6 +4319,11 @@ def _create_planter_assignment(
         raise ValueError(
             "Choose a species for this assignment or record one on its image analysis before assigning points."
         )
+
+    planting_schedule_id, assignment_date = resolve_assignment_activity(
+        conn, int(planter['organization_id']), normalized_site_zone_id,
+        assignment_date, planting_schedule_id,
+    )
 
     placeholders = ",".join("?" for _ in point_ids)
     requested_rows = conn.execute(f"""
@@ -4430,9 +4441,9 @@ def _create_planter_assignment(
     cur = conn.execute("""
         INSERT INTO planter_assignments (
             planter_id, assigned_by_user_id, title, assignment_date, travel_mode,
-            status, species, notes, site_zone_id
+            status, species, notes, site_zone_id, planting_schedule_id
         )
-        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
     """, (
         planter_id,
         assigned_by_user_id,
@@ -4442,6 +4453,7 @@ def _create_planter_assignment(
         species_value,
         notes.strip() if notes else None,
         normalized_site_zone_id,
+        planting_schedule_id,
     ))
     assignment_id = cur.lastrowid
 
@@ -4474,7 +4486,8 @@ def _create_planter_assignment(
         actor_user_id=assigned_by_user_id, actor_planter_id=planter_id,
         organization_id=planter["organization_id"], project_site_id=normalized_site_zone_id,
         summary=f"Assigned {len(ordered_point_ids)} planting points to {planter['full_name']}.",
-        details={"assignment_id": assignment_id, "point_count": len(ordered_point_ids)},
+        details={"assignment_id": assignment_id, "point_count": len(ordered_point_ids),
+                 "planting_schedule_id": planting_schedule_id},
     )
     return assignment_id
 
@@ -5130,6 +5143,12 @@ def update_assignment_point_status(
         conn.close()
         raise ValueError("Assignment point was not found.")
     point = dict(row)
+    try:
+        if status == 'completed':
+            lock_assignment_activity(conn, int(point['assignment_id']))
+    except Exception:
+        conn.close()
+        raise
     if point['current_assignment_point_status'] == status:
         conn.close()
         return
@@ -5270,6 +5289,13 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
     assignment_point_ids = [point["assignment_point_id"] for point in actionable]
     planting_point_ids = [point["planting_point_id"] for point in actionable]
     assignment_ids = sorted({point["assignment_id"] for point in actionable})
+
+    try:
+        for assignment_id in assignment_ids:
+            lock_assignment_activity(conn, int(assignment_id))
+    except Exception:
+        conn.close()
+        raise
 
     assignment_placeholders = ",".join("?" for _ in assignment_point_ids)
     planting_placeholders = ",".join("?" for _ in planting_point_ids)
@@ -7083,10 +7109,17 @@ def _clean_schedule_count(value: Any, field: str) -> Optional[int]:
 def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
     row = conn.execute("""
         SELECT ps.*, sz.name AS project_site_name, sz.polygon_geojson,
-               o.name AS canonical_organization_name
+               o.name AS canonical_organization_name,
+               work.assignment_count, work.planting_count
         FROM planting_schedules ps
         LEFT JOIN site_zones sz ON sz.id = ps.project_site_id
         LEFT JOIN organizations o ON o.id = ps.organization_id
+        LEFT JOIN LATERAL (
+            SELECT COUNT(DISTINCT pa.id) AS assignment_count, COUNT(pe.id) AS planting_count
+            FROM planter_assignments pa
+            LEFT JOIN planting_events pe ON pe.assignment_id = pa.id
+            WHERE pa.planting_schedule_id = ps.id
+        ) work ON TRUE
         WHERE ps.id = ?
     """, (int(schedule_id),)).fetchone()
     if not row:
@@ -7155,6 +7188,13 @@ def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
         "updated_by_user_id": row["updated_by_user_id"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "planting_started": int(row['planting_count']) > 0,
+        "recorded_planting_count": int(row['planting_count']),
+        "linked_assignment_count": int(row['assignment_count']),
+        "edit_lock_reason": (
+            'Planting has been recorded. Activity details and deletion are locked; contact details and notes can be corrected.'
+            if int(row['planting_count']) > 0 else None
+        ),
     }
 
 
@@ -7384,6 +7424,9 @@ def update_planting_schedule(
                     raise ValueError("Selected project site belongs to a different organization.")
 
         effective_site_id = values.get("project_site_id")
+        if current.get('source') == 'website' and values['organization_id'] != current['organization_id']:
+            raise ActivityConflict('A confirmed website booking must keep its organization. Arrange a new booking for a different organization.')
+        changed, work = validate_activity_change(conn, dict(current), values)
         should_update_site_cadence = bool(
             effective_site_id is not None
             and values["status"] == "confirmed"
@@ -7438,8 +7481,24 @@ def update_planting_schedule(
             values["status"], values["notes"], updated_by_user_id,
             updated_at, int(schedule_id),
         ))
+        if 'start_at' in changed and not work['plantings']:
+            conn.execute("""UPDATE planter_assignments SET assignment_date = CAST(? AS date)
+                WHERE planting_schedule_id = ?""", (values['start_at'][:10], int(schedule_id)))
+        from mangrovision_db.appointment_email import refresh_schedule_confirmation
+        email_update = refresh_schedule_confirmation(conn, dict(current), values)
+        if changed:
+            append_activity(
+                conn, action='schedule.updated', actor_type='staff' if updated_by_user_id else 'system',
+                actor_user_id=updated_by_user_id, organization_id=values['organization_id'],
+                project_site_id=values['project_site_id'], summary=f"Updated activity {values['title']}.",
+                details={'schedule_id': int(schedule_id), 'changed_fields': changed,
+                         'before': {key: current.get(key) for key in changed},
+                         'after': {key: values.get(key) for key in changed}},
+            )
         conn.commit()
-        return _planting_schedule_row(conn, int(schedule_id))
+        result = _planting_schedule_row(conn, int(schedule_id))
+        result['email_update'] = email_update
+        return result
     except Exception:
         conn.rollback()
         raise
@@ -7447,14 +7506,31 @@ def update_planting_schedule(
         conn.close()
 
 
-def delete_planting_schedule(schedule_id: int) -> bool:
+def delete_planting_schedule(schedule_id: int, *, deleted_by_user_id: Optional[int] = None) -> bool:
     conn = _get_connection()
     try:
+        current = conn.execute('SELECT * FROM planting_schedules WHERE id = ? FOR UPDATE', (int(schedule_id),)).fetchone()
+        if not current:
+            return False
+        work = activity_work(conn, int(schedule_id))
+        if work['plantings']:
+            raise ActivityConflict('This activity has recorded planting and cannot be deleted. Its planting history must be preserved.')
+        if current.get('source') == 'website':
+            raise ActivityConflict('Cancel this website booking instead of deleting it, so the requester is notified and its history is preserved.')
+        if work['assignments']:
+            raise ActivityConflict('Remove this activity\'s unplanted assignments before deleting the activity.')
         cursor = conn.execute(
             "DELETE FROM planting_schedules WHERE id = ?", (int(schedule_id),),
         )
+        append_activity(conn, action='schedule.deleted', actor_type='staff' if deleted_by_user_id else 'system',
+            actor_user_id=deleted_by_user_id, organization_id=current['organization_id'],
+            project_site_id=current['project_site_id'], summary=f"Deleted unplanted activity {current['title']}.",
+            details={'schedule_id': int(schedule_id)})
         conn.commit()
         return cursor.rowcount > 0
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
