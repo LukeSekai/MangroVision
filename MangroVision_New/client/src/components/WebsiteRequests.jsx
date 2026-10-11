@@ -97,10 +97,9 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
     finally { inFlight.current = false; setBusy(false); }
   };
 
-  return createPortal(<Modal open title="Review website request" variant="info" className="modal-card-wide website-review-dialog" busy={busy}
+  return createPortal(<Modal open title={`Review website request · ${request.reference}`} variant="info" className="modal-card-wide website-review-dialog" busy={busy}
     cancelLabel="Close" confirmLabel={rescheduling ? 'Confirm new schedule' : confirming ? 'Confirm appointment' : 'Decline request'} onConfirm={save} onCancel={onClose}>
     <form className="website-review" noValidate onChangeCapture={feedback.onChange} aria-busy={busy} ref={formRoot} onSubmit={save}>
-      <p className="website-review-reference">{request.reference}</p>
       <dl className="website-request-details">
         <div><dt>Organization</dt><dd>{request.organization}</dd></div>
         <div><dt>Contact person</dt><dd>{request.contact_name}</dd></div>
@@ -124,7 +123,7 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
         {!request.email ? <label>Confirmation email<input disabled={busy} {...feedback.props('email')} type="email" value={form.email} onChange={update} required maxLength={254} /><small>This older request has no email address. Obtain it from the requester to send their confirmation{planting ? ' and planter codes' : ''}.</small><FieldError feedback={feedback} field="email" /></label> : null}
         <div className="website-request-advice">{planting ? <>{renderAdvice(advice)}<p>{advice.reason}</p></> : <p>Check staff availability and site conditions for this {appointmentTypeLabel(request.appointment_type).toLowerCase()}.</p>}{conflicts.length ? <p><strong>{conflicts.length} existing {conflicts.length === 1 ? 'schedule overlaps' : 'schedules overlap'} this time.</strong> Check staff and site availability.</p> : null}</div>
         {needsCaution ? <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('acceptCaution')} checked={form.acceptCaution} onChange={update} /><span>I reviewed the {planting ? 'tide and ' : ''}schedule warnings and assessed whether this activity can proceed.<FieldError feedback={feedback} field="acceptCaution" /></span></label> : null}
-        <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('contacted')} checked={form.contacted} onChange={update} /><span>I contacted the requester and they agreed to this date and time.<FieldError feedback={feedback} field="contacted" /></span></label>
+        <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('contacted')} checked={form.contacted} onChange={update} /><span>I contacted the requester and they <strong>agreed to this date and time.</strong><FieldError feedback={feedback} field="contacted" /></span></label>
       </> : null}
       <label>{confirming ? 'Review notes (optional)' : 'Reason (required)'}<textarea disabled={busy} {...feedback.props('decisionNotes')} value={form.decisionNotes} onChange={update} maxLength={2000} rows={2} required={!confirming} /><FieldError feedback={feedback} field="decisionNotes" /></label>
     </form>
