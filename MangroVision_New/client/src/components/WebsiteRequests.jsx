@@ -130,7 +130,7 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
   </Modal>, document.body);
 }
 
-export default function WebsiteRequests({ token, reloadKey, organizations, schedules, assessmentFor, renderAdvice, onRequestsChange, reviewRequest, onReview, onClose, onChanged }) {
+export default function WebsiteRequests({ token, reloadKey, organizations, schedules, assessmentFor, renderAdvice, reviewRequest, onReview, onClose, onChanged }) {
   const location = useLocation();
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState('');
@@ -150,14 +150,14 @@ export default function WebsiteRequests({ token, reloadKey, organizations, sched
       .then((data) => {
         if (controller.signal.aborted) return;
         const rows = Array.isArray(data.requests) ? data.requests : [];
-        setRequests(rows); onRequestsChange(rows); setError(''); setLoading(false);
+        setRequests(rows); setError(''); setLoading(false);
       }).catch((issue) => {
         if (issue.name !== 'AbortError') { setError(issue.message); setLoading(false); }
       });
     load();
     const timer = globalThis.setInterval(load, 60000);
     return () => { controller.abort(); globalThis.clearInterval(timer); };
-  }, [token, reloadKey, refreshKey, onRequestsChange]);
+  }, [token, reloadKey, refreshKey]);
   const pending = requests.filter((request) => request.status === 'pending');
   const visible = filter === 'pending' ? pending : requests;
   const saved = (message) => { setNotice(message); onClose(); setRefreshKey((key) => key + 1); onChanged(); window.dispatchEvent(new Event('mv:data-changed')); };

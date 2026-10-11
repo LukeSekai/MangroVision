@@ -112,8 +112,9 @@ name, including for cached public clients that still send a custom title.
 New manual appointments require the same organization, contact person, phone,
 email, activity choice, date, start/end times and participant count (1–10,000),
 with optional notes. Both use a future time window on one Philippine date.
-Staff additionally select the appointment status. Expected seedlings and the
-fixed 14-day monitoring interval appear only for tree planting.
+Staff additionally select the appointment status. The fixed 14-day monitoring
+interval appears only for tree planting. Scheduling no longer asks for or shows
+expected seedlings; historical stored values are preserved.
 
 Manual contacts are saved in the existing contact summary, with email in the
 existing notification-email field. No database migration is needed. Editing
@@ -127,8 +128,11 @@ refreshed every 30 seconds and on focus. Clicking it opens
 Website Requests panel. Staff also receive a notification linking to that panel.
 Reviewing a request clears its pending count and marks that notification read.
 
-Website requests appear on the Scheduling calendar and in the Website Requests
-panel. That panel refreshes every minute and has a manual refresh button. All
+Pending website requests appear in the Website Requests panel. The calendar
+shows only confirmed, in-progress and completed schedules. Staff drafts and
+tentative or cancelled activities remain available in List. Upcoming totals
+include only confirmed and in-progress activities. The requests panel refreshes
+every minute and has a manual refresh button. All
 pending requests remain visible; the history includes the latest 200 reviewed
 requests. The review dialog shows the submitted organization, contact details,
 activity and requested schedule as read-only details. **Confirm requested

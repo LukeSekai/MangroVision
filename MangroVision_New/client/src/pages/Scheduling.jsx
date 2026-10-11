@@ -219,7 +219,6 @@ function normalizeSchedule(schedule) {
     start_time: scheduleStartTime(schedule),
     end_time: schedule?.end_time ?? '',
     expected_participants: schedule?.expected_participants ?? schedule?.expected_planters ?? schedule?.participants ?? null,
-    seedlings: schedule?.seedlings ?? schedule?.expected_seedlings ?? schedule?.seedling_count ?? null,
     inspection_interval_days: schedule?.inspection_interval_days ?? schedule?.interval_days ?? null,
     status: schedule?.status ?? 'requested',
     notes: schedule?.notes ?? '',
@@ -242,7 +241,6 @@ function makeScheduleForm(schedule = null) {
       ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIMEZONE }).format(endAt)
       : ''),
     expectedParticipants: schedule?.expected_participants ?? '',
-    seedlings: schedule?.seedlings ?? '',
     inspectionIntervalDays: 14,
     status: schedule?.status ?? 'requested',
     notes: schedule?.notes ?? '',
@@ -324,7 +322,7 @@ function PlantingBadge({ assessment }) {
 function PlantingLegend() {
   return <div className="schedule-planting-legend" aria-label="Planting color guide">
     {['safe', 'unsafe'].map((status) => <PlantingBadge key={status} assessment={{ status }} />)}
-    <small>Colors help you plan when to plant. Each activity also shows whether it is pending, confirmed or completed.</small>
+    <small>Colors help you plan when to plant. The calendar shows confirmed, in-progress and completed activities. Review pending requests below.</small>
   </div>;
 }
 
@@ -394,8 +392,7 @@ function ScheduleDetails({ schedule, showOrganization = true }) {
     {showOrganization ? <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
     {isPlantingAppointment(schedule) ? <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div> : null}
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
-    {isPlantingAppointment(schedule) ? <><div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
-    <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div></> : null}
+    {isPlantingAppointment(schedule) ? <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div> : null}
     {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
     {schedule.notification_email ? <div><dt>Notification email</dt><dd>{schedule.notification_email}</dd></div> : null}
     {schedule.notification_delivery ? <div><dt>Organization email</dt><dd>{schedule.notification_delivery.awaiting_retry ? 'Delivery failed; queued for automatic retry'
@@ -579,7 +576,6 @@ export default function Scheduling() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
-  const [websiteRequests, setWebsiteRequests] = useState([]);
   const [reviewRequest, setReviewRequest] = useState(null);
   const loadedSchedules = useRef(null);
   const [tideRetryKey, setTideRetryKey] = useState(0);
@@ -601,7 +597,6 @@ export default function Scheduling() {
     startTime: { label: 'Start time', aliases: ['start_time', 'start_at'] },
     endTime: { label: 'End time', aliases: ['end_time', 'end_at'], serverTerms: ['end time', 'end_time'], validate: (value) => value && form.startTime && value <= form.startTime ? 'Choose an end time later than the start time on the same day.' : '' },
     expectedParticipants: { label: 'Participants', aliases: ['expected_planters', 'expected_participants'], serverTerms: ['participant count'] },
-    seedlings: { label: 'Expected seedlings', aliases: ['expected_seedlings'] },
     status: { label: 'Activity status' },
     notes: { label: 'Notes' },
   });
@@ -687,6 +682,9 @@ export default function Scheduling() {
       `${a.scheduled_date}T${a.start_time}`.localeCompare(`${b.scheduled_date}T${b.start_time}`)
     ));
   }, [apiData]);
+  const approvedSchedules = useMemo(() => schedules.filter((schedule) => (
+    ['confirmed', 'in_progress', 'completed'].includes(String(schedule.status).toLowerCase())
+  )), [schedules]);
   const organizations = useMemo(() => {
     const merged = new Map();
     arrayOf(apiData?.organizations).forEach((source) => {
@@ -756,29 +754,20 @@ export default function Scheduling() {
   const calendarWeeks = useMemo(() => Array.from({ length: 6 }, (_, index) => calendarDays.slice(index * 7, index * 7 + 7)), [calendarDays]);
   const schedulesByDate = useMemo(() => {
     const grouped = new Map();
-    groupCalendarSchedules(schedules).forEach((group) => {
+    groupCalendarSchedules(approvedSchedules).forEach((group) => {
       const schedule = group.schedule;
       if (!schedule.scheduled_date) return;
       if (!grouped.has(schedule.scheduled_date)) grouped.set(schedule.scheduled_date, []);
       grouped.get(schedule.scheduled_date).push(group);
     });
     return grouped;
-  }, [schedules]);
-  const requestsByDate = useMemo(() => {
-    const grouped = new Map();
-    websiteRequests.filter((request) => request.status === 'pending').forEach((request) => {
-      const day = dateInManila(new Date(request.start_at));
-      if (!grouped.has(day)) grouped.set(day, []);
-      grouped.get(day).push(request);
-    });
-    return grouped;
-  }, [websiteRequests]);
+  }, [approvedSchedules]);
   const assignmentSites = useMemo(() => assigningSchedule
     ? projectSites.filter((site) => sameOrganization(site, assigningSchedule))
     : [], [assigningSchedule, projectSites]);
 
   const today = dateInManila();
-  const upcoming = schedules.filter((schedule) => schedule.scheduled_date >= today && !['completed', 'cancelled'].includes(String(schedule.status).toLowerCase()));
+  const upcoming = approvedSchedules.filter((schedule) => schedule.scheduled_date >= today && String(schedule.status).toLowerCase() !== 'completed');
   const confirmed = upcoming.filter((schedule) => String(schedule.status).toLowerCase() === 'confirmed').length;
   const selectedDateTides = form.date ? arrayOf(tidesByDate.get(form.date)) : [];
 
@@ -838,7 +827,7 @@ export default function Scheduling() {
       setReloadKey((value) => value + 1);
     } catch (saveError) {
       if (request.method === 'POST' && (saveError.uncertain || saveError.status >= 500)) {
-        setFormError('Could not verify whether the new activity was saved. Check the calendar before submitting it again to avoid a duplicate. Your entries are kept.');
+        setFormError('Could not verify whether the new activity was saved. Check List before submitting it again to avoid a duplicate. Your entries are kept.');
       } else if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save the planting schedule.');
     } finally {
       setTimeCaution(null);
@@ -876,13 +865,8 @@ export default function Scheduling() {
     }
     const intervalDays = editingSchedule?.inspection_interval_days ?? 14;
     const participants = form.expectedParticipants === '' ? null : Number(form.expectedParticipants);
-    const seedlings = !formPlanting || form.seedlings === '' ? null : Number(form.seedlings);
     if (participants !== null && (!Number.isInteger(participants) || participants < 0)) {
       feedback.reject({ expectedParticipants: 'Enter a whole number of 0 or more, or leave this blank.' });
-      return;
-    }
-    if (seedlings !== null && (!Number.isInteger(seedlings) || seedlings < 0)) {
-      feedback.reject({ seedlings: 'Enter a whole number of 0 or more, or leave this blank.' });
       return;
     }
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
@@ -913,7 +897,6 @@ export default function Scheduling() {
       // aliases for display, but create/update requests should not depend on
       // alias fields that older running API processes may reject as extras.
       expected_planters: participants,
-      expected_seedlings: seedlings,
       inspection_interval_days: intervalDays,
       status: form.status,
       notes: form.notes.trim() || null,
@@ -1007,7 +990,7 @@ export default function Scheduling() {
           <div>
             <span className="schedule-step">Plan a date, confirm it, then choose a planting area</span>
             <h2 id="organization-schedules-title">Organization schedules</h2>
-            <p>Review all confirmed activities here. For tree planting, choose an organization planting area after confirmation. Add areas in the Zone Editor.</p>
+            <p>The calendar shows approved activities. Use List to manage staff drafts and activity history, and review website requests below. For tree planting, choose an organization planting area after confirmation.</p>
           </div>
           <button type="button" className="schedule-primary" onClick={openCreate}>+ Add new schedule</button>
         </div>
@@ -1019,7 +1002,6 @@ export default function Scheduling() {
           <article><span>Upcoming schedules</span><strong>{formatCount(upcoming.length)}</strong><small>By organization</small></article>
           <article><span>Confirmed schedules</span><strong>{formatCount(confirmed)}</strong><small>LGU-approved activities</small></article>
           <article><span>Expected participants</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.expected_participants) || 0), 0))}</strong><small>Across upcoming activities</small></article>
-          <article><span>Expected seedlings</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.seedlings) || 0), 0))}</strong><small>Across upcoming activities</small></article>
         </div>
 
         <PlantingLegend />
@@ -1053,7 +1035,6 @@ export default function Scheduling() {
                     <article className={`schedule-calendar-day${cell.inMonth ? '' : ' is-outside'}${cell.date === today ? ' is-today' : ''}`} role="gridcell" key={cell.date}>
                       <time dateTime={cell.date}>{cell.day}</time>
                       <div className="schedule-calendar-events">
-                        {arrayOf(requestsByDate.get(cell.date)).map((request) => <button type="button" className="schedule-calendar-request" key={`request-${request.id}`} onClick={() => setReviewRequest(request)} aria-haspopup="dialog"><span>{appointmentTypeLabel(request.appointment_type)} · Pending</span><strong>{request.organization}</strong><small>{formatDate(request.start_at, true)} · {request.participants} participants</small></button>)}
                         {daySchedules.map((group) => <ScheduleCalendarEvent key={group.key} group={group} assessment={assessmentFor(group.schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item.schedule, schedules: item.schedules })} />)}
                         {dayTides.slice(0, 4).map((tide) => (
                           <TideTime key={`${tide.occurred_at}-${tideKind(tide)}`} tide={tide} guide={calendarGuide} onOpen={(item) => setCalendarEntry({ kind: 'tide', tide: item })} />
@@ -1101,7 +1082,7 @@ export default function Scheduling() {
 
       <WebsiteRequests token={token} reloadKey={reloadKey} organizations={organizations} schedules={schedules}
         assessmentFor={assessmentFor} renderAdvice={(assessment) => <PlantingBadge assessment={assessment} />}
-        onRequestsChange={setWebsiteRequests} reviewRequest={reviewRequest} onReview={setReviewRequest}
+        reviewRequest={reviewRequest} onReview={setReviewRequest}
         onClose={() => setReviewRequest(null)} onChanged={() => setReloadKey((value) => value + 1)} />
 
       <HighTideCaution selection={timeCaution}
@@ -1162,7 +1143,7 @@ export default function Scheduling() {
               <select disabled={Boolean(editingSchedule)} {...feedback.props('appointmentType')} value={form.appointmentType} onChange={(event) => {
                 acceptedUnsafeTime.current = null;
                 lastWarnedTime.current = null;
-                setForm((current) => ({ ...current, appointmentType: event.target.value, seedlings: '' }));
+                setForm((current) => ({ ...current, appointmentType: event.target.value }));
               }} required>
                 <option value="">Choose an appointment type</option>
                 {APPOINTMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
@@ -1204,16 +1185,11 @@ export default function Scheduling() {
               <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('expectedParticipants')} type="number" min={editingSchedule ? '0' : '1'} max={editingSchedule ? undefined : '10000'} required={!editingSchedule} step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
               <FieldError feedback={feedback} field="expectedParticipants" />
             </label>
-            {formPlanting ? <><label>
-              <span>Expected seedlings</span>
-              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('seedlings')} type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
-              <FieldError feedback={feedback} field="seedlings" />
-            </label>
-            <label>
+            {formPlanting ? <label>
               <span>Days between plant checks</span>
               <input type="number" value={editingSchedule?.inspection_interval_days ?? 14} readOnly aria-readonly="true" />
               <small>Monitoring is due every 14 days from the actual planting date.</small>
-            </label></> : null}
+            </label> : null}
             <label>
               <span>Status *</span>
               <select {...feedback.props('status')} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>

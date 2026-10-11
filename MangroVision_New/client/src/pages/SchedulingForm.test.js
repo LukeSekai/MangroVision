@@ -5,9 +5,10 @@ import { MemoryRouter } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import { scheduleContactFields } from '../utils/scheduleContact.js';
+import { manilaToday } from '../like/booking.js';
 
 let server, dom, root, createRoot, Scheduling, useAuthStore;
-let schedules, writes;
+let schedules, writes, requests, onWrite;
 const globals = new Map();
 const date = '2035-06-12';
 
@@ -15,13 +16,14 @@ before(async () => {
   dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true, url: 'http://localhost' });
   for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
     navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element,
-    SVGElement: dom.window.SVGElement, localStorage: dom.window.localStorage, sessionStorage: dom.window.sessionStorage,
+    SVGElement: dom.window.SVGElement, Event: dom.window.Event, localStorage: dom.window.localStorage, sessionStorage: dom.window.sessionStorage,
     IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), fetch: globalThis.fetch,
   })) {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   ({ createRoot } = await import('react-dom/client'));
+  window.HTMLElement.prototype.scrollTo = () => {};
   server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null, ws: false },
     cacheDir: 'node_modules/.vite-manual-scheduling-tests', optimizeDeps: { noDiscovery: true, include: [] } });
   ({ default: Scheduling } = await server.ssrLoadModule('/src/pages/Scheduling.jsx'));
@@ -35,15 +37,16 @@ after(async () => {
 });
 beforeEach(() => {
   root = createRoot(document.getElementById('root'));
-  schedules = []; writes = [];
+  schedules = []; writes = []; requests = []; onWrite = null;
   useAuthStore.setState({ token: 'test-cookie', isAuthenticated: true });
   globalThis.fetch = async (url, options = {}) => {
     if (options.body) {
       writes.push({ url, method: options.method, body: JSON.parse(options.body) });
+      onWrite?.(writes.at(-1));
       return Response.json({ id: 1 });
     }
     if (String(url).includes('/planting-schedules')) return Response.json({ schedules, organizations: [], project_sites: [] });
-    if (String(url).includes('/like-appointments')) return Response.json({ requests: [] });
+    if (String(url).includes('/like-appointments')) return Response.json({ requests });
     if (String(url).includes('/tides/forecast')) return Response.json({ available: false, message: 'Forecast unavailable.' });
     assert.fail(`Unexpected request: ${url}`);
   };
@@ -88,8 +91,8 @@ for (const [type, label] of [['field_visit', 'Field visit'], ['clean_up_drive', 
       assert.equal(document.querySelector(`[name="${name}"]`).required, true, `${name} must be required`);
     }
     await fill(type);
-    assert.equal(Boolean(document.querySelector('[name="seedlings"]')), type === 'tree_planting');
-    if (type === 'tree_planting') await change('seedlings', '100');
+    assert.equal(document.querySelector('[name="seedlings"]'), null);
+    assert.doesNotMatch(document.querySelector('.schedule-form').textContent, /Expected seedlings/);
     await submit();
     assert.equal(writes.length, 1);
     const body = writes[0].body;
@@ -99,7 +102,7 @@ for (const [type, label] of [['field_visit', 'Field visit'], ['clean_up_drive', 
     assert.equal(body.phone, '09123456789'); assert.equal(body.email, 'head@example.org');
     assert.equal(body.expected_planters, 10);
     assert.equal(body.start_at, `${date}T08:00:00+08:00`); assert.equal(body.end_at, `${date}T09:30:00+08:00`);
-    assert.equal(body.expected_seedlings, type === 'tree_planting' ? 100 : null);
+    assert.equal(Object.hasOwn(body, 'expected_seedlings'), false);
     assert.equal(body.notes, 'Meet at the gate.');
   });
 }
@@ -121,7 +124,8 @@ test('manual errors stop missing, invalid and past booking details before saving
 test('editing a legacy schedule keeps its title and untouched contact summary', async () => {
   const contact = 'Head: old contact details and instructions. '.repeat(4).trim();
   schedules = [{ id: 7, organization: 'Old school', title: 'Historical community event', contact,
-    start_at: `${date}T08:00:00+08:00`, end_at: `${date}T09:30:00+08:00`, status: 'requested', expected_planters: null }];
+    start_at: `${date}T08:00:00+08:00`, end_at: `${date}T09:30:00+08:00`, status: 'requested', expected_planters: null,
+    expected_seedlings: 360 }];
   await render(); await click('List'); await click('Edit');
   assert.equal(document.querySelector('[name="appointmentType"]').disabled, true);
   assert.equal(document.querySelector('[name="title"]'), null);
@@ -131,6 +135,7 @@ test('editing a legacy schedule keeps its title and untouched contact summary', 
   assert.equal(writes[0].body.title, undefined); assert.equal(writes[0].body.appointment_type, undefined);
   assert.equal(writes[0].body.contact, contact);
   assert.equal(writes[0].body.expected_planters, null);
+  assert.equal(Object.hasOwn(writes[0].body, 'expected_seedlings'), false, 'Editing must leave historical seedling counts untouched');
 });
 
 test('website schedule contacts remain read-only and their original summary is preserved', async () => {
@@ -150,4 +155,59 @@ test('website schedule contacts remain read-only and their original summary is p
 test('contact summaries support comma-separated names, embedded emails and a separate recipient', () => {
   assert.deepEqual(scheduleContactFields({ contact: 'Doe, Jane, +63 912 345 6789, old@example.org', notification_email: 'new@example.org' }),
     { contactName: 'Doe, Jane', phone: '+63 912 345 6789', email: 'new@example.org' });
+});
+
+test('calendar and upcoming totals exclude unapproved requests while drafts remain manageable', async () => {
+  const today = manilaToday();
+  schedules = [
+    ['requested', 'Staff draft', 999], ['tentative', 'Tentative activity', 998], ['confirmed', 'Approved activity', 10],
+    ['in_progress', 'Ongoing activity', 5], ['completed', 'Finished activity', 15], ['cancelled', 'Cancelled activity', 200],
+  ].map(([status, title, participants], index) => ({ id: index + 1, status, title, organization: `Group ${index + 1}`,
+    appointment_type: 'tree_planting', start_at: `${today}T08:00:00+08:00`, end_at: `${today}T09:30:00+08:00`,
+    expected_planters: participants, expected_seedlings: 360 }));
+  requests = [{ id: 21, reference: 'LIKE-PENDING-TEST', organization: 'Unapproved website group', contact_name: 'Coordinator',
+    phone: '09123456789', email: 'head@example.org', title: 'Website visit', appointment_type: 'field_visit', participants: 10,
+    status: 'pending', start_at: `${today}T10:00:00+08:00`, end_at: `${today}T11:00:00+08:00` }];
+  await render();
+  const calendar = document.querySelector('.schedule-calendar');
+  assert.deepEqual([...calendar.querySelectorAll('.schedule-entry-title')].map((card) => card.textContent),
+    ['Approved activity', 'Ongoing activity', 'Finished activity']);
+  assert.doesNotMatch(calendar.textContent, /Staff draft|Tentative activity|Cancelled activity|Unapproved website group/);
+  assert.equal(document.querySelector('.schedule-calendar-request'), null);
+  assert.match(document.querySelector('#website-requests').textContent, /Unapproved website group/);
+  assert.ok([...document.querySelectorAll('#website-requests button')].find((button) => button.textContent === 'Review request'));
+  assert.deepEqual([...document.querySelectorAll('.schedule-kpis article strong')].map((value) => value.textContent), ['2', '1', '15']);
+  assert.doesNotMatch(document.body.textContent, /Expected seedlings/);
+  const approvedCard = calendar.querySelector('.schedule-calendar-event');
+  await act(async () => approvedCard.click());
+  assert.doesNotMatch(document.querySelector('.schedule-details-modal').textContent, /Seedlings/);
+  await click('Close'); await click('List');
+  const list = document.querySelector('[aria-labelledby="organization-schedules-title"] table');
+  for (const title of ['Staff draft', 'Tentative activity', 'Cancelled activity']) assert.ok(list.textContent.includes(title));
+});
+
+test('a website request enters the calendar only after successful approval and refresh', async () => {
+  const tomorrow = manilaToday(new Date(Date.now() + 86400000));
+  const request = { id: 22, reference: 'LIKE-APPROVAL-TEST', organization: 'Website volunteers', contact_name: 'Coordinator',
+    phone: '09123456789', email: 'head@example.org', title: 'Field visit', appointment_type: 'field_visit', participants: 10,
+    status: 'pending', start_at: `${tomorrow}T08:00:00+08:00`, end_at: `${tomorrow}T09:30:00+08:00` };
+  requests = [request];
+  onWrite = (write) => {
+    assert.match(write.url, /\/like-appointments\/22\/review$/);
+    assert.equal(write.body.action, 'confirmed');
+    requests = [{ ...request, status: 'confirmed', schedule_id: 1 }];
+    schedules = [{ id: 1, ...request, status: 'confirmed', source: 'website', expected_planters: request.participants }];
+  };
+  await render();
+  if (tomorrow.slice(0, 7) !== manilaToday().slice(0, 7)) {
+    await act(async () => document.querySelector('[aria-label="Next month"]').click());
+  }
+  assert.equal(document.querySelectorAll('.schedule-calendar-event').length, 0);
+  await click('Review request');
+  await act(async () => document.querySelector('[name="contacted"]').click());
+  await act(async () => document.querySelector('.website-review').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+  assert.equal(writes.length, 1);
+  assert.equal(document.querySelectorAll('.schedule-calendar-event').length, 1);
+  assert.match(document.querySelector('.schedule-calendar').textContent, /Website volunteers/);
+  assert.match(document.querySelector('#website-requests').textContent, /No pending website requests/);
 });
