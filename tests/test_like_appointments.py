@@ -205,3 +205,19 @@ def test_confirmation_schedules_delivery_after_review(api, monkeypatch):
     assert client.post('/api/like-appointments/9/review', json={'action': 'confirmed', 'contacted': True}).status_code == 200
     assert calls == [{'request_id': 9}]
     assert client.post('/api/like-appointments/9/review', json={'action': 'confirmed', 'email': 'broken'}).status_code == 422
+
+
+def test_pending_request_cancellation_rejected_before_review_or_delivery(api, monkeypatch):
+    client, routes, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'planner'})
+    monkeypatch.setattr(routes, 'review_appointment', lambda *args: pytest.fail('Cancellation reached pending-request review'))
+    monkeypatch.setattr(routes, 'run_delivery_cycle', lambda **kwargs: pytest.fail('Rejected cancellation started delivery'))
+    response = client.post('/api/like-appointments/9/review', json={'action': 'cancelled', 'decision_notes': 'No longer needed.'})
+    assert response.status_code == 422
+
+
+def test_pending_request_cancellation_rejected_before_database_access(monkeypatch):
+    from mangrovision_db import like_appointments
+    monkeypatch.setattr(like_appointments.planting, '_get_connection', lambda: pytest.fail('Invalid review accessed database'))
+    with pytest.raises(ValueError, match='Confirm or decline'):
+        like_appointments.review_appointment(9, {'action': 'cancelled'}, 1)

@@ -58,7 +58,7 @@ class AppointmentCreate(BaseModel):
 
 class AppointmentReview(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
-    action: Literal['confirmed', 'declined', 'cancelled']
+    action: Literal['confirmed', 'declined']
     organization: str | None = Field(default=None, min_length=1, max_length=200)
     organization_id: int | None = Field(default=None, ge=1)
     email: EmailStr | None = Field(default=None, max_length=254)

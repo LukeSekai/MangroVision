@@ -169,6 +169,8 @@ def _planter_login(conn, schedule, request, user_id):
 
 
 def review_appointment(request_id: int, values: dict, user_id: int) -> dict:
+    if values.get('action') not in {'confirmed', 'declined'}:
+        raise ValueError('Confirm or decline a pending request. Cancel confirmed activities from Scheduling.')
     conn = planting._get_connection()
     try:
         current = conn.execute('SELECT * FROM like_appointment_requests WHERE id = ? FOR UPDATE',
@@ -211,7 +213,7 @@ def review_appointment(request_id: int, values: dict, user_id: int) -> dict:
             queue_confirmation(conn, current, schedule, email, login=login)
             conn.execute('UPDATE like_appointment_requests SET email = ? WHERE id = ?', (email, request_id))
         elif not str(values.get('decision_notes') or '').strip():
-            raise ValueError('Enter a reason for declining or cancelling the request.')
+            raise ValueError('Enter a reason for declining the request.')
         conn.execute("""
             UPDATE like_appointment_requests SET status = ?, schedule_id = ?, decision_notes = ?,
                 contacted = ?, reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP WHERE id = ?

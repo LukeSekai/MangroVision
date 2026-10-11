@@ -115,9 +115,17 @@ Reviewing a request clears its pending count and marks that notification read.
 Website requests appear on the Scheduling calendar and in the Website Requests
 panel. That panel refreshes every minute and has a manual refresh button. All
 pending requests remain visible; the history includes the latest 200 reviewed
-requests. Staff can review tide advice and overlapping schedules, agree on a new
-time, and select an existing organization or register one on confirmation.
-Confirmation requires acknowledging that the requester was contacted.
+requests. The review dialog shows the submitted organization, contact details,
+activity and requested schedule as read-only details. **Confirm requested
+schedule** keeps the original date and time. **Reschedule and confirm** reveals
+date and time inputs for a new schedule agreed with the requester. Switching
+back to ordinary confirmation ignores draft reschedule times. Organization
+matching and registration use the submitted organization name. Older requests
+without an email address require staff to obtain the missing recipient.
+Confirmation requires acknowledging that the requester was contacted. Changing
+the proposed time clears that agreement and any schedule-warning acknowledgement.
+The dialog is displayed above the workspace header with a scrolling body and
+visible footer actions.
 
 Approval creates one confirmed schedule and links it to the request in
 the same transaction as queuing the confirmation email. Repeated approval cannot
@@ -127,7 +135,8 @@ issues one individual code per participant. Existing participants keep their cod
 across activities. Field visits and clean-up drives create no planter account and cannot
 be assigned a planting area. Planting area assignment and later schedule changes
 use the existing staff workflow.
-Declined/cancelled pending requests require a reason and create no schedule.
+Pending requests can be declined with a reason; they cannot be cancelled through
+request review. Declining creates no schedule.
 Confirmed website schedules are retained and can be cancelled before planting
 starts. Deletion is blocked so their request and email history remain connected.
 
@@ -233,7 +242,7 @@ notice. Staff still coordinate these changes with the organization.
 - `GET /api/like-appointments`: authenticated `admin`, `lgu`, or `planner` access.
 - `GET /api/like-appointments/summary`: the same staff roles; returns only the
   pending count and Scheduling link.
-- `POST /api/like-appointments/{id}/review`: staff approval, decline, or cancellation.
+- `POST /api/like-appointments/{id}/review`: staff confirmation (original or agreed revised times) or decline. Pending-request cancellation is rejected.
 
 Public submissions carry a UUID submission key. Identical retries reuse the
 original reference; changing the payload under the same key returns 409.

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import Modal from './Modal';
 import useFormFeedback from '../utils/useFormFeedback';
@@ -16,17 +17,18 @@ const manilaParts = (value) => {
   return { date: `${p.year}-${p.month}-${p.day}`, time: `${p.hour}:${p.minute}` };
 };
 const formatTime = (value) => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value));
+const formatEndTime = (value) => new Intl.DateTimeFormat('en-PH', { timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value));
 const isFutureTime = (value) => Date.parse(value) > Date.now();
 
 async function requestJson(path, options = {}) {
   return formRequest(`${API}${path}`, options, 'Could not process the website request. Please check the details and try again.');
 }
 
-function RequestReview({ request, organizations, schedules, assessmentFor, renderAdvice, onClose, onSaved }) {
+export function RequestReview({ request, organizations, schedules, assessmentFor, renderAdvice, onClose, onSaved }) {
   const start = manilaParts(request.start_at);
   const end = manilaParts(request.end_at);
   const [form, setForm] = useState({
-    organization: request.organization, date: start.date, startTime: start.time, endTime: end.time,
+    date: start.date, startTime: start.time, endTime: end.time,
     contacted: false, action: 'confirmed', decisionNotes: '', acceptCaution: false, email: request.email || '',
   });
   const [busy, setBusy] = useState(false);
@@ -34,17 +36,27 @@ function RequestReview({ request, organizations, schedules, assessmentFor, rende
   const inFlight = useRef(false);
   const formRoot = useRef(null);
   const feedback = useFormFeedback({
-    organization: { label: 'Organization', serverTerms: ['organization'] }, email: { label: 'Confirmation email', serverTerms: ['email'] },
-    date: { label: 'Agreed date' }, startTime: { label: 'Start time', aliases: ['start_at'], serverTerms: ['future'] },
+    email: { label: 'Confirmation email', serverTerms: ['email'] },
+    date: { label: 'New date' }, startTime: { label: 'Start time', aliases: ['start_at'], serverTerms: ['future'] },
     endTime: { label: 'End time', aliases: ['end_at'] }, contacted: { label: 'Requester agreement' },
     acceptCaution: { label: 'Schedule warnings' }, decisionNotes: { label: 'Reason', aliases: ['decision_notes'] },
   });
   useEffect(() => {
-    formRoot.current?.closest('.modal-card')?.scrollTo(0, 0);
+    formRoot.current?.closest('.modal-content')?.scrollTo(0, 0);
     formRoot.current?.querySelector('select')?.focus({ preventScroll: true });
   }, []);
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.type === 'checkbox' ? event.target.checked : event.target.value, ...(event.target.name === 'date' || event.target.name === 'startTime' || event.target.name === 'endTime' ? { acceptCaution: false } : {}) }));
-  const window = { start_at: `${form.date}T${form.startTime}:00+08:00`, end_at: `${form.date}T${form.endTime}:00+08:00` };
+  const update = (event) => {
+    const { name, type, checked, value } = event.target;
+    if (name === 'action') { feedback.clear(); setError(''); }
+    setForm((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value,
+      ...(['action', 'date', 'startTime', 'endTime'].includes(name) ? { acceptCaution: false, contacted: false } : {}),
+    }));
+  };
+  const rescheduling = form.action === 'rescheduled';
+  const confirming = form.action !== 'declined';
+  const window = rescheduling
+    ? { start_at: `${form.date}T${form.startTime}:00+08:00`, end_at: `${form.date}T${form.endTime}:00+08:00` }
+    : { start_at: request.start_at, end_at: request.end_at };
   const planting = isPlantingAppointment(request);
   const advice = planting ? assessmentFor(window) : null;
   const conflicts = schedules.filter((schedule) => !['cancelled', 'completed'].includes(schedule.status)
@@ -56,49 +68,67 @@ function RequestReview({ request, organizations, schedules, assessmentFor, rende
     if (inFlight.current) return;
     setError('');
     if (!feedback.validate()) return;
-    if (form.action === 'confirmed') {
-      if (!form.organization.trim() || !form.date || !form.startTime || !form.endTime || form.endTime <= form.startTime) {
+    if (confirming) {
+      if (rescheduling && (!form.date || !form.startTime || !form.endTime || form.endTime <= form.startTime)) {
         feedback.reject({ endTime: 'Choose an end time later than the start time on the same day.' }); return;
       }
-      if (!isFutureTime(window.start_at)) { feedback.reject({ startTime: 'Choose an agreed date and time in the future.' }); return; }
+      if (!isFutureTime(window.start_at)) {
+        if (rescheduling) feedback.reject({ startTime: 'Choose a new date and time in the future.' });
+        else setError('The requested time has passed. Choose “Reschedule and confirm” to agree on a new time.');
+        return;
+      }
       if (!form.contacted) { feedback.reject({ contacted: 'Contact the requester and agree on the date and time before confirming.' }); return; }
       if (needsCaution && !form.acceptCaution) { feedback.reject({ acceptCaution: 'Review and acknowledge the schedule warnings before confirming.' }); return; }
-    } else if (!form.decisionNotes.trim()) { feedback.reject({ decisionNotes: 'Enter a reason for declining or cancelling this request.' }); return; }
-    const organization = organizations.find((item) => item.name.toLowerCase() === form.organization.trim().toLowerCase());
+    } else if (!form.decisionNotes.trim()) { feedback.reject({ decisionNotes: 'Enter a reason for declining this request.' }); return; }
+    const organization = organizations.find((item) => item.name.toLowerCase() === request.organization.trim().toLowerCase());
     inFlight.current = true;
     setBusy(true);
     try {
       await requestJson(`/api/like-appointments/${request.id}/review`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          action: form.action, contacted: form.contacted, decision_notes: form.decisionNotes.trim() || null,
-          ...(form.action === 'confirmed' ? { email: form.email.trim() } : {}),
-          ...(form.action === 'confirmed' ? { ...window, organization: organization?.name || form.organization.trim(), organization_id: organization?.id || null } : {}),
+          action: confirming ? 'confirmed' : 'declined', contacted: form.contacted, decision_notes: form.decisionNotes.trim() || null,
+          ...(confirming && !request.email ? { email: form.email.trim() } : {}),
+          ...(confirming ? { organization: organization?.name || request.organization.trim(), organization_id: organization?.id || null } : {}),
+          ...(rescheduling ? window : {}),
         }),
       });
-      onSaved(form.action === 'confirmed' ? 'Appointment confirmed and recorded in Scheduling. The confirmation email is queued for delivery.' : `Website request ${form.action}.`);
+      onSaved(confirming ? 'Appointment confirmed and recorded in Scheduling. The confirmation email is queued for delivery.' : 'Website request declined.');
     } catch (issue) { if (!feedback.fromServer(issue)) setError(issue.message); }
     finally { inFlight.current = false; setBusy(false); }
   };
 
-  return <Modal open title={`Review website request · ${request.reference}`} variant="info" className="modal-card-wide" busy={busy}
-    confirmLabel={form.action === 'confirmed' ? 'Confirm and create schedule' : form.action === 'declined' ? 'Decline request' : 'Cancel request'} onConfirm={save} onCancel={onClose}>
+  return createPortal(<Modal open title="Review website request" variant="info" className="modal-card-wide website-review-dialog" busy={busy}
+    cancelLabel="Close" confirmLabel={rescheduling ? 'Confirm new schedule' : confirming ? 'Confirm appointment' : 'Decline request'} onConfirm={save} onCancel={onClose}>
     <form className="website-review" noValidate onChangeCapture={feedback.onChange} aria-busy={busy} ref={formRoot} onSubmit={save}>
-      <dl className="website-request-details"><div><dt>Contact person</dt><dd>{request.contact_name}</dd></div><div><dt>Phone</dt><dd><a href={`tel:${request.phone.replace(/[^+\d]/g, '')}`}>{request.phone}</a></dd></div>{request.email ? <div><dt>Email</dt><dd><a href={`mailto:${request.email}`}>{request.email}</a></dd></div> : null}<div><dt>Appointment type</dt><dd>{appointmentTypeLabel(request.appointment_type)}</dd></div><div><dt>Activity</dt><dd>{request.title}</dd></div><div><dt>Participants</dt><dd>{request.participants}</dd></div><div><dt>Requested time</dt><dd>{formatTime(request.start_at)} – {manilaParts(request.end_at).time} (Philippine time)</dd></div></dl>
-      {request.notes ? <p className="website-request-notes">{request.notes}</p> : null}
+      <p className="website-review-reference">{request.reference}</p>
+      <dl className="website-request-details">
+        <div><dt>Organization</dt><dd>{request.organization}</dd></div>
+        <div><dt>Contact person</dt><dd>{request.contact_name}</dd></div>
+        <div><dt>Phone</dt><dd><a href={`tel:${request.phone.replace(/[^+\d]/g, '')}`}>{request.phone}</a></dd></div>
+        <div><dt>Email</dt><dd>{request.email ? <a href={`mailto:${request.email}`}>{request.email}</a> : 'Not supplied'}</dd></div>
+        <div><dt>Appointment type</dt><dd>{appointmentTypeLabel(request.appointment_type)}</dd></div>
+        <div><dt>Participants</dt><dd>{request.participants}</dd></div>
+        <div className="website-request-detail-wide"><dt>Activity</dt><dd>{request.title}</dd></div>
+        <div className="website-request-detail-wide"><dt>Requested schedule</dt><dd>{formatTime(request.start_at)} – {formatEndTime(request.end_at)} <small>(Philippine time)</small></dd></div>
+      </dl>
+      {request.notes ? <div className="website-request-notes"><strong>Requester notes</strong><p>{request.notes}</p></div> : null}
       <FormErrorSummary feedback={feedback} />
       <FormMessage error={error} loading={busy ? 'Saving the decision…' : ''} onRetry={save} busy={busy} />
-      <label>Decision<select name="action" disabled={busy} value={form.action} onChange={(event) => { feedback.clear(); update(event); }}><option value="confirmed">Confirm appointment</option><option value="declined">Decline request</option><option value="cancelled">Cancel request</option></select></label>
-      {form.action === 'confirmed' ? <>
-        <label>Organization<input disabled={busy} {...feedback.props('organization')} value={form.organization} onChange={update} list="website-request-organizations" maxLength={200} required /><datalist id="website-request-organizations">{organizations.map((item) => <option key={item.id} value={item.name} />)}</datalist><small>Select a registered organization or enter the agreed name to register it on approval.</small><FieldError feedback={feedback} field="organization" /></label>
-        <label>Confirmation email<input disabled={busy} {...feedback.props('email')} type="email" value={form.email} onChange={update} required maxLength={254} /><small>Confirm this address with the requester. The agreed schedule{planting ? ' and planter access details' : ''} will be sent here.</small><FieldError feedback={feedback} field="email" /></label>
-        <div className="website-review-times"><label>Agreed date<input disabled={busy} {...feedback.props('date')} type="date" value={form.date} onChange={update} required /><FieldError feedback={feedback} field="date" /></label><label>Start time<input disabled={busy} {...feedback.props('startTime')} type="time" value={form.startTime} onChange={update} required /><FieldError feedback={feedback} field="startTime" /></label><label>End time<input disabled={busy} {...feedback.props('endTime')} type="time" value={form.endTime} onChange={update} required /><FieldError feedback={feedback} field="endTime" /></label></div>
+      <label>Decision<select name="action" disabled={busy} value={form.action} onChange={update}><option value="confirmed">Confirm requested schedule</option><option value="rescheduled">Reschedule and confirm</option><option value="declined">Decline request</option></select></label>
+      {confirming ? <>
+        {rescheduling ? <fieldset className="website-review-reschedule" disabled={busy}>
+          <legend>New schedule</legend>
+          <p>Agree on a new time with the requester before confirming.</p>
+          <div className="website-review-times"><label>New date<input {...feedback.props('date')} type="date" value={form.date} onChange={update} required /><FieldError feedback={feedback} field="date" /></label><label>Start time<input {...feedback.props('startTime')} type="time" value={form.startTime} onChange={update} required /><FieldError feedback={feedback} field="startTime" /></label><label>End time<input {...feedback.props('endTime')} type="time" value={form.endTime} onChange={update} required /><FieldError feedback={feedback} field="endTime" /></label></div>
+        </fieldset> : <p className="website-review-hint">Confirmation keeps the requested date and time.</p>}
+        {!request.email ? <label>Confirmation email<input disabled={busy} {...feedback.props('email')} type="email" value={form.email} onChange={update} required maxLength={254} /><small>This older request has no email address. Obtain it from the requester to send their confirmation{planting ? ' and planter codes' : ''}.</small><FieldError feedback={feedback} field="email" /></label> : null}
         <div className="website-request-advice">{planting ? <>{renderAdvice(advice)}<p>{advice.reason}</p></> : <p>Check staff availability and site conditions for this {appointmentTypeLabel(request.appointment_type).toLowerCase()}.</p>}{conflicts.length ? <p><strong>{conflicts.length} existing {conflicts.length === 1 ? 'schedule overlaps' : 'schedules overlap'} this time.</strong> Check staff and site availability.</p> : null}</div>
         {needsCaution ? <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('acceptCaution')} checked={form.acceptCaution} onChange={update} /><span>I reviewed the {planting ? 'tide and ' : ''}schedule warnings and assessed whether this activity can proceed.<FieldError feedback={feedback} field="acceptCaution" /></span></label> : null}
         <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('contacted')} checked={form.contacted} onChange={update} /><span>I contacted the requester and they agreed to this date and time.<FieldError feedback={feedback} field="contacted" /></span></label>
       </> : null}
-      <label>{form.action === 'confirmed' ? 'Coordination notes (optional)' : 'Reason (required)'}<textarea disabled={busy} {...feedback.props('decisionNotes')} value={form.decisionNotes} onChange={update} maxLength={2000} rows={3} required={form.action !== 'confirmed'} /><FieldError feedback={feedback} field="decisionNotes" /></label>
+      <label>{confirming ? 'Review notes (optional)' : 'Reason (required)'}<textarea disabled={busy} {...feedback.props('decisionNotes')} value={form.decisionNotes} onChange={update} maxLength={2000} rows={2} required={!confirming} /><FieldError feedback={feedback} field="decisionNotes" /></label>
     </form>
-  </Modal>;
+  </Modal>, document.body);
 }
 
 export default function WebsiteRequests({ token, reloadKey, organizations, schedules, assessmentFor, renderAdvice, onRequestsChange, reviewRequest, onReview, onClose, onChanged }) {

@@ -181,14 +181,25 @@ def test_confirmation_requires_contact_and_failed_approval_leaves_no_schedule(wo
     assert workspace.execute(text('SELECT status FROM like_appointment_requests')).scalar() == 'pending'
 
 
-@pytest.mark.parametrize('action', ['declined', 'cancelled'])
-def test_decline_and_cancel_require_reason_and_create_no_schedule(workspace, action):
+def test_decline_requires_reason_and_creates_no_schedule(workspace):
     service.submit_appointment(values(), 'test-peer')
     with pytest.raises(ValueError, match='reason'):
-        service.review_appointment(request_id(workspace), {'action': action}, 1)
-    reviewed = service.review_appointment(request_id(workspace), {'action': action, 'decision_notes': 'Agreed another activity instead.'}, 1)
-    assert reviewed['status'] == action
+        service.review_appointment(request_id(workspace), {'action': 'declined'}, 1)
+    reviewed = service.review_appointment(request_id(workspace), {'action': 'declined', 'decision_notes': 'Agreed another activity instead.'}, 1)
+    assert reviewed['status'] == 'declined'
     assert workspace.execute(text('SELECT count(*) FROM planting_schedules')).scalar() == 0
+
+
+def test_confirming_requested_window_preserves_submitted_details(workspace):
+    body = values(appointment_type='field_visit')
+    service.submit_appointment(body, 'test-peer')
+    original = workspace.execute(text('SELECT organization, email, title, start_at, end_at, notes FROM like_appointment_requests')).one()
+    reviewed = service.review_appointment(request_id(workspace), {'action': 'confirmed', 'contacted': True}, 1)
+    schedule = planting.get_planting_schedule(reviewed['schedule_id'])
+    assert planting._parse_dashboard_datetime(schedule['start_at']) == body['start_at']
+    assert planting._parse_dashboard_datetime(schedule['end_at']) == body['end_at']
+    assert schedule['title'] == body['title']
+    assert workspace.execute(text('SELECT organization, email, title, start_at, end_at, notes FROM like_appointment_requests')).one() == original
 
 
 def test_rate_limit_preserves_successful_requests_and_retry_receipt(workspace):
