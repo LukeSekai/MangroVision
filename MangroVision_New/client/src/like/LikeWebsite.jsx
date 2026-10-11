@@ -3,7 +3,7 @@ import { bookingErrors, bookingPayload, manilaToday, submitBooking } from './boo
 import useFormFeedback from '../utils/useFormFeedback';
 import { serverFieldErrors } from '../utils/formValidation';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
-import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes';
+import { APPOINTMENT_TYPES } from '../utils/appointmentTypes';
 import LikeMapDialog from './LikeMapDialog';
 
 function Icon({ name = 'leaf', size = 24, ...props }) {
@@ -69,7 +69,7 @@ const pastActivities = [
 ].map((activity) => ({ ...activity, title: activity.photo ? activity.photo.replace(/\.[^.]+$/, '') : 'Activity title to be added' }));
 
 const initialForm = {
-  organization: '', contact_name: '', phone: '', email: '', title: '',
+  organization: '', contact_name: '', phone: '', email: '',
   appointment_type: '',
   date: '', start_time: '', end_time: '', participants: '', notes: '', consent: false, website: '',
 };
@@ -78,7 +78,7 @@ const bookingFields = {
   contact_name: { label: 'Contact person' }, phone: { label: 'Phone number' }, email: { label: 'Email' },
   date: { label: 'Preferred date' }, start_time: { label: 'Start time', aliases: ['start_at'] },
   end_time: { label: 'End time', aliases: ['end_at'] }, participants: { label: 'Participants' },
-  title: { label: 'Activity name' }, notes: { label: 'Notes' }, consent: { label: 'Consent' },
+  notes: { label: 'Notes' }, consent: { label: 'Consent' },
 };
 
 export function AppointmentForm() {
@@ -168,10 +168,7 @@ export function AppointmentForm() {
           <label>End time <span>*</span><input disabled={busy} {...feedback.props('end_time')} type="time" value={form.end_time} onChange={update} required /><FieldError feedback={feedback} field="end_time" /></label>
         </div>
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
-        <div className="like-form-row">
-          <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
-          <label>Activity name <small>optional</small><input disabled={busy} {...feedback.props('title')} value={form.title} onChange={update} maxLength={200} placeholder={appointmentTypeLabel(form.appointment_type)} /><FieldError feedback={feedback} field="title" /></label>
-        </div>
+        <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
         <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>
         <label className="like-honeypot" aria-hidden="true">Website<input name="website" value={form.website} onChange={update} tabIndex={-1} autoComplete="off" /></label>
         <label className="like-consent"><input disabled={busy} {...feedback.props('consent')} type="checkbox" checked={form.consent} onChange={update} required /><span>I understand this is a request, subject to LGU confirmation. LIKE staff may use my contact details to coordinate this appointment.</span><FieldError feedback={feedback} field="consent" /></label>

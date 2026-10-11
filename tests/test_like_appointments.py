@@ -120,6 +120,72 @@ def test_public_receipt_and_timezone(api, monkeypatch):
     assert captured['start_at'].utcoffset() == timedelta(hours=8)
 
 
+@pytest.mark.parametrize('appointment_type,label', [
+    ('field_visit', 'Field visit'), ('clean_up_drive', 'Clean-up drive'), ('tree_planting', 'Tree planting'),
+])
+@pytest.mark.parametrize('has_custom_title', [False, True])
+def test_public_name_is_generated_from_type(api, monkeypatch, appointment_type, label, has_custom_title):
+    client, routes, _ = api
+    captured = {}
+    def submit(values, peer):
+        captured.update(values)
+        return {'reference': 'LIKE-TEST'}
+    monkeypatch.setattr(routes, 'submit_appointment', submit)
+    body = payload()
+    body['appointment_type'] = appointment_type
+    if has_custom_title:
+        body['title'] = 'Cached arbitrary activity name'
+    else:
+        body.pop('title')
+    assert client.post('/api/public/like/appointments', json=body).status_code == 201
+    assert captured['title'] == label
+
+
+def manual_payload(**changes):
+    public = payload()
+    return {**{key: public[key] for key in ('organization', 'contact_name', 'phone', 'email', 'appointment_type', 'start_at', 'end_at', 'notes')},
+            'expected_planters': public['participants'], 'status': 'confirmed', **changes}
+
+
+@pytest.mark.parametrize('appointment_type,label', [
+    ('field_visit', 'Field visit'), ('clean_up_drive', 'Clean-up drive'), ('tree_planting', 'Tree planting'),
+])
+def test_manual_input_matches_public_data_and_generates_name(api, monkeypatch, appointment_type, label):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    captured = {}
+    def create(**values):
+        captured.update(values)
+        return {'id': 1}
+    monkeypatch.setattr(staff, 'create_planting_schedule', create)
+    body = manual_payload(appointment_type=appointment_type, title='Ignored custom title')
+    response = client.post('/api/planting-schedules', json=body)
+    assert response.status_code == 201
+    assert captured['appointment_type'] == appointment_type and captured['title'] == label
+    assert captured['contact'] == f"{body['contact_name']}, {body['phone']}"
+    assert captured['notification_email'] == body['email']
+    assert captured['expected_planters'] == body['expected_planters']
+    assert captured['inspection_interval_days'] == 14
+    assert captured['start_at'] == body['start_at'] and captured['end_at'] == body['end_at']
+
+
+@pytest.mark.parametrize('changes', [
+    {'appointment_type': 'other'}, {'appointment_type': None}, {'contact_name': None}, {'contact_name': ' '},
+    {'phone': None}, {'phone': 'abcdefghi'}, {'phone': '123456'}, {'email': None}, {'email': 'broken'},
+    {'expected_planters': None}, {'expected_planters': 0}, {'expected_planters': 10001}, {'expected_planters': 1.5},
+    {'expected_planters': True}, {'organization': ' '},
+    {'start_at': '2020-01-01T08:00:00+08:00', 'end_at': '2020-01-01T09:00:00+08:00'},
+    {'start_at': '2035-01-01T08:00:00+08:00', 'end_at': '2035-01-01T07:00:00+08:00'},
+    {'start_at': '2035-01-01T08:00:00+08:00', 'end_at': '2035-01-02T09:00:00+08:00'},
+    {'appointment_type': 'field_visit', 'expected_seedlings': 10},
+])
+def test_invalid_manual_inputs_never_reach_storage(api, monkeypatch, changes):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'create_planting_schedule', lambda **kwargs: pytest.fail('Invalid input reached storage'))
+    assert client.post('/api/planting-schedules', json=manual_payload(**changes)).status_code in (400, 422)
+
+
 @pytest.mark.parametrize('changes', [
     {'consent': False}, {'participants': 0}, {'participants': 1.5}, {'participants': 10001},
     {'phone': 'abcdefghi'}, {'email': 'invalid-email'}, {'email': ''}, {'email': None}, {'organization': '   '},

@@ -7267,11 +7267,15 @@ def create_planting_schedule(
     expected_seedlings: Optional[int] = None,
     status: str = "requested",
     notes: Optional[str] = None,
+    appointment_type: str = 'tree_planting',
     created_by_user_id: Optional[int] = None,
     _connection: Any = None,
 ) -> dict:
     """Create a schedule; a supplied connection leaves the transaction to its caller."""
     clean_organization = _clean_organization_name(organization)
+    from mangrovision_db.appointment_email import APPOINTMENT_TYPES
+    if appointment_type not in APPOINTMENT_TYPES:
+        raise ValueError('Choose a field visit, clean-up drive, or tree planting appointment.')
     clean_cadence = _clean_positive_interval(inspection_interval_days)
     if clean_cadence != 14:
         raise ValueError("Plant checks are fixed at 14-day intervals.")
@@ -7302,14 +7306,14 @@ def create_planting_schedule(
             INSERT INTO planting_schedules (
                 project_site_id, organization, organization_id,
                 inspection_interval_days, contact, notification_email, title, start_at, end_at,
-                expected_planters, expected_seedlings, status, notes,
+                expected_planters, expected_seedlings, status, notes, appointment_type,
                 created_by_user_id, updated_by_user_id, created_at, updated_at
-            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             canonical["name"], int(canonical["id"]), clean_cadence,
             clean_contact, clean_email, clean_title,
             clean_start.isoformat(timespec="seconds"), clean_end.isoformat(timespec="seconds"),
-            clean_planters, clean_seedlings, clean_status, clean_notes,
+            clean_planters, clean_seedlings, clean_status, clean_notes, appointment_type,
             created_by_user_id, created_by_user_id, now, now,
         ))
         schedule_id = int(cursor.lastrowid)

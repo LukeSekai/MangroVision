@@ -1001,3 +1001,13 @@
 
 .schedule-tide-caution { text-align: left; line-height: 1.6; }
 .schedule-tide-caution p + p { margin-top: 12px; }
+
+.modal-card.modal-card-wide.schedule-form-modal { max-height: calc(100dvh - 40px); display: flex; flex-direction: column; overflow: hidden; }
+.schedule-form-modal .modal-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.schedule-form-modal .modal-icon { display: none; }
+.schedule-form-modal .modal-title { padding-right: 24px; text-align: left; }
+.schedule-form-modal .modal-actions { flex-shrink: 0; border-top: 1px solid var(--border-light, #e2e8f0); }
+.schedule-form-modal input[readonly] { background: #f1f5f9; color: #475569; }
+@media (max-width: 620px) {
+  .modal-card.modal-card-wide.schedule-form-modal { max-height: calc(100dvh - 20px); }
+}

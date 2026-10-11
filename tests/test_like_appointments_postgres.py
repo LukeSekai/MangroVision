@@ -198,7 +198,7 @@ def test_confirming_requested_window_preserves_submitted_details(workspace):
     schedule = planting.get_planting_schedule(reviewed['schedule_id'])
     assert planting._parse_dashboard_datetime(schedule['start_at']) == body['start_at']
     assert planting._parse_dashboard_datetime(schedule['end_at']) == body['end_at']
-    assert schedule['title'] == body['title']
+    assert schedule['title'] == delivery.APPOINTMENT_TYPES[body['appointment_type']]
     assert workspace.execute(text('SELECT organization, email, title, start_at, end_at, notes FROM like_appointment_requests')).one() == original
 
 
@@ -218,7 +218,33 @@ def test_manual_schedule_creation_still_works(workspace):
     schedule = planting.create_planting_schedule(organization=body['organization'], inspection_interval_days=14,
         title='Staff-assisted planting', start_at=body['start_at'], end_at=body['end_at'], created_by_user_id=1)
     assert schedule['source'] == 'staff' and schedule['status'] == 'requested'
+    assert schedule['title'] == 'Staff-assisted planting'
     assert workspace.execute(text('SELECT count(*) FROM like_appointment_requests')).scalar() == 0
+
+
+@pytest.mark.parametrize('appointment_type', ['field_visit', 'clean_up_drive', 'tree_planting'])
+def test_manual_appointment_type_and_contact_survive_storage_and_email(workspace, appointment_type):
+    body = values()
+    label = delivery.APPOINTMENT_TYPES[appointment_type]
+    schedule = planting.create_planting_schedule(
+        organization=body['organization'], inspection_interval_days=14, title=label,
+        appointment_type=appointment_type, contact=f"{body['contact_name']}, {body['phone']}",
+        notification_email=body['email'], expected_planters=body['participants'],
+        start_at=body['start_at'], end_at=body['end_at'], status='confirmed', created_by_user_id=1,
+    )
+    stored = planting.get_planting_schedule(schedule['id'])
+    assert stored['appointment_type'] == appointment_type and stored['title'] == label
+    assert stored['contact'] == f"{body['contact_name']}, {body['phone']}"
+    assert stored['notification_email'] == body['email'] and stored['expected_planters'] == 20
+    assert stored['source'] == 'staff'
+    messages = []
+    assert staff_delivery.send_pending_schedule_emails(sender=lambda *args: messages.append(args))['sent'] == 1
+    assert messages[0][0] == body['email'] and label in messages[0][2]
+    assert workspace.execute(text('SELECT count(*) FROM like_appointment_requests')).scalar() == 0
+    if appointment_type != 'tree_planting':
+        assert workspace.execute(text('SELECT count(*) FROM planters')).scalar() == 0
+        assert 'Signed-in planters' not in messages[0][2]
+        assert 'Planting area:' not in messages[0][2]
 
 
 def staff_activity(**changes):

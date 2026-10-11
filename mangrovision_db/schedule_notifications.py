@@ -62,7 +62,9 @@ def activity_message(current, updated, kind):
     if kind == 'cancellation':
         lines.extend(['', 'This activity will not proceed at the time above. Contact LGU staff to arrange another activity.'])
     else:
-        lines.extend(['', 'Use the latest schedule above. Signed-in planters can also view the activity and tide advisory in MangroVision.',
+        viewing = (' Signed-in planters can also view the activity and tide advisory in MangroVision.'
+                   if updated.get('appointment_type', 'tree_planting') == 'tree_planting' else '')
+        lines.extend(['', f'Use the latest schedule above.{viewing}',
                       'Contact LGU staff if these arrangements need to change.'])
     details = [('Organization', updated['organization']), ('Current schedule', time_window(updated)),
                ('Status', updated['status'].replace('_', ' ').capitalize())]

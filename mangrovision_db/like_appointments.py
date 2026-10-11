@@ -72,6 +72,7 @@ def submit_appointment(values: dict, peer: str) -> dict:
     values = dict(values)
     if values.get('appointment_type') not in APPOINTMENT_TYPES:
         raise ValueError('Choose a field visit, clean-up drive, or tree planting appointment.')
+    values['title'] = APPOINTMENT_TYPES[values['appointment_type']]
     submission_key = str(values.pop('submission_key'))
     values.pop('website', None)
     fingerprint = hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
@@ -204,11 +205,11 @@ def review_appointment(request_id: int, values: dict, user_id: int) -> dict:
                 organization_id=values.get('organization_id'), inspection_interval_days=14,
                 title=current['title'], start_at=start, end_at=end, contact=contact,
                 expected_planters=current['participants'], status='confirmed',
+                appointment_type=current['appointment_type'],
                 notes=current['notes'], created_by_user_id=user_id, _connection=conn,
             )
             schedule_id = schedule['id']
-            conn.execute("UPDATE planting_schedules SET source = 'website', appointment_type = ? WHERE id = ?",
-                         (current['appointment_type'], schedule_id))
+            conn.execute("UPDATE planting_schedules SET source = 'website' WHERE id = ?", (schedule_id,))
             login = _planter_login(conn, schedule, current, user_id) if current['appointment_type'] == 'tree_planting' else None
             queue_confirmation(conn, current, schedule, email, login=login)
             conn.execute('UPDATE like_appointment_requests SET email = ? WHERE id = ?', (email, request_id))

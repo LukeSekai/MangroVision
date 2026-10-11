@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import {
   CartesianGrid,
@@ -23,7 +24,9 @@ import {
 } from '../utils/plantingTides';
 import { useAuthStore } from '../stores/authStore';
 import { groupCalendarSchedules } from '../utils/calendarScheduleGroups';
-import { appointmentTypeLabel, isPlantingAppointment } from '../utils/appointmentTypes';
+import { APPOINTMENT_TYPES, appointmentTypeLabel, isPlantingAppointment } from '../utils/appointmentTypes';
+import { bookingErrors } from '../like/booking';
+import { scheduleContactFields, scheduleContactSummary } from '../utils/scheduleContact';
 import './Scheduling.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -229,14 +232,13 @@ function makeScheduleForm(schedule = null) {
   return {
     organizationId: String(schedule?.organization_id ?? ''),
     organizationName: schedule?.organization_name ?? '',
-    title: schedule?.title ?? '',
-    contact: schedule?.contact ?? '',
-    notificationEmail: schedule?.notification_email ?? '',
-    date: schedule?.scheduled_date ?? (startAt && !Number.isNaN(startAt.getTime()) ? dateInManila(startAt) : ''),
-    startTime: schedule?.start_time ?? (startAt && !Number.isNaN(startAt.getTime())
+    appointmentType: schedule ? schedule.appointment_type || 'tree_planting' : '',
+    ...scheduleContactFields(schedule || {}),
+    date: schedule?.scheduled_date || (startAt && !Number.isNaN(startAt.getTime()) ? dateInManila(startAt) : ''),
+    startTime: schedule?.start_time || (startAt && !Number.isNaN(startAt.getTime())
       ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIMEZONE }).format(startAt)
       : ''),
-    endTime: schedule?.end_time ?? (endAt && !Number.isNaN(endAt.getTime())
+    endTime: schedule?.end_time || (endAt && !Number.isNaN(endAt.getTime())
       ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIMEZONE }).format(endAt)
       : ''),
     expectedParticipants: schedule?.expected_participants ?? '',
@@ -591,13 +593,14 @@ export default function Scheduling() {
   const [formError, setFormError] = useState('');
   const feedback = useFormFeedback({
     organizationName: { label: 'Organization', aliases: ['organization', 'organization_id'], serverTerms: ['organization'] },
-    title: { label: 'Activity title' },
-    contact: { label: 'Contact' },
-    notificationEmail: { label: 'Notification email', aliases: ['notification_email'], serverTerms: ['notification email'] },
+    appointmentType: { label: 'Appointment type', aliases: ['appointment_type'], serverTerms: ['appointment type'] },
+    contactName: { label: 'Contact person', aliases: ['contact_name'], serverTerms: ['contact person'] },
+    phone: { label: 'Phone number', serverTerms: ['phone number'] },
+    email: { label: 'Email', aliases: ['notification_email'], serverTerms: ['email address', 'notification email'] },
     date: { label: 'Date' },
     startTime: { label: 'Start time', aliases: ['start_time', 'start_at'] },
     endTime: { label: 'End time', aliases: ['end_time', 'end_at'], serverTerms: ['end time', 'end_time'], validate: (value) => value && form.startTime && value <= form.startTime ? 'Choose an end time later than the start time on the same day.' : '' },
-    expectedParticipants: { label: 'Expected participants', aliases: ['expected_planters'] },
+    expectedParticipants: { label: 'Participants', aliases: ['expected_planters', 'expected_participants'], serverTerms: ['participant count'] },
     seedlings: { label: 'Expected seedlings', aliases: ['expected_seedlings'] },
     status: { label: 'Activity status' },
     notes: { label: 'Notes' },
@@ -614,6 +617,8 @@ export default function Scheduling() {
   const [assignmentSiteId, setAssignmentSiteId] = useState('');
   const [assignmentError, setAssignmentError] = useState('');
   const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const formPlanting = form.appointmentType === 'tree_planting';
+  const originalContact = scheduleContactFields(editingSchedule || {});
 
   useEffect(() => {
     if (new URLSearchParams(location.search).get('requests') !== 'pending') return undefined;
@@ -710,7 +715,7 @@ export default function Scheduling() {
     return forecastPlantingGuide({ payload: tidePayload, now, allowOutdated: true });
   }, [tidePayload, now]);
   useEffect(() => {
-    if (!formOpen || saving || editingSchedule?.planting_started || !isPlantingAppointment(editingSchedule || {})) return;
+    if (!formOpen || saving || editingSchedule?.planting_started || !formPlanting) return;
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const assessment = assessSelectedTime(selection, tidePayload, now);
     if (assessment.status !== 'unsafe') {
@@ -727,7 +732,7 @@ export default function Scheduling() {
       setTimeCaution({ ...selection, assessment });
     });
     return () => { cancelled = true; };
-  }, [formOpen, saving, editingSchedule, tidePayload, now, form.date, form.startTime, form.endTime]);
+  }, [formOpen, saving, editingSchedule, formPlanting, tidePayload, now, form.date, form.startTime, form.endTime]);
   const tides = useMemo(() => normalizeTideEvents(tidePayload), [tidePayload]);
   const tidesByDate = useMemo(() => {
     const grouped = new Map();
@@ -826,7 +831,7 @@ export default function Scheduling() {
         : saved?.email_update ? (saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the organization.'
           : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the organization.'
             : ' A confirmation email is queued for the organization.') : '';
-      setNotice((request.method === 'PUT' ? 'Planting schedule updated.' : 'Planting schedule created. Once confirmed, you can choose a planting area for it.') + emailNotice);
+      setNotice((request.method === 'PUT' ? 'Appointment updated.' : 'Appointment created.') + emailNotice);
       setFormOpen(false);
       setEditingSchedule(null);
       setMonth(request.body.date.slice(0, 7));
@@ -850,7 +855,17 @@ export default function Scheduling() {
       setFormError('Sign in as LGU staff to save planting schedules.');
       return;
     }
-    if (!feedback.validate()) return;
+    const commonErrors = bookingErrors({
+      organization: form.organizationName, contact_name: form.contactName, phone: form.phone, email: form.email,
+      appointment_type: form.appointmentType, date: form.date, start_time: form.startTime, end_time: form.endTime,
+      participants: form.expectedParticipants, consent: true,
+    });
+    const fieldNames = { organization: 'organizationName', contact_name: 'contactName', appointment_type: 'appointmentType',
+      start_time: 'startTime', end_time: 'endTime', participants: 'expectedParticipants' };
+    const errors = Object.fromEntries(Object.entries(commonErrors)
+      .filter(([field]) => !editingSchedule || (['phone', 'email'].includes(field) && form[field].trim()))
+      .map(([field, message]) => [fieldNames[field] || field, message]));
+    if (!feedback.validate(errors)) return;
     const organizationName = form.organizationName.trim();
     const organization = organizations.find((option) => (
       option.name.trim().toLocaleLowerCase() === organizationName.toLocaleLowerCase()
@@ -861,7 +876,7 @@ export default function Scheduling() {
     }
     const intervalDays = editingSchedule?.inspection_interval_days ?? 14;
     const participants = form.expectedParticipants === '' ? null : Number(form.expectedParticipants);
-    const seedlings = form.seedlings === '' ? null : Number(form.seedlings);
+    const seedlings = !formPlanting || form.seedlings === '' ? null : Number(form.seedlings);
     if (participants !== null && (!Number.isInteger(participants) || participants < 0)) {
       feedback.reject({ expectedParticipants: 'Enter a whole number of 0 or more, or leave this blank.' });
       return;
@@ -873,7 +888,7 @@ export default function Scheduling() {
     const selection = { date: form.date, startTime: form.startTime, endTime: form.endTime };
     const timeAssessment = assessSelectedTime(selection, tidePayload, now);
     const unsafeKey = selectionKey(selection);
-    if (!editingSchedule?.planting_started && isPlantingAppointment(editingSchedule || {}) && requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
+    if (!editingSchedule?.planting_started && formPlanting && requiresTimeCautionBeforeSave(selection, timeAssessment, acceptedUnsafeTime.current)) {
       lastWarnedTime.current = unsafeKey;
       setTimeCaution({ ...selection, assessment: timeAssessment });
       return;
@@ -881,12 +896,19 @@ export default function Scheduling() {
     const body = {
       ...(organization ? { organization_id: organization.id } : {}),
       organization: organization?.name || organizationName,
-      title: form.title.trim(),
-      contact: form.contact.trim() || null,
-      ...(editingSchedule?.source === 'website' ? {} : { notification_email: form.notificationEmail.trim() || null }),
+      ...(editingSchedule ? {
+        contact: form.contactName === originalContact.contactName && form.phone === originalContact.phone
+          ? editingSchedule.contact || null : scheduleContactSummary(form.contactName, form.phone),
+        ...(editingSchedule.source === 'website' ? {} : { notification_email: form.email.trim() || null }),
+      } : {
+        appointment_type: form.appointmentType,
+        contact_name: form.contactName.trim(), phone: form.phone.trim(), email: form.email.trim(),
+      }),
       date: form.date,
       start_time: form.startTime,
       end_time: form.endTime,
+      start_at: `${form.date}T${form.startTime}:00+08:00`,
+      end_at: `${form.date}T${form.endTime}:00+08:00`,
       // Use the canonical API names. The response still exposes the shorter
       // aliases for display, but create/update requests should not depend on
       // alias fields that older running API processes may reject as extras.
@@ -1089,9 +1111,9 @@ export default function Scheduling() {
         }}
         onBack={() => setTimeCaution(null)} />
 
-      <Modal
-        open={formOpen && !timeCaution}
-        title={editingSchedule ? 'Edit appointment' : 'Add new planting schedule'}
+      {formOpen && createPortal(<Modal
+        open={!timeCaution}
+        title={editingSchedule ? 'Edit appointment' : 'Add appointment'}
         confirmLabel={editingSchedule ? 'Save changes' : 'Create schedule'}
         cancelLabel="Close"
         busy={saving}
@@ -1104,14 +1126,14 @@ export default function Scheduling() {
           <FormErrorSummary feedback={feedback} />
           <FormMessage error={formError} loading={saving ? 'Saving the activity…' : ''} onRetry={formError.startsWith('Could not verify whether') ? undefined : saveSchedule} busy={saving} />
           {editingSchedule?.planting_started ? <p role="status">Planting has been recorded for this activity. Planning details are locked. You can correct contact details and notes, or update progress.</p> : null}
-          {editingSchedule?.source === 'website' ? <p>Agree on revised details with the requester before saving. Changing the date, time, title, or expected participants queues an email. Cancelling queues a cancellation notice.</p> : null}
-          {editingSchedule?.source !== 'website' ? <p>Confirmed activities appear on the organization’s planter page. A notification email sends confirmations, schedule changes, and cancellations to the organization.</p> : null}
-          {isPlantingAppointment(editingSchedule || {}) ? <div className="schedule-form-assessment">
+          {editingSchedule?.source === 'website' ? <p>Agree on revised details with the requester before saving. Changing the date, time, or expected participants queues an email. Cancelling queues a cancellation notice.</p> : null}
+          {editingSchedule?.source !== 'website' ? <p>Confirmations, schedule changes, and cancellations are emailed to the contact person.</p> : null}
+          {formPlanting ? <div className="schedule-form-assessment">
             <PlantingBadge assessment={assessmentFor({ ...editingSchedule,
               start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00`,
             })} />
             <p>{assessmentFor({ ...editingSchedule, start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00` }).reason}</p>
-          </div> : <p>{appointmentTypeLabel(editingSchedule.appointment_type)}: check staff availability and site conditions with LIKE.</p>}
+          </div> : form.appointmentType ? <p>{appointmentTypeLabel(form.appointmentType)}: check staff availability and site conditions with LIKE.</p> : null}
           <div className="schedule-form-grid">
             <label>
               <span>Organization *</span>
@@ -1136,24 +1158,35 @@ export default function Scheduling() {
               {editingSchedule?.project_site_id ? <small>This activity already has a planting area, so its organization cannot be changed.</small> : null}
             </label>
             <label>
-              <span>Activity title *</span>
-              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('title')} value={form.title} maxLength="180" onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} required />
-              <FieldError feedback={feedback} field="title" />
+              <span>Appointment type *</span>
+              <select disabled={Boolean(editingSchedule)} {...feedback.props('appointmentType')} value={form.appointmentType} onChange={(event) => {
+                acceptedUnsafeTime.current = null;
+                lastWarnedTime.current = null;
+                setForm((current) => ({ ...current, appointmentType: event.target.value, seedlings: '' }));
+              }} required>
+                <option value="">Choose an appointment type</option>
+                {APPOINTMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}
+              </select>
+              <FieldError feedback={feedback} field="appointmentType" />
             </label>
             <label>
-              <span>Contact</span>
-              <input {...feedback.props('contact')} value={form.contact} maxLength="160" placeholder="Name, phone, or email" onChange={(event) => setForm((current) => ({ ...current, contact: event.target.value }))} />
-              <FieldError feedback={feedback} field="contact" />
+              <span>Contact person{!editingSchedule ? ' *' : ''}</span>
+              <input {...feedback.props('contactName')} value={form.contactName} maxLength={Math.max(100, originalContact.contactName.length)} autoComplete="name" readOnly={editingSchedule?.source === 'website'} required={!editingSchedule} onChange={(event) => setForm((current) => ({ ...current, contactName: event.target.value }))} />
+              <FieldError feedback={feedback} field="contactName" />
             </label>
-            {editingSchedule?.source !== 'website' ? <label>
-              <span>Organization notification email</span>
-              <input {...feedback.props('notificationEmail')} type="email" maxLength={254} value={form.notificationEmail} placeholder="coordinator@example.com" onChange={(event) => setForm((current) => ({ ...current, notificationEmail: event.target.value }))} />
-              <FieldError feedback={feedback} field="notificationEmail" />
-              <small>Use the address agreed with the organization. Without an email address, updates appear only on its planter page.</small>
-            </label> : null}
+            <label>
+              <span>Phone number{!editingSchedule ? ' *' : ''}</span>
+              <input {...feedback.props('phone')} type="tel" value={form.phone} minLength={editingSchedule ? undefined : 7} maxLength={Math.max(32, originalContact.phone.length)} autoComplete="tel" readOnly={editingSchedule?.source === 'website'} required={!editingSchedule} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} />
+              <FieldError feedback={feedback} field="phone" />
+            </label>
+            <label>
+              <span>Email{!editingSchedule ? ' *' : ''}</span>
+              <input {...feedback.props('email')} type="email" maxLength={254} value={form.email} autoComplete="email" readOnly={editingSchedule?.source === 'website'} required={!editingSchedule} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
+              <FieldError feedback={feedback} field="email" />
+            </label>
             <label>
               <span>Date *</span>
-              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('date')} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('date')} type="date" min={editingSchedule ? undefined : today} value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />
               <FieldError feedback={feedback} field="date" />
             </label>
             <label>
@@ -1167,11 +1200,11 @@ export default function Scheduling() {
               <FieldError feedback={feedback} field="endTime" />
             </label>
             <label>
-              <span>Expected participants</span>
-              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('expectedParticipants')} type="number" min="0" step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
+              <span>Participants{!editingSchedule ? ' *' : ''}</span>
+              <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('expectedParticipants')} type="number" min={editingSchedule ? '0' : '1'} max={editingSchedule ? undefined : '10000'} required={!editingSchedule} step="1" value={form.expectedParticipants} onChange={(event) => setForm((current) => ({ ...current, expectedParticipants: event.target.value }))} />
               <FieldError feedback={feedback} field="expectedParticipants" />
             </label>
-            {isPlantingAppointment(editingSchedule || {}) ? <><label>
+            {formPlanting ? <><label>
               <span>Expected seedlings</span>
               <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('seedlings')} type="number" min="0" step="1" value={form.seedlings} onChange={(event) => setForm((current) => ({ ...current, seedlings: event.target.value }))} />
               <FieldError feedback={feedback} field="seedlings" />
@@ -1200,7 +1233,7 @@ export default function Scheduling() {
               <FieldError feedback={feedback} field="notes" />
             </label>
           </div>
-          {form.date && isPlantingAppointment(editingSchedule || {}) ? (
+          {form.date && formPlanting ? (
             <div className="schedule-form-tides">
               <span>Tide forecast for {formatDate(`${form.date}T12:00:00+08:00`)}</span>
               {selectedDateTides.length ? selectedDateTides.map((tide) => (
@@ -1208,9 +1241,9 @@ export default function Scheduling() {
               )) : <small>High and low tide times are not available for this date yet.</small>}
             </div>
           ) : null}
-          <p className="schedule-form-footnote">{isPlantingAppointment(editingSchedule || {}) ? 'Choose a planting area after confirming the activity. ' : ''}All times are Philippine time.</p>
+          <p className="schedule-form-footnote">{formPlanting ? 'Choose a planting area after confirming the activity. ' : ''}All times are Philippine time.</p>
         </form>
-      </Modal>
+      </Modal>, document.body)}
 
       <Modal
         open={Boolean(assigningSchedule)}

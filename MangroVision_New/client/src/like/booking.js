@@ -28,7 +28,7 @@ export function bookingErrors(form, step, now = new Date()) {
       errors.start_time = 'Choose a date and time in the future.';
     }
     if (form.end_time && form.start_time && form.end_time <= form.start_time) errors.end_time = 'End time must be later than start time.';
-  if (!Number.isInteger(Number(form.participants)) || Number(form.participants) < 1 || Number(form.participants) > 10000) {
+    if (!Number.isInteger(Number(form.participants)) || Number(form.participants) < 1 || Number(form.participants) > 10000) {
       errors.participants = 'Enter a participant count between 1 and 10,000.';
     }
     if (!form.consent) errors.consent = 'Please acknowledge how your contact details will be used.';
@@ -42,7 +42,7 @@ export function bookingPayload(form, submissionKey) {
   return {
     organization: form.organization.trim(), contact_name: form.contact_name.trim(),
     phone: form.phone.trim(), email: form.email.trim(), appointment_type: form.appointment_type,
-    title: form.title.trim() || appointmentTypeLabel(form.appointment_type),
+    title: appointmentTypeLabel(form.appointment_type),
     start_at: `${form.date}T${form.start_time}:00+08:00`,
     end_at: `${form.date}T${form.end_time}:00+08:00`,
     participants: Number(form.participants), notes: form.notes.trim() || null,

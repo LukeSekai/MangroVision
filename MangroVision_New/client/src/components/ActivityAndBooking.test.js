@@ -74,6 +74,8 @@ test('a network retry keeps website inputs and reuses the same submission key', 
   await act(async () => root.render(createElement(AppointmentForm)));
   for (const [name, value] of Object.entries({ appointment_type: 'tree_planting', organization: 'Example organization', contact_name: 'Coordinator', phone: '09123456789', email: 'head@example.org' })) await change(name, value);
   await submit();
+  assert.equal(document.querySelector('[name="title"]'), null);
+  assert.doesNotMatch(document.body.textContent, /Activity name/);
   const date = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
   await submit();
   const dateControl = document.querySelector('[name="date"]');
@@ -86,6 +88,7 @@ test('a network retry keeps website inputs and reuses the same submission key', 
   await submit();
   assert.equal(requests.length, 2);
   assert.equal(requests[0].submission_key, requests[1].submission_key);
+  assert.equal(requests[0].title, 'Tree planting');
   assert.match(document.querySelector('[role="status"]').textContent, /LIKE-TEST/);
 });
 

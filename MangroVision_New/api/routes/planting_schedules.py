@@ -1,11 +1,13 @@
 """Authenticated LGU planting-activity schedule endpoints."""
 
-from typing import Any, Optional
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from mangrovision_db.activity_rules import ActivityConflict
-from mangrovision_db.appointment_email import run_delivery_cycle
+from mangrovision_db.appointment_email import APPOINTMENT_TYPES, run_delivery_cycle
 from mangrovision_db.schedule_notifications import run_schedule_delivery_cycle
 
 from planting_database import (
@@ -45,25 +47,37 @@ def _schedule_error(error: ValueError) -> HTTPException:
 
 
 class PlantingScheduleCreate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    organization: str
+    organization: str = Field(min_length=1, max_length=200)
     organization_id: Optional[int] = None
-    inspection_interval_days: int
+    inspection_interval_days: int = 14
+    appointment_type: Literal['field_visit', 'clean_up_drive', 'tree_planting'] | None = None
+    contact_name: str | None = Field(default=None, min_length=1, max_length=100)
+    phone: str | None = Field(default=None, min_length=7, max_length=32)
+    email: EmailStr | None = Field(default=None, max_length=254)
+    # Retained for existing clients. New appointments use structured contact fields.
     contact: Optional[str] = None
     notification_email: Optional[EmailStr] = None
-    title: str
+    title: str | None = Field(default=None, max_length=200)
     start_at: Optional[str] = None
     end_at: Optional[str] = None
     date: Optional[str] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
-    expected_planters: Optional[int] = None
-    expected_participants: Optional[int] = None
+    expected_planters: int | None = Field(default=None, strict=True)
+    expected_participants: int | None = Field(default=None, strict=True)
     expected_seedlings: Optional[int] = None
     seedlings: Optional[int] = None
     status: str = "requested"
-    notes: Optional[str] = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+    @field_validator('phone')
+    @classmethod
+    def phone_number(cls, value):
+        if value is not None and (len(re.sub(r'\D', '', value)) < 7 or not re.fullmatch(r'[+()\d\s.\-]+', value)):
+            raise ValueError('Enter a valid phone number.')
+        return value
 
 
 class PlantingScheduleUpdate(BaseModel):
@@ -115,6 +129,37 @@ def _create_values(body: PlantingScheduleCreate) -> dict:
         if values["expected_seedlings"] is not None
         else values["seedlings"]
     )
+    structured = values['appointment_type'] is not None or any(
+        values[key] is not None for key in ('contact_name', 'phone', 'email')
+    )
+    appointment_type = values['appointment_type'] or 'tree_planting'
+    if structured:
+        if not values['appointment_type']:
+            raise ValueError('Choose an appointment type.')
+        for key, label in (('contact_name', 'contact person'), ('phone', 'phone number'), ('email', 'email address')):
+            if not values[key]:
+                raise ValueError(f'Enter a {label}.')
+        if expected_planters is None or not 1 <= expected_planters <= 10000:
+            raise ValueError('Enter a participant count between 1 and 10,000.')
+        manila = timezone(timedelta(hours=8))
+        start = datetime.fromisoformat(start_at.replace('Z', '+00:00'))
+        end = datetime.fromisoformat(end_at.replace('Z', '+00:00'))
+        start = start.replace(tzinfo=manila) if start.tzinfo is None else start.astimezone(manila)
+        end = end.replace(tzinfo=manila) if end.tzinfo is None else end.astimezone(manila)
+        if end <= start or end.date() != start.date():
+            raise ValueError('Choose a start and end time on the same Philippine date, with end after start.')
+        if start <= datetime.now(manila):
+            raise ValueError('Choose a date and start time in the future.')
+        start_at, end_at = start.isoformat(), end.isoformat()
+        if appointment_type != 'tree_planting' and expected_seedlings not in (None, 0):
+            raise ValueError('Expected seedlings apply only to tree planting.')
+        if appointment_type != 'tree_planting':
+            expected_seedlings = None
+        values['title'] = APPOINTMENT_TYPES[appointment_type]
+        values['contact'] = f"{values['contact_name']}, {values['phone']}"
+        values['notification_email'] = values['email']
+    elif not values['title']:
+        raise ValueError('An activity title is required for an existing scheduling client.')
     return {
         "organization": values["organization"],
         "organization_id": values["organization_id"],
@@ -128,6 +173,7 @@ def _create_values(body: PlantingScheduleCreate) -> dict:
         "expected_seedlings": expected_seedlings,
         "status": values["status"],
         "notes": values["notes"],
+        "appointment_type": appointment_type,
     }
 
 

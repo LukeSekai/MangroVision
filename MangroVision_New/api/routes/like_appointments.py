@@ -12,7 +12,7 @@ from api.routes.planting_schedules import _require_lgu_user
 from mangrovision_db.like_appointments import (
     AppointmentConflict, AppointmentRateLimit, appointment_summary, list_appointments, review_appointment, submit_appointment,
 )
-from mangrovision_db.appointment_email import run_delivery_cycle
+from mangrovision_db.appointment_email import APPOINTMENT_TYPES, run_delivery_cycle
 
 public_router = APIRouter()
 staff_router = APIRouter()
@@ -27,7 +27,8 @@ class AppointmentCreate(BaseModel):
     phone: str = Field(min_length=7, max_length=32)
     email: EmailStr = Field(max_length=254)
     appointment_type: Literal['field_visit', 'clean_up_drive', 'tree_planting']
-    title: str = Field(min_length=1, max_length=200)
+    # Accepted for cached clients; the selected appointment type owns the title.
+    title: str | None = Field(default=None, max_length=200)
     start_at: datetime
     end_at: datetime
     participants: int = Field(ge=1, le=10000, strict=True)
@@ -53,6 +54,7 @@ class AppointmentCreate(BaseModel):
     def appointment_window(self):
         if self.end_at <= self.start_at or self.end_at.date() != self.start_at.date():
             raise ValueError('Choose a start and end time on the same Philippine date, with end after start.')
+        self.title = APPOINTMENT_TYPES[self.appointment_type]
         return self
 
 

@@ -106,6 +106,21 @@ participant count, and consent are required. Email syntax is validated; this
 does not prove mailbox ownership or guarantee delivery. LGU staff confirm the
 contact address while coordinating with the requester.
 
+The selected appointment type supplies the activity name automatically. Neither
+booking form asks for a separate activity name. The backend also generates the
+name, including for cached public clients that still send a custom title.
+New manual appointments require the same organization, contact person, phone,
+email, activity choice, date, start/end times and participant count (1–10,000),
+with optional notes. Both use a future time window on one Philippine date.
+Staff additionally select the appointment status. Expected seedlings and the
+fixed 14-day monitoring interval appear only for tree planting.
+
+Manual contacts are saved in the existing contact summary, with email in the
+existing notification-email field. No database migration is needed. Editing
+an existing schedule preserves its activity type and title, and permits missing
+legacy contact details. Submitted website contacts remain read-only on linked
+schedules. The manual dialog has a scrolling body and visible footer actions.
+
 The LGU/admin dashboard shows a compact appointment button with a pending count,
 refreshed every 30 seconds and on focus. Clicking it opens
 `/scheduling?requests=pending`, selects the pending filter, and scrolls to the
