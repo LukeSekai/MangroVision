@@ -106,7 +106,7 @@ def _message(request, schedule, *, login=None, access_lines=None, kind='confirma
         access_lines.extend(f"Participant {entry['participant_slot']}: {entry['code']}"
                             for entry in login.get('codes', []) if entry.get('code'))
         access_lines.extend(['Give each participant only their own code. No username or password is needed.',
-            'Keep the same code and browser for future activities and your assigned points. Codes remain valid until LGU staff revoke or replace them.',
+            'Use your code on any browser or device to resume the same assigned points. Codes remain valid until LGU staff revoke or replace them.',
             'Keep this full code list private with the group leader.'])
     if access_lines and kind != 'cancellation':
         lines.extend(['', *access_lines])

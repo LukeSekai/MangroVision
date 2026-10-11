@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { submissionError } from '../utils/formValidation';
-import { participantDeviceKey, participantStorageIdentity, readParticipantDeviceKey, parseParticipantRecoveryCode, rememberParticipantDeviceKey, knownParticipantDeviceKeys } from '../utils/participantDevice';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -23,14 +22,6 @@ function storePlanter(planter) {
   } catch { /* The server session remains authoritative. */ }
 }
 
-function preserveRenamedDevice(planter) {
-  const previous = readStoredPlanter();
-  if (!previous || previous.id !== planter?.id || previous.participant_slot !== planter.participant_slot) return;
-  const identity = readParticipantDeviceKey(participantStorageIdentity(previous), { accountOnly: true })
-    || (previous.username ? readParticipantDeviceKey(previous.username, { accountOnly: true }) : null);
-  if (identity) rememberParticipantDeviceKey(identity, participantStorageIdentity(planter));
-}
-
 function welcome(kind) {
   try {
     sessionStorage.setItem('mv_field_show_welcome', '1');
@@ -47,28 +38,20 @@ export const usePlanterAuthStore = create((set, get) => ({
   status: 'idle', // idle | loading | error
   error: '',
 
-  login: async (accessCode, recoveryCode = '') => {
+  login: async (accessCode) => {
     set({ status: 'loading', error: '' });
-    let identity;
     try {
-      const knownIdentities = recoveryCode ? [] : knownParticipantDeviceKeys();
-      // Codes never become storage keys. The server searches only the exact
-      // participant slot authenticated by the code, including old browser keys.
-      const savedIdentity = participantDeviceKey();
-      identity = recoveryCode ? parseParticipantRecoveryCode(recoveryCode) : savedIdentity;
       const res = await fetch(`${API}/api/planter-auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_code: accessCode.trim(), device_key: identity, known_device_keys: knownIdentities, resume_device: Boolean(recoveryCode) }),
+        body: JSON.stringify({ access_code: accessCode.trim() }),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        const error = submissionError(payload.detail, 'Could not sign in. Check your planter code and try again.');
+        const error = submissionError(payload.detail, 'Could not sign in. Check your planter code and try again.', res.status);
         throw error;
       }
       const data = await res.json();
-      identity = data.device_key || identity;
-      rememberParticipantDeviceKey(identity, participantStorageIdentity(data.planter));
       storePlanter(data.planter);
       welcome('login');
       set({
@@ -111,7 +94,6 @@ export const usePlanterAuthStore = create((set, get) => ({
         return;
       }
       const data = await res.json();
-      preserveRenamedDevice(data.planter);
       storePlanter(data.planter);
       set({ token: 'cookie', planter: data.planter, isAuthenticated: true });
     } catch {
@@ -130,7 +112,6 @@ export const usePlanterAuthStore = create((set, get) => ({
     }
     const data = await res.json();
     if (data.planter) {
-      preserveRenamedDevice(data.planter);
       storePlanter(data.planter);
       set({ planter: data.planter });
     }

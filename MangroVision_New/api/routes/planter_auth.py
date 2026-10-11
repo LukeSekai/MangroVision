@@ -1,6 +1,6 @@
 """Planter self-service authentication endpoints (mobile /field app)."""
 
-from typing import Annotated, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, Field
@@ -37,7 +37,7 @@ def _require_planter() -> dict:
     if planter.get("status") != "active":
         raise HTTPException(status_code=403, detail="This planter account is inactive.")
     if planter.get("participant_slot") is None:
-        raise HTTPException(status_code=401, detail="Sign in again to join a participant slot.")
+        raise HTTPException(status_code=401, detail="Sign in again with your individual planter code.")
     return planter
 
 
@@ -50,9 +50,8 @@ def _assert_point_belongs_to_planter(assignment_point_id: int, planter: dict) ->
 
 class PlanterLoginRequest(BaseModel):
     access_code: str = Field(min_length=1, max_length=32)
-    device_key: str = Field(min_length=16, max_length=200)
-    known_device_keys: List[Annotated[str, Field(min_length=16, max_length=200)]] = Field(default_factory=list, max_length=64)
-    resume_device: bool = False
+    # Cached clients may still send device fields. Pydantic ignores those extras;
+    # only the planter code determines which existing participant signs in.
 
 
 def _planter_public_dict(planter: dict) -> dict:
@@ -78,8 +77,7 @@ def register_planter():
 @router.post("/login")
 def planter_login(body: PlanterLoginRequest, response: Response, request: Request):
     try:
-        planter, identity, token = authenticate_code(body.access_code, body.device_key,
-            resume_device=body.resume_device, known_device_keys=body.known_device_keys,
+        planter, token = authenticate_code(body.access_code,
             address=request.client.host if request.client else 'unknown')
     except CodeError as error:
         headers = {'Retry-After': str(error.retry_after)} if error.retry_after else None
@@ -90,7 +88,7 @@ def planter_login(body: PlanterLoginRequest, response: Response, request: Reques
         raise HTTPException(status_code=503, detail=str(error)) from error
     set_planter_session(response, token)
     response.headers['Cache-Control'] = 'no-store'
-    return {"planter": _planter_public_dict(planter), "device_key": identity}
+    return {"planter": _planter_public_dict(planter)}
 
 
 @router.get("/session")

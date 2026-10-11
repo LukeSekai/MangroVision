@@ -108,7 +108,7 @@ test('planter refresh displays revised dates and cancellations, with tide covera
   assert.doesNotMatch(document.body.textContent, /No elevated-water overlap forecast/);
 });
 
-test('field access offers sign-in and recovery without registration or loading organization choices', async () => {
+test('field access needs only a planter code, without recovery or registration', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, body: JSON.parse(options.body) });
@@ -118,7 +118,9 @@ test('field access offers sign-in and recovery without registration or loading o
   await settle();
   assert.equal(calls.length, 0);
   assert.doesNotMatch(document.body.textContent, /Register|Create Organization Account/);
-  assert.match(document.body.textContent, /Using a different browser/);
+  assert.match(document.body.textContent, /any browser or device/);
+  assert.doesNotMatch(document.body.textContent, /recovery|reset your device/i);
+  assert.equal(document.querySelector('[name="recovery_code"]'), null);
   assert.equal(document.querySelector('[name="password"]'), null);
   assert.equal(document.querySelector('[name="username"]'), null);
   await change('access_code', 'K7MP-4R9X');
@@ -128,7 +130,7 @@ test('field access offers sign-in and recovery without registration or loading o
   assert.equal(calls[0].body.access_code, 'K7MP-4R9X');
   assert.equal(calls[0].body.password, undefined);
   assert.equal(calls[0].body.username, undefined);
-  assert.ok(calls[0].body.device_key.length >= 16);
+  assert.deepEqual(calls[0].body, { access_code: 'K7MP-4R9X' });
 });
 
 test('staff create individual codes with participant count and no credentials', async () => {

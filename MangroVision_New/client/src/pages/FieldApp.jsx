@@ -7,7 +7,6 @@ import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
-import ParticipantRecovery from '../components/ParticipantRecovery';
 import GuideButton from '../components/GuideButton';
 import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
 import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts } from '../utils/projectSiteInfo';
@@ -123,9 +122,8 @@ export function AuthScreen() {
   const [localError, setLocalError] = useState('');
   const feedback = useFormFeedback({
     access_code: { label: 'Planter code', validate: (value) => /^[A-HJ-NP-Z2-9]{8}$/.test(value.replace(/[\s-]/g, '').toUpperCase()) ? '' : 'Enter your eight-character planter code, for example K7MP-4R9X.' },
-    recovery_code: { label: 'Device recovery code', serverTerms: ['device recovery code'] },
   });
-  const [form, setForm] = useState({ access_code: '', recovery_code: '', use_recovery_code: false });
+  const [form, setForm] = useState({ access_code: '' });
   const update = (field) => (event) => setForm((current) => ({ ...current, [field]: event.target.value }));
   const submitting = storeStatus === 'loading';
   const handleSubmit = async (event) => {
@@ -135,7 +133,7 @@ export function AuthScreen() {
     usePlanterAuthStore.setState({ error: '' });
     if (!feedback.validate()) return;
     try {
-      await login(form.access_code, form.use_recovery_code ? form.recovery_code.trim() : '');
+      await login(form.access_code);
     } catch (error) {
       if (feedback.fromServer(error)) usePlanterAuthStore.setState({ error: '' });
       else setLocalError(error.message || 'Could not sign in. Check your connection and try again.');
@@ -155,20 +153,7 @@ export function AuthScreen() {
             placeholder="K7MP-4R9X" maxLength={32} required />
           <FieldError feedback={feedback} field="access_code" />
         </label>
-        <p className="field-label-help">Your code keeps the same participant number across activities. Return using the same browser to keep your assigned points.</p>
-        <details className="field-recovery-options" onToggle={(event) => {
-          if (!event.currentTarget.open) setForm((current) => ({ ...current, use_recovery_code: false }));
-        }}>
-          <summary>Using a different browser or field link?</summary>
-          <p className="field-label-help">If your participant number is already linked to another browser, use your saved device recovery code or ask LGU staff to reset your device. Your planting points will stay assigned to you.</p>
-          <label className="field-label"><span><input type="checkbox" checked={form.use_recovery_code}
-            onChange={(event) => setForm((current) => ({ ...current, use_recovery_code: event.target.checked }))} /> I have a device recovery code</span></label>
-          {form.use_recovery_code && <label className="field-label">Device recovery code
-            <input {...feedback.props('recovery_code')} className="field-input" type="text" required value={form.recovery_code}
-              onChange={update('recovery_code')} placeholder="MV1-?" autoComplete="off" spellCheck={false} />
-            <FieldError feedback={feedback} field="recovery_code" />
-          </label>}
-        </details>
+        <p className="field-label-help">Use your code on any browser or device to return to the same participant number, assigned points, and planting progress.</p>
       </fieldset>
       {(localError || storeError) && <div className="field-error" role="alert">{localError || storeError}</div>}
       <button className="field-submit" type="submit" disabled={submitting}>{submitting ? 'Signing in...' : 'Sign in'}</button>
@@ -687,7 +672,6 @@ export default function FieldApp() {
 
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
-  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const avatarMenuRef = useRef(null);
   const reloadSequence = useRef(0);
 
@@ -1054,10 +1038,6 @@ export default function FieldApp() {
                 onClick={() => { setAvatarMenuOpen(false); setActivityOpen(true); }}>
                 Activity Logs
               </button>
-              <button type="button" role="menuitem" className="field-avatar-menu-item"
-                onClick={() => { setAvatarMenuOpen(false); setRecoveryOpen(true); }}>
-                Device recovery code
-              </button>
               <button
                 type="button"
                 role="menuitem"
@@ -1254,8 +1234,6 @@ export default function FieldApp() {
         routeBusy={routeBusy}
         routeError={routeError}
       />}
-
-      {recoveryOpen && <ParticipantRecovery planter={planter} onClose={() => setRecoveryOpen(false)} />}
 
       <Modal
         open={welcomeOpen}

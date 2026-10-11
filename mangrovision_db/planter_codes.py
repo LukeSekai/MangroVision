@@ -195,8 +195,8 @@ def _limit(conn, key, maximum):
                         max(1, int((start + timedelta(minutes=10) - now).total_seconds())))
 
 
-def authenticate_code(code, device_key, *, known_device_keys=(), resume_device=False, address='unknown'):
-    """Authenticate and bind only the slot identified by this code, atomically."""
+def authenticate_code(code, *, address='unknown'):
+    """Open the code's exact participant slot from any browser."""
     import planting_database as planting
     normalized = normalize_code(code)
     digest = _digest(normalized)
@@ -214,38 +214,20 @@ def authenticate_code(code, device_key, *, known_device_keys=(), resume_device=F
         if not found:
             raise CodeError('This planter code is incorrect or no longer valid. Check it with your group leader or LGU staff.', 401)
         account = _account(conn, found['planter_id'])
-        binding = conn.execute('''SELECT pc.revoked_at, op.device_key_hash FROM planter_access_codes pc
+        credential = conn.execute('''SELECT pc.revoked_at FROM planter_access_codes pc
             JOIN organization_participants op ON op.planter_id = pc.planter_id AND op.slot = pc.participant_slot
             WHERE pc.planter_id = ? AND pc.participant_slot = ? AND pc.code_digest = ? FOR UPDATE OF pc, op''',
             (found['planter_id'], found['participant_slot'], digest)).fetchone()
         slot = found['participant_slot']
-        if not binding or binding['revoked_at'] is not None or slot > account['participant_count']:
+        if not credential or credential['revoked_at'] is not None or slot > account['participant_count']:
             raise CodeError('This planter code is incorrect or no longer valid. Check it with your group leader or LGU staff.', 401)
-        if not isinstance(device_key, str) or not 16 <= len(device_key) <= 200:
-            raise CodeError('A saved device identity is required. Reload this page and try again.', 409)
-        keys = [device_key] if resume_device else [device_key, *known_device_keys]
-        candidates = {hashlib.sha256(key.encode()).hexdigest(): key for key in keys
-                      if isinstance(key, str) and 16 <= len(key) <= 200}
-        identity = device_key
-        if binding['device_key_hash']:
-            identity = candidates.get(binding['device_key_hash'])
-            if not identity:
-                raise CodeError('This code belongs to a participant already using another browser. Use that browser or your device recovery code, or ask LGU staff to reset your device.', 409)
-        else:
-            if resume_device:
-                raise CodeError('This device recovery code does not match a saved device. Use normal sign-in after an LGU reset.', 409)
-            device_hash = hashlib.sha256(identity.encode()).hexdigest()
-            if conn.execute('SELECT 1 FROM organization_participants WHERE planter_id = ? AND device_key_hash = ?',
-                            (account['id'], device_hash)).fetchone():
-                identity = secrets.token_hex(24)
-                device_hash = hashlib.sha256(identity.encode()).hexdigest()
-            conn.execute('UPDATE organization_participants SET device_key_hash = ? WHERE planter_id = ? AND slot = ?',
-                         (device_hash, account['id'], slot))
+        # The private code identifies the participant. Keep legacy device records
+        # untouched; neither a new browser nor a returning browser claims a slot.
         token = planting._create_session('planter', account['id'], slot, connection=conn)
-        conn.execute('UPDATE planters SET last_login_at = CURRENT_TIMESTAMP WHERE id = ?', (account['id'],))
+        conn.execute('UPDATE planters SET last_login = CURRENT_TIMESTAMP WHERE id = ?', (account['id'],))
         account['participant_slot'] = slot
         conn.commit()
-        return account, identity, token
+        return account, token
     except Exception:
         conn.rollback()
         raise

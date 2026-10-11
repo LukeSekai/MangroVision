@@ -1,5 +1,10 @@
 # Organization planter accounts
 
+> Historical shared-login and browser-slot documentation. Current planter access
+> uses individual codes on any browser or device; see
+> [Individual planter codes](planter-code-access.md). Browser recovery and device
+> slot restrictions below describe the earlier implementation.
+
 Each organization registers once in `/field`, providing a shared username,
 password, and participant count. Each device uses that login and receives a
 persistent numbered participant slot. Logging out does not release the slot.

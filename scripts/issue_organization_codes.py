@@ -68,7 +68,8 @@ def handover(accounts):
         'th,td{border:1px solid #ccdcd4;padding:10px;text-align:left}th{background:#edf7f1}code{font-size:18px}'
         'section{break-inside:avoid;margin:28px 0}</style><h1>Private planter codes</h1>'
         '<p>Keep each organization’s full list with its leader. Give each participant only their own code, '
-        'matching their existing participant number. Codes work across activities. Return in the same browser.</p>'
+        'matching their existing participant number. Codes work across activities and browsers, '
+        'restoring the same participant number and assigned points.</p>'
         + ''.join(sections) + '</html>')
 
 

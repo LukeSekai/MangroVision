@@ -49,7 +49,7 @@ def workspace(monkeypatch):
                 organization_id BIGINT, username TEXT UNIQUE, password_hash TEXT, phone TEXT,
                 base_label TEXT, base_lat DOUBLE PRECISION, base_lon DOUBLE PRECISION, notes TEXT,
                 status TEXT DEFAULT 'active', participant_count INTEGER DEFAULT 1, merged_into_planter_id BIGINT,
-                last_login_at TIMESTAMPTZ
+                last_login TIMESTAMPTZ
             );
             CREATE TEMP TABLE organization_participants(planter_id BIGINT, slot INTEGER, device_key_hash TEXT,
                 PRIMARY KEY (planter_id, slot), UNIQUE (planter_id, device_key_hash));

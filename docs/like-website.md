@@ -190,7 +190,7 @@ remains valid across activities until staff replace or revoke it. Codes use
 random letters and numbers without ambiguous `I`, `O`, `1`, or `0`; they are not
 based on organization names, dates, or predictable sequences.
 
-The planter page offers **Sign in** and device recovery. Public self-registration
+The planter page offers **Sign in** with an individual code. Public self-registration
 is closed, including the old API endpoint. For staff-assisted groups, select the
 organization in **Planting Assignments ? Planter codes**. Create access using the
 participant count, or view the existing codes, copy/download the private list,
@@ -198,12 +198,12 @@ and replace or revoke a particular participant?s code. Existing reserved points
 are allocated only when access is first created. Staff give the full list only
 to the organization leader, who gives each participant their own code.
 
-Existing organization owners and participant slots stay intact. Existing browser
-identities and sessions continue working; old browser keys are resolved only
-against the participant identified by the code. A new browser cannot silently
-claim another slot for that code. Use the saved device recovery code, or have
-staff reset the existing device. Replacing/revoking a code ends that participant?s
-sessions while preserving assigned points and device identity.
+Existing organization owners and participant slots stay intact. Each personal
+code opens its exact participant slot on any browser or device, including after
+clearing site data or changing field links. No device recovery or staff reset is
+required. New sign-ins do not claim additional slots or change assigned points.
+Existing sessions remain valid. Replacing/revoking a code ends all of that
+participant's sessions while preserving their assigned points and planting history.
 
 Planter sign-in no longer accepts a shared username/password. Legacy account
 columns remain internal for compatibility with existing records. Individual

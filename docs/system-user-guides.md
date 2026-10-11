@@ -22,7 +22,7 @@ The staff guides cover:
 
 Field users have a separate guide for participant assignments, map/GPS controls,
 navigation, individual and multiple-point planting confirmation, the point list,
-skipping, device recovery and activity history. Staff and field sign-in guides
+skipping, individual code access and activity history. Staff and field sign-in guides
 are currently dormant: their code is retained, but their buttons are hidden.
 
 Guides navigate between staff screens and reveal collapsed panels. They do not

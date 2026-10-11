@@ -11,20 +11,22 @@ route. Copy that link for planters; no second frontend tunnel is needed. The
 launcher supplies `MANGROVISION_PUBLIC_FRONTEND_URL` to its backend process.
 
 For participants returning on later days, share the permanent production
-website's `/field` URL and keep using that exact address. The browser remembers
-the participant number across logout, browser restarts, and expired sessions.
-Ordinary sign-in restores that participant's saved points and planting progress
-without a recovery code or an extra device slot. A new backend tunnel is routed
-behind the same website address with `--deploy`; participants keep their existing
-browser identity. A first move from an old temporary frontend link to the
-permanent website can require a one-time participant recovery.
+website's `/field` URL and give each planter their individual code. The code
+restores the same participant number, saved points and planting progress on any
+browser or device, including after logout, session expiry or cleared site data.
+No saved browser identity, device recovery code or LGU device reset is needed.
+Participant counts limit codes and participant slots, not browsers or sessions.
 
-The saved device identity is part of the shared frontend code, so this behavior
-also applies on the existing Vercel site when the updated frontend is deployed
-and connected to the backend. Repeated sign-ins and sign-outs on the same browser
-consume one slot per organization; sessions do not count as extra devices.
-Different shared-link paths or query strings on that same production origin keep
-the same identity. Use the production hostname rather than changing preview URLs.
+This requires the updated backend and frontend to be deployed together. A new
+backend tunnel is routed behind the same website address with `--deploy`.
+If the field address changes, share the new address; participants use their
+existing codes. Use the production hostname for a consistent shared link.
+
+Pushing `Latest-Main` triggers Vercel's automatic frontend deployment using the
+configured backend tunnel URL. It does not update the FastAPI code or restart
+the API on the laptop. Pull backend changes on the laptop running the public
+API and restart its launcher. A launcher restart creates a new Quick Tunnel,
+so use `--deploy` to update Vercel's routing to that new URL.
 
 Local development continues to offer **Generate Cloudflare Link** for the
 React server on port 5173. It checks `CLOUDFLARED_BIN`, the system PATH and

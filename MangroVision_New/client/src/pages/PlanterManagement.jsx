@@ -6,7 +6,6 @@ import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
-import ParticipantDevices from '../components/ParticipantDevices';
 import OrganizationAccess from '../components/OrganizationAccess';
 import { getPlanterColor } from '../utils/planterColors';
 import { useLocation } from 'react-router-dom';
@@ -430,7 +429,7 @@ export default function PlanterManagement() {
             )}
           </div>
 
-          {!shareHosted && <p className="text-sm">Keep the current link while participants are working. A newly generated link needs their saved device recovery codes to restore the same participant numbers.</p>}
+          {!shareHosted && <p className="text-sm">If the field link changes, share the new link. Participants can use their existing planter codes to resume the same points.</p>}
           {shareError && <div className="assign-message assign-error">{shareError}</div>}
           {shareCopied && <div className="assign-message assign-success">{shareCopied}</div>}
         </div>
@@ -604,12 +603,6 @@ export default function PlanterManagement() {
           <OrganizationAccess key={selectedAssignmentPlanter.organization_id} organization={selectedAssignmentPlanter}
             expectedParticipants={assignmentActivity?.expected_planters || 1}
             onCreated={() => { setAssignSuccess('Planter codes created. Share the code list privately with the group leader.'); void loadData(); }} />
-        </PanelCard>
-      )}
-
-      {selectedAssignmentPlanter && !selectedAssignmentPlanter.registration_pending && (
-        <PanelCard title="Participant devices" defaultOpen={false}>
-          <ParticipantDevices key={selectedAssignmentPlanter.id} planter={selectedAssignmentPlanter} />
         </PanelCard>
       )}
 

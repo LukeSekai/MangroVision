@@ -86,7 +86,7 @@ export const STAFF_TOURS = [
       step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant confirmed activity when one is available. Check that the activity and site match the planned field visit.'),
       step('/planters', '#organization-point-count', 'Set the allocation size', 'Enter how many available points to assign. Review the count, species and participant allocation before using Assign. Participants receive staggered zigzag strips, with later batches balancing existing allocations.'),
       step('/planters', assignCard('Field Share Link'), 'Share the field workspace', 'Open Field Share Link and copy the field link for participants. On a local setup, use the provided link-generation controls if needed. Keep the current link while participants work.'),
-      step('/planters', assignCard('Participant devices'), 'Register and recover participant devices', 'After selecting a registered organization, Participant devices shows its device allocations. Each participant should keep their assigned participant number and device recovery code. Use these controls to manage a lost or replaced device.'),
+      step('/planters', assignCard('Planter codes'), 'Manage individual planter codes', 'Give each participant only their own code. It opens their same participant number and assigned points on any browser. Replace or revoke a code here when needed; their planting records stay saved.'),
       step('/planters', '.assignment-activity-report', 'Review organization progress', 'View Activity Report opens the recorded planting activity report. Use the Overview tab for mapped planting totals. Refresh your data after field users record planting progress.'),
     ],
   },
@@ -158,7 +158,6 @@ export const FIELD_TOURS = [{
     step(null, '.field-work-actions', 'Record a planted point', 'After physically planting at an eligible location, open its details and use the planted action. Check the point number and confirm the action when prompted.'),
     step(null, '.field-work-actions', 'Record several planted points', 'Choose points to mark lets you select multiple locations that you have already planted. Review the selected point numbers before confirming. Leave unfinished or unavailable locations unselected.'),
     step(null, '.field-list-toggle', 'Review the point list', 'Open the point list to browse assignments and filter by status. Select a point from the list to inspect it. If a point cannot be planted, use the available skip action and provide the requested reason.'),
-    step(null, '.field-avatar-button', 'Keep your device recovery code', 'Open the account menu and choose Device recovery code. Keep it privately with your participant number so the same allocation can be restored if your device or field link changes.'),
     step(null, '.field-avatar-button', 'Review activity and finish', 'The account menu also opens Activity Logs and Sign out. Check that your planted-point progress is updated before signing out.'),
   ],
 }];
@@ -179,8 +178,8 @@ export const FIELD_LOGIN_TOURS = [{
   description: 'Sign in with your group’s shared login or recover a device.',
   steps: [
     step(null, '.field-auth-brand', 'Organization field access', 'Use your individual code from your group leader or LGU staff. The code keeps the same participant number across activities.'),
-    step(null, '.field-form', 'Sign in on a participant device', 'Enter your planter code and choose Sign in. Return in the same browser for your assigned points. Each participant uses their own code.'),
-    step(null, '.field-form', 'Recover access to an existing allocation', 'If replacing a device or returning through a different field link, use the recovery options and your saved device recovery code. Ask the LGU for help if you cannot recover the participant slot.'),
+    step(null, '.field-form', 'Sign in with your personal code', 'Enter your planter code and choose Sign in. The same code restores your assigned points on any browser or device. Each participant uses their own code.'),
+    step(null, '.field-form', 'Get help with a lost or invalid code', 'Ask your group leader or LGU staff for your participant code. Staff can replace a lost or revoked code while keeping your participant number and planting progress.'),
   ],
 }];
 

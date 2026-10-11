@@ -23,8 +23,8 @@ def seed(db, name='Oton Youth', participants=2, *, pending=False):
     return org, account
 
 
-def login(value, key='ab' * 24, **kwargs):
-    return codes.authenticate_code(value, key, address='test-peer', **kwargs)
+def login(value):
+    return codes.authenticate_code(value, address='test-peer')
 
 
 def test_issuing_existing_codes_preserves_all_records_and_is_idempotent(workspace):
@@ -51,44 +51,72 @@ def test_issuing_existing_codes_preserves_all_records_and_is_idempotent(workspac
 def test_code_uses_exact_slot_and_stays_valid_across_logins(workspace):
     _, account = seed(workspace)
     entries = codes.manage_codes(account, issue=True)['codes']
-    planter, identity, token = login(entries[1]['code'].lower().replace('-', ' '))
+    planter, token = login(entries[1]['code'].lower().replace('-', ' '))
     assert planter['id'] == account and planter['participant_slot'] == 2
-    assert identity == 'ab' * 24 and token
+    assert token
     assert workspace.execute(text('SELECT participant_slot FROM auth_sessions')).scalar_one() == 2
+    assert workspace.execute(text('SELECT last_login FROM planters WHERE id=:id'), {'id': account}).scalar_one() is not None
     assert workspace.execute(text('SELECT device_key_hash FROM organization_participants WHERE slot=1')).scalar_one() is None
     assert login(entries[1]['code'])[0]['participant_slot'] == 2
 
 
-def test_existing_bound_device_resolves_only_the_codes_slot(workspace):
+def test_existing_device_bindings_do_not_restrict_code_sign_in(workspace):
     _, account = seed(workspace)
     first, second = codes.manage_codes(account, issue=True)['codes']
-    key1, key2 = 'ab' * 24, 'cd' * 24
-    login(first['code'], key1)
-    login(second['code'], key2)
-    planter, resolved, _ = login(second['code'], key1, known_device_keys=[key1, key2])
-    assert planter['participant_slot'] == 2 and resolved == key2
-    with pytest.raises(codes.CodeError, match='already using another browser'):
-        login(second['code'], key1, known_device_keys=[key1])
+    for slot, key in ((1, 'ab' * 24), (2, 'cd' * 24)):
+        workspace.execute(text('UPDATE organization_participants SET device_key_hash=:hash WHERE planter_id=:id AND slot=:slot'),
+            {'hash': hashlib.sha256(key.encode()).hexdigest(), 'id': account, 'slot': slot})
+    before = workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall()
+    assert login(second['code'])[0]['participant_slot'] == 2
+    assert login(first['code'])[0]['participant_slot'] == 1
+    assert workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall() == before
 
 
-def test_another_browser_cannot_consume_a_second_slot_for_the_same_code(workspace):
-    _, account = seed(workspace)
-    entry = codes.manage_codes(account, issue=True)['codes'][0]
-    login(entry['code'])
-    with pytest.raises(codes.CodeError, match='already using another browser'):
-        login(entry['code'], 'cd' * 24)
-    assert workspace.execute(text('SELECT count(*) FROM auth_sessions')).scalar_one() == 1
-    assert workspace.execute(text('SELECT device_key_hash FROM organization_participants WHERE slot=2')).scalar_one() is None
+def test_fresh_browsers_resume_same_points_when_all_ten_participants_have_signed_in(workspace):
+    import sys
+    from pathlib import Path
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
+    from api.routes.planter_auth import router
+
+    _, account = seed(workspace, participants=10)
+    entries = codes.manage_codes(account, issue=True)['codes']
+    workspace.exec_driver_sql("ALTER TABLE pg_temp.planter_assignment_points ADD COLUMN status TEXT DEFAULT 'pending'")
+    workspace.execute(text('INSERT INTO planter_assignments(id, planter_id) VALUES (10, :id)'), {'id': account})
+    workspace.exec_driver_sql('''INSERT INTO planter_assignment_points(id, assignment_id, participant_slot, status)
+        SELECT n, 10, ((n - 1) / 10) + 1, CASE WHEN n <= 3 THEN 'completed' ELSE 'pending' END
+        FROM generate_series(1, 100) AS n''')
+    before = workspace.execute(text('SELECT * FROM planter_assignment_points ORDER BY id')).fetchall()
+    app = FastAPI()
+    app.include_router(router, prefix='/api/planter-auth')
+    for index, entry in enumerate([*entries, entries[0], entries[0]]):
+        # Each cookie jar has no existing device identity or recovery code.
+        with TestClient(app, base_url='https://field.example.test') as client:
+            body = {'access_code': entry['code']}
+            if index == 11:
+                # Older cached clients' browser/recovery fields cannot override
+                # the code or block a valid participant from signing in.
+                body.update(device_key='old-browser-key', known_device_keys=[], resume_device=True)
+            response = client.post('/api/planter-auth/login', json=body)
+            assert response.status_code == 200
+            assert response.json()['planter']['participant_slot'] == entry['participant_slot']
+            assert response.headers.get('set-cookie')
+            assert 'device_key' not in response.json()
+    slots = workspace.execute(text('SELECT participant_slot FROM auth_sessions ORDER BY id')).scalars().all()
+    assert slots == [*range(1, 11), 1, 1]
+    assert workspace.execute(text('SELECT count(*) FROM organization_participants')).scalar_one() == 10
+    assert workspace.execute(text('SELECT * FROM planter_assignment_points ORDER BY id')).fetchall() == before
 
 
-def test_two_participant_codes_on_one_browser_get_distinct_device_bindings(workspace):
+def test_different_codes_select_distinct_participants_without_device_binding(workspace):
     _, account = seed(workspace)
     first, second = codes.manage_codes(account, issue=True)['codes']
-    _, identity1, _ = login(first['code'])
-    _, identity2, _ = login(second['code'])
-    assert identity1 != identity2
-    assert login(first['code'], identity2, known_device_keys=[identity1, identity2])[1] == identity1
-    assert login(second['code'], identity1, known_device_keys=[identity1, identity2])[1] == identity2
+    assert login(first['code'])[0]['participant_slot'] == 1
+    assert login(second['code'])[0]['participant_slot'] == 2
+    assert login(first['code'])[0]['participant_slot'] == 1
+    assert workspace.execute(text('SELECT count(*) FROM organization_participants WHERE device_key_hash IS NOT NULL')).scalar_one() == 0
 
 
 def test_unknown_inactive_revoked_and_merged_codes_never_bind_a_device(workspace):
@@ -114,14 +142,15 @@ def test_replacement_revokes_only_that_participants_sessions_and_preserves_devic
     _, account = seed(workspace)
     first, second = codes.manage_codes(account, issue=True)['codes']
     login(first['code'])
-    login(second['code'], 'cd' * 24)
+    login(first['code'])
+    login(second['code'])
     before = workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall()
     changed = codes.manage_codes(account, slot=1, action='regenerate')['codes']
     assert changed[0]['code'] != first['code'] and changed[1] == second
     with pytest.raises(codes.CodeError, match='incorrect or no longer valid'):
         login(first['code'])
     sessions = workspace.execute(text('SELECT participant_slot, revoked_at FROM auth_sessions ORDER BY id')).fetchall()
-    assert sessions[0].revoked_at and sessions[1].revoked_at is None
+    assert sessions[0].revoked_at and sessions[1].revoked_at and sessions[2].revoked_at is None
     assert workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall() == before
     assert login(changed[0]['code'])[0]['participant_slot'] == 1
 
@@ -134,17 +163,18 @@ def test_issue_does_not_reactivate_a_revoked_code(workspace):
     assert entry['revoked'] is True and entry['code'] is None
 
 
-def test_device_recovery_must_match_this_code_not_another_slot(workspace):
-    _, account = seed(workspace)
+def test_same_participant_number_in_other_organization_cannot_change_code_ownership(workspace):
+    _, account = seed(workspace, name='First group')
     first, second = codes.manage_codes(account, issue=True)['codes']
-    login(first['code'])
-    login(second['code'], 'cd' * 24)
-    assert login(first['code'], resume_device=True)[0]['participant_slot'] == 1
-    with pytest.raises(codes.CodeError):
-        login(first['code'], 'cd' * 24, known_device_keys=['ab' * 24], resume_device=True)
+    _, other_account = seed(workspace, name='Second group')
+    other = codes.manage_codes(other_account, issue=True)['codes'][0]
+    assert login(other['code'])[0]['id'] == other_account
+    planter, _ = login(first['code'])
+    assert planter['id'] == account and planter['participant_slot'] == 1
+    assert login(second['code'])[0]['participant_slot'] == 2
 
 
-def test_failed_session_creation_rolls_back_device_claim(workspace, monkeypatch):
+def test_failed_session_creation_preserves_participants_and_last_login(workspace, monkeypatch):
     import planting_database as planting
     _, account = seed(workspace)
     entry = codes.manage_codes(account, issue=True)['codes'][0]
@@ -152,6 +182,8 @@ def test_failed_session_creation_rolls_back_device_claim(workspace, monkeypatch)
     with pytest.raises(RuntimeError, match='Session failure'):
         login(entry['code'])
     assert workspace.execute(text('SELECT count(*) FROM organization_participants WHERE device_key_hash IS NOT NULL')).scalar_one() == 0
+    assert workspace.execute(text('SELECT count(*) FROM auth_sessions')).scalar_one() == 0
+    assert workspace.execute(text('SELECT last_login FROM planters WHERE id=:id'), {'id': account}).scalar_one() is None
     assert workspace.execute(text('SELECT count(*) FROM planter_auth_limits')).scalar_one() == 2
 
 

@@ -7,6 +7,13 @@ There is no username or password input and no registration button. Each code
 identifies one existing participant number and works across the organization’s
 activities. This is a reusable private credential, not an emailed one-time code.
 
+The personal code is sufficient on any browser, device, or current field link.
+There is no browser lock, device recovery code, or required LGU device reset.
+Logging out, doing nothing before logout, or clearing browser data does not
+change the participant number, consume another slot, or move assigned points.
+For 10 participants and 100 initially assigned points, there are 10 participant
+codes and 10 points per participant; the count limits participants, not browsers.
+
 Staff use **Planting Assignments → Planter codes** to create access, retrieve the
 private list, or replace/revoke a particular code. Group leaders receive the full
 list and give each participant only their own code. Website tree-planting emails
@@ -24,10 +31,9 @@ planting statuses, monitoring history and activity links. Reserved owners withou
 completed access and historical merged accounts are excluded.
 
 Participants already using a browser receive the code for their current participant
-number. Old browser identities remain usable. Each code searches only its own
-slot, even when a browser has identities for multiple organizations. A different
-browser needs the saved device recovery code or an LGU device reset. Resetting a
-device preserves point ownership. Staff can distribute codes by participant
+number. Each code opens only its own existing slot, regardless of browser history.
+Legacy device bindings are preserved but do not authorize or restrict code sign-in.
+Staff can distribute codes by participant
 number; current anonymous slots do not establish the planter’s real name.
 
 Old shared credentials stop signing in after activation. Existing sessions stay
@@ -44,8 +50,12 @@ Codes have a unique keyed SHA-256 lookup digest and an encrypted staff copy.
 The stable server-only `LIKE_EMAIL_ENCRYPTION_KEY` protects both; keep its current
 value and include it in private recovery arrangements. It is not a frontend key.
 
-The server authenticates the exact slot and creates its session in the same
-transaction as device binding. Failed session creation rolls back the binding.
+The server validates the exact slot and creates its session in one transaction.
+Sign-in does not write device bindings or create participant slots. Failed session
+creation leaves participant records and the account's last-login timestamp intact.
+Multiple browsers can have sessions for the same participant. Logout ends only
+that browser's session; replacing or revoking the code ends all of that
+participant's sessions. Other participants remain signed in.
 Durable limits permit 20 attempts per code and 600 per observed peer in ten minutes,
 with `Retry-After` on throttled requests. The larger peer allowance accommodates
 group arrivals through the shared proxy. Limits use the server-observed peer;
@@ -56,11 +66,14 @@ activity logs contain no codes. Pending booking emails are refreshed when codes
 change. A code change is blocked while an access email is being delivered.
 Delivered emails cannot be recalled; share the replacement with its participant.
 
-## Activation — pending approval
+## Original activation procedure
 
-This feature is prepared locally. Migration 0017 and existing code issuance have
-not been applied to the shared database. Per `like-website.md`, shared schema
-activation is separate from feature development.
+Historical activation instructions follow. A read-only check on October 12
+confirmed migration `20261012_0017` and 66 codes already exist in the shared
+database. Do not reissue codes or reset credentials to install the login fix.
+See [Planter sign-in server error](planter-login-fix-2026-10-12.md) for the
+backend correction and coordinated frontend deployment. The original schema
+activation procedure is retained below for a new deployment.
 
 After approval:
 
@@ -93,15 +106,19 @@ from an interrupted issuance run.
 ## Verification
 
 Real PostgreSQL tests create temporary tables and run the migrations there with
-an outer rollback. They cover exact-slot access, existing bindings, code-only
-authentication, persistence across bookings, revocation, recovery, throttling,
-atomic session binding, pending emails and a nine-owner/66-slot conversion.
-Frontend tests cover code-only sign-in, device persistence, legacy browser keys,
-recovery, no credential storage and staff code management. No test sends real mail.
+an outer rollback. They cover exact-slot access from fresh browsers even after
+all participants have signed in, preservation of points and legacy bindings,
+persistence across bookings, revocation of multiple sessions, throttling,
+session rollback, pending emails and a nine-owner/66-slot conversion.
+Frontend tests cover code-only sign-in, browser and domain changes, blocked
+browser storage, no credential storage and staff code management. No test sends real mail.
 
-Verification passed: 141 backend checks across the regression and focused reruns,
-23 frontend checks, ESLint and the production build. PostgreSQL checks used only
-temporary tables with an outer rollback. The final correction gives a clear
-encryption-key error and rolls back schedule changes when the vault cannot be opened.
+Original code-feature verification passed: 141 backend checks across the
+regression and focused reruns, 23 frontend checks, ESLint and the production
+build. The browser-independent login and `last_login` correction passed all
+16 PostgreSQL code-access tests plus the updated frontend checks, ESLint and
+production build. PostgreSQL checks used only temporary tables with an outer
+rollback. A clear encryption-key error rolls back schedule changes when the
+vault cannot be opened.
 
 A fictional code email preview is saved at `tmp/email-preview/confirmation.html`.

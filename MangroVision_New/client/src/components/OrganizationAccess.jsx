@@ -51,7 +51,7 @@ export default function OrganizationAccess({ organization, expectedParticipants 
   };
   const handover = () => `${organization.organization_name} ? Individual planter codes\nOpen: ${window.location.origin}/field\n\n`
     + codes.map((entry) => `Participant ${entry.participant_slot}: ${entry.code || 'Revoked'}`).join('\n')
-    + '\n\nGive each participant only their own code. Keep this full list with the group leader.\nCodes work across activities. Use the same browser to retain device access.\n';
+    + '\n\nGive each participant only their own code. Keep this full list with the group leader.\nCodes work across activities and browsers. Your code restores the same participant number and assigned points.\n';
   const download = () => {
     const url = URL.createObjectURL(new Blob([handover()], { type: 'text/plain;charset=utf-8' }));
     const link = document.createElement('a'); link.href = url; link.download = 'planter-codes-private.txt'; link.click();
