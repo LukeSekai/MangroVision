@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { availableOrganizationPoints } from '../utils/organizationAssignment';
-import { countMapPointStatuses } from '../utils/mapPointStats';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
 import { useAuthStore } from '../stores/authStore';
@@ -9,7 +8,6 @@ import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
 import ParticipantDevices from '../components/ParticipantDevices';
 import { getPlanterColor } from '../utils/planterColors';
-import { POINT_STATUS_LABELS as STATUS_LABEL } from '../utils/pointStatus';
 import { useLocation } from 'react-router-dom';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
@@ -44,7 +42,6 @@ export default function PlanterManagement() {
     if (requestedSection === 'assign') queueMicrotask(() => setOpenPanel(requestedSection));
   }, [requestedSection, location.key]);
   const points = useMapStore((s) => s.points);
-  const pointCounts = useMemo(() => countMapPointStatuses(points), [points]);
   const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const fetchZones = useMapStore((s) => s.fetchZones);
@@ -60,7 +57,6 @@ export default function PlanterManagement() {
   const [organizations, setOrganizations] = useState([]);
   const [plantingSchedules, setPlantingSchedules] = useState([]);
   const [assignmentActivityChoice, setAssignmentActivityChoice] = useState('');
-  const [dashStats, setDashStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   // One unified assign form: one clicked point and many clicked points share
@@ -131,18 +127,16 @@ export default function PlanterManagement() {
     const sequence = ++loadSequence.current;
     setLoading(true);
     try {
-      const [pRes, dRes, oRes, sRes] = await Promise.all([
+      const [pRes, oRes, sRes] = await Promise.all([
         fetch(`${API}/api/planters/?include_inactive=true`),
-        fetch(`${API}/api/planters/dashboard`),
         fetch(`${API}/api/planter-auth/organizations`),
         fetch(`${API}/api/planting-schedules`),
       ]);
-      if (![pRes, dRes, oRes, sRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
-      const [nextPlanters, nextStats, nextOrganizations, nextSchedules] = await Promise.all([pRes.json(), dRes.json(), oRes.json(), sRes.json()]);
+      if (![pRes, oRes, sRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
+      const [nextPlanters, nextOrganizations, nextSchedules] = await Promise.all([pRes.json(), oRes.json(), sRes.json()]);
       if (sequence !== loadSequence.current) return;
       setPlanters(nextPlanters);
       setOrganizations(nextOrganizations.organizations);
-      setDashStats(nextStats);
       setPlantingSchedules(nextSchedules.schedules || []);
     } catch (err) {
       console.error('Failed to load planter data:', err);
@@ -368,62 +362,6 @@ export default function PlanterManagement() {
 
   return (
     <Panel plantingTool title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
-      {dashStats && (
-        <PanelCard
-          title="Overview"
-          icon={
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-          }
-        >
-          <div className="planter-stats-grid">
-            <div className="stat-card">
-              <div className="stat-label">Active organizations</div>
-              <div className="stat-value">{dashStats.active_planters}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Active assignments</div>
-              <div className="stat-value">{dashStats.active_assignments}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Planned</div>
-              <div className="stat-value" style={{ color: 'var(--color-planned)' }}>{pointCounts.planned.toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Assigned</div>
-              <div className="stat-value" style={{ color: 'var(--color-assigned)' }}>{pointCounts.assigned.toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">{STATUS_LABEL.completed}</div>
-              <div className="stat-value" style={{ color: 'var(--color-completed)' }}>{pointCounts.planted.toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Dead</div>
-              <div className="stat-value" style={{ color: '#7f1d1d' }}>{pointCounts.dead.toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Skipped</div>
-              <div className="stat-value" style={{ color: '#6b7280' }}>{pointCounts.skipped.toLocaleString()}</div>
-            </div>
-            <div className="stat-card">
-              <div className="stat-label">Unavailable</div>
-              <div className="stat-value" style={{ color: '#f97316' }}>{pointCounts.unavailable.toLocaleString()}</div>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            style={{ marginTop: 12, width: '100%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-            onClick={() => setReportOpen(true)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M3 3v18h18" />
-              <path d="M7 14l4-4 4 4 5-5" />
-            </svg>
-            View Activity Report
-          </button>
-        </PanelCard>
-      )}
-
       <PanelCard
         title="Field Share Link"
         defaultOpen={false}
@@ -670,6 +608,18 @@ export default function PlanterManagement() {
           <ParticipantDevices key={selectedAssignmentPlanter.id} planter={selectedAssignmentPlanter} />
         </PanelCard>
       )}
+
+      <button
+        type="button"
+        className="btn btn-secondary btn-sm assignment-activity-report"
+        onClick={() => setReportOpen(true)}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M7 14l4-4 4 4 5-5" />
+        </svg>
+        View Activity Report
+      </button>
 
       <Modal
         open={Boolean(noAvailableSite)}

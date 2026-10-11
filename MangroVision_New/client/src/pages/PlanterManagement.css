@@ -1,11 +1,10 @@
-.planter-stats-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-}
-
-.planter-stats-grid .stat-card {
-  padding: 10px 12px;
+.assignment-activity-report {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* Assign card */

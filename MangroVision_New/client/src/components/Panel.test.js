@@ -221,35 +221,17 @@ async function click(button) {
 const headers = () => [...document.querySelectorAll('.panel-card-header')];
 const expanded = () => headers().filter((header) => header.getAttribute('aria-expanded') === 'true');
 
-test('assignment overview uses current map statuses and updates when a planted point dies', async () => {
-  responses.set('/api/planters/dashboard', {
-    active_planters: 9, active_assignments: 10, pending_assigned_points: 517,
-    completed_assigned_points: 1145, skipped_assigned_points: 1,
-  });
-  const points = [
-    ...Array.from({ length: 840 }, () => ({ map_status: 'planted', assignment_status: 'completed' })),
-    ...Array.from({ length: 305 }, () => ({ map_status: 'dead', planting_status: 'planted', assignment_status: 'completed', death_at: '2026-10-09' })),
-    ...Array.from({ length: 517 }, () => ({ map_status: 'assigned', assignment_status: 'pending' })),
-    ...Array.from({ length: 1511 }, () => ({ map_status: 'planned' })),
-    ...Array.from({ length: 21 }, () => ({ map_status: 'skipped', assignment_status: 'skipped' })),
-    ...Array.from({ length: 246 }, () => ({ map_status: 'unavailable', eroded_unavailable: true })),
-    { map_status: 'dead', deleted_at: '2026-10-09' },
-  ].map((point, index) => ({ ...point, id: index + 1 }));
-  useMapStore.setState({ points });
+test('Assign Points opens the form without a duplicate overview and keeps activity reports accessible', async () => {
   await render(pages.get('PlanterManagement'));
-  await click(headers().find((header) => header.textContent.includes('Overview')));
-  const summary = () => Object.fromEntries([...document.querySelectorAll('.planter-stats-grid .stat-card')]
-    .map((card) => [card.querySelector('.stat-label').textContent, card.querySelector('.stat-value').textContent]));
-  assert.deepEqual(summary(), {
-    'Active organizations': '9', 'Active assignments': '10',
-    Planned: '1,511', Assigned: '517', Planted: '840', Dead: '305', Skipped: '21', Unavailable: '246',
-  });
-  await act(async () => useMapStore.setState({
-    points: points.map((point) => point.id === 1 ? { ...point, map_status: 'dead', death_at: '2026-10-09' } : point),
-  }));
-  assert.equal(summary().Planted, '839');
-  assert.equal(summary().Dead, '306');
-  assert.equal(summary().Skipped, '21');
+  assert.equal(headers().some((header) => header.textContent.includes('Overview')), false);
+  assert.match(expanded()[0].textContent, /Assign available points/);
+  assert.equal(requests.includes('/api/planters/dashboard'), false);
+  await click(document.querySelector('.assignment-activity-report'));
+  assert.equal(document.querySelector('[role="dialog"]').getAttribute('aria-labelledby'), 'par-title');
+  assert.equal(document.querySelector('#par-title').textContent, 'Organization Activity');
+  await click(document.querySelector('[aria-label="Close report"]'));
+  assert.equal(document.querySelector('.par-backdrop'), null);
+  assert.equal(mutations.length, 0);
 });
 
 test('Quick Assign shows available points and explains invalid counts only when assigning', async () => {

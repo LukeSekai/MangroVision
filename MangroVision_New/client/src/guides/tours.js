@@ -87,7 +87,7 @@ export const STAFF_TOURS = [
       step('/planters', '#organization-point-count', 'Set the allocation size', 'Enter how many available points to assign. Review the count, species and participant allocation before using Assign. Participants receive staggered zigzag strips, with later batches balancing existing allocations.'),
       step('/planters', assignCard('Field Share Link'), 'Share the field workspace', 'Open Field Share Link and copy the field link for participants. On a local setup, use the provided link-generation controls if needed. Keep the current link while participants work.'),
       step('/planters', assignCard('Participant devices'), 'Register and recover participant devices', 'After selecting a registered organization, Participant devices shows its device allocations. Each participant should keep their assigned participant number and device recovery code. Use these controls to manage a lost or replaced device.'),
-      step('/planters', '[data-guide-panel="Planting Assignments"] .floating-panel-header', 'Review organization progress', 'Overview summarizes organizations and assignments. View Activity Report opens the recorded planting activity report. Refresh your data after field users record planting progress.'),
+      step('/planters', '.assignment-activity-report', 'Review organization progress', 'View Activity Report opens the recorded planting activity report. Use the Overview tab for mapped planting totals. Refresh your data after field users record planting progress.'),
     ],
   },
   {
