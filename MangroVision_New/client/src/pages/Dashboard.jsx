@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
 import AppointmentNotice from '../components/AppointmentNotice';
 import RestorationReportDialog from '../components/RestorationReportDialog';
+import Modal from '../components/Modal';
 import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses';
 import { DASHBOARD_ENDPOINTS, dashboardSectionsForTab } from '../utils/dashboardLoading';
 import {
@@ -369,10 +370,12 @@ function ChartCard({
   );
 }
 
-function KpiCard({ label, value, hint, tone = 'green', progress = null }) {
+function KpiCard({ label, value, hint, tone = 'green', progress = null, onClick, actionLabel }) {
   const safeProgress = firstNumber(progress);
+  const Container = onClick ? 'button' : 'article';
   return (
-    <article className={`dash-kpi dash-kpi-${tone}`}>
+    <Container className={`dash-kpi dash-kpi-${tone}${onClick ? ' dash-kpi-action' : ''}`}
+      type={onClick ? 'button' : undefined} onClick={onClick} aria-haspopup={onClick ? 'dialog' : undefined}>
       <span className="dash-kpi-accent" aria-hidden="true" />
       <div className="dash-kpi-label">{label}</div>
       <div className="dash-kpi-value">{value}</div>
@@ -382,7 +385,8 @@ function KpiCard({ label, value, hint, tone = 'green', progress = null }) {
           <span style={{ width: `${Math.max(0, Math.min(100, safeProgress))}%` }} />
         </div>
       ) : null}
-    </article>
+      {actionLabel && <span className="dash-kpi-action-label">{actionLabel}<span aria-hidden="true"> →</span></span>}
+    </Container>
   );
 }
 
@@ -451,6 +455,7 @@ function boundarySourceLabel(value) {
 }
 
 function OverviewTab({ data }) {
+  const [followUpOpen, setFollowUpOpen] = useState(false);
   const kpis = data?.kpis || {};
   const planted = kpis.seedlings_planted || {};
   const attention = kpis.sites_requiring_attention || {};
@@ -507,8 +512,11 @@ function OverviewTab({ data }) {
           value={formatCount(attention.value)}
           hint="Based on current inspections and site conditions"
           tone={numberOrNull(attention.value) > 0 ? 'red' : 'green'}
+          onClick={() => setFollowUpOpen(true)}
+          actionLabel="View sites and next steps"
         />
       </KpiStrip>
+      <SiteFollowUpDialog open={followUpOpen} data={data} onClose={() => setFollowUpOpen(false)} />
 
       <div className="dash-grid">
         <ChartCard
@@ -560,6 +568,39 @@ function OverviewTab({ data }) {
       </div>
     </div>
   );
+}
+
+function SiteFollowUpDialog({ open, data, onClose }) {
+  const sites = arrayOf(data?.site_attention).filter((site) => arrayOf(site.reasons).length > 0);
+  const count = firstNumber(data?.kpis?.sites_requiring_attention?.value, sites.length) ?? 0;
+  return <Modal open={open} title="Sites needing follow-up" variant="info"
+    className="modal-card-wide dash-follow-up-dialog" cancelLabel="Close" onCancel={onClose}>
+    <p className="dash-follow-up-intro">Review each site's flagged conditions, then locate it on the map or open its organization's monitoring records. This list uses your Dashboard filters.</p>
+    {sites.length > 0 ? <ul className="dash-follow-up-list">
+      {sites.map((site) => {
+        const reasons = new Set(arrayOf(site.reasons));
+        const name = site.site_name || `Site ${site.site_id}`;
+        const siteId = encodeURIComponent(site.site_id);
+        const focus = reasons.has('warning_exposure') ? 'risk_areas' : 'site_points';
+        return <li key={site.site_id} className="dash-follow-up-site">
+          <h3>{name}</h3>
+          <ul className="dash-follow-up-reasons">
+            {reasons.has('overdue_inspections') && <li><strong>Monitoring overdue.</strong> {formatCount(site.overdue_inspections)} pending inspection{Number(site.overdue_inspections) === 1 ? '' : 's'} past due.</li>}
+            {reasons.has('survival_below_target') && <li><strong>Survival below target.</strong> {formatPercent(site.survival_rate_pct)} of inspected seedlings are alive.</li>}
+            {reasons.has('warning_exposure') && <li><strong>Warning zone exposure.</strong> {formatCount(site.warning_points)} planting point{Number(site.warning_points) === 1 ? '' : 's'} within warning zones.</li>}
+          </ul>
+          <div className="dash-follow-up-actions">
+            <Link to={`/map?project_site_id=${siteId}&focus=${focus}`} onClick={onClose}
+              aria-label={`View ${name} on the map`}>View site on map</Link>
+            <Link to={`/monitoring?project_site_id=${siteId}`} onClick={onClose}
+              aria-label={`Open Monitoring for ${name}`}>Open Monitoring</Link>
+          </div>
+        </li>;
+      })}
+    </ul> : <p role="status" className="dash-follow-up-empty">{count > 0
+      ? 'Site details are unavailable. Refresh the Dashboard to try again.'
+      : 'No sites need follow-up for the selected filters.'}</p>}
+  </Modal>;
 }
 
 function WrappedCategoryTick({ x, y, payload }) {

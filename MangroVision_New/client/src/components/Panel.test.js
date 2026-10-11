@@ -708,6 +708,57 @@ test('inspect-plants-due links filter available monitoring visits and can show u
   assert.equal(mutations.length, 0);
 });
 
+test('site follow-up links show the responsible organization and retain monitoring locks', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true },
+    { id: 2, name: 'Site owner', total_planted: 100, monitoring_available: false },
+  ] });
+  responses.set('/api/project-sites/12', { type: 'Feature', id: 12,
+    properties: { name: 'North planting site', organization_id: 2, organization_name: 'Site owner' } });
+  await render(pages.get('OrganizationMonitoring'), '/page?project_site_id=12');
+  const context = document.querySelector('.monitoring-site-context');
+  assert.match(context.textContent, /Follow-up for North planting site/);
+  assert.match(context.textContent, /Monitoring visits cover all of its planting sites/);
+  const list = () => document.querySelector('.org-monitoring-organization-list');
+  assert.match(list().textContent, /Site owner/);
+  assert.doesNotMatch(list().textContent, /Other organization/);
+  assert.equal(list().querySelector('button').disabled, true);
+  assert.equal(context.querySelector('a').getAttribute('href'), '/map?project_site_id=12&focus=site_points');
+  const history = () => document.querySelector('.org-monitoring-history-card');
+  await click(history().querySelector('.panel-card-header'));
+  assert.match(history().textContent, /Site owner/);
+  assert.doesNotMatch(history().textContent, /Other organization/);
+  await click(document.querySelector('.monitoring-due-filter input'));
+  assert.doesNotMatch(list().textContent, /Site owner/);
+  assert.match(document.querySelector('.org-monitoring-content').textContent, /No organizations are due/);
+  await click(document.querySelector('.monitoring-due-filter input'));
+  await click([...context.querySelectorAll('button')].find((button) => button.textContent === 'Show all organizations'));
+  assert.equal(document.querySelector('.monitoring-site-context'), null);
+  assert.match(list().textContent, /Other organization/);
+  assert.match(list().textContent, /Site owner/);
+  assert.match(history().textContent, /Other organization/);
+  assert.equal(mutations.length, 0);
+});
+
+test('failed site lookups never show unrelated organizations and can be retried', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true },
+  ] });
+  responses.set('/api/project-sites/12', new Response(JSON.stringify({ detail: 'Project site not found.' }), { status: 404 }));
+  await render(pages.get('OrganizationMonitoring'), '/page?project_site_id=12');
+  assert.match(document.querySelector('.monitoring-site-context [role="alert"]').textContent, /Project site not found/);
+  assert.doesNotMatch(document.querySelector('.org-monitoring-organization-list').textContent, /Other organization/);
+  assert.ok([...document.querySelectorAll('.org-monitoring-kpis strong')].every((element) => element.textContent === '—'));
+  await click(document.querySelector('.org-monitoring-history-card .panel-card-header'));
+  assert.doesNotMatch(document.querySelector('.org-monitoring-history-card').textContent, /Other organization/);
+  responses.set('/api/project-sites/12', { type: 'Feature', id: 12,
+    properties: { name: 'Restored site', organization_id: 1, organization_name: 'Other organization' } });
+  await click([...document.querySelectorAll('.monitoring-site-context button')].find((button) => button.textContent === 'Retry'));
+  assert.match(document.querySelector('.monitoring-site-context').textContent, /Restored site/);
+  assert.match(document.querySelector('.org-monitoring-organization-list').textContent, /Other organization/);
+  assert.equal(mutations.length, 0);
+});
+
 for (const name of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'ErodedZoneEditor', 'MonitoringMapWorkspace']) {
   test(`${name} opens one section at a time and preserves all-closed state on return`, async () => {
     await render(pages.get(name));

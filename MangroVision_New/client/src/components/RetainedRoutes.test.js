@@ -1,7 +1,7 @@
 import test, { before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { act, createElement } from 'react';
-import { MemoryRouter, Route, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, useLocation, useNavigate } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { build } from 'vite';
 import { writeFile, unlink } from 'node:fs/promises';
@@ -12,6 +12,7 @@ import process from 'node:process';
 let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, useMapStore;
 let requests, scheduleRows, mapPoints, appointmentRows, approvals, useAuthStore;
 let goalSaves, goalSaveFailure, savedGoalSettings;
+let followUpRows;
 const bundlePath = resolve(`node_modules/.retained-routes-${process.pid}.mjs`);
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
@@ -66,6 +67,8 @@ before(async () => {
     }
     if (url.pathname.startsWith('/api/dashboard/')) return Response.json({
       as_of: '2026-10-06T01:00:00Z', filter_options: { sites: [{ id: 1, name: 'Test Site' }] }, suitability: rows,
+      kpis: { sites_requiring_attention: { value: followUpRows.filter((site) => site.reasons.length).length } },
+      site_attention: followUpRows,
       lifecycle: mapPoints.map((point) => ({
         key: { planned: 'available', planted: 'planted_unverified' }[point.map_status] || point.map_status,
         value: 1,
@@ -133,6 +136,7 @@ beforeEach(() => {
   goalSaves = [];
   goalSaveFailure = false;
   savedGoalSettings = new Map();
+  followUpRows = [];
   useAuthStore.setState({ user: null });
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
@@ -141,8 +145,10 @@ afterEach(async () => { await act(async () => root.unmount()); });
 
 function Navigation() {
   const navigate = useNavigate();
+  const location = useLocation();
   return createElement('nav', null, ...['dashboard', 'activity', 'scheduling', 'map'].map((page) =>
-    createElement('button', { key: page, 'data-page': page, onClick: () => navigate(`/${page}`) }, page)));
+    createElement('button', { key: page, 'data-page': page, onClick: () => navigate(`/${page}`) }, page)),
+    createElement('output', { 'data-location': true }, location.pathname + location.search));
 }
 
 async function settle() {
@@ -152,11 +158,12 @@ async function settle() {
 async function render(page = 'dashboard') {
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/${page}`] },
     createElement(Navigation),
-    createElement(RetainedRoutes, { paths: ['/dashboard', '/activity', '/scheduling', '/map'] },
+    createElement(RetainedRoutes, { paths: ['/dashboard', '/activity', '/scheduling', '/map', '/monitoring'] },
       createElement(Route, { path: '/dashboard', element: createElement(Dashboard) }),
       createElement(Route, { path: '/activity', element: createElement(ActivityFeed) }),
       createElement(Route, { path: '/scheduling', element: createElement(Scheduling) }),
       createElement(Route, { path: '/map', element: createElement(MapAnalytics) }),
+      createElement(Route, { path: '/monitoring', element: createElement('p', null, 'Monitoring destination') }),
     ))));
   await settle();
 }
@@ -169,6 +176,48 @@ async function click(selector) {
 }
 
 const count = (path) => requests.filter((url) => url.split('?')[0] === path).length;
+
+test('follow-up card lists affected sites and links to their exact map and monitoring context', async () => {
+  followUpRows = [
+    { site_id: 1, site_name: 'North planting site', reasons: ['overdue_inspections', 'survival_below_target'], overdue_inspections: 4, survival_rate_pct: 55 },
+    { site_id: 2, site_name: 'Warning site', reasons: ['warning_exposure'], warning_points: 12 },
+    { site_id: 3, site_name: 'Healthy site', reasons: [] },
+  ];
+  await render();
+  const requestCount = requests.length;
+  await click('.dash-kpi-action');
+  const dialog = document.querySelector('.dash-follow-up-dialog');
+  assert.ok(dialog);
+  for (const text of [/North planting site/, /Monitoring overdue.*4 pending inspections/s, /Survival below target.*55%/s]) {
+    assert.match(dialog.textContent, text);
+  }
+  assert.match(dialog.textContent, /Warning zone exposure.*12 planting points/s);
+  assert.doesNotMatch(dialog.textContent, /Healthy site/);
+  assert.equal(dialog.querySelectorAll('.dash-follow-up-site').length, 2);
+  assert.equal(requests.length, requestCount, 'Opening the list uses the already loaded reporting scope');
+  await click(dialog.querySelector('[aria-label="View Warning site on the map"]'));
+  assert.equal(document.querySelector('[data-location]').textContent, '/map?project_site_id=2&focus=risk_areas');
+  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
+  await click('[data-page="dashboard"]');
+  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
+  await click('.dash-kpi-action');
+  await click('[aria-label="Open Monitoring for North planting site"]');
+  assert.equal(document.querySelector('[data-location]').textContent, '/monitoring?project_site_id=1');
+  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
+  assert.equal(goalSaves.length, 0);
+});
+
+test('zero follow-up sites has an honest empty state and Escape restores focus to the card', async () => {
+  await render();
+  const button = document.querySelector('.dash-kpi-action');
+  button.focus();
+  await click(button);
+  assert.match(document.querySelector('.dash-follow-up-dialog').textContent, /No sites need follow-up for the selected filters/);
+  assert.equal(document.querySelector('.dash-follow-up-dialog a'), null);
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
+  assert.equal(document.activeElement, button);
+});
 
 test('map and donut pick up mutations made while their retained page is hidden', async () => {
   mapPoints = [{ id: 1, map_status: 'planted', planting_status: 'planted' }];

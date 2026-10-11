@@ -121,6 +121,7 @@ export const STAFF_TOURS = [
       step('/dashboard', '.dash-header', 'Review restoration progress', 'Dashboard summarizes saved planting and monitoring information. Review its indicators alongside the organization records and field observations.'),
       step('/dashboard', '.dash-filter-shell', 'Choose the reporting scope', 'Set the start date, end date and project site. The default view covers the current year so far. Check the scope before comparing indicators or downloading a report.'),
       step('/dashboard', '.dash-tabs', 'Explore the dashboard sections', 'Use the tabs to view planting progress, survival, health and other restoration indicators. Each view uses the selected reporting scope.'),
+      step('/dashboard', '.dash-kpi-action', 'Find sites needing follow-up', 'Select Sites needing follow-up to see the affected project sites and their flagged conditions. View site on map locates a site. Open Monitoring shows the organization responsible for that site.'),
       step('/dashboard', '.dash-goals-button', 'Set planting goals', 'Open Planting goals to select the year and review or enter the annual planting and survival targets. Save goals after checking the values.'),
       step('/dashboard', '.dash-report-button', 'Create a restoration report', 'Use Download Report to choose a report type and review its scope. Download the report after checking the included dates, sites and records.'),
     ],

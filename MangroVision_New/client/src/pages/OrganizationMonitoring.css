@@ -8,6 +8,12 @@
   scrollbar-width: thin;
 }
 .org-monitoring-content { max-width: 1680px; margin: 0 auto; }
+.monitoring-site-context { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin: 18px 0; padding: 16px; border: 1px solid #bbf7d0; border-radius: 12px; background: #f0fdf4; }
+.monitoring-site-context h2 { font-size: 0.95rem; color: var(--green-900); margin-bottom: 6px; }
+.monitoring-site-context p { font-size: 0.8125rem; color: var(--text-secondary); line-height: 1.5; }
+.monitoring-site-context-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.monitoring-site-context-actions a, .monitoring-site-context-actions button { padding: 8px 11px; border: 1px solid var(--green-700); border-radius: 8px; background: white; color: var(--green-700); font: inherit; font-size: 0.8125rem; font-weight: 600; text-decoration: none; cursor: pointer; }
+.monitoring-site-context-actions a:focus-visible, .monitoring-site-context-actions button:focus-visible { outline: 3px solid var(--green-600); outline-offset: 3px; }
 .org-monitoring-page * { min-width: 0; }
 .org-monitoring-page button, .org-monitoring-page input, .org-monitoring-page select { font-family: inherit; }
 .org-monitoring-page-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; margin-bottom: 24px; }

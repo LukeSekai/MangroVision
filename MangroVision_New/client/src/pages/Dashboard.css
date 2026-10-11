@@ -416,6 +416,35 @@
   color: var(--green-600);
 }
 
+.dash-kpi-action {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 150ms, box-shadow 150ms;
+}
+.dash-kpi-action:hover { border-color: var(--green-600); box-shadow: var(--shadow-md); }
+.dash-kpi-action:focus-visible { outline: 3px solid var(--green-600); outline-offset: 3px; }
+.dash-kpi-action-label { display: block; margin-top: 10px; color: var(--green-700); font-size: 0.75rem; font-weight: 700; }
+.dash-follow-up-dialog .modal-content { padding: 24px; }
+.dash-follow-up-dialog .modal-title { text-align: left; padding-right: 28px; }
+.dash-follow-up-dialog .modal-icon { display: none; }
+.dash-follow-up-intro { color: var(--text-secondary); }
+.dash-follow-up-list { display: grid; gap: 12px; padding: 0; margin: 18px 0 0; list-style: none; }
+.dash-follow-up-site { padding: 16px; border: 1px solid var(--border-light); border-radius: 12px; background: var(--surface-muted); }
+.dash-follow-up-site h3 { margin: 0 0 10px; color: var(--green-900); font-size: 0.95rem; overflow-wrap: anywhere; }
+.dash-follow-up-reasons { display: grid; gap: 7px; margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 0.8125rem; line-height: 1.5; }
+.dash-follow-up-reasons strong { color: var(--text-primary); }
+.dash-follow-up-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.dash-follow-up-actions a { padding: 9px 12px; border: 1px solid var(--green-700); border-radius: 8px; color: var(--green-700); background: var(--surface-base); font-weight: 700; font-size: 0.8125rem; text-decoration: none; }
+.dash-follow-up-actions a:last-child { color: white; background: var(--green-700); }
+.dash-follow-up-actions a:focus-visible { outline: 3px solid var(--green-600); outline-offset: 3px; }
+.dash-follow-up-empty { margin-top: 18px; padding: 14px; background: var(--green-50); border-radius: 10px; }
+@media (max-width: 620px) {
+  .dash-follow-up-dialog .modal-content { padding: 20px 14px; }
+  .dash-follow-up-actions a { flex: 1 1 160px; text-align: center; }
+}
+
 /* Cards and charts */
 
 .dash-grid {

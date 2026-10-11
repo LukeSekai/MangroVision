@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Modal from '../components/Modal';
 import OrganizationHistory from '../components/OrganizationHistory';
 import AutomaticGrowth from '../components/AutomaticGrowth';
@@ -96,6 +96,9 @@ export default function OrganizationMonitoring() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const dueOnly = searchParams.get('filter') === 'due';
+  const requestedSiteId = searchParams.get('project_site_id') || '';
+  const [siteContext, setSiteContext] = useState({ id: '', site: null, error: '' });
+  const [siteRevision, setSiteRevision] = useState(0);
   const feedback = useFormFeedback({
     monitored_at: { label: 'Monitoring date', serverTerms: ['visit date', 'monitoring date'] },
     dead_count: { label: 'Newly dead seedlings', aliases: ['new_dead_count'], serverTerms: ['new deaths', 'newly dead'] },
@@ -174,6 +177,37 @@ export default function OrganizationMonitoring() {
     window.addEventListener('mv:data-changed', refresh);
     return () => window.removeEventListener('mv:data-changed', refresh);
   }, [loadWorkspace]);
+
+  useEffect(() => {
+    if (!requestedSiteId || !token) return undefined;
+    const controller = new AbortController();
+    queueMicrotask(() => {
+      if (!controller.signal.aborted) setSiteContext({ id: '', site: null, error: '' });
+    });
+    fetch(`${API}/api/project-sites/${encodeURIComponent(requestedSiteId)}`, { signal: controller.signal })
+      .then(async (response) => {
+        const site = await response.json();
+        if (!response.ok) throw new Error(site.detail || 'Could not load this project site.');
+        if (!site.properties) throw new Error('Project site details are unavailable.');
+        if (!controller.signal.aborted) setSiteContext({ id: requestedSiteId, site, error: '' });
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) setSiteContext({ id: requestedSiteId, site: null, error: error.message || 'Could not load this project site.' });
+      });
+    return () => controller.abort();
+  }, [requestedSiteId, token, siteRevision]);
+
+  const siteContextReady = siteContext.id === requestedSiteId;
+  const followUpSite = siteContextReady ? siteContext.site : null;
+  const followUpOrganizationId = followUpSite?.properties?.organization_id;
+  const siteContextLoading = Boolean(requestedSiteId && !siteContextReady);
+  const siteContextUnavailable = Boolean(requestedSiteId && siteContext.error);
+  const overviewUnavailable = loading || siteContextLoading || siteContextUnavailable;
+  const scopedOrganizations = requestedSiteId
+    ? organizations.filter((organization) => followUpOrganizationId != null && String(organization.id) === String(followUpOrganizationId))
+    : organizations;
+  const visibleOrganizations = scopedOrganizations.filter((organization) => !dueOnly || organization.monitoring_available === true);
+  const siteMapPath = `/map?project_site_id=${encodeURIComponent(requestedSiteId)}&focus=site_points`;
 
   const selectedOrganization = useMemo(
     () => organizations.find(
@@ -334,25 +368,47 @@ export default function OrganizationMonitoring() {
         </div>
         <div className="org-monitoring-page-actions">
           <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
-          <button type="button" className="is-primary" onClick={() => navigate('/monitoring/map')}>
+          <button type="button" className="is-primary" onClick={() => navigate(requestedSiteId ? siteMapPath : '/monitoring/map')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>
             Show map
           </button>
         </div>
       </header>
 
+      {requestedSiteId && <section className="monitoring-site-context" aria-label="Selected follow-up site">
+        <div>
+          {siteContextLoading ? <p role="status">Finding the organization responsible for this site...</p>
+            : siteContext.error ? <p role="alert">{siteContext.error}</p>
+              : <><h2>Follow-up for {followUpSite?.properties?.name || `Site ${requestedSiteId}`}</h2>
+                <p>{followUpOrganizationId != null
+                  ? `Showing ${followUpSite.properties.organization_name || scopedOrganizations[0]?.name || 'the responsible organization'}. Monitoring visits cover all of its planting sites.`
+                  : 'This site has no organization owner. Review the site in Planting Map.'}</p>
+                {!loading && followUpOrganizationId != null && scopedOrganizations.length === 0 && <p role="status">The organization for this site is unavailable in Monitoring.</p>}
+              </>}
+        </div>
+        <div className="monitoring-site-context-actions">
+          {siteContext.error && <button type="button" onClick={() => setSiteRevision((value) => value + 1)}>Retry</button>}
+          <Link to={siteMapPath}>View site on map</Link>
+          <button type="button" onClick={() => {
+            const next = new URLSearchParams(searchParams);
+            next.delete('project_site_id');
+            setSearchParams(next);
+          }}>Show all organizations</button>
+        </div>
+      </section>}
+
       <label className="monitoring-due-filter"><input type="checkbox" checked={dueOnly} onChange={(event) => {
         const next = new URLSearchParams(searchParams);
         if (event.target.checked) next.set('filter', 'due'); else next.delete('filter');
         setSearchParams(next);
       }} /> Show organizations due for a visit</label>
-      {dueOnly && !loading && !loadError && !organizations.some((organization) => organization.monitoring_available === true)
+      {dueOnly && !overviewUnavailable && !loadError && (!requestedSiteId || scopedOrganizations.length > 0) && !visibleOrganizations.length
         ? <p role="status">No organizations are due for a monitoring visit. Clear the filter to see upcoming visits.</p> : null}
       <div className="org-monitoring-kpis" aria-label="Monitoring overview">
-        <article><span>Organizations</span><strong>{loading ? '—' : organizations.length}</strong><small>Participating in monitoring</small></article>
-        <article><span>Seedlings planted</span><strong>{loading ? '—' : organizations.reduce((sum, item) => sum + Number(item.total_planted ?? item.current_planted_points ?? 0), 0).toLocaleString()}</strong><small>Includes recorded deaths and replacement plantings</small></article>
-        <article><span>Recorded visits</span><strong>{loading ? '—' : organizations.reduce((sum, item) => sum + Number(item.monitoring_record_count || 0), 0).toLocaleString()}</strong><small>Monitoring records to date</small></article>
-        <article><span>Awaiting first visit</span><strong>{loading ? '—' : organizations.filter((item) => !item.latest_record).length}</strong><small>Organizations with no visit recorded</small></article>
+        <article><span>Organizations</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.length}</strong><small>Participating in monitoring</small></article>
+        <article><span>Seedlings planted</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.reduce((sum, item) => sum + Number(item.total_planted ?? item.current_planted_points ?? 0), 0).toLocaleString()}</strong><small>Includes recorded deaths and replacement plantings</small></article>
+        <article><span>Recorded visits</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.reduce((sum, item) => sum + Number(item.monitoring_record_count || 0), 0).toLocaleString()}</strong><small>Monitoring records to date</small></article>
+        <article><span>Awaiting first visit</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.filter((item) => !item.latest_record).length}</strong><small>Organizations with no visit recorded</small></article>
       </div>
 
       {loadError && <div className="org-monitoring-message is-error">{loadError}</div>}
@@ -364,7 +420,7 @@ export default function OrganizationMonitoring() {
         icon={<SummaryIcon />}
         className="org-monitoring-summary-card"
       >
-        {loading ? <div className="org-monitoring-muted">Loading organizations...</div> : null}
+        {loading || siteContextLoading ? <div className="org-monitoring-muted">Loading organizations...</div> : null}
         {!loading && organizations.length === 0 ? (
           <div className="org-monitoring-muted">
             No organizations are registered yet. Create a planting schedule or organization first.
@@ -372,7 +428,7 @@ export default function OrganizationMonitoring() {
         ) : null}
         {organizations.length > 0 ? (
           <div className="org-monitoring-organization-list">
-            {organizations.filter((organization) => !dueOnly || organization.monitoring_available === true).map((organization) => {
+            {visibleOrganizations.map((organization) => {
               const organizationLatest = organization.latest_record || null;
               const hasPlantedSeedlings = Number(organization.total_planted ?? organization.current_planted_points ?? 0) > 0;
               const monitoringAvailable = organization.monitoring_available === true;
@@ -413,7 +469,7 @@ export default function OrganizationMonitoring() {
       </PanelCard>
 
       <Modal
-        open={Boolean(selectedOrganization)}
+        open={Boolean(selectedOrganization) && (!requestedSiteId || String(selectedOrganization.id) === String(followUpOrganizationId))}
         title="Record monitoring visit"
         icon={<VisitIcon />}
         variant="info"
@@ -558,13 +614,13 @@ export default function OrganizationMonitoring() {
         panelKey="organization-history"
         title="Monitoring History"
         icon={<HistoryIcon />}
-        badge={organizations.length}
+        badge={overviewUnavailable ? '—' : scopedOrganizations.length}
         className="org-monitoring-history-card"
       >
-        {loading ? <p className="org-monitoring-muted">Loading organizations...</p> : null}
+        {loading || siteContextLoading ? <p className="org-monitoring-muted">Loading organizations...</p> : null}
         {!loading && !organizations.length ? <p className="org-monitoring-muted">No organizations to display yet.</p> : null}
         <div className="org-monitoring-organization-list">
-          {organizations.map((organization) => <button key={organization.id} type="button"
+          {scopedOrganizations.map((organization) => <button key={organization.id} type="button"
             className="org-monitoring-organization-card is-history" onClick={() => setHistoryOrganization(organization)} aria-haspopup="dialog">
             <OrganizationCardHeading name={organization.name} />
             <span className="org-monitoring-organization-metrics">
@@ -576,7 +632,7 @@ export default function OrganizationMonitoring() {
         </div>
       </PanelCard>
       </div>
-      {historyOrganization ? <OrganizationHistory key={historyOrganization.id} organization={historyOrganization} onChanged={() => loadWorkspace({ quiet: true })} onClose={() => setHistoryOrganization(null)} /> : null}
+      {historyOrganization && (!requestedSiteId || String(historyOrganization.id) === String(followUpOrganizationId)) ? <OrganizationHistory key={historyOrganization.id} organization={historyOrganization} onChanged={() => loadWorkspace({ quiet: true })} onClose={() => setHistoryOrganization(null)} /> : null}
       {reportOpen && <RestorationReportDialog initialSelection={{ type: 'monitoring' }} onClose={() => setReportOpen(false)} />}
     </div>
   );
