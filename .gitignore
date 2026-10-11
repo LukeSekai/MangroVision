@@ -51,10 +51,15 @@ htmlcov/
 !/tests/test_like_appointments.py
 !/tests/test_like_appointments_postgres.py
 !/tests/test_appointment_email_transport.py
+!/tests/test_planter_activities.py
+!/tests/test_organization_credentials_postgres.py
+!/tests/test_planter_codes_postgres.py
 *.test.js
 *.test.mjs
 *.spec.js
 *.spec.mjs
+!MangroVision_New/client/src/components/ActivityAndBooking.test.js
+!MangroVision_New/client/src/utils/activityTides.test.js
 # Keep the operational report regression checks with their implementation.
 !MangroVision_New/client/src/utils/restorationReports.test.js
 !MangroVision_New/client/src/pages/RestorationReports.test.js

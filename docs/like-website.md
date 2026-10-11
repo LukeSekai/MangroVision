@@ -121,9 +121,10 @@ Confirmation requires acknowledging that the requester was contacted.
 
 Approval creates one confirmed schedule and links it to the request in
 the same transaction as queuing the confirmation email. Repeated approval cannot
-create another schedule, account, or queued email. Tree planting creates a shared
-organization planter account if one does not exist, or completes a reserved
-account. Field visits and clean-up drives create no planter account and cannot
+create another schedule, account, or queued email. Tree planting creates an
+organization owner if one does not exist, or completes a reserved account, then
+issues one individual code per participant. Existing participants keep their codes
+across activities. Field visits and clean-up drives create no planter account and cannot
 be assigned a planting area. Planting area assignment and later schedule changes
 use the existing staff workflow.
 Declined/cancelled pending requests require a reason and create no schedule.
@@ -143,7 +144,9 @@ values in the private `.env` for the development environment:
 - When `BREVO_API_KEY` is empty, confirmations use the existing `SMTP_HOST`,
   `SMTP_PORT`, `SMTP_FROM`, `SMTP_USERNAME`, and `SMTP_PASSWORD` settings.
   Cloud verification-email settings are separate from booking confirmations.
-- `LIKE_EMAIL_ENCRYPTION_KEY`: a dedicated, stable Fernet key for the email queue.
+- `LIKE_EMAIL_ENCRYPTION_KEY`: a stable Fernet key for the email queue and private
+  planter-code vault. It also keys the code lookup HMAC. Keep the existing value;
+  replacing it without a planned conversion breaks code lookup and decryption.
   Generate it locally with the following command and copy its output into the
   private `.env`. Never commit it or prefix it with `VITE_`.
 - `MANGROVISION_PUBLIC_URL`: the frontend's reachable base URL, for example
@@ -173,14 +176,46 @@ An optional one-shot worker is also available:
 
 The email includes the reference, organization, appointment type, agreed date and
 time in Philippine time, and participant count. Tree planting also includes the
-planter URL and username. Newly created accounts receive a random password;
-existing accounts keep their password and participant-device allocations, and
-receive instructions to use their existing password. Staff can manage existing
-account access through the current organization-account workflow.
+planter URL and individual participant codes. Confirmations, schedule updates, and cancellations use
+the MangroVision HTML layout, with a plain-text alternative. The credentials
+section and planter button are omitted for cancellations; non-planting bookings
+do not receive planter credentials. Brevo receives `htmlContent` and
+`textContent` as described in its
+[transactional email reference](https://developers.brevo.com/reference/send-transac-email);
+SMTP uses a multipart message.
 
-Passwords are hashed in account records. Queued message contents are encrypted,
-never returned by the API, and erased after successful provider submission. Scheduling
-shows whether the email is queued, awaiting retry, or sent. Provider acceptance does
+The planter page uses one eight-character code, displayed as `K7MP-4R9X`.
+Each code identifies a specific participant number within an organization and
+remains valid across activities until staff replace or revoke it. Codes use
+random letters and numbers without ambiguous `I`, `O`, `1`, or `0`; they are not
+based on organization names, dates, or predictable sequences.
+
+The planter page offers **Sign in** and device recovery. Public self-registration
+is closed, including the old API endpoint. For staff-assisted groups, select the
+organization in **Planting Assignments ? Planter codes**. Create access using the
+participant count, or view the existing codes, copy/download the private list,
+and replace or revoke a particular participant?s code. Existing reserved points
+are allocated only when access is first created. Staff give the full list only
+to the organization leader, who gives each participant their own code.
+
+Existing organization owners and participant slots stay intact. Existing browser
+identities and sessions continue working; old browser keys are resolved only
+against the participant identified by the code. A new browser cannot silently
+claim another slot for that code. Use the saved device recovery code, or have
+staff reset the existing device. Replacing/revoking a code ends that participant?s
+sessions while preserving assigned points and device identity.
+
+Planter sign-in no longer accepts a shared username/password. Legacy account
+columns remain internal for compatibility with existing records. Individual
+codes are looked up using a keyed digest and kept in an encrypted staff vault.
+Public planter session responses contain neither codes nor legacy credentials.
+Staff code responses use `Cache-Control: no-store`; codes are not saved in
+browser storage. Durable sign-in limits return a retry time when exceeded.
+
+Queued message contents are encrypted, never returned by the booking API, and
+erased after successful provider submission. Pending booking messages are
+refreshed after code changes, and replacement is blocked during active delivery.
+Scheduling shows whether the email is queued, awaiting retry, or sent. Provider acceptance does
 not guarantee inbox delivery. Delivery retries can resend an email if a process
 stops after sending but before recording success; the schedule and account remain
 unique. Cancelled schedules only deliver a queued cancellation notice; removed
@@ -286,3 +321,14 @@ accounts, encrypted email retries and purging, corrected email addresses,
 notifications/counts, rollback, decline/cancellation, rate limits, database
 client-role access, and existing manual schedule creation. Email delivery is
 mocked; these tests never send real email.
+
+## Existing participant conversion
+
+Migration 0017 and issuance for the nine existing organizations were activated
+on October 12, 2026 after the approved backup and verification. Planter code
+sign-in is live at the stable Vercel `/field` URL.
+
+[Planter code access](planter-code-access.md) describes migration `20261012_0017`,
+the reviewed existing-account conversion and the private handover. The new schema
+and code conversion require a fresh verified encrypted backup and shared-database
+activation approval. They are not applied during feature development.

@@ -11,6 +11,7 @@ import planting_database as planting
 from email_validator import EmailNotValidError, validate_email
 
 from .appointment_email import APPOINTMENT_TYPES, queue_confirmation
+from .readable_credentials import available_username, organization_password
 
 
 class AppointmentConflict(ValueError):
@@ -146,6 +147,7 @@ def appointment_summary() -> dict:
 
 
 def _planter_login(conn, schedule, request, user_id):
+    from .planter_codes import ensure_codes
     organization_id = int(schedule['organization_id'])
     conn.execute('SELECT id FROM organizations WHERE id = ? FOR UPDATE', (organization_id,)).fetchone()
     account = conn.execute("""
@@ -155,15 +157,15 @@ def _planter_login(conn, schedule, request, user_id):
     if account and account['status'] != 'active':
         raise ValueError('This organization account is inactive. Reactivate it before confirming tree planting.')
     if account and not is_registration_pending(dict(account)):
-        return {'username': account['username'], 'participant_count': account['participant_count']}
-    password = secrets.token_urlsafe(18)
-    username = f'like-{organization_id}-{secrets.token_hex(4)}'
-    planting.create_planter(
+        return {'codes': ensure_codes(conn, account['id'])}
+    username = available_username(conn, schedule['organization_name'], organization_id)
+    password = organization_password(schedule['organization_name'])
+    planter_id = planting.create_planter(
         full_name=schedule['organization_name'], username=username, password=password,
         phone=request['phone'], organization_id=organization_id,
         participant_count=int(request['participants']), created_by_user_id=user_id, _connection=conn,
     )
-    return {'username': username, 'password': password, 'participant_count': int(request['participants'])}
+    return {'codes': ensure_codes(conn, planter_id)}
 
 
 def review_appointment(request_id: int, values: dict, user_id: int) -> dict:

@@ -5,8 +5,8 @@ export function controlError(control, label) {
     return `${control.tagName === 'SELECT' ? 'Choose' : 'Enter'} ${label.toLowerCase()}.`;
   }
   if (validity.badInput) return `Enter a number for ${label.toLowerCase()}.`;
-  if (validity.rangeUnderflow) return `Enter ${control.min} or more for ${label.toLowerCase()}.`;
-  if (validity.rangeOverflow) return `Enter ${control.max} or less for ${label.toLowerCase()}.`;
+  if (validity.rangeUnderflow) return control.type === 'date' ? `Choose ${control.min} or later for ${label.toLowerCase()}.` : `Enter ${control.min} or more for ${label.toLowerCase()}.`;
+  if (validity.rangeOverflow) return control.type === 'date' ? `Choose ${control.max} or earlier for ${label.toLowerCase()}.` : `Enter ${control.max} or less for ${label.toLowerCase()}.`;
   if (validity.stepMismatch) return control.step === '1'
     ? `Enter a whole number for ${label.toLowerCase()}.`
     : `Use increments of ${control.step} for ${label.toLowerCase()}.`;
@@ -18,13 +18,35 @@ export function controlError(control, label) {
   return '';
 }
 
-export function submissionError(detail, fallback = 'Could not save. Please try again.') {
-  const error = new Error(typeof detail === 'string' ? detail : fallback);
+export function submissionError(detail, fallback = 'Could not save. Please try again.', status) {
+  const statusMessage = status === 401 && !Array.isArray(detail) && (!detail || /session|expired/i.test(detail)) ? 'Your session has expired. Sign in again, then retry.'
+    : status === 429 ? 'Too many requests. Please wait before trying again.'
+      : status >= 500 ? 'The server could not complete this request. Your entries are kept; please retry.' : '';
+  const error = new Error(statusMessage || (typeof detail === 'string' ? detail : fallback));
   error.detail = detail;
+  error.status = status;
   return error;
 }
 
+// Use the same response handling for forms, retaining structured field errors.
+export async function formRequest(url, options = {}, fallback) {
+  let response;
+  try { response = await fetch(url, options); }
+  catch (error) {
+    if (error.name === 'AbortError') throw error;
+    throw Object.assign(new Error('Could not connect. Check your connection and retry. Your entries are kept.'), {
+      uncertain: !['GET', 'HEAD'].includes(String(options.method || 'GET').toUpperCase()),
+    });
+  }
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) throw submissionError(payload?.detail, fallback, response.status);
+  if (payload === null) throw Object.assign(new Error('Could not verify the result. Refresh before submitting again.'), { uncertain: true });
+  return payload;
+}
+
 export function serverFieldErrors(error, fields) {
+  if ((error?.status === 401 && !Array.isArray(error.detail)) || error?.status === 429 || error?.status >= 500) return {};
+  if (error?.fieldErrors) return Object.fromEntries(Object.entries(error.fieldErrors).filter(([field]) => fields[field]));
   const detail = error?.detail;
   const issues = Array.isArray(detail) ? detail : [];
   const result = {};

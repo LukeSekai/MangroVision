@@ -1,11 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { controlError, serverFieldErrors, submissionError } from './formValidation.js';
+import { controlError, formRequest, serverFieldErrors, submissionError } from './formValidation.js';
 import { POINT_STATUS_LABELS, ASSIGNMENT_STATUS_LABELS, pointStatusLabel } from './pointStatus.js';
 import { reportPeriodFieldErrors } from './restorationReports.js';
 
 const dom = new JSDOM();
+
+test('transient failures stay at form level and preserve structured field corrections', async () => {
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    await assert.rejects(() => formRequest('/test'), /Check your connection and retry/);
+    globalThis.fetch = async () => new Response(JSON.stringify({ detail: [{ loc: ['body', 'email'], type: 'value_error', msg: 'Invalid email' }] }), { status: 422 });
+    await assert.rejects(() => formRequest('/test'), (error) => Boolean(serverFieldErrors(error, { email: { label: 'Email' } }).email));
+    const server = submissionError('Private server error mentioning email', 'Fallback', 503);
+    assert.match(server.message, /entries are kept/);
+    assert.deepEqual(serverFieldErrors(server, { email: { label: 'Email', serverTerms: ['email'] } }), {});
+    const auth = submissionError([{ loc: ['body', 'password'], type: 'credential_error', msg: 'Incorrect password.' }], 'Fallback', 401);
+    assert.equal(serverFieldErrors(auth, { password: { label: 'Password' } }).password, 'Incorrect password.');
+  } finally { globalThis.fetch = original; }
+});
 const input = (attributes, value = '') => {
   const control = dom.window.document.createElement('input');
   Object.entries(attributes).forEach(([key, setting]) => control.setAttribute(key, setting));

@@ -22,9 +22,11 @@ function readCookie(key) {
   } catch { return null; }
 }
 
-export function readParticipantDeviceKey(username) {
+export function readParticipantDeviceKey(username, { accountOnly = false } = {}) {
   const key = storageKey(username);
-  return [readLocal(key), readCookie(key), readLocal(DEVICE_KEY), readCookie(DEVICE_KEY)].find(validKey) || null;
+  const keys = [readLocal(key), readCookie(key)];
+  if (!accountOnly) keys.push(readLocal(DEVICE_KEY), readCookie(DEVICE_KEY));
+  return keys.find(validKey) || null;
 }
 
 export function rememberParticipantDeviceKey(identity, username) {
@@ -53,6 +55,28 @@ export function participantDeviceKey(username) {
   return rememberParticipantDeviceKey(identity, username);
 }
 
+export function knownParticipantDeviceKeys() {
+  // A renamed login has a different storage key. Let the authenticated server
+  // match the identities already present on this browser to the same group.
+  const identities = new Set();
+  const add = (key, value) => {
+    if ((key === DEVICE_KEY || key.startsWith(`${DEVICE_KEY}:`)) && validKey(value)) identities.add(value);
+  };
+  try {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (key) add(key, readLocal(key));
+    }
+  } catch { /* Cookie identities can be used when local storage is unavailable. */ }
+  try {
+    for (const cookie of document.cookie.split(';')) {
+      const separator = cookie.indexOf('=');
+      if (separator >= 0) add(decodeURIComponent(cookie.slice(0, separator).trim()), decodeURIComponent(cookie.slice(separator + 1)));
+    }
+  } catch { /* Local storage identities can be used when cookies are unavailable. */ }
+  return [...identities].slice(0, 64);
+}
+
 export function participantRecoveryCode(username) {
   // Never generate a new identity when displaying an existing participant's code.
   const identity = readParticipantDeviceKey(username);
@@ -67,4 +91,7 @@ export function parseParticipantRecoveryCode(code) {
   const match = /^MV1([a-f0-9]{48})$/i.exec(compact);
   if (!match) throw new Error('Enter the complete device recovery code beginning with MV1.');
   return match[1].toLowerCase();
+}
+export function participantStorageIdentity(planter) {
+  return planter?.id && planter?.participant_slot ? `participant-${planter.id}-${planter.participant_slot}` : undefined;
 }

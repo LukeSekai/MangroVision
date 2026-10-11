@@ -6,7 +6,7 @@ import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import useFormFeedback from '../utils/useFormFeedback';
-import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { submissionError } from '../utils/formValidation';
 import './ErodedZoneEditor.css';
 
@@ -360,7 +360,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw submissionError(err.detail, 'Failed to save project site. Please try again.');
+          throw submissionError(err.detail, 'Failed to save project site. Please try again.', res.status);
         }
         cancelDrawing();
         setSaveMsgText('Project site saved');
@@ -381,7 +381,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw submissionError(err.detail, 'Failed to save warning zone. Please try again.');
+          throw submissionError(err.detail, 'Failed to save warning zone. Please try again.', res.status);
         }
         cancelDrawing();
         setSaveMsgText('Warning zone saved');
@@ -400,7 +400,7 @@ export default function ErodedZoneEditor() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          throw submissionError(err.detail, 'Failed to save zone. Please try again.');
+          throw submissionError(err.detail, 'Failed to save zone. Please try again.', res.status);
         }
         cancelDrawing();
         setSaveMsgText('Zone saved');
@@ -671,11 +671,7 @@ export default function ErodedZoneEditor() {
                   ? 'Long-press the map, then drag a loop around the wanted points. The live count helps you adjust the boundary before saving.'
                   : 'Click points on the map to draw an erosion polygon. Covered planting points stay visible but become Unavailable for planting. Removing the zone returns unassigned points to Planned. Click the first green point to close it.'}
             </p>
-            {saveMsgText && (
-              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
-                {saveMsgText}
-              </p>
-            )}
+            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
           </div>
         ) : !drawnCoords ? (
           <div>
@@ -690,11 +686,7 @@ export default function ErodedZoneEditor() {
             <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={cancelDrawing}>
               Cancel
             </button>
-            {saveMsgText && (
-              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
-                {saveMsgText}
-              </p>
-            )}
+            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
           </div>
         ) : (
           <div className="save-form" onChangeCapture={feedback.onChange}>
@@ -786,11 +778,7 @@ export default function ErodedZoneEditor() {
               </button>
               <button className="btn btn-ghost btn-sm" onClick={cancelDrawing}>Cancel</button>
             </div>
-            {saveMsgText && (
-              <p className="text-sm" style={{ color: saveMsgIsError ? '#991b1b' : 'var(--color-completed)', marginTop: 6 }}>
-                {saveMsgText}
-              </p>
-            )}
+            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
           </div>
         )}
       </PanelCard>

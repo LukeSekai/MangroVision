@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { submissionError } from '../utils/formValidation';
-import { participantDeviceKey, parseParticipantRecoveryCode, rememberParticipantDeviceKey } from '../utils/participantDevice';
+import { participantDeviceKey, participantStorageIdentity, readParticipantDeviceKey, parseParticipantRecoveryCode, rememberParticipantDeviceKey, knownParticipantDeviceKeys } from '../utils/participantDevice';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -23,6 +23,14 @@ function storePlanter(planter) {
   } catch { /* The server session remains authoritative. */ }
 }
 
+function preserveRenamedDevice(planter) {
+  const previous = readStoredPlanter();
+  if (!previous || previous.id !== planter?.id || previous.participant_slot !== planter.participant_slot) return;
+  const identity = readParticipantDeviceKey(participantStorageIdentity(previous), { accountOnly: true })
+    || (previous.username ? readParticipantDeviceKey(previous.username, { accountOnly: true }) : null);
+  if (identity) rememberParticipantDeviceKey(identity, participantStorageIdentity(planter));
+}
+
 function welcome(kind) {
   try {
     sessionStorage.setItem('mv_field_show_welcome', '1');
@@ -39,76 +47,43 @@ export const usePlanterAuthStore = create((set, get) => ({
   status: 'idle', // idle | loading | error
   error: '',
 
-  register: async ({ full_name, username, password, organization_id, participant_count, phone, base_label, base_lat, base_lon }) => {
-    set({ status: 'loading', error: '' });
-    let identity;
-    try { identity = participantDeviceKey(username); }
-    catch (error) { set({ status: 'error', error: error.message }); throw error; }
-    const res = await fetch(`${API}/api/planter-auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        full_name,
-        username,
-        password,
-        organization_id,
-        participant_count,
-        device_key: identity,
-        phone: phone || '',
-        base_label: base_label || '',
-        base_lat: base_lat ?? null,
-        base_lon: base_lon ?? null,
-      }),
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      const error = submissionError(payload.detail, 'Registration failed. Check the highlighted fields and try again.');
-      set({ status: 'error', error: error.message });
-      throw error;
-    }
-    const data = await res.json();
-    storePlanter(data.planter);
-    welcome('register');
-    set({
-      token: 'cookie',
-      planter: data.planter,
-      isAuthenticated: true,
-      status: 'idle',
-      error: '',
-    });
-    return data.planter;
-  },
-
-  login: async (username, password, participantSlot = null, recoverSlot = false, recoveryCode = '') => {
+  login: async (accessCode, recoveryCode = '') => {
     set({ status: 'loading', error: '' });
     let identity;
     try {
-      const savedIdentity = participantDeviceKey(username);
+      const knownIdentities = recoveryCode ? [] : knownParticipantDeviceKeys();
+      // Codes never become storage keys. The server searches only the exact
+      // participant slot authenticated by the code, including old browser keys.
+      const savedIdentity = participantDeviceKey();
       identity = recoveryCode ? parseParticipantRecoveryCode(recoveryCode) : savedIdentity;
-    } catch (error) { set({ status: 'error', error: error.message }); throw error; }
-    const res = await fetch(`${API}/api/planter-auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, device_key: identity, participant_slot: recoverSlot ? participantSlot : null, recover_slot: recoverSlot, resume_device: Boolean(recoveryCode) }),
-    });
-    if (!res.ok) {
-      const payload = await res.json().catch(() => ({}));
-      const error = submissionError(payload.detail, 'Login failed. Check your shared username and password, then try again.');
+      const res = await fetch(`${API}/api/planter-auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_code: accessCode.trim(), device_key: identity, known_device_keys: knownIdentities, resume_device: Boolean(recoveryCode) }),
+      });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => ({}));
+        const error = submissionError(payload.detail, 'Could not sign in. Check your planter code and try again.');
+        throw error;
+      }
+      const data = await res.json();
+      identity = data.device_key || identity;
+      rememberParticipantDeviceKey(identity, participantStorageIdentity(data.planter));
+      storePlanter(data.planter);
+      welcome('login');
+      set({
+        token: 'cookie',
+        planter: data.planter,
+        isAuthenticated: true,
+        status: 'idle',
+        error: '',
+      });
+      return data.planter;
+    } catch (failure) {
+      const error = failure instanceof TypeError ? new Error('Could not reach the server. Check your connection and try again.') : failure;
       set({ status: 'error', error: error.message });
       throw error;
     }
-    const data = await res.json();
-    rememberParticipantDeviceKey(identity, username);
-    storePlanter(data.planter);
-    welcome('login');
-    set({
-      token: 'cookie',
-      planter: data.planter,
-      isAuthenticated: true,
-      status: 'idle',
-      error: '',
-    });
-    return data.planter;
   },
 
   logout: async () => {
@@ -136,6 +111,7 @@ export const usePlanterAuthStore = create((set, get) => ({
         return;
       }
       const data = await res.json();
+      preserveRenamedDevice(data.planter);
       storePlanter(data.planter);
       set({ token: 'cookie', planter: data.planter, isAuthenticated: true });
     } catch {
@@ -154,6 +130,7 @@ export const usePlanterAuthStore = create((set, get) => ({
     }
     const data = await res.json();
     if (data.planter) {
+      preserveRenamedDevice(data.planter);
       storePlanter(data.planter);
       set({ planter: data.planter });
     }

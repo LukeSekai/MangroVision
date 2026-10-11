@@ -3,9 +3,10 @@
 from typing import Any, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, EmailStr
 from mangrovision_db.activity_rules import ActivityConflict
 from mangrovision_db.appointment_email import run_delivery_cycle
+from mangrovision_db.schedule_notifications import run_schedule_delivery_cycle
 
 from planting_database import (
     create_planting_schedule,
@@ -50,6 +51,7 @@ class PlantingScheduleCreate(BaseModel):
     organization_id: Optional[int] = None
     inspection_interval_days: int
     contact: Optional[str] = None
+    notification_email: Optional[EmailStr] = None
     title: str
     start_at: Optional[str] = None
     end_at: Optional[str] = None
@@ -72,6 +74,7 @@ class PlantingScheduleUpdate(BaseModel):
     organization_id: Optional[int] = None
     inspection_interval_days: Optional[int] = None
     contact: Optional[str] = None
+    notification_email: Optional[EmailStr] = None
     title: Optional[str] = None
     start_at: Optional[str] = None
     end_at: Optional[str] = None
@@ -117,6 +120,7 @@ def _create_values(body: PlantingScheduleCreate) -> dict:
         "organization_id": values["organization_id"],
         "inspection_interval_days": values["inspection_interval_days"],
         "contact": values["contact"],
+        "notification_email": values["notification_email"],
         "title": values["title"],
         "start_at": start_at,
         "end_at": end_at,
@@ -213,14 +217,26 @@ def planting_schedule(schedule_id: int):
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 @router.post("/", status_code=status.HTTP_201_CREATED, include_in_schema=False)
-def add_planting_schedule(body: PlantingScheduleCreate):
+def add_planting_schedule(body: PlantingScheduleCreate, background_tasks: BackgroundTasks):
     user = _require_lgu_user()
     try:
-        return create_planting_schedule(
+        result = create_planting_schedule(
             **_create_values(body), created_by_user_id=int(user["id"]),
         )
+        _deliver_update(result, background_tasks)
+        return result
     except ValueError as error:
         raise _schedule_error(error) from error
+
+
+def _deliver_update(result, background_tasks):
+    update = result.get('email_update') or {}
+    if update.get('status') != 'queued':
+        return
+    if update.get('request_id'):
+        background_tasks.add_task(run_delivery_cycle, request_id=update['request_id'])
+    elif update.get('schedule_id'):
+        background_tasks.add_task(run_schedule_delivery_cycle, schedule_id=update['schedule_id'])
 
 
 def _edit_planting_schedule(
@@ -239,8 +255,7 @@ def _edit_planting_schedule(
         raise _schedule_error(error) from error
     if result is None:
         raise HTTPException(status_code=404, detail="Planting schedule not found.")
-    if result.get('email_update'):
-        background_tasks.add_task(run_delivery_cycle, request_id=result['email_update']['request_id'])
+    _deliver_update(result, background_tasks)
     return result
 
 

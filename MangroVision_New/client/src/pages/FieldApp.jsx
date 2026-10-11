@@ -14,6 +14,7 @@ import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts } f
 import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import FieldActivities from '../components/FieldActivities';
 import { usePlanterAuthStore } from '../stores/planterAuthStore';
 import { ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { createGoogleSatelliteLayer } from '../config/googleBasemap';
@@ -115,257 +116,64 @@ async function fetchRoute(origin, dest, travelMode = 'walking', accuracy = null)
   return response.json();
 }
 
-function AuthScreen() {
-  const register = usePlanterAuthStore((s) => s.register);
-  const login = usePlanterAuthStore((s) => s.login);
-  const storeStatus = usePlanterAuthStore((s) => s.status);
-  const storeError = usePlanterAuthStore((s) => s.error);
-
-  const [mode, setMode] = useState('login');
+export function AuthScreen() {
+  const login = usePlanterAuthStore((state) => state.login);
+  const storeStatus = usePlanterAuthStore((state) => state.status);
+  const storeError = usePlanterAuthStore((state) => state.error);
   const [localError, setLocalError] = useState('');
   const feedback = useFormFeedback({
-    organization_id: { label: 'Organization', serverTerms: ['organization is required', 'organization not found'] },
-    username: { label: 'Shared username', serverTerms: ['username is already', 'username already', 'username must'] },
-    password: { label: 'Password', serverTerms: ['password must', 'password should'] },
-    participant_count: { label: 'Number of participants', serverTerms: ['participant count', 'participant_count'] },
-    participant_slot: { label: 'Participant number', serverTerms: ['participant number', 'participant slot', 'participant_slot'] },
-    recovery_code: { label: 'Device recovery code', serverTerms: ['recovery code'] },
-    phone: { label: 'Phone' },
-    base_label: { label: 'Home base label' },
+    access_code: { label: 'Planter code', validate: (value) => /^[A-HJ-NP-Z2-9]{8}$/.test(value.replace(/[\s-]/g, '').toUpperCase()) ? '' : 'Enter your eight-character planter code, for example K7MP-4R9X.' },
+    recovery_code: { label: 'Device recovery code', serverTerms: ['device recovery code'] },
   });
-  const [organizations, setOrganizations] = useState([]);
-  const [organizationsLoading, setOrganizationsLoading] = useState(true);
-  const [form, setForm] = useState({
-    participant_count: 1,
-    participant_slot: '',
-    recover_slot: false,
-    use_recovery_code: false,
-    recovery_code: '',
-    organization_id: '',
-    username: '',
-    password: '',
-    phone: '',
-    base_label: '',
-  });
-
-  const update = (field) => (event) => setForm((f) => ({ ...f, [field]: event.target.value }));
+  const [form, setForm] = useState({ access_code: '', recovery_code: '', use_recovery_code: false });
+  const update = (field) => (event) => setForm((current) => ({ ...current, [field]: event.target.value }));
   const submitting = storeStatus === 'loading';
-
-  useEffect(() => {
-    let active = true;
-    fetch(`${API_BASE}/api/planter-auth/organizations`)
-      .then(async (response) => {
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(payload.detail || 'Could not load organizations.');
-        if (active) setOrganizations(Array.isArray(payload.organizations) ? payload.organizations : []);
-      })
-      .catch((error) => {
-        if (active) setLocalError(error.message || 'Could not load organizations.');
-      })
-      .finally(() => {
-        if (active) setOrganizationsLoading(false);
-      });
-    return () => { active = false; };
-  }, []);
-
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (submitting) return;
     setLocalError('');
     usePlanterAuthStore.setState({ error: '' });
     if (!feedback.validate()) return;
     try {
-      if (mode === 'login') {
-        await login(form.username.trim(), form.password, Number(form.participant_slot) || null, form.recover_slot, form.use_recovery_code ? form.recovery_code.trim() : '');
-      } else {
-        if (!form.organization_id) {
-          feedback.reject({ organization_id: 'Choose your organization. Ask the LGU to add it through Scheduling if it is missing.' });
-          return;
-        }
-        await register({
-          full_name: organizations.find((organization) => Number(organization.id) === Number(form.organization_id))?.name || 'Organization',
-          participant_count: Number(form.participant_count),
-          username: form.username.trim(),
-          password: form.password,
-          organization_id: Number(form.organization_id),
-          phone: form.phone.trim(),
-          base_label: form.base_label.trim(),
-        });
-      }
+      await login(form.access_code, form.use_recovery_code ? form.recovery_code.trim() : '');
     } catch (error) {
-      usePlanterAuthStore.setState({ status: 'error' });
       if (feedback.fromServer(error)) usePlanterAuthStore.setState({ error: '' });
       else setLocalError(error.message || 'Could not sign in. Check your connection and try again.');
     }
   };
-
-  return (
-    <div className="field-auth-screen">
-      <div className="field-auth-card">
-        {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="field-login" /></div>}
-        <div className="field-auth-brand">
-          <Logo variant="lockup" size={44} alt="MangroVision" />
-          <span className="field-auth-brand-suffix">Field</span>
-        </div>
-        <p className="field-auth-subtitle">
-          Organization {mode === 'login' ? 'sign in' : 'registration'}
-        </p>
-
-        <div className="field-tab-row">
-          <button
-            type="button"
-            className={`field-tab ${mode === 'login' ? 'field-tab-active' : ''}`}
-            onClick={() => { setMode('login'); setLocalError(''); feedback.clear(); usePlanterAuthStore.setState({ error: '' }); }}
-          >
-            Sign In
-          </button>
-          <button
-            type="button"
-            className={`field-tab ${mode === 'register' ? 'field-tab-active' : ''}`}
-            onClick={() => { setMode('register'); setLocalError(''); feedback.clear(); usePlanterAuthStore.setState({ error: '' }); }}
-          >
-            Register
-          </button>
-        </div>
-
-        <form className="field-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
-          <FormErrorSummary feedback={feedback} />
-          {mode === 'register' && (
-            <>
-              <label className="field-label">
-                Organization
-                <select {...feedback.props('organization_id')}
-                  className="field-input"
-                  value={form.organization_id}
-                  onChange={update('organization_id')}
-                  disabled={organizationsLoading || organizations.length === 0}
-                  required
-                >
-                  <option value="">
-                    {organizationsLoading
-                      ? 'Loading organizations...'
-                      : organizations.length
-                        ? 'Select your organization'
-                        : 'No organizations available'}
-                  </option>
-                  {organizations.map((organization) => (
-                    <option key={organization.id} value={organization.id}>{organization.name}</option>
-                  ))}
-                </select>
-              <FieldError feedback={feedback} field="organization_id" />
-                {!organizationsLoading && organizations.length === 0 && (
-                  <small className="field-label-help">Ask the LGU to create the organization through Scheduling first.</small>
-                )}
-              </label>
-            </>
-          )}
-
-          {mode === 'login' && (
-            <>
-              <small className="field-label-help">Return on this device using the same browser and field link. Your participant number, assigned points, and saved planting progress return automatically after sign-in.</small>
-              <details className="field-recovery-options" onToggle={(event) => {
-                if (!event.currentTarget.open) setForm((current) => ({ ...current, use_recovery_code: false, recover_slot: false }));
-              }}>
-                <summary>Recover access to previous points</summary>
-                <p className="field-label-help">Use these options if the field link changed, your browser data was cleared, or the LGU reset your participant slot.</p>
-              <label className="field-label">
-                <span><input type="checkbox" checked={form.use_recovery_code} onChange={(event) => setForm((current) => ({ ...current, use_recovery_code: event.target.checked, recover_slot: false }))} /> I have a device recovery code</span>
-              </label>
-              {form.use_recovery_code && (
-                <label className="field-label">
-                  Device recovery code
-                  <input {...feedback.props('recovery_code')} className="field-input" type="text" required value={form.recovery_code} onChange={update('recovery_code')} placeholder="MV1-…" autoComplete="off" spellCheck={false} />
-                  <FieldError feedback={feedback} field="recovery_code" />
-                  <small className="field-label-help">Use the private code saved for your participant number on the previous link.</small>
-                </label>
-              )}
-              <label className="field-label">
-                <span><input type="checkbox" checked={form.recover_slot} onChange={(event) => setForm((current) => ({ ...current, recover_slot: event.target.checked, use_recovery_code: false }))} /> I am replacing a device after an LGU reset</span>
-              </label>
-              {form.recover_slot && (
-                <label className="field-label">
-                  Participant number reset by the LGU
-                  <input {...feedback.props('participant_slot')} className="field-input" type="number" min="1" max="10000" required value={form.participant_slot} onChange={update('participant_slot')} />
-              <FieldError feedback={feedback} field="participant_slot" />
-                  <small className="field-label-help">Only use this to recover your previous points on a replacement phone.</small>
-                </label>
-              )}
-              </details>
-            </>
-          )}
-          <label className="field-label">
-            Shared username
-            <input {...feedback.props('username')}
-              className="field-input"
-              type="text"
-              value={form.username}
-              onChange={update('username')}
-              autoComplete="username"
-              required
-            />
-              <FieldError feedback={feedback} field="username" />
-          </label>
-
-          <label className="field-label">
-            Password
-            <input {...feedback.props('password')}
-              className="field-input"
-              type="password"
-              value={form.password}
-              onChange={update('password')}
-              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-              required
-            />
-              <FieldError feedback={feedback} field="password" />
-          </label>
-
-          {mode === 'register' && (
-            <>
-              <label className="field-label">
-                Number of participants / planters
-                <input {...feedback.props('participant_count')} className="field-input" type="number" min="1" max="10000" step="1" required value={form.participant_count} onChange={update('participant_count')} />
-              <FieldError feedback={feedback} field="participant_count" />
-                <small className="field-label-help">Register once for your organization. Each device receives its own share of the points and keeps its participant number and planting progress after logout.</small>
-              </label>
-              <label className="field-label">
-                Phone (optional)
-                <input {...feedback.props('phone')}
-                  className="field-input"
-                  type="tel"
-                  value={form.phone}
-                  onChange={update('phone')}
-                  autoComplete="tel"
-                />
-              <FieldError feedback={feedback} field="phone" />
-              </label>
-              <label className="field-label">
-                Home base label (optional)
-                <input {...feedback.props('base_label')}
-                  className="field-input"
-                  type="text"
-                  value={form.base_label}
-                  onChange={update('base_label')}
-                  placeholder="e.g. Leganes barangay hall"
-                />
-              <FieldError feedback={feedback} field="base_label" />
-              </label>
-            </>
-          )}
-
-          {(localError || storeError) && (
-            <div className="field-error" role="alert">{localError || storeError}</div>
-          )}
-
-          <button
-            className="field-submit"
-            type="submit"
-            disabled={submitting || (mode === 'register' && (organizationsLoading || organizations.length === 0))}
-          >
-            {submitting ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Organization Account'}
-          </button>
-        </form>
-      </div>
-    </div>
-  );
+  return <div className="field-auth-screen"><div className="field-auth-card">
+    {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="field-login" /></div>}
+    <div className="field-auth-brand"><Logo variant="lockup" size={44} alt="MangroVision" /><span className="field-auth-brand-suffix">Field</span></div>
+    <h1 className="field-auth-subtitle">Planter sign in</h1>
+    <p className="field-label-help">Enter your individual code from your group leader or LGU staff.</p>
+    <form className="field-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
+      <FormErrorSummary feedback={feedback} />
+      <fieldset className="field-auth-fields" disabled={submitting}>
+        <label className="field-label">Planter code
+          <input {...feedback.props('access_code')} className="field-input field-access-code" type="text" value={form.access_code}
+            onChange={update('access_code')} autoComplete="off" autoCapitalize="characters" spellCheck={false}
+            placeholder="K7MP-4R9X" maxLength={32} required />
+          <FieldError feedback={feedback} field="access_code" />
+        </label>
+        <p className="field-label-help">Your code keeps the same participant number across activities. Return using the same browser to keep your assigned points.</p>
+        <details className="field-recovery-options" onToggle={(event) => {
+          if (!event.currentTarget.open) setForm((current) => ({ ...current, use_recovery_code: false }));
+        }}>
+          <summary>Using a different browser or field link?</summary>
+          <p className="field-label-help">If your participant number is already linked to another browser, use your saved device recovery code or ask LGU staff to reset your device. Your planting points will stay assigned to you.</p>
+          <label className="field-label"><span><input type="checkbox" checked={form.use_recovery_code}
+            onChange={(event) => setForm((current) => ({ ...current, use_recovery_code: event.target.checked }))} /> I have a device recovery code</span></label>
+          {form.use_recovery_code && <label className="field-label">Device recovery code
+            <input {...feedback.props('recovery_code')} className="field-input" type="text" required value={form.recovery_code}
+              onChange={update('recovery_code')} placeholder="MV1-?" autoComplete="off" spellCheck={false} />
+            <FieldError feedback={feedback} field="recovery_code" />
+          </label>}
+        </details>
+      </fieldset>
+      {(localError || storeError) && <div className="field-error" role="alert">{localError || storeError}</div>}
+      <button className="field-submit" type="submit" disabled={submitting}>{submitting ? 'Signing in...' : 'Sign in'}</button>
+    </form>
+  </div></div>;
 }
 
 function PointsMap({
@@ -1273,6 +1081,8 @@ export default function FieldApp() {
           )}
         </div>
       </header>
+
+      <FieldActivities key={planter?.organization_id ?? planter?.id} organizationId={planter?.organization_id} />
 
       {activityOpen && <div className="field-activity-overlay" role="dialog" aria-label="Organization activity">
         <div className="field-activity-head"><strong>Organization activity</strong><button type="button" onClick={() => setActivityOpen(false)}>Close</button></div>

@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import { submissionError } from '../utils/formValidation.js';
 
-let server, dom, root, createRoot, useFormFeedback, FieldError, FormErrorSummary, RetainedRoutes, submissions;
+let server, dom, root, createRoot, useFormFeedback, FieldError, FormErrorSummary, FormMessage, RetainedRoutes, submissions;
 const originalGlobals = new Map();
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true });
@@ -22,7 +22,7 @@ before(async () => {
     cacheDir: 'node_modules/.vite-form-feedback-tests', optimizeDeps: { noDiscovery: true, include: [] },
   });
   ({ default: useFormFeedback } = await server.ssrLoadModule('/src/utils/useFormFeedback.js'));
-  ({ FieldError, FormErrorSummary } = await server.ssrLoadModule('/src/components/FormFeedback.jsx'));
+  ({ FieldError, FormErrorSummary, FormMessage } = await server.ssrLoadModule('/src/components/FormFeedback.jsx'));
   ({ default: RetainedRoutes } = await server.ssrLoadModule('/src/components/RetainedRoutes.jsx'));
 });
 after(async () => {
@@ -133,4 +133,15 @@ test('errors for a hidden authentication field stay at form level', async () => 
   await act(async () => document.querySelector('[data-unmounted-error]').click());
   assert.equal(handled, false);
   assert.equal(document.querySelector('.form-field-error'), null);
+});
+
+test('form-level failures offer retry and success uses a polite status message', async () => {
+  let retried = 0;
+  await act(async () => root.render(createElement(FormMessage, { error: 'Could not connect. Your entries are kept.', onRetry: () => retried++ })));
+  assert.equal(document.querySelector('[role="alert"]').textContent, 'Could not connect. Your entries are kept.Retry');
+  await act(async () => document.querySelector('button').click());
+  assert.equal(retried, 1);
+  await act(async () => root.render(createElement(FormMessage, { success: 'Activity saved.' })));
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  assert.equal(document.querySelector('[role="status"]').textContent, 'Activity saved.');
 });

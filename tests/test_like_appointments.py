@@ -73,6 +73,28 @@ def test_notes_update_does_not_run_delivery(api, monkeypatch):
     assert client.patch('/api/planting-schedules/1', json={'notes': 'Corrected note'}).status_code == 200
 
 
+def test_staff_schedule_update_runs_the_staff_queue_only(api, monkeypatch):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'get_planting_schedule', lambda _: {'id': 1})
+    monkeypatch.setattr(staff, 'update_planting_schedule', lambda *args, **kwargs: {'id': 1, 'email_update': {'schedule_id': 1, 'status': 'queued', 'kind': 'update'}})
+    monkeypatch.setattr(staff, 'run_delivery_cycle', lambda **kwargs: pytest.fail('Staff activity entered website queue'))
+    calls = []
+    monkeypatch.setattr(staff, 'run_schedule_delivery_cycle', lambda **kwargs: calls.append(kwargs))
+    assert client.patch('/api/planting-schedules/1', json={'notification_email': 'head@example.org'}).status_code == 200
+    assert calls == [{'schedule_id': 1}]
+    assert client.patch('/api/planting-schedules/1', json={'notification_email': 'broken'}).status_code == 422
+
+
+def test_missing_staff_recipient_does_not_start_delivery(api, monkeypatch):
+    client, _, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    monkeypatch.setattr(staff, 'get_planting_schedule', lambda _: {'id': 1})
+    monkeypatch.setattr(staff, 'update_planting_schedule', lambda *args, **kwargs: {'id': 1, 'email_update': {'schedule_id': 1, 'status': 'missing_recipient'}})
+    monkeypatch.setattr(staff, 'run_schedule_delivery_cycle', lambda **kwargs: pytest.fail('No-recipient update started delivery'))
+    assert client.patch('/api/planting-schedules/1', json={'title': 'Revised activity'}).status_code == 200
+
+
 def test_recorded_activity_delete_returns_conflict(api, monkeypatch):
     from mangrovision_db.activity_rules import ActivityConflict
     client, _, staff = api

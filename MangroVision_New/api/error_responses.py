@@ -19,7 +19,7 @@ def install_error_responses(app):
         logger.error('Request failed: %s %s', request.method, request.url.path,
                      exc_info=(type(error), error, error.__traceback__))
         return JSONResponse(status_code=500, content={
-            'detail': 'The server could not complete this request. Check the laptop backend log and try again.',
+            'detail': 'The server could not complete this request. Please retry. Contact staff if it keeps happening.',
         }, headers={'Cache-Control': 'no-store'})
 
     app.add_exception_handler(DatabaseTimeout, database_unavailable)

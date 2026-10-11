@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { bookingPayload, manilaToday, submitBooking } from './booking';
+import { bookingErrors, bookingPayload, manilaToday, submitBooking } from './booking';
+import useFormFeedback from '../utils/useFormFeedback';
+import { serverFieldErrors } from '../utils/formValidation';
+import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes';
 import LikeMapDialog from './LikeMapDialog';
 
@@ -70,13 +73,21 @@ const initialForm = {
   appointment_type: '',
   date: '', start_time: '', end_time: '', participants: '', notes: '', consent: false, website: '',
 };
+const bookingFields = {
+  appointment_type: { label: 'Appointment type' }, organization: { label: 'Organization' },
+  contact_name: { label: 'Contact person' }, phone: { label: 'Phone number' }, email: { label: 'Email' },
+  date: { label: 'Preferred date' }, start_time: { label: 'Start time', aliases: ['start_at'] },
+  end_time: { label: 'End time', aliases: ['end_at'] }, participants: { label: 'Participants' },
+  title: { label: 'Activity name' }, notes: { label: 'Notes' }, consent: { label: 'Consent' },
+};
 
-function AppointmentForm() {
+export function AppointmentForm() {
   const [form, setForm] = useState(initialForm);
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState(null);
+  const feedback = useFormFeedback(bookingFields);
   const attempt = useRef(null);
   const lock = useRef(false);
   const firstField = useRef(null);
@@ -91,6 +102,8 @@ function AppointmentForm() {
   const next = (event) => {
     event.preventDefault();
     setError('');
+    if (!feedback.validate(bookingErrors(form, 1))) return;
+    feedback.clear();
     setStep(2);
     window.setTimeout(() => firstField.current?.focus(), 0);
   };
@@ -98,6 +111,7 @@ function AppointmentForm() {
     event.preventDefault();
     if (lock.current) return;
     setError('');
+    if (!feedback.validate(bookingErrors(form, 2))) return;
     try {
       // Retrying an identical request reuses its key, including after a lost response.
       const fingerprint = JSON.stringify(form);
@@ -107,7 +121,11 @@ function AppointmentForm() {
       setBusy(true);
       setReceipt(await submitBooking(payload));
     } catch (issue) {
-      setError(issue.message || 'We could not send your request. Check your connection and try again.');
+      const errors = serverFieldErrors(issue, bookingFields);
+      if (Object.keys(errors).length) {
+        if (Object.keys(errors).some((field) => ['appointment_type', 'organization', 'contact_name', 'phone', 'email'].includes(field))) setStep(1);
+        feedback.reject(errors);
+      } else setError(issue.message || 'We could not send your request. Check your connection and try again.');
     } finally {
       setBusy(false);
       lock.current = false;
@@ -130,33 +148,34 @@ function AppointmentForm() {
       <li className={step >= 1 ? 'is-current' : ''}><span>{step === 2 ? <Icon name="check" size={14} /> : '1'}</span>Your group</li>
       <li className={step === 2 ? 'is-current' : ''}><span>2</span>Your preferred schedule</li>
     </ol>
-    <form onSubmit={step === 1 ? next : submit}>
-      {error ? <p className="like-form-error" role="alert">{error}</p> : null}
+    <form noValidate onChangeCapture={feedback.onChange} aria-busy={busy} onSubmit={step === 1 ? next : submit}>
+      <FormErrorSummary feedback={feedback} />
+      <FormMessage error={error} loading={busy ? 'Sending your request…' : ''} onRetry={step === 2 ? submit : undefined} busy={busy} />
       {step === 1 ? <div className="like-form-fields" key="group">
-        <label>Appointment type <span>*</span><select name="appointment_type" value={form.appointment_type} onChange={update} required><option value="" disabled>Choose your activity</option>{APPOINTMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select></label>
-        <label>Organization or group name <span>*</span><input name="organization" value={form.organization} onChange={update} required maxLength={200} autoComplete="organization" placeholder="e.g. Your school, company, or community" /></label>
-        <label>Contact person <span>*</span><input name="contact_name" value={form.contact_name} onChange={update} required maxLength={100} autoComplete="name" placeholder="Full name" /></label>
+        <label>Appointment type <span>*</span><select disabled={busy} {...feedback.props('appointment_type')} value={form.appointment_type} onChange={update} required><option value="" disabled>Choose your activity</option>{APPOINTMENT_TYPES.map((type) => <option key={type.value} value={type.value}>{type.label}</option>)}</select><FieldError feedback={feedback} field="appointment_type" /></label>
+        <label>Organization or group name <span>*</span><input disabled={busy} {...feedback.props('organization')} value={form.organization} onChange={update} required maxLength={200} autoComplete="organization" placeholder="e.g. Your school, company, or community" /><FieldError feedback={feedback} field="organization" /></label>
+        <label>Contact person <span>*</span><input disabled={busy} {...feedback.props('contact_name')} value={form.contact_name} onChange={update} required maxLength={100} autoComplete="name" placeholder="Full name" /><FieldError feedback={feedback} field="contact_name" /></label>
         <div className="like-form-row">
-          <label>Phone number <span>*</span><input name="phone" type="tel" value={form.phone} onChange={update} required minLength={7} maxLength={32} autoComplete="tel" placeholder="09XX XXX XXXX" /></label>
-          <label>Email <span>*</span><input name="email" type="email" value={form.email} onChange={update} required maxLength={254} autoComplete="email" placeholder="you@example.com" /></label>
+          <label>Phone number <span>*</span><input disabled={busy} {...feedback.props('phone')} type="tel" value={form.phone} onChange={update} required minLength={7} maxLength={32} autoComplete="tel" placeholder="09XX XXX XXXX" /><FieldError feedback={feedback} field="phone" /></label>
+          <label>Email <span>*</span><input disabled={busy} {...feedback.props('email')} type="email" value={form.email} onChange={update} required maxLength={254} autoComplete="email" placeholder="you@example.com" /><FieldError feedback={feedback} field="email" /></label>
         </div>
         <p className="like-field-hint">Use an email address you can access. Your appointment confirmation will be sent here.</p>
         <button className="like-button" type="submit">Continue to schedule <Icon name="arrow" size={18} /></button>
       </div> : <div className="like-form-fields" key="schedule">
-        <label>Preferred date <span>*</span><input ref={firstField} name="date" type="date" value={form.date} onChange={update} required min={manilaToday()} /></label>
+        <label>Preferred date <span>*</span><input disabled={busy} {...feedback.props('date')} ref={(node) => { firstField.current = node; feedback.props('date').ref(node); }} type="date" value={form.date} onChange={update} required min={manilaToday()} /><FieldError feedback={feedback} field="date" /></label>
         <div className="like-form-row">
-          <label>Start time <span>*</span><input name="start_time" type="time" value={form.start_time} onChange={update} required /></label>
-          <label>End time <span>*</span><input name="end_time" type="time" value={form.end_time} onChange={update} required /></label>
+          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required /><FieldError feedback={feedback} field="start_time" /></label>
+          <label>End time <span>*</span><input disabled={busy} {...feedback.props('end_time')} type="time" value={form.end_time} onChange={update} required /><FieldError feedback={feedback} field="end_time" /></label>
         </div>
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
         <div className="like-form-row">
-          <label>Participants <span>*</span><input name="participants" type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /></label>
-          <label>Activity name <small>optional</small><input name="title" value={form.title} onChange={update} maxLength={200} placeholder={appointmentTypeLabel(form.appointment_type)} /></label>
+          <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
+          <label>Activity name <small>optional</small><input disabled={busy} {...feedback.props('title')} value={form.title} onChange={update} maxLength={200} placeholder={appointmentTypeLabel(form.appointment_type)} /><FieldError feedback={feedback} field="title" /></label>
         </div>
-        <label>Anything we should know? <small>optional</small><textarea name="notes" value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /></label>
+        <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>
         <label className="like-honeypot" aria-hidden="true">Website<input name="website" value={form.website} onChange={update} tabIndex={-1} autoComplete="off" /></label>
-        <label className="like-consent"><input name="consent" type="checkbox" checked={form.consent} onChange={update} required /><span>I understand this is a request, subject to LGU confirmation. LIKE staff may use my contact details to coordinate this appointment.</span></label>
-        <div className="like-form-actions"><button className="like-back" type="button" disabled={busy} onClick={() => { setStep(1); setError(''); }}>Back</button><button className="like-button" type="submit" disabled={busy}>{busy ? 'Sending request…' : 'Send appointment request'}<Icon name="arrow" size={18} /></button></div>
+        <label className="like-consent"><input disabled={busy} {...feedback.props('consent')} type="checkbox" checked={form.consent} onChange={update} required /><span>I understand this is a request, subject to LGU confirmation. LIKE staff may use my contact details to coordinate this appointment.</span><FieldError feedback={feedback} field="consent" /></label>
+        <div className="like-form-actions"><button className="like-back" type="button" disabled={busy} onClick={() => { setStep(1); setError(''); feedback.clear(); }}>Back</button><button className="like-button" type="submit" disabled={busy}>{busy ? 'Sending request…' : error ? 'Retry appointment request' : 'Send appointment request'}<Icon name="arrow" size={18} /></button></div>
       </div>}
     </form>
     <p className="like-form-footnote"><Icon name="calendar" size={16} /> A request today. A confirmed schedule after LGU review.</p>

@@ -7110,10 +7110,12 @@ def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
     row = conn.execute("""
         SELECT ps.*, sz.name AS project_site_name, sz.polygon_geojson,
                o.name AS canonical_organization_name,
-               work.assignment_count, work.planting_count
+               work.assignment_count, work.planting_count,
+               notice.status AS notification_status, notice.last_error AS notification_error, notice.sent_at AS notification_sent_at
         FROM planting_schedules ps
         LEFT JOIN site_zones sz ON sz.id = ps.project_site_id
         LEFT JOIN organizations o ON o.id = ps.organization_id
+        LEFT JOIN activity_schedule_emails notice ON notice.schedule_id = ps.id
         LEFT JOIN LATERAL (
             SELECT COUNT(DISTINCT pa.id) AS assignment_count, COUNT(pe.id) AS planting_count
             FROM planter_assignments pa
@@ -7166,6 +7168,11 @@ def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
             else _DEFAULT_OPERATIONAL_INSPECTION_INTERVAL_DAYS
         ),
         "contact": row["contact"],
+        "notification_email": row.get("notification_email"),
+        "notification_delivery": ({'status': row['notification_status'],
+                                    'awaiting_retry': bool(row['notification_error']),
+                                    'sent_at': row['notification_sent_at']}
+                                   if row.get('notification_status') else None),
         "title": row["title"],
         "appointment_type": row.get("appointment_type", "tree_planting"),
         "start_at": start_at.isoformat(timespec="seconds") if start_at else row["start_at"],
@@ -7255,6 +7262,7 @@ def create_planting_schedule(
     start_at: Any,
     end_at: Any,
     contact: Optional[str] = None,
+    notification_email: Optional[str] = None,
     expected_planters: Optional[int] = None,
     expected_seedlings: Optional[int] = None,
     status: str = "requested",
@@ -7269,6 +7277,8 @@ def create_planting_schedule(
         raise ValueError("Plant checks are fixed at 14-day intervals.")
     clean_title = _clean_schedule_text(title, "title", required=True, max_length=200)
     clean_contact = _clean_schedule_text(contact, "contact", max_length=300)
+    from mangrovision_db.schedule_notifications import clean_notification_email, queue_schedule_notification
+    clean_email = clean_notification_email(notification_email)
     clean_notes = _clean_schedule_text(notes, "notes", max_length=2000)
     clean_start = _parse_dashboard_datetime(start_at)
     clean_end = _parse_dashboard_datetime(end_at)
@@ -7291,21 +7301,25 @@ def create_planting_schedule(
         cursor = conn.execute("""
             INSERT INTO planting_schedules (
                 project_site_id, organization, organization_id,
-                inspection_interval_days, contact, title, start_at, end_at,
+                inspection_interval_days, contact, notification_email, title, start_at, end_at,
                 expected_planters, expected_seedlings, status, notes,
                 created_by_user_id, updated_by_user_id, created_at, updated_at
-            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             canonical["name"], int(canonical["id"]), clean_cadence,
-            clean_contact, clean_title,
+            clean_contact, clean_email, clean_title,
             clean_start.isoformat(timespec="seconds"), clean_end.isoformat(timespec="seconds"),
             clean_planters, clean_seedlings, clean_status, clean_notes,
             created_by_user_id, created_by_user_id, now, now,
         ))
         schedule_id = int(cursor.lastrowid)
+        result = _planting_schedule_row(conn, schedule_id)
+        # Website approval owns its own confirmation and transaction.
+        if _connection is None:
+            result['email_update'] = queue_schedule_notification(conn, None, result)
         if _connection is None:
             conn.commit()
-        return _planting_schedule_row(conn, schedule_id)
+        return result
     except Exception:
         if _connection is None:
             conn.rollback()
@@ -7323,6 +7337,7 @@ def update_planting_schedule(
     organization_id: Any = _UNSET,
     inspection_interval_days: Any = _UNSET,
     contact: Any = _UNSET,
+    notification_email: Any = _UNSET,
     title: Any = _UNSET,
     start_at: Any = _UNSET,
     end_at: Any = _UNSET,
@@ -7358,6 +7373,9 @@ def update_planting_schedule(
             )
         if contact is not _UNSET:
             values["contact"] = _clean_schedule_text(contact, "contact", max_length=300)
+        if notification_email is not _UNSET:
+            from mangrovision_db.schedule_notifications import clean_notification_email
+            values['notification_email'] = clean_notification_email(notification_email)
         if notes is not _UNSET:
             values["notes"] = _clean_schedule_text(notes, "notes", max_length=2000)
         if start_at is not _UNSET:
@@ -7426,6 +7444,8 @@ def update_planting_schedule(
         effective_site_id = values.get("project_site_id")
         if current.get('source') == 'website' and values['organization_id'] != current['organization_id']:
             raise ActivityConflict('A confirmed website booking must keep its organization. Arrange a new booking for a different organization.')
+        if current_status != 'requested' and values['organization_id'] != current['organization_id']:
+            raise ActivityConflict('A confirmed activity must keep its organization. Cancel it and create a separate activity for a different organization.')
         changed, work = validate_activity_change(conn, dict(current), values)
         should_update_site_cadence = bool(
             effective_site_id is not None
@@ -7469,14 +7489,14 @@ def update_planting_schedule(
         conn.execute("""
             UPDATE planting_schedules
                SET project_site_id = ?, organization = ?, organization_id = ?,
-                   inspection_interval_days = ?, contact = ?, title = ?,
+                   inspection_interval_days = ?, contact = ?, notification_email = ?, title = ?,
                    start_at = ?, end_at = ?, expected_planters = ?,
                    expected_seedlings = ?, status = ?, notes = ?,
                    updated_by_user_id = ?, updated_at = ?
              WHERE id = ?
         """, (
             values["project_site_id"], values["organization"], values["organization_id"],
-            cadence, values["contact"], values["title"], values["start_at"], values["end_at"],
+            cadence, values["contact"], values.get('notification_email'), values["title"], values["start_at"], values["end_at"],
             values["expected_planters"], values["expected_seedlings"],
             values["status"], values["notes"], updated_by_user_id,
             updated_at, int(schedule_id),
@@ -7485,7 +7505,10 @@ def update_planting_schedule(
             conn.execute("""UPDATE planter_assignments SET assignment_date = CAST(? AS date)
                 WHERE planting_schedule_id = ?""", (values['start_at'][:10], int(schedule_id)))
         from mangrovision_db.appointment_email import refresh_schedule_confirmation
-        email_update = refresh_schedule_confirmation(conn, dict(current), values)
+        from mangrovision_db.schedule_notifications import queue_schedule_notification
+        email_update = (refresh_schedule_confirmation(conn, dict(current), values)
+                        if current.get('source') == 'website'
+                        else queue_schedule_notification(conn, dict(current), values))
         if changed:
             append_activity(
                 conn, action='schedule.updated', actor_type='staff' if updated_by_user_id else 'system',
@@ -7517,6 +7540,8 @@ def delete_planting_schedule(schedule_id: int, *, deleted_by_user_id: Optional[i
             raise ActivityConflict('This activity has recorded planting and cannot be deleted. Its planting history must be preserved.')
         if current.get('source') == 'website':
             raise ActivityConflict('Cancel this website booking instead of deleting it, so the requester is notified and its history is preserved.')
+        if current['status'] in {'confirmed', 'in_progress', 'completed', 'cancelled'}:
+            raise ActivityConflict('Cancel a confirmed activity instead of deleting it, so the organization can see the change and its history is preserved.')
         if work['assignments']:
             raise ActivityConflict('Remove this activity\'s unplanted assignments before deleting the activity.')
         cursor = conn.execute(

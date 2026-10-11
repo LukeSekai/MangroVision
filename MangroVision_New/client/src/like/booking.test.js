@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookingPayload, manilaToday } from './booking.js';
+import { bookingErrors, bookingPayload, manilaToday } from './booking.js';
 
 const valid = { organization: ' School ', contact_name: ' Coordinator ', phone: '09123456789', email: 'coordinator@example.org', appointment_type: 'tree_planting',
   title: '', date: manilaToday(new Date(Date.now() + 7 * 86400000)), start_time: '08:00', end_time: '10:00', participants: '20', notes: '', consent: true, website: '' };
@@ -35,4 +35,10 @@ test('each appointment choice retains its type and has a useful default title', 
     assert.equal(body.appointment_type, type);
     assert.equal(body.title, label);
   }
+});
+
+test('booking errors identify each correction and only validate the active step', () => {
+  assert.deepEqual(Object.keys(bookingErrors({ ...valid, organization: '  ', phone: 'abc', email: 'broken' }, 1)), ['organization', 'phone', 'email']);
+  assert.deepEqual(Object.keys(bookingErrors({ ...valid, email: 'broken', end_time: '07:00' }, 2)), ['end_time']);
+  assert.throws(() => bookingPayload({ ...valid, end_time: '07:00' }, 'key'), (error) => Boolean(error.fieldErrors.end_time));
 });

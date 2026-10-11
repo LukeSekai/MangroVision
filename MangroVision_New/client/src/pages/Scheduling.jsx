@@ -13,12 +13,12 @@ import {
 } from 'recharts';
 import Modal from '../components/Modal';
 import useFormFeedback from '../utils/useFormFeedback';
-import { FieldError, FormErrorSummary } from '../components/FormFeedback';
-import { submissionError } from '../utils/formValidation';
+import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
+import { formRequest } from '../utils/formValidation';
 import WebsiteRequests from '../components/WebsiteRequests';
 import useTideForecasts from '../utils/useTideForecasts';
 import {
-  PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, finiteNumber, forecastIssue,
+  COASTAL_FORECAST_KEY, PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, finiteNumber, forecastIssue,
   forecastPlantingGuide, guideLevelState, coloredTideSeries,
 } from '../utils/plantingTides';
 import { useAuthStore } from '../stores/authStore';
@@ -95,30 +95,7 @@ function formatHeight(value) {
 }
 
 async function fetchJson(path, options = {}) {
-  const response = await fetch(`${API}${path}`, options);
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = body?.detail ?? body?.message;
-    const messages = (Array.isArray(detail) ? detail : [detail])
-      .filter((item) => item !== null && item !== undefined && item !== '')
-      .map((item) => {
-        if (typeof item === 'string') return item;
-        if (typeof item !== 'object') return String(item);
-        const field = arrayOf(item.loc)
-          .filter((part) => part !== 'body')
-          .join('.');
-        const message = item.msg ?? item.message ?? item.detail;
-        if (message) return field ? `${field}: ${message}` : String(message);
-        try {
-          return JSON.stringify(item);
-        } catch {
-          return 'The server rejected one of the submitted values.';
-        }
-      });
-    const error = submissionError(detail, messages.join('; ') || `Request failed (${response.status})`);
-    throw error;
-  }
-  return body && typeof body === 'object' ? body : {};
+  return formRequest(`${API}${path}`, options, 'Could not save the activity. Check the details and retry.');
 }
 
 function normalizeTideEvents(payload) {
@@ -254,6 +231,7 @@ function makeScheduleForm(schedule = null) {
     organizationName: schedule?.organization_name ?? '',
     title: schedule?.title ?? '',
     contact: schedule?.contact ?? '',
+    notificationEmail: schedule?.notification_email ?? '',
     date: schedule?.scheduled_date ?? (startAt && !Number.isNaN(startAt.getTime()) ? dateInManila(startAt) : ''),
     startTime: schedule?.start_time ?? (startAt && !Number.isNaN(startAt.getTime())
       ? new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIMEZONE }).format(startAt)
@@ -417,6 +395,9 @@ function ScheduleDetails({ schedule, showOrganization = true }) {
     {isPlantingAppointment(schedule) ? <><div><dt>Seedlings</dt><dd>{formatCount(schedule.seedlings)}</dd></div>
     <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div></> : null}
     {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
+    {schedule.notification_email ? <div><dt>Notification email</dt><dd>{schedule.notification_email}</dd></div> : null}
+    {schedule.notification_delivery ? <div><dt>Organization email</dt><dd>{schedule.notification_delivery.awaiting_retry ? 'Delivery failed; queued for automatic retry'
+      : schedule.notification_delivery.status === 'sent' ? 'Sent' : schedule.notification_delivery.status === 'sending' ? 'Sending' : 'Queued'}</dd></div> : null}
     {schedule.notes ? <div><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
   </dl>;
 }
@@ -612,9 +593,10 @@ export default function Scheduling() {
     organizationName: { label: 'Organization', aliases: ['organization', 'organization_id'], serverTerms: ['organization'] },
     title: { label: 'Activity title' },
     contact: { label: 'Contact' },
+    notificationEmail: { label: 'Notification email', aliases: ['notification_email'], serverTerms: ['notification email'] },
     date: { label: 'Date' },
-    startTime: { label: 'Start time', aliases: ['start_time'] },
-    endTime: { label: 'End time', aliases: ['end_time'], serverTerms: ['end time', 'end_time'], validate: (value) => value && form.startTime && value <= form.startTime ? 'Choose an end time later than the start time on the same day.' : '' },
+    startTime: { label: 'Start time', aliases: ['start_time', 'start_at'] },
+    endTime: { label: 'End time', aliases: ['end_time', 'end_at'], serverTerms: ['end time', 'end_time'], validate: (value) => value && form.startTime && value <= form.startTime ? 'Choose an end time later than the start time on the same day.' : '' },
     expectedParticipants: { label: 'Expected participants', aliases: ['expected_planters'] },
     seedlings: { label: 'Expected seedlings', aliases: ['expected_seedlings'] },
     status: { label: 'Activity status' },
@@ -718,7 +700,7 @@ export default function Scheduling() {
     .map(normalizeProjectSite)
     .filter((site) => site.id !== null && site.id !== undefined)
     .sort((a, b) => a.name.localeCompare(b.name)), [apiData]);
-  const forecastKey = '10.7800,122.6253';
+  const forecastKey = COASTAL_FORECAST_KEY;
   const forecastRecords = useTideForecasts([forecastKey], tideRetryKey);
   const activeForecast = forecastRecords[forecastKey];
   const tidePayload = activeForecast?.payload;
@@ -839,17 +821,20 @@ export default function Scheduling() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request.body),
       });
-      const emailNotice = saved?.email_update
-        ? (saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the requester.'
-          : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the requester.'
-            : ' The queued confirmation now contains the revised details.') : '';
+      const emailNotice = saved?.email_update?.status === 'missing_recipient'
+        ? ' No email was queued. Add the organization’s notification email to send the current details. Planters can view the saved schedule.'
+        : saved?.email_update ? (saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the organization.'
+          : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the organization.'
+            : ' A confirmation email is queued for the organization.') : '';
       setNotice((request.method === 'PUT' ? 'Planting schedule updated.' : 'Planting schedule created. Once confirmed, you can choose a planting area for it.') + emailNotice);
       setFormOpen(false);
       setEditingSchedule(null);
       setMonth(request.body.date.slice(0, 7));
       setReloadKey((value) => value + 1);
     } catch (saveError) {
-      if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save the planting schedule.');
+      if (request.method === 'POST' && (saveError.uncertain || saveError.status >= 500)) {
+        setFormError('Could not verify whether the new activity was saved. Check the calendar before submitting it again to avoid a duplicate. Your entries are kept.');
+      } else if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save the planting schedule.');
     } finally {
       setTimeCaution(null);
       setSaving(false);
@@ -898,6 +883,7 @@ export default function Scheduling() {
       organization: organization?.name || organizationName,
       title: form.title.trim(),
       contact: form.contact.trim() || null,
+      ...(editingSchedule?.source === 'website' ? {} : { notification_email: form.notificationEmail.trim() || null }),
       date: form.date,
       start_time: form.startTime,
       end_time: form.endTime,
@@ -1005,7 +991,7 @@ export default function Scheduling() {
         </div>
 
         {error ? <Message>{error}</Message> : null}
-        {notice ? <Message type="success">{notice}</Message> : null}
+        <FormMessage success={notice} />
 
         <div className="schedule-kpis">
           <article><span>Upcoming schedules</span><strong>{formatCount(upcoming.length)}</strong><small>By organization</small></article>
@@ -1076,7 +1062,7 @@ export default function Scheduling() {
                     <td><div className="schedule-row-actions">
                       {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
                       <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
-                      <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
+                      <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel confirmed activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
                     </div></td>
                   </tr>
                 );
@@ -1116,9 +1102,10 @@ export default function Scheduling() {
       >
         <form className="schedule-form" noValidate onChangeCapture={feedback.onChange} onSubmit={saveSchedule}>
           <FormErrorSummary feedback={feedback} />
-          {formError ? <Message>{formError}</Message> : null}
+          <FormMessage error={formError} loading={saving ? 'Saving the activity…' : ''} onRetry={formError.startsWith('Could not verify whether') ? undefined : saveSchedule} busy={saving} />
           {editingSchedule?.planting_started ? <p role="status">Planting has been recorded for this activity. Planning details are locked. You can correct contact details and notes, or update progress.</p> : null}
           {editingSchedule?.source === 'website' ? <p>Agree on revised details with the requester before saving. Changing the date, time, title, or expected participants queues an email. Cancelling queues a cancellation notice.</p> : null}
+          {editingSchedule?.source !== 'website' ? <p>Confirmed activities appear on the organization’s planter page. A notification email sends confirmations, schedule changes, and cancellations to the organization.</p> : null}
           {isPlantingAppointment(editingSchedule || {}) ? <div className="schedule-form-assessment">
             <PlantingBadge assessment={assessmentFor({ ...editingSchedule,
               start_at: `${form.date}T${form.startTime}+08:00`, end_at: `${form.date}T${form.endTime}+08:00`,
@@ -1138,7 +1125,7 @@ export default function Scheduling() {
                   const matching = organizations.find((organization) => organization.name.trim().toLocaleLowerCase() === value.trim().toLocaleLowerCase());
                   setForm((current) => ({ ...current, organizationName: value, organizationId: matching ? String(matching.id) : '' }));
                 }}
-                disabled={Boolean(editingSchedule?.project_site_id || editingSchedule?.planting_started || editingSchedule?.source === 'website')}
+                disabled={Boolean(editingSchedule && editingSchedule.status !== 'requested')}
                 required
               />
               <FieldError feedback={feedback} field="organizationName" />
@@ -1158,6 +1145,12 @@ export default function Scheduling() {
               <input {...feedback.props('contact')} value={form.contact} maxLength="160" placeholder="Name, phone, or email" onChange={(event) => setForm((current) => ({ ...current, contact: event.target.value }))} />
               <FieldError feedback={feedback} field="contact" />
             </label>
+            {editingSchedule?.source !== 'website' ? <label>
+              <span>Organization notification email</span>
+              <input {...feedback.props('notificationEmail')} type="email" maxLength={254} value={form.notificationEmail} placeholder="coordinator@example.com" onChange={(event) => setForm((current) => ({ ...current, notificationEmail: event.target.value }))} />
+              <FieldError feedback={feedback} field="notificationEmail" />
+              <small>Use the address agreed with the organization. Without an email address, updates appear only on its planter page.</small>
+            </label> : null}
             <label>
               <span>Date *</span>
               <input disabled={Boolean(editingSchedule?.planting_started)} {...feedback.props('date')} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} required />

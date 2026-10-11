@@ -126,3 +126,67 @@ def test_timeout_reaches_worker_for_retry(monkeypatch):
     mock_provider(monkeypatch, timed_out)
     with pytest.raises(httpx.ReadTimeout):
         delivery._send_confirmation('recipient@example.org', 'Subject', 'Body')
+
+
+def test_html_and_text_are_both_sent_to_brevo(monkeypatch):
+    payloads = []
+    def accepted(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(201, json={'messageId': 'test-receipt'})
+    mock_provider(monkeypatch, accepted)
+    delivery._send_confirmation('recipient@example.org', 'Confirmed', 'Plain details', html_body='<h1>Confirmed</h1>')
+    assert payloads[0]['textContent'] == 'Plain details'
+    assert payloads[0]['htmlContent'] == '<h1>Confirmed</h1>'
+
+
+def test_html_uses_multipart_smtp_fallback(monkeypatch):
+    from mangrovision_db import notifications
+    monkeypatch.delenv('BREVO_API_KEY')
+    monkeypatch.setenv('SMTP_HOST', 'smtp.example.org')
+    monkeypatch.setenv('SMTP_USERNAME', 'test-only')
+    monkeypatch.setenv('SMTP_PASSWORD', 'test-only')
+    monkeypatch.setenv('SMTP_PORT', '587')
+    messages = []
+    class FakeSMTP:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def starttls(self): pass
+        def login(self, *args): pass
+        def send_message(self, message): messages.append(message)
+    monkeypatch.setattr(notifications.smtplib, 'SMTP', FakeSMTP)
+    monkeypatch.setattr(delivery, '_send_smtp', notifications._send_smtp)
+    delivery._send_confirmation('recipient@example.org', 'Confirmed', 'Plain details', html_body='<h1>Confirmed</h1>')
+    assert messages[0].get_content_type() == 'multipart/alternative'
+    assert messages[0].get_body(preferencelist=('plain',)).get_content().strip() == 'Plain details'
+    assert '<h1>Confirmed</h1>' in messages[0].get_body(preferencelist=('html',)).get_content()
+
+
+def test_email_design_escapes_details_credentials_and_unsafe_links():
+    from mangrovision_db.activity_email_design import render_activity_email
+    html = render_activity_email(kind='confirmation', title='<script>bad</script>', greeting='Hello <img>',
+        introduction='A & B', details=[('Organization', '<img src=x onerror=bad()>')],
+        access_lines=['Planter access', 'Open: javascript:alert(1)', 'Participant 1: <b>team</b>', 'Participant 2: <private>&"'])
+    assert '<script>' not in html and '<img' not in html and 'javascript:' not in html
+    assert '&lt;script&gt;' in html and '&lt;private&gt;&amp;&quot;' in html
+    assert 'Individual planter codes' in html and 'Open planter workspace' not in html
+
+
+def test_cancelled_email_hides_account_details_and_access_button():
+    from mangrovision_db.activity_email_design import render_activity_email
+    html = render_activity_email(kind='cancellation', title='Group planting', greeting='Hello team',
+        introduction='Cancelled', details=[('Time', '08:00 AM')],
+        access_lines=['Participant 1: private-test', 'Open: https://example.org/field'])
+    assert 'This activity will not proceed' in html
+    assert 'private-test' not in html and 'test-group' not in html and '/field' not in html
+
+
+def test_readable_credentials_keep_the_organization_name_and_independent_secret():
+    from mangrovision_db.readable_credentials import organization_password, organization_slug, WORDS
+    import math
+    assert organization_slug('  Otón Youth & Volunteers  ', 1) == 'oton-youth-volunteers'
+    assert organization_slug('!!!', 7) == 'organization-7'
+    passwords = {organization_password('Oton Youth') for _ in range(30)}
+    assert len(passwords) == 30
+    assert all(password.startswith('OtonYouth-') and password.split('-')[-1].isdigit() for password in passwords)
+    assert 4 * math.log2(len(set(WORDS))) + math.log2(100_000_000) > 54

@@ -264,7 +264,7 @@ export default function PlanterActivityReport({ open, onClose }) {
               {planterRows.length === 0 ? (
                 <div className="par-status">
                   No organization accounts registered yet. Activity will appear here once
-                  organizations register and receive points.
+                  staff create organization access and assign points.
                 </div>
               ) : (
                 <>

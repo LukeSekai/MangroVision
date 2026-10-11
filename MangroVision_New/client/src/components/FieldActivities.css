@@ -1,0 +1,19 @@
+.field-activities { flex-shrink: 0; background: #f8fafc; border-bottom: 1px solid #dbe4df; font-size: 13px; }
+.field-activities > summary { padding: 10px 18px; color: #164b32; cursor: pointer; font-weight: 700; }
+.field-activities > summary span { margin-left: 10px; color: #54677a; font-weight: 500; font-size: 12px; }
+.field-activities-content { padding: 0 14px 12px; max-height: min(45vh, 400px); overflow-y: auto; }
+.field-activities-toolbar { display: flex; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.field-activities button { cursor: pointer; border: 1px solid #b8c9bf; border-radius: 6px; padding: 6px 9px; background: white; color: #164b32; }
+.field-activity-card { position: relative; padding: 12px; margin-top: 8px; border: 1px solid #dbe4df; border-radius: 10px; background: white; }
+.field-activity-card h3 { font-size: 14px; margin: 0 0 6px; padding-right: 100px; }
+.field-activity-card p { margin: 6px 0; line-height: 1.5; }
+.field-activity-status { position: absolute; right: 12px; top: 12px; font-size: 11px; color: #166534; text-transform: capitalize; }
+.field-activity-status.is-cancelled, .field-activity-cancelled { color: #991b1b; }
+.field-activity-change { padding: 8px; background: #fff7ed; border-radius: 6px; color: #9a3412; }
+.field-activity-tides { padding: 9px; margin-top: 8px; background: #f0fdf4; border-radius: 6px; }
+.field-activity-tides.is-unsafe { background: #fff7ed; }
+.field-activity-tides.is-unknown { background: #f1f5f9; }
+.field-activity-tides ul { padding-left: 18px; }
+.field-activity-tides small, .field-forecast-freshness { display: block; color: #526477; line-height: 1.5; }
+.field-activity-tides a { display: inline-block; margin-top: 5px; color: #12613b; }
+@media (max-width: 480px) { .field-activities > summary { padding: 10px 12px; } .field-activities > summary span { display: block; margin: 4px 0 0 14px; } .field-activities-toolbar { flex-wrap: wrap; } }

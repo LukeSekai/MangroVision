@@ -12,6 +12,7 @@ from cryptography.fernet import Fernet
 
 from .compat import get_connection
 from .notifications import _send_smtp
+from .activity_email_design import render_activity_email
 
 APPOINTMENT_TYPES = {
     'field_visit': 'Field visit',
@@ -25,7 +26,7 @@ def _cipher():
     try:
         return Fernet(key.encode('ascii'))
     except (ValueError, UnicodeError) as error:
-        raise ValueError('Configure LIKE_EMAIL_ENCRYPTION_KEY before confirming website appointments.') from error
+        raise ValueError('Configure LIKE_EMAIL_ENCRYPTION_KEY before issuing planter codes or confirming website appointments.') from error
 
 
 def _sender_configured():
@@ -36,25 +37,30 @@ def _sender_configured():
     return all(os.getenv(name, '').strip() for name in ('SMTP_HOST', 'SMTP_USERNAME', 'SMTP_PASSWORD'))
 
 
-def _send_confirmation(recipient, subject, body):
+def _send_confirmation(recipient, subject, body, *, html_body=None):
     key = os.getenv('BREVO_API_KEY', '').strip()
     if not key:
+        if html_body:
+            return _send_smtp(recipient, subject, body, html_body=html_body)
         return _send_smtp(recipient, subject, body)
     sender = os.getenv('SMTP_FROM', '').strip()
     if not sender:
         raise ValueError('Configure SMTP_FROM with a verified Brevo sender before sending confirmations.')
     if key.startswith('xsmtpsib-'):
         raise ValueError("BREVO_API_KEY must contain an API key from Brevo's API keys page.")
+    payload = {
+        'sender': {'name': 'MangroVision', 'email': sender},
+        'to': [{'email': recipient}],
+        'subject': subject,
+        'textContent': body,
+    }
+    if html_body:
+        payload['htmlContent'] = html_body
     with httpx.Client(timeout=30, follow_redirects=False) as client:
         response = client.post(
             'https://api.brevo.com/v3/smtp/email',
             headers={'api-key': key, 'accept': 'application/json'},
-            json={
-                'sender': {'name': 'MangroVision', 'email': sender},
-                'to': [{'email': recipient}],
-                'subject': subject,
-                'textContent': body,
-            },
+            json=payload,
         )
     if response.status_code != 201:
         raise RuntimeError(f'Brevo did not accept the confirmation email (HTTP {response.status_code}).')
@@ -96,20 +102,31 @@ def _message(request, schedule, *, login=None, access_lines=None, kind='confirma
         parsed = urlsplit(base_url)
         if parsed.scheme not in {'https', 'http'} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError('Configure MANGROVISION_PUBLIC_URL before sending planter login details.')
-        access_lines = ['Planter access', f'Open: {base_url}/field', f"Username: {login['username']}"]
-        if login.get('password'):
-            access_lines.append(f"Password: {login['password']}")
-        else:
-            access_lines.append('Use your existing organization password. Contact LGU staff if you need help accessing the account.')
-        access_lines.extend([f"This shared account supports {login['participant_count']} participant devices.",
-                      'Keep these login details private and share them only with your planting group.'])
+        access_lines = ['Planter access', f'Open: {base_url}/field']
+        access_lines.extend(f"Participant {entry['participant_slot']}: {entry['code']}"
+                            for entry in login.get('codes', []) if entry.get('code'))
+        access_lines.extend(['Give each participant only their own code. No username or password is needed.',
+            'Keep the same code and browser for future activities and your assigned points. Codes remain valid until LGU staff revoke or replace them.',
+            'Keep this full code list private with the group leader.'])
     if access_lines and kind != 'cancellation':
         lines.extend(['', *access_lines])
     lines.extend(['', 'For questions or changes, contact the LGU staff who coordinated your appointment.',
                   '', 'LIKE · Leganes, Iloilo'])
     label = {'confirmation': 'confirmed', 'update': 'updated', 'cancellation': 'cancelled'}[kind]
+    details = [
+        ('Organization', schedule.get('organization_name') or schedule['organization']),
+        ('Appointment', APPOINTMENT_TYPES[request['appointment_type']]),
+        ('Date', start.strftime('%B %d, %Y')),
+        ('Time', f"{start:%I:%M %p} – {end:%I:%M %p} (Philippine time)"),
+        ('Participants', schedule.get('expected_planters') if schedule.get('expected_planters') is not None else request['participants']),
+        ('Reference', request['reference']),
+    ]
     return {'subject': f"LIKE appointment {label} · {request['reference']}",
-            'body': '\n'.join(lines), 'access_lines': access_lines}
+            'body': '\n'.join(lines), 'access_lines': access_lines,
+            'html_body': render_activity_email(
+                kind=kind, title=schedule['title'], greeting=f"Hello {request['contact_name']},",
+                introduction=announcement, details=details, access_lines=access_lines,
+                footer='LIKE · Leganes Integrated Katunggan Ecopark · Leganes, Iloilo')}
 
 
 def _encrypted_message(message):
@@ -152,22 +169,14 @@ def refresh_schedule_confirmation(conn, current, updated):
     if existing and existing['status'] == 'sending':
         raise ActivityConflict('The booking email is being delivered. Try saving these changes again after delivery finishes.')
     access_lines = []
-    if existing and existing['encrypted_message']:
-        try:
-            old = json.loads(_cipher().decrypt(existing['encrypted_message'].encode('ascii')))
-            access_lines = old.get('access_lines') or []
-            if not access_lines and '\nPlanter access\n' in old['body']:
-                section = old['body'].split('\nPlanter access\n', 1)[1].split('\n\nFor questions or changes,', 1)[0]
-                access_lines = ['Planter access', *section.splitlines()]
-        except Exception as error:
-            raise ValueError('The queued confirmation could not be refreshed. Check the stable email encryption key before changing this booking.') from error
     login = None
-    if not access_lines and request['appointment_type'] == 'tree_planting':
-        account = conn.execute("""SELECT username, participant_count FROM planters
+    if request['appointment_type'] == 'tree_planting' and updated['status'] != 'cancelled':
+        account = conn.execute("""SELECT id, username FROM planters
             WHERE organization_id = ? AND merged_into_planter_id IS NULL AND status = 'active'
             ORDER BY id LIMIT 1""", (updated['organization_id'],)).fetchone()
         if account and account['username']:
-            login = dict(account)
+            from .planter_codes import ensure_codes
+            login = {'codes': ensure_codes(conn, account['id'])}
     kind = 'cancellation' if updated['status'] == 'cancelled' else (
         'update' if existing and (existing['status'] == 'sent' or existing['message_kind'] == 'update') else 'confirmation')
     encrypted = _encrypted_message(_message(dict(request), updated, login=login, access_lines=access_lines, kind=kind))
@@ -221,7 +230,10 @@ def send_pending_appointment_emails(*, request_id=None, sender=None, limit=20):
         error_code = None
         try:
             message = json.loads(_cipher().decrypt(row['encrypted_message'].encode('ascii')))
-            send(row['recipient_email'], message['subject'], message['body'])
+            if sender is not None:
+                send(row['recipient_email'], message['subject'], message['body'])
+            else:
+                send(row['recipient_email'], message['subject'], message['body'], html_body=message.get('html_body'))
         except Exception as error:
             # Provider errors can echo recipients, credentials, and server configuration.
             error_code = type(error).__name__

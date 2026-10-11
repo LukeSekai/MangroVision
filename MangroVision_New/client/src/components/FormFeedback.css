@@ -7,6 +7,11 @@
   font-weight: 500;
 }
 .form-error-summary { color: #b91c1c; font-size: 0.875rem; margin: 8px 0; }
+.form-message { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; margin: 10px 0; border: 1px solid; border-radius: 8px; font-size: .875rem; line-height: 1.5; }
+.form-message.is-error { color: #991b1b; background: #fef2f2; border-color: #fecaca; }
+.form-message.is-success { color: #166534; background: #f0fdf4; border-color: #bbf7d0; }
+.form-message.is-loading { color: #334155; background: #f8fafc; border-color: #cbd5e1; }
+.form-message button { flex-shrink: 0; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 5px; padding: 4px 10px; cursor: pointer; }
 input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
   border-color: #b91c1c;
   outline-color: #b91c1c;

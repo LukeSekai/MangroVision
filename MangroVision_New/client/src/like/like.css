@@ -179,6 +179,12 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-form-fields .like-field-hint { font-size: 9px; margin: -8px 0 0; }
 .like-form-fields .like-consent { display: flex; gap: 9px; align-items: flex-start; font-size: 10px; line-height: 1.6; font-weight: 400; color: #65705f; }
 .like-consent input { accent-color: #166534; width: 15px; height: 15px; flex-shrink: 0; margin: 2px 0 0; }
+.like-form-fields .form-field-error { color: #b91c1c; font-size: 12px; }
+.like-form-fields [aria-invalid="true"] { border-color: #b91c1c; }
+.like-form-fields input:disabled, .like-form-fields select:disabled, .like-form-fields textarea:disabled { opacity: .7; }
+.like-form-fields .like-consent { flex-wrap: wrap; }
+.like-consent > span:not(.form-field-error) { flex: 1; }
+.like-consent > .form-field-error { flex-basis: 100%; margin-left: 24px; }
 .like-form-actions { display: flex; align-items: center; gap: 24px; }
 .like-back { background: transparent; padding: 12px 0; font-size: 11px; color: #166534; }
 .like-form-footnote { display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 9px; text-align: center; margin: 23px 0 0; }

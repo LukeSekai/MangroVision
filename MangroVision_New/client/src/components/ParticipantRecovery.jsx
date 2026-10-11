@@ -1,12 +1,12 @@
 import { useRef, useState } from 'react';
 import Modal from './Modal';
-import { participantRecoveryCode } from '../utils/participantDevice';
+import { participantRecoveryCode, participantStorageIdentity } from '../utils/participantDevice';
 
 export default function ParticipantRecovery({ planter, onClose }) {
   const input = useRef(null);
   const [message, setMessage] = useState('');
   let code = '', error = '';
-  try { code = participantRecoveryCode(planter?.username); }
+  try { code = participantRecoveryCode(participantStorageIdentity(planter)); }
   catch (problem) { error = problem.message; }
 
   const copyCode = async () => {

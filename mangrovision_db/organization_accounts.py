@@ -43,6 +43,13 @@ def allocation_slots(point_count, participant_count, existing_counts=None):
 
 
 def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recover_slot=False, resume_device=False):
+    return claim_participant_device(planter_id, device_key, requested_slot,
+                                    recover_slot=recover_slot, resume_device=resume_device)[0]
+
+
+def claim_participant_device(planter_id, device_key, requested_slot=None, *, recover_slot=False,
+                             resume_device=False, known_device_keys=()):
+    """Reuse this browser's existing slot even after its group login is renamed."""
     from planting_database import _get_connection
     if not device_key or not 16 <= len(device_key) <= 200:
         raise ValueError('A persistent device identity is required. Please reload and sign in again.')
@@ -55,10 +62,28 @@ def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recov
         limit = account['participant_count']
         existing = conn.execute('SELECT slot FROM organization_participants WHERE planter_id = ? AND device_key_hash = ? AND slot <= ?',
                                 (planter_id, device_hash, limit)).fetchone()
+        if known_device_keys and not (recover_slot or resume_device):
+            # Only authenticated account slots are searched. Other groups' keys
+            # must never be used to allocate a new slot in this organization.
+            candidates = {hashlib.sha256(key.encode()).hexdigest(): key for key in known_device_keys
+                          if isinstance(key, str) and 16 <= len(key) <= 200}
+            candidates[device_hash] = device_key
+            if len(candidates) > 65:
+                raise ValueError('Use your device recovery code to restore this participant number.')
+            if candidates:
+                placeholders = ','.join('?' for _ in candidates)
+                matches = conn.execute(f'''SELECT slot, device_key_hash FROM organization_participants
+                    WHERE planter_id = ? AND slot <= ? AND device_key_hash IN ({placeholders})''',
+                                       (planter_id, limit, *candidates)).fetchall()
+                if len(matches) > 1:
+                    raise ValueError('This browser has more than one participant identity for this organization. Use the recovery code for your participant number.')
+                if matches:
+                    existing = matches[0]
+                    device_key = candidates[existing['device_key_hash']]
         if existing:
             if recover_slot and requested_slot != existing['slot']:
                 raise ValueError(f'This browser is already Participant {existing["slot"]}. Ask the LGU to reset that device slot before recovering Participant {requested_slot}.')
-            return existing['slot']
+            return existing['slot'], device_key
         if resume_device:
             raise ValueError('This recovery code is not linked to this organization. Check the code or ask the LGU to recover your participant number.')
         if recover_slot and (requested_slot is None or not 1 <= requested_slot <= limit):
@@ -77,7 +102,7 @@ def claim_participant_slot(planter_id, device_key, requested_slot=None, *, recov
         conn.execute('UPDATE organization_participants SET device_key_hash = ? WHERE planter_id = ? AND slot = ?',
                      (device_hash, planter_id, slot['slot']))
         conn.commit()
-        return slot['slot']
+        return slot['slot'], device_key
     finally:
         conn.close()
 

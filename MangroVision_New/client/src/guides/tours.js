@@ -175,12 +175,11 @@ export const STAFF_LOGIN_TOURS = [{
 }];
 
 export const FIELD_LOGIN_TOURS = [{
-  id: 'field-login', title: 'Organization access and registration',
-  description: 'Register your team, sign in as a participant or recover a device.',
+  id: 'field-login', title: 'Planter sign in',
+  description: 'Sign in with your group’s shared login or recover a device.',
   steps: [
-    step(null, '.field-auth-brand', 'Organization field access', 'Field users share an organization account, while each device uses a separate participant number. Ask the LGU to add your organization through Scheduling if it is missing.'),
-    step(null, '.field-tab-row', 'Register the organization once', 'Use Register when your organization does not yet have a field account. Choose the organization, shared username and password, and the number of participants. Coordinate this registration with your team.'),
-    step(null, '.field-form', 'Sign in on a participant device', 'Use Sign In with the shared organization credentials. Follow the participant-number instructions to claim or restore the appropriate device slot. Keep the same participant number for your assigned work.'),
+    step(null, '.field-auth-brand', 'Organization field access', 'Use your individual code from your group leader or LGU staff. The code keeps the same participant number across activities.'),
+    step(null, '.field-form', 'Sign in on a participant device', 'Enter your planter code and choose Sign in. Return in the same browser for your assigned points. Each participant uses their own code.'),
     step(null, '.field-form', 'Recover access to an existing allocation', 'If replacing a device or returning through a different field link, use the recovery options and your saved device recovery code. Ask the LGU for help if you cannot recover the participant slot.'),
   ],
 }];

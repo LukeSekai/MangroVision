@@ -6,6 +6,7 @@ export const PLANTING_STATES = Object.freeze({
 });
 
 const OUTDATED_FORECAST_MESSAGE = 'These water levels are out of date. Refresh before planning your visit.';
+export const COASTAL_FORECAST_KEY = '10.7800,122.6253';
 
 export function finiteNumber(value) {
   if (!['number', 'string'].includes(typeof value) || String(value).trim() === '') return null;
@@ -162,6 +163,41 @@ export function coloredTideSeries(rows, guide) {
 // graph. A site assignment is administrative and does not change this estimate.
 export function assessGraphWindow({ payload, startAt, endAt, now = Date.now(), allowOutdated = false }) {
   return assessWindow({ payload, startAt, endAt, now, useGraphReference: true, allowOutdated });
+}
+
+// Duration is the interval above the same estimated reference used by staff.
+// A high-tide extremum is a peak time, not an interval with a duration.
+export function activityTideSummary({ payload, startAt, endAt, now = Date.now() }) {
+  const assessment = assessGraphWindow({ payload, startAt, endAt, now });
+  if (assessment.status === 'unknown') return { ...assessment, periods: [], peaks: [] };
+  const rows = levelSeries(payload);
+  const threshold = assessment.threshold_m;
+  const periods = [];
+  for (let i = 1; i < rows.length; i += 1) {
+    const a = rows[i - 1];
+    const b = rows[i];
+    if (a.height_m <= threshold && b.height_m <= threshold) continue;
+    const crossing = a.occurred_at + (b.occurred_at - a.occurred_at)
+      * (threshold - a.height_m) / (b.height_m - a.height_m);
+    const start = a.height_m > threshold ? a.occurred_at : crossing;
+    const end = b.height_m > threshold ? b.occurred_at : crossing;
+    if (end <= start) continue;
+    const last = periods.at(-1);
+    if (last && Math.abs(last.end - start) < 1) last.end = end;
+    else periods.push({ start, end });
+  }
+  const start = instantMs(startAt);
+  const end = instantMs(endAt);
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const peaks = (Array.isArray(payload.extremes) ? payload.extremes : [])
+    .filter((row) => String(row.type).toLowerCase() === 'high' && finiteNumber(row.timestamp) !== null
+      && day.format(new Date(row.timestamp * 1000)) === day.format(new Date(start)))
+    .map((row) => ({ at: row.timestamp * 1000, height_m: finiteNumber(row.height_m) }));
+  return { ...assessment, peaks, periods: periods.filter((period) => period.end > start && period.start < end)
+    .map((period) => ({ ...period, duration_minutes: (period.end - period.start) / 60000,
+      incomplete: (period.start === rows[0].occurred_at && rows[0].height_m > threshold)
+        || (period.end === rows.at(-1).occurred_at && rows.at(-1).height_m > threshold),
+    })) };
 }
 
 // Check a selected start or end time even before the other field is filled in.

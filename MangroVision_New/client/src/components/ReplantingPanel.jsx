@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PanelCard } from './Panel';
 import { SeedlingMap } from './SeedlingLocations';
 import { toggleSeedling } from '../utils/monitoringLocations';
+import useFormFeedback from '../utils/useFormFeedback';
+import { formRequest } from '../utils/formValidation';
+import { FieldError, FormErrorSummary, FormMessage } from './FormFeedback';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const STATUS = { awaiting_review: 'Awaiting LGU review', approved: 'Approved · awaiting assignment', assigned: 'Replacement assigned', completed: 'Replacement planted' };
@@ -17,12 +20,11 @@ export default function ReplantingPanel({ organizations, refreshKey, onChanged }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const feedback = useFormFeedback({ organization: { label: 'Replacement organization', aliases: ['organization_id'], serverTerms: ['organization'] }, assignmentDate: { label: 'Planting work date', aliases: ['assignment_date'] } });
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const response = await fetch(`${API}/api/monitoring/replanting`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || 'Could not load replacement work.');
+      const payload = await formRequest(`${API}/api/monitoring/replanting`, {}, 'Could not load replacement work.');
       setPoints(payload.points || []); setSelected([]);
     } catch (failure) { setError(failure.message); }
     finally { setLoading(false); }
@@ -34,14 +36,12 @@ export default function ReplantingPanel({ organizations, refreshKey, onChanged }
     if (busy) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const response = await fetch(`${API}/api/monitoring/replanting/${path}`, {
+      await formRequest(`${API}/api/monitoring/replanting/${path}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.detail || 'Could not update replacement work.');
       setNotice(message); setOrganization(''); setAssignmentDate('');
       await load(); onChanged?.();
-    } catch (failure) { setError(failure.message); }
+    } catch (failure) { if (!feedback.fromServer(failure)) setError(failure.message); }
     finally { setBusy(false); }
   }
   function toggle(id) { if (!busy) setSelected((current) => toggleSeedling(current, id)); }
@@ -53,8 +53,7 @@ export default function ReplantingPanel({ organizations, refreshKey, onChanged }
       <label>Original organization<select value={source} disabled={busy} onChange={(e) => { setSource(e.target.value); setSelected([]); }}><option value="">All organizations</option>{organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
       <button type="button" onClick={load} disabled={busy || loading}>Refresh locations</button>
     </div>
-    {error ? <p role="alert" className="org-monitoring-message is-error">{error}</p> : null}
-    {notice ? <p role="status" className="org-monitoring-message is-success">{notice}</p> : null}
+    <FormMessage error={error} success={notice} loading={busy ? 'Saving replacement work…' : ''} />
     {loading ? <p role="status">Loading replacement locations…</p> : <>
       {filtered.length ? <><SeedlingMap points={filtered} selected={selected} onToggle={toggle} />
         <div className="seedling-location-checklist">{filtered.map((p) => <div key={p.planting_event_id} className="replanting-row">
@@ -62,13 +61,14 @@ export default function ReplantingPanel({ organizations, refreshKey, onChanged }
             <span><strong>{p.analysis_name} · Point {p.point_num}</strong><small>{p.project_site_name} · {p.organization_name} · {p.species}<br />{STATUS[p.replanting_status]}{p.assignment_id ? ` · Assignment ${p.assignment_id}` : ''}</small></span></label>
           {p.replanting_status === 'awaiting_review' ? <button type="button" disabled={busy} onClick={() => mutate(`${p.planting_event_id}/approve`, { expected_version: p.version }, 'Location approved for replacement planting.')}>Approve for replacement</button> : null}
         </div>)}</div></> : <p>No locations at this stage. Deaths with unknown locations appear here after they are identified in Monitoring History.</p>}
-      {selected.length > 0 ? <form className="replanting-assignment" onSubmit={(e) => { e.preventDefault(); if (!organization || !assignmentDate) return;
+      {selected.length > 0 ? <form className="replanting-assignment" noValidate onChangeCapture={feedback.onChange} aria-busy={busy} onSubmit={(e) => { e.preventDefault(); if (busy || !feedback.validate()) return;
         void mutate('assign', { planting_event_ids: selected, versions: Object.fromEntries(points.filter((p) => selected.includes(p.planting_event_id)).map((p) => [p.planting_event_id, p.version])), organization_id: Number(organization), assignment_date: assignmentDate }, 'Replacement assignment created. Confirm planting through the existing assignment workflow.');
       }}>
         <p>{selected.length} approved locations selected. Choose an organization authorized for their project sites. Existing species will be kept.</p>
-        <div className="seedling-location-filters"><label>Assign replacement work to<select required value={organization} onChange={(e) => setOrganization(e.target.value)} disabled={busy}><option value="">Select an organization</option>{organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select></label>
-          <label>Planting work date<input type="date" required value={assignmentDate} onChange={(e) => setAssignmentDate(e.target.value)} disabled={busy} /></label>
-          <button type="submit" disabled={busy || !organization || !assignmentDate}>{busy ? 'Saving…' : 'Create replacement assignment'}</button></div>
+        <FormErrorSummary feedback={feedback} />
+        <div className="seedling-location-filters"><label>Assign replacement work to<select {...feedback.props('organization')} required value={organization} onChange={(e) => setOrganization(e.target.value)} disabled={busy}><option value="">Select an organization</option>{organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select><FieldError feedback={feedback} field="organization" /></label>
+          <label>Planting work date<input {...feedback.props('assignmentDate')} type="date" required value={assignmentDate} onChange={(e) => setAssignmentDate(e.target.value)} disabled={busy} /><FieldError feedback={feedback} field="assignmentDate" /></label>
+          <button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Create replacement assignment'}</button></div>
       </form> : null}
     </>}
   </PanelCard>;

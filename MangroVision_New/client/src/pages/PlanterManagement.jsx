@@ -7,11 +7,12 @@ import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import PlanterActivityReport from './PlanterActivityReport';
 import ParticipantDevices from '../components/ParticipantDevices';
+import OrganizationAccess from '../components/OrganizationAccess';
 import { getPlanterColor } from '../utils/planterColors';
 import { useLocation } from 'react-router-dom';
 import useFormFeedback from '../utils/useFormFeedback';
-import { FieldError, FormErrorSummary } from '../components/FormFeedback';
-import { submissionError } from '../utils/formValidation';
+import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
+import { formRequest } from '../utils/formValidation';
 import './PlanterManagement.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -263,7 +264,7 @@ export default function PlanterManagement() {
     if (!feedback.validate()) return;
     setAssignBusy(true);
     try {
-      const res = await fetch(`${API}/api/planters/organizations/${assignOrganizationId}/assignments`, {
+      await formRequest(`${API}/api/planters/organizations/${assignOrganizationId}/assignments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -272,10 +273,6 @@ export default function PlanterManagement() {
           ...(assignmentActivity ? { planting_schedule_id: assignmentActivity.id } : {}),
         }),
       });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw submissionError(payload.detail, 'Assignment failed. Please try again.');
-      }
       const planter = selectedAssignmentPlanter;
       setAssignSuccess(
         `Assigned ${pointIdsToAssign.length} point${pointIdsToAssign.length === 1 ? '' : 's'} to ${planter?.organization_name || 'organization'}.`,
@@ -495,8 +492,8 @@ export default function PlanterManagement() {
               <span className="text-sm" style={{ color: 'var(--color-primary)', lineHeight: 1.4 }}>
                 <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
                 {selectedAssignmentPlanter.registration_pending
-                  ? 'Account not registered yet · Points can be reserved now'
-                  : `${selectedAssignmentPlanter.participant_count} participants · Shared organization account`}
+                  ? 'Login not created yet · Points can be reserved now'
+                  : `${selectedAssignmentPlanter.participant_count} participants · Individual planter codes`}
               </span>
             )}
           </div>
@@ -573,7 +570,7 @@ export default function PlanterManagement() {
               <strong>{pointIdsToAssign.length} points{!selectedAssignmentPlanter.registration_pending && ` / ${selectedAssignmentPlanter.participant_count} participants`}</strong>
               {selectedSpeciesSummary && <span className="text-sm">{selectedSpeciesSummary}</span>}
               {selectedAssignmentPlanter.registration_pending ? (
-                <span className="text-sm">These points will appear when this organization registers. Its participant count at signup determines each participant’s share.</span>
+                <span className="text-sm">Create the organization’s login in Organization access below. Its device count determines each participant’s share.</span>
               ) : <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>}
               <span className="text-sm">All planted points count toward {selectedAssignmentPlanter.organization_name}.</span>
             </div>
@@ -598,10 +595,17 @@ export default function PlanterManagement() {
                 ? 'Assignment Locked'
                 : `Assign ${pointIdsToAssign.length || ''} Point${pointIdsToAssign.length === 1 ? '' : 's'}`.trim()}
           </button>
-          {assignError && <div className="assign-message assign-error">{assignError}</div>}
-          {assignSuccess && <div className="assign-message assign-success">{assignSuccess}</div>}
+          <FormMessage error={assignError} success={assignSuccess} loading={assignBusy ? 'Assigning planting points…' : ''} />
         </div>
       </PanelCard>
+
+      {selectedAssignmentPlanter && (
+        <PanelCard title="Planter codes" defaultOpen={selectedAssignmentPlanter.registration_pending}>
+          <OrganizationAccess key={selectedAssignmentPlanter.organization_id} organization={selectedAssignmentPlanter}
+            expectedParticipants={assignmentActivity?.expected_planters || 1}
+            onCreated={() => { setAssignSuccess('Planter codes created. Share the code list privately with the group leader.'); void loadData(); }} />
+        </PanelCard>
+      )}
 
       {selectedAssignmentPlanter && !selectedAssignmentPlanter.registration_pending && (
         <PanelCard title="Participant devices" defaultOpen={false}>

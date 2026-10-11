@@ -22,12 +22,12 @@ export default function useFormFeedback(fields) {
       return next;
     });
   };
-  const validate = () => {
-    const next = {};
+  const validate = (additionalErrors = {}) => {
+    const next = { ...additionalErrors };
     for (const [field, config] of Object.entries(fields)) {
       const control = controls.current[field];
       if (!control) continue;
-      const message = controlError(control, config.label) || (!control.disabled && config.validate?.(control.value)) || '';
+      const message = additionalErrors[field] || controlError(control, config.label) || (!control.disabled && config.validate?.(control.value)) || '';
       if (message) next[field] = message;
     }
     if (Object.keys(next).length) return reject(next);

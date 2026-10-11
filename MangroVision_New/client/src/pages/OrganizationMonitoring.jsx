@@ -11,8 +11,8 @@ import { PanelCard } from '../components/Panel';
 import { useAuthStore } from '../stores/authStore';
 import './OrganizationMonitoring.css';
 import useFormFeedback from '../utils/useFormFeedback';
-import { FieldError, FormErrorSummary } from '../components/FormFeedback';
-import { submissionError } from '../utils/formValidation';
+import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
+import { formRequest } from '../utils/formValidation';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const MANILA_TIMEZONE = 'Asia/Manila';
@@ -297,7 +297,7 @@ export default function OrganizationMonitoring() {
 
     setSaving(true);
     try {
-      const response = await fetch(
+      const payload = await formRequest(
         `${API}/api/monitoring/organization-records`,
         {
           method: 'POST',
@@ -317,8 +317,6 @@ export default function OrganizationMonitoring() {
           }),
         },
       );
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw submissionError(payload.detail, 'Could not save monitoring record. Please try again.');
       setNotice(`${payload.organization_name} monitoring was recorded as one organization visit.`);
       setSelectedOrganizationId('');
       setSelectedDeaths([]);
@@ -412,7 +410,7 @@ export default function OrganizationMonitoring() {
       </div>
 
       {loadError && <div className="org-monitoring-message is-error">{loadError}</div>}
-      {notice && <div className="org-monitoring-message is-success" role="status">{notice}</div>}
+      <FormMessage success={notice} />
 
       <PanelCard
         panelKey="organization-summary"
@@ -598,7 +596,7 @@ export default function OrganizationMonitoring() {
               <FieldError feedback={feedback} field="actions_taken" />
           </div>
 
-          {formError && <div className="org-monitoring-message is-error" role="alert">{formError}</div>}
+          <FormMessage error={formError} loading={saving ? 'Saving monitoring visit…' : ''} />
           {notice && <div className="org-monitoring-message is-success">{notice}</div>}
           <button
             className="org-monitoring-submit"

@@ -41,3 +41,25 @@ def test_staff_device_summary_and_unknown_account(devices_api, monkeypatch):
     read.assert_called_once_with(1)
     read.side_effect = ValueError('Organization account not found.')
     assert client.get('/api/planters/999/participants').status_code == 404
+
+
+def test_codes_are_staff_only_and_never_cached(devices_api, monkeypatch):
+    client, monitoring, _, _, _ = devices_api
+    route = importlib.import_module('api.routes.planters')
+    manage = Mock(return_value={'planter_id': 1, 'codes': [{'participant_slot': 2, 'code': 'K7MP-4R9X', 'revoked': False}]})
+    monkeypatch.setattr(route, 'manage_codes', manage)
+    paths = ['/api/planters/1/access-codes', '/api/planters/1/participants/2/access-code']
+    assert client.get(paths[0]).status_code == 401
+    assert client.post(paths[0]).status_code == 401
+    assert client.post(paths[1], json={'action': 'regenerate'}).status_code == 401
+    manage.assert_not_called()
+    monkeypatch.setattr(monitoring, 'get_user_by_session_token', lambda _: {'id': 7, 'role': 'lgu'})
+    response = client.get(paths[0])
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert manage.call_args.kwargs == {}
+    response = client.post(paths[0])
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert manage.call_args.kwargs == {'issue': True}
+    response = client.post(paths[1], json={'action': 'regenerate'})
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert manage.call_args.kwargs == {'slot': 2, 'action': 'regenerate'}

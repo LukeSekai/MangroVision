@@ -27,7 +27,7 @@ def changed_fields(current, updated):
     return [key for key in (
         'organization_id', 'project_site_id', 'title', 'start_at', 'end_at',
         'expected_planters', 'expected_seedlings', 'inspection_interval_days',
-        'status', 'contact', 'notes',
+        'status', 'contact', 'notification_email', 'notes',
     ) if _comparable(key, current.get(key)) != _comparable(key, updated.get(key))]
 
 
@@ -35,7 +35,7 @@ def validate_activity_change(conn, current, updated):
     work = activity_work(conn, int(current['id']))
     changed = changed_fields(current, updated)
     if work['plantings']:
-        frozen = set(changed) - {'contact', 'notes', 'status'}
+        frozen = set(changed) - {'contact', 'notification_email', 'notes', 'status'}
         allowed_statuses = {current['status'], 'in_progress', 'completed'}
         if current['status'] == 'completed':
             allowed_statuses = {'completed'}

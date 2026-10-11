@@ -1,16 +1,13 @@
 """Planter self-service authentication endpoints (mobile /field app)."""
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, Field
-from mangrovision_db.organization_accounts import claim_participant_slot
+from mangrovision_db.planter_codes import authenticate_code, CodeError
+from mangrovision_db.planter_activities import list_planter_activities
 
 from planting_database import (
-    authenticate_planter,
-    create_planter,
-    create_planter_session,
-    get_planter,
     get_planter_by_session_token,
     get_planter_field_points,
     list_organizations,
@@ -18,7 +15,6 @@ from planting_database import (
     mark_planter_points_completed,
     revoke_planter_session,
     update_assignment_point_status,
-    update_planter_last_login,
 )
 from api.security import clear_planter_session, set_planter_session
 
@@ -52,85 +48,49 @@ def _assert_point_belongs_to_planter(assignment_point_id: int, planter: dict) ->
         raise HTTPException(status_code=403, detail="That point is not assigned to your participant slot.")
 
 
-class PlanterRegisterRequest(BaseModel):
-    full_name: str = "Organization account"
-    username: str
-    password: str
-    organization_id: int
-    participant_count: int = Field(default=1, ge=1, le=10000)
-    device_key: str = Field(min_length=16, max_length=200)
-    phone: str = ""
-    base_label: str = ""
-    base_lat: Optional[float] = None
-    base_lon: Optional[float] = None
-
-
 class PlanterLoginRequest(BaseModel):
-    username: str
-    password: str
+    access_code: str = Field(min_length=1, max_length=32)
     device_key: str = Field(min_length=16, max_length=200)
-    participant_slot: Optional[int] = Field(default=None, ge=1, le=10000)
-    recover_slot: bool = False
+    known_device_keys: List[Annotated[str, Field(min_length=16, max_length=200)]] = Field(default_factory=list, max_length=64)
     resume_device: bool = False
 
 
 def _planter_public_dict(planter: dict) -> dict:
-    """Strip password_hash before returning a planter to the client."""
-    safe = {key: value for key, value in planter.items() if key != "password_hash"}
+    """Credentials and the former shared username are never public sign-in data."""
+    safe = {key: value for key, value in planter.items()
+            if key not in {"password_hash", "username", "encrypted_code", "code_digest", "access_code"}}
     return safe
 
 
-# MIGRATED FROM app.py planter self-registration flow
+# Organization choices are also used by the staff assignment panel.
 @router.get("/organizations")
 def planter_organizations():
-    """Public organization choices used by the planter registration form."""
+    """Organization choices used by the staff assignment panel."""
     return {"organizations": list_organizations()}
 
 
 @router.post("/register")
-def register_planter(body: PlanterRegisterRequest, response: Response):
-    try:
-        planter_id = create_planter(
-            full_name=body.full_name,
-            username=body.username,
-            password=body.password,
-            phone=body.phone,
-            base_label=body.base_label,
-            base_lat=body.base_lat,
-            base_lon=body.base_lon,
-            status="active",
-            organization_id=body.organization_id,
-            participant_count=body.participant_count,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-
-    planter = get_planter(planter_id)
-    slot = claim_participant_slot(planter_id, body.device_key)
-    planter["participant_slot"] = slot
-    token = create_planter_session(planter_id, slot)
-    set_planter_session(response, token)
-    update_planter_last_login(planter_id)
-    return {"planter": _planter_public_dict(planter)}
+def register_planter():
+    # Keep a clear response for older cached clients, with no account/device writes.
+    raise HTTPException(status_code=410, detail="Planter registration is closed. Use your individual planter code or contact LGU staff.")
 
 
 @router.post("/login")
-def planter_login(body: PlanterLoginRequest, response: Response):
-    planter = authenticate_planter(body.username, body.password)
-    if not planter:
-        raise HTTPException(status_code=401, detail="Invalid username or password")
-    if planter.get("status") != "active":
-        raise HTTPException(status_code=403, detail="This planter account is inactive.")
+def planter_login(body: PlanterLoginRequest, response: Response, request: Request):
     try:
-        slot = claim_participant_slot(planter["id"], body.device_key, body.participant_slot,
-                                      recover_slot=body.recover_slot, resume_device=body.resume_device)
+        planter, identity, token = authenticate_code(body.access_code, body.device_key,
+            resume_device=body.resume_device, known_device_keys=body.known_device_keys,
+            address=request.client.host if request.client else 'unknown')
+    except CodeError as error:
+        headers = {'Retry-After': str(error.retry_after)} if error.retry_after else None
+        detail = str(error) if error.status in {409, 503} else [
+            {'loc': ['body', 'access_code'], 'type': 'credential_error', 'msg': str(error)}]
+        raise HTTPException(status_code=error.status, detail=detail, headers=headers) from error
     except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-    planter["participant_slot"] = slot
-    token = create_planter_session(planter["id"], slot)
+        raise HTTPException(status_code=503, detail=str(error)) from error
     set_planter_session(response, token)
-    update_planter_last_login(planter["id"])
-    return {"planter": _planter_public_dict(planter)}
+    response.headers['Cache-Control'] = 'no-store'
+    return {"planter": _planter_public_dict(planter), "device_key": identity}
 
 
 @router.get("/session")
@@ -146,6 +106,13 @@ def planter_logout(response: Response):
 
 
 # MIGRATED FROM app.py show_planter_field_view (/field workspace)
+@router.get('/me/activities')
+def my_activities(response: Response):
+    planter = _require_planter()
+    response.headers['Cache-Control'] = 'no-store'
+    return {'activities': list_planter_activities(planter.get('organization_id'))}
+
+
 @router.get("/me/field-points")
 def my_field_points():
     planter = _require_planter()

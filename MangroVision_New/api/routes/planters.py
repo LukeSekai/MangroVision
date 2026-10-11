@@ -1,20 +1,19 @@
 """Planter management endpoints."""
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response
 from fastapi.responses import JSONResponse
 from shapely.geometry import Point
 from shapely.prepared import prep
 from api.routes.monitoring import _require_lgu_user
 from pydantic import BaseModel, Field
 from mangrovision_db.organization_accounts import list_participant_devices, reset_participant_device
+from mangrovision_db.planter_codes import create_code_account, manage_codes, CodeError
 
 from api.runtime_state import is_processing_active
 from planting_database import (
     _get_connection,
-    _hash_password,
-    create_planter,
     create_planter_assignment,
     create_organization_assignments,
     get_mortality_detail_table,
@@ -43,8 +42,6 @@ class CreatePlanterRequest(BaseModel):
     full_name: str = "Organization account"
     organization_id: int
     participant_count: int = Field(default=1, ge=1, le=10000)
-    username: str
-    password: str
     phone: str = ""
     base_label: str = ""
     base_lat: Optional[float] = None
@@ -61,7 +58,6 @@ class UpdatePlanterRequest(BaseModel):
     base_lon: Optional[float] = None
     notes: Optional[str] = None
     status: Optional[str] = None
-    password: Optional[str] = None
 
 
 class CreateAssignmentRequest(BaseModel):
@@ -183,25 +179,13 @@ def assign_point(body: AssignPointRequest):
 
 # MIGRATED FROM app.py planter management tab (create form)
 @router.post("/")
-def create_planter_endpoint(body: CreatePlanterRequest, user: dict = Depends(_require_lgu_user)):
+def create_planter_endpoint(body: CreatePlanterRequest, response: Response, user: dict = Depends(_require_lgu_user)):
     try:
-        planter_id = create_planter(
-            full_name=body.full_name,
-            username=body.username,
-            password=body.password,
-            phone=body.phone,
-            base_label=body.base_label,
-            base_lat=body.base_lat,
-            base_lon=body.base_lon,
-            notes=body.notes,
-            status=body.status,
-            organization_id=body.organization_id,
-            participant_count=body.participant_count,
-            created_by_user_id=int(user["id"]),
-        )
+        result = create_code_account(body.model_dump(), int(user['id']))
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
-    return get_planter(planter_id)
+    response.headers['Cache-Control'] = 'no-store'
+    return {**get_planter(result['planter_id']), 'codes': result['codes']}
 
 
 @router.get("/{planter_id}")
@@ -242,8 +226,6 @@ def update_planter_endpoint(planter_id: int, body: UpdatePlanterRequest):
         if status not in {"active", "inactive"}:
             raise HTTPException(status_code=400, detail="Invalid planter status.")
         updates.append(("status", status))
-    if body.password is not None and body.password:
-        updates.append(("password_hash", _hash_password(body.password)))
 
     if not updates:
         return planter
@@ -326,3 +308,34 @@ def reset_device(planter_id: int, slot: int):
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return {"status": "reset", "slot": slot}
+
+
+class ChangeCodeRequest(BaseModel):
+    action: Literal['regenerate', 'revoke']
+
+
+def _codes_call(planter_id, **kwargs):
+    try:
+        return manage_codes(planter_id, **kwargs)
+    except CodeError as error:
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get('/{planter_id}/access-codes')
+def participant_codes(planter_id: int, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return _codes_call(planter_id)
+
+
+@router.post('/{planter_id}/access-codes')
+def issue_participant_codes(planter_id: int, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return _codes_call(planter_id, issue=True)
+
+
+@router.post('/{planter_id}/participants/{slot}/access-code')
+def change_participant_code(planter_id: int, slot: int, body: ChangeCodeRequest, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return _codes_call(planter_id, slot=slot, action=body.action)

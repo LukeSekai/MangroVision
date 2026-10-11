@@ -54,6 +54,7 @@ from api.routes import (
     zones,
 )
 from mangrovision_db.appointment_email import run_delivery_cycle
+from mangrovision_db.schedule_notifications import run_schedule_delivery_cycle
 
 _EXPECTED_DB_REVISION = ScriptDirectory(_PARENT_DIR / "alembic").get_current_head()
 
@@ -63,6 +64,7 @@ async def lifespan(_app):
         while True:
             await asyncio.sleep(60)
             await asyncio.to_thread(run_delivery_cycle)
+            await asyncio.to_thread(run_schedule_delivery_cycle)
     worker = asyncio.create_task(deliver_emails())
     try:
         yield
