@@ -6,6 +6,7 @@ import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore, originalStartProcess;
+let PlantingMapWorkspace, Sidebar, MapView;
 const pages = new Map();
 const originalGlobals = new Map();
 let requests, responses, mutations;
@@ -18,6 +19,7 @@ before(async () => {
     FileReader: dom.window.FileReader, File: dom.window.File, FormData: dom.window.FormData,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+    ResizeObserver: class { observe() {} disconnect() {} },
     fetch: async (input, options) => {
       const path = new URL(input, window.location.origin).pathname;
       requests.push(path);
@@ -47,6 +49,9 @@ before(async () => {
   });
   ({ Panel, PanelCard } = await server.ssrLoadModule('/src/components/Panel.jsx'));
   ({ default: RetainedRoutes } = await server.ssrLoadModule('/src/components/RetainedRoutes.jsx'));
+  ({ default: PlantingMapWorkspace } = await server.ssrLoadModule('/src/components/PlantingMapWorkspace.jsx'));
+  ({ default: Sidebar } = await server.ssrLoadModule('/src/components/Sidebar.jsx'));
+  ({ default: MapView } = await server.ssrLoadModule('/src/components/MapView.jsx'));
   for (const page of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'ErodedZoneEditor', 'MonitoringMapWorkspace', 'OrganizationMonitoring']) {
     const module = await server.ssrLoadModule(`/src/pages/${page}.jsx`);
     pages.set(page, module.default);
@@ -87,6 +92,110 @@ function Navigation() {
     createElement('button', { 'data-nav': 'back', onClick: () => navigate('/page') }, 'Back'),
     createElement('button', { 'data-nav': 'browser-back', onClick: () => navigate(-1) }, 'Browser Back'));
 }
+
+async function renderPlantingWorkspace(entry = '/map') {
+  const tools = { '/map': 'MapAnalytics', '/zones': 'ErodedZoneEditor', '/planters': 'PlanterManagement', '/processing': 'ImageProcessing' };
+  useMapStore.setState({ layerVisibility: { points: true, orthophoto: true, siteZones: true, projectSites: true, forbidden: true, eroded: true, warnings: true } });
+  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [entry] },
+    createElement(Sidebar), createElement(MapView),
+    createElement(PlantingMapWorkspace, null,
+      createElement(RetainedRoutes, { paths: [...Object.keys(tools), '/dashboard'] },
+        ...Object.entries(tools).map(([path, page]) => createElement(Route, { key: path, path, element: createElement(pages.get(page)) })),
+        createElement(Route, { path: '/dashboard', element: createElement('p', { 'data-dashboard': true }, 'Dashboard') }),
+      )))));
+  await settle();
+}
+
+const toolLink = (path) => document.querySelector(`.planting-tool-nav a[href="${path}"]`);
+const layerInput = (label) => [...document.querySelectorAll('.leaflet-control-layers label')]
+  .find((element) => element.textContent.trim() === label)?.querySelector('input');
+
+test('Planting Map switches all four real tools in one panel while keeping forms and the map', async () => {
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  const frame = document.querySelector('.planting-workspace-panel');
+  assert.deepEqual([...document.querySelectorAll('.planting-tool-nav a')].map((link) => link.textContent),
+    ['Overview', 'Zone Editor', 'Assign Points', 'Analyze Image']);
+  assert.equal(document.querySelectorAll('.floating-panel').length, 1);
+  assert.equal(document.querySelector('.sidebar-nav a[href="/zones"]'), null);
+  assert.equal(document.querySelector('.sidebar-nav a[href="/planters"]'), null);
+  assert.equal(document.querySelector('.sidebar-nav a[href="/processing"]'), null);
+  assert.equal(document.querySelector('[data-guide-card="layers"]'), null);
+
+  await click(toolLink('/processing'));
+  await click([...document.querySelectorAll('[data-guide-panel="Analyze Image"] .panel-card-header')]
+    .find((header) => header.textContent.includes('Configuration')));
+  const species = document.querySelector('.config-list select');
+  await act(async () => { species.value = 'bungalon'; species.dispatchEvent(new Event('change', { bubbles: true })); });
+  await click(toolLink('/zones'));
+  assert.equal(document.querySelector('[data-guide-panel="Zone Editor"]').style.display, '');
+  await click(toolLink('/planters'));
+  assert.ok(document.querySelector('#assign-organization'));
+  assert.equal(document.querySelector('.sidebar-nav a[href="/map"]').classList.contains('active'), true);
+  await click(toolLink('/processing'));
+  assert.equal(document.querySelector('.config-list select'), species);
+  assert.equal(species.value, 'bungalon');
+  assert.equal(document.querySelector('.planting-workspace-panel'), frame);
+  assert.equal(document.querySelectorAll('.floating-panel').length, 1);
+  assert.equal(useMapStore.getState().mapInstance, map);
+
+  await click(document.querySelector('.panel-toggle'));
+  assert.equal(frame.hasAttribute('inert'), true);
+  await click(document.querySelector('.sidebar-nav a[href="/dashboard"]'));
+  assert.ok(document.querySelector('[data-dashboard]'));
+  assert.equal(document.getElementById('planting-map-workspace').hasAttribute('inert'), false);
+  await click(document.querySelector('.sidebar-nav a[href="/map"]'));
+  assert.equal(frame.classList.contains('floating-panel-hidden'), true);
+  await click(document.querySelector('.panel-toggle'));
+  assert.equal(frame.hasAttribute('inert'), false);
+  await click(toolLink('/processing'));
+  assert.equal(species.value, 'bungalon');
+  assert.equal(mutations.length, 0);
+});
+
+test('direct assignment links work and the workspace still locks Zone Editor during processing', async () => {
+  await renderPlantingWorkspace('/planters?section=assign');
+  assert.equal(toolLink('/planters').getAttribute('aria-current'), 'page');
+  assert.equal(document.querySelector('#assign-organization').closest('[inert]'), null);
+  await click(toolLink('/processing'));
+  await act(async () => useProcessingStore.setState({ processing: true, stage: 'Detecting canopy' }));
+  const zoneLink = toolLink('/zones');
+  assert.equal(zoneLink.getAttribute('aria-disabled'), 'true');
+  await click(zoneLink);
+  assert.equal(toolLink('/processing').getAttribute('aria-current'), 'page');
+  await act(async () => useProcessingStore.setState({ processing: false }));
+  await click(zoneLink);
+  assert.equal(toolLink('/zones').getAttribute('aria-current'), 'page');
+  assert.equal(mutations.length, 0);
+});
+
+test('upper-left layers stay in sync with shared map state and survive tool changes', async () => {
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  assert.ok(document.querySelector('.leaflet-top.leaflet-left [data-guide-layers]'));
+  const labels = { points: 'Planting Points', orthophoto: 'Drone Orthomosaic', siteZones: 'Assignment Zones', projectSites: 'Project Sites', forbidden: 'Forbidden Zones', eroded: 'Eroded Zones', warnings: 'Warning Zones' };
+  for (const [key, label] of Object.entries(labels)) {
+    const input = layerInput(label);
+    assert.equal(input.checked, true);
+    await click(input);
+    assert.equal(useMapStore.getState().layerVisibility[key], false);
+    assert.equal(input.checked, false);
+    await act(async () => useMapStore.getState().showLayers([key]));
+    // Leaflet rebuilds the checkbox DOM after programmatic visibility changes.
+    assert.equal(layerInput(label).checked, true);
+  }
+  await click(layerInput('Drone Orthomosaic'));
+  await click(layerInput('Warning Zones'));
+  await click(layerInput('OpenStreetMap'));
+  await click(toolLink('/zones'));
+  await click(toolLink('/processing'));
+  await click(toolLink('/map'));
+  assert.equal(layerInput('Drone Orthomosaic').checked, false);
+  assert.equal(layerInput('Warning Zones').checked, false);
+  assert.equal(layerInput('OpenStreetMap').checked, true);
+  assert.equal(useMapStore.getState().mapInstance, map);
+  assert.equal(mutations.length, 0);
+});
 
 async function settle(ms = 25) {
   await act(async () => { await new Promise((resolve) => window.setTimeout(resolve, ms)); });

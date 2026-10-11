@@ -562,7 +562,7 @@ export default function ErodedZoneEditor() {
   };
 
   return (
-    <Panel title="Zone Editor" subtitle={`${projectSiteFeatures.length + erodedFeatures.length + forbiddenFeatures.length + warningFeatures.length} zones total`}>
+    <Panel plantingTool title="Zone Editor" subtitle={`${projectSiteFeatures.length + erodedFeatures.length + forbiddenFeatures.length + warningFeatures.length} zones total`}>
       {zoneLocked && (
         <div className="zone-lock-banner">
           <strong>Zone editing locked</strong>

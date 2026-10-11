@@ -7,6 +7,7 @@ import Logo from './Logo';
 import ProcessingIndicator from './ProcessingIndicator';
 import NotificationBell from './NotificationBell';
 import GuideButton from './GuideButton';
+import PlantingMapWorkspace from './PlantingMapWorkspace';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
 import './AppShell.css';
@@ -73,7 +74,7 @@ export default function AppShell({ children }) {
           <MapView />
         </div>}
         <div className="content-layer">
-          {children}
+          <PlantingMapWorkspace>{children}</PlantingMapWorkspace>
         </div>
       </main>
       <Modal

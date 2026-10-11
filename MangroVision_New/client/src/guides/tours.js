@@ -17,7 +17,7 @@ export const STAFF_TOURS = [
     description: 'Find the main screens, notifications and map controls.',
     steps: [
       step('/map', '.workspace-header', 'Welcome to MangroVision', 'Use MangroVision to plan potential planting locations, coordinate organizations, and follow up on planted seedlings. Next and Back move through this guide. You can end it at any time.'),
-      step('/map', '.sidebar-nav', 'Choose a task', 'The navigation opens Planting Map, Dashboard, Scheduling, Monitoring, Analyze Image, Planting Assignments, Zone Editor and Activity Logs. Each screen also has its own guide in Help / Guide.'),
+      step('/map', '.sidebar-nav', 'Choose a task', 'The sidebar opens Planting Map, Dashboard, Scheduling, Monitoring and Activity Logs. Use the navigation inside Planting Map to switch between Overview, Zone Editor, Assign Points and Analyze Image. Each screen also has its own guide in Help / Guide.'),
       step('/map', '.map-layer', 'Explore the map', 'Drag to move around and use the zoom controls to inspect locations. Select a planting point to see its details. The map stays available beside planning screens.'),
       step('/map', '.panel-toggle', 'Make room for the map', 'Use Hide to collapse the side panel and Show to bring it back. Open a section heading to reveal its controls.'),
       step('/map', '.notification-button', 'Follow notifications', 'Open the notification bell to review updates and tasks that need attention. Check Activity Logs for the history of recorded actions.'),
@@ -59,7 +59,7 @@ export const STAFF_TOURS = [
     steps: [
       step('/map', mapCard('overview'), 'Review saved planting capacity', 'Overview summarizes saved analyses and mapped points by status. Planned points are candidates awaiting assignment; assigned, planted, dead, skipped and unavailable points describe later stages.'),
       step('/map', mapCard('legend'), 'Read map symbols', 'Use Legend to identify point statuses, species and zone boundaries. Orange unavailable points are inside eroded areas. Inspect a point on the map to review its details.'),
-      step('/map', mapCard('layers'), 'Choose visible layers', 'Use Layers to show or hide planting points, the orthophoto, coverage zones, project sites, forbidden zones, eroded zones and warning zones. These switches change the view.'),
+      step('/map', '[data-guide-layers]', 'Choose visible layers', 'Open the layer control in the upper-left corner to choose the basemap and show or hide the drone orthomosaic, planting points, assignment zones, project sites, forbidden zones, eroded zones and warning zones. These switches change the view.'),
       step('/map', mapCard('coverage'), 'Check area measurements', 'Coverage summarizes analyzed, plantable and danger areas. Compare these figures with the source imagery and the study criteria before using them for planning.'),
       step('/map', mapCard('export'), 'Export saved planting coordinates', 'Open Export Saved Points and choose a supported format. These downloads contain saved planting locations. Open the file in your GIS or navigation tool and verify its coordinates and reference system.'),
     ],

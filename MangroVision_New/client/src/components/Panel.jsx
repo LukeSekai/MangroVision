@@ -9,6 +9,7 @@ import {
   useState,
 } from 'react';
 import './Panel.css';
+import { usePlantingWorkspace } from './plantingWorkspaceContext';
 
 const PanelAccordionContext = createContext(null);
 
@@ -25,7 +26,9 @@ export function Panel({
   onOpenKeyChange,
   className = '',
   toggleClassName = '',
+  plantingTool = false,
 }) {
+  const inPlantingWorkspace = usePlantingWorkspace();
   const [hidden, setHidden] = useState(defaultHidden);
   const [internalOpenKey, setInternalOpenKey] = useState(initialOpenKey);
   const registeredCards = useRef(new Set());
@@ -50,6 +53,18 @@ export function Panel({
     setCardOpen,
     isCardOpen: (key) => openKey === key,
   }), [openKey, registerCard, setCardOpen]);
+
+  if (plantingTool && inPlantingWorkspace) {
+    return <div data-guide-panel={title} className={`planting-tool-panel ${className}`.trim()}>
+      <div className="planting-tool-summary floating-panel-header">
+        <h3>{title === 'Planting Map' ? 'Map overview' : title}</h3>
+        {subtitle && <span className="floating-panel-subtitle">{subtitle}</span>}
+      </div>
+      <PanelAccordionContext.Provider value={accordionContext}>
+        <div className="floating-panel-body">{children}</div>
+      </PanelAccordionContext.Provider>
+    </div>;
+  }
 
   return (
     <>

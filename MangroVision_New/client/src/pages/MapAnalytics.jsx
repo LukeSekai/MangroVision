@@ -25,8 +25,6 @@ export default function MapAnalytics() {
   const fetchStats = useMapStore((s) => s.fetchStats);
   const points = useMapStore((s) => s.points);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
-  const layerVisibility = useMapStore((s) => s.layerVisibility);
-  const toggleLayer = useMapStore((s) => s.toggleLayer);
 
   const [busyExport, setBusyExport] = useState('');
   const [exportError, setExportError] = useState('');
@@ -96,7 +94,7 @@ export default function MapAnalytics() {
   };
 
   return (
-    <Panel title="Planting Map" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
+    <Panel plantingTool title="Planting Map" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
       <PanelCard
         title="Overview"
         panelKey="overview"
@@ -150,50 +148,6 @@ export default function MapAnalytics() {
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#dc2626' }} /><span>Forbidden Zone</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#ea580c' }} /><span>Eroded Zone</span></div>
           <div className="legend-item"><span className="legend-dot legend-dot-outline" style={{ borderColor: '#f59e0b' }} /><span>Warning Zone</span></div>
-        </div>
-      </PanelCard>
-
-      <PanelCard
-        title="Layers"
-        panelKey="layers"
-        defaultOpen={false}
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polygon points="12 2 2 7 12 12 22 7 12 2" />
-            <polyline points="2 17 12 22 22 17" />
-            <polyline points="2 12 12 17 22 12" />
-          </svg>
-        }
-      >
-        <div className="layer-toggles">
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.points} onChange={() => toggleLayer('points')} />
-            <span>Planting Points</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.orthophoto} onChange={() => toggleLayer('orthophoto')} />
-            <span>Orthophoto Overlay</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.siteZones} onChange={() => toggleLayer('siteZones')} />
-            <span>Assignment Zones</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.projectSites} onChange={() => toggleLayer('projectSites')} />
-            <span>Project Sites</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.forbidden} onChange={() => toggleLayer('forbidden')} />
-            <span>Forbidden Zones</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.eroded} onChange={() => toggleLayer('eroded')} />
-            <span>Eroded Zones</span>
-          </label>
-          <label className="layer-toggle">
-            <input type="checkbox" checked={layerVisibility.warnings} onChange={() => toggleLayer('warnings')} />
-            <span>Warning Zones</span>
-          </label>
         </div>
       </PanelCard>
 

@@ -7,6 +7,30 @@
 .map-container .leaflet-top.leaflet-left .leaflet-control-layers {
   margin-top: 16px;
   margin-left: 16px;
+  border: 1px solid var(--border-light);
+  border-radius: 10px;
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+}
+
+.map-container .leaflet-control-layers-expanded {
+  padding: 10px 14px;
+  max-width: calc(100vw - 112px);
+  max-height: calc(100vh - 180px);
+  overflow-y: auto;
+}
+
+.map-container .leaflet-control-layers label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.map-container .leaflet-control-layers-selector {
+  accent-color: var(--green-700);
 }
 
 /* Monitoring has a back link in the same corner. */

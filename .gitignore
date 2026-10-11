@@ -61,6 +61,7 @@ htmlcov/
 !MangroVision_New/client/src/utils/processingJobs.test.js
 !MangroVision_New/client/src/utils/apiReadCache.test.js
 !MangroVision_New/client/src/utils/mapPointStats.test.js
+!MangroVision_New/client/src/utils/mapLayerVisibility.test.js
 !MangroVision_New/client/src/utils/projectSiteInfo.test.js
 !MangroVision_New/client/src/pages/Dashboard.test.js
 !MangroVision_New/client/src/components/RetainedRoutes.test.js

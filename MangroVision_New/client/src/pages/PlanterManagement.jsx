@@ -367,7 +367,7 @@ export default function PlanterManagement() {
   };
 
   return (
-    <Panel title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
+    <Panel plantingTool title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
       {dashStats && (
         <PanelCard
           title="Overview"

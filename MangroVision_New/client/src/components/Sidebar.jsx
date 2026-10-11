@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
-import { useProcessingStore } from '../stores/processingStore';
+import { PLANTING_TOOLS } from './plantingWorkspaceContext';
 import Logo from './Logo';
 import './Sidebar.css';
 
@@ -48,39 +48,6 @@ const NAV_ITEMS = [
     icon: (
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
-      </svg>
-    ),
-  },
-  {
-    to: '/processing',
-    label: 'Analyze Image',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-        <circle cx="8.5" cy="8.5" r="1.5" />
-        <polyline points="21 15 16 10 5 21" />
-      </svg>
-    ),
-  },
-  {
-    to: '/planters',
-    label: 'Planting Assignments',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-        <circle cx="9" cy="7" r="4" />
-        <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-      </svg>
-    ),
-  },
-  {
-    to: '/zones',
-    label: 'Zone Editor',
-    icon: (
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
-        <circle cx="12" cy="10" r="3" />
       </svg>
     ),
   },
@@ -139,7 +106,8 @@ function SidebarClock() {
 export default function Sidebar() {
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
-  const processing = useProcessingStore((s) => s.processing);
+  const { pathname } = useLocation();
+  const inPlantingWorkspace = PLANTING_TOOLS.some((tool) => tool.to === pathname);
 
   return (
     <aside className="sidebar">
@@ -153,20 +121,16 @@ export default function Sidebar() {
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item) => {
-            const locked = processing && item.to === '/zones';
             return (
               <NavLink
                 key={item.to}
                 to={item.to}
                 end={item.to === '/map'}
-                aria-disabled={locked}
-                onClick={(event) => {
-                  if (locked) event.preventDefault();
-                }}
+                aria-current={item.to === '/map' && inPlantingWorkspace ? 'page' : undefined}
                 className={({ isActive }) =>
-                  `sidebar-nav-item ${isActive ? 'active' : ''} ${locked ? 'disabled' : ''}`
+                  `sidebar-nav-item ${isActive || (item.to === '/map' && inPlantingWorkspace) ? 'active' : ''}`
                 }
-                title={locked ? 'Zone Editor is locked while image processing is running' : item.label}
+                title={item.label}
               >
                 {item.icon}
                 <span className="sidebar-nav-label">{item.label}</span>

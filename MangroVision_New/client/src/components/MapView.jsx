@@ -13,6 +13,7 @@ import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSite
 import { POINT_STATUS_COLORS as STATUS_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
+import { connectMapLayerVisibility } from '../utils/mapLayerVisibility';
 import './MapView.css';
 import './ProjectSiteInfo.css';
 
@@ -270,15 +271,6 @@ export default function MapView() {
     googleSatellite.addTo(map);
     orthophoto.addTo(map);
 
-    const baseLayerControl = L.control.layers(
-      {
-        'Google Satellite': googleSatellite,
-        OpenStreetMap: osm,
-      },
-      { 'Drone Orthomosaic': orthophoto },
-      { position: 'topleft', collapsed: true }
-    ).addTo(map);
-
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
 
@@ -358,6 +350,26 @@ export default function MapView() {
       style: PROJECT_SITE_STYLE,
     });
 
+    const baseLayerControl = L.control.layers(
+      { 'Google Satellite': googleSatellite, OpenStreetMap: osm },
+      {
+        'Drone Orthomosaic': orthophoto,
+        'Planting Points': pointLayer,
+        'Assignment Zones': siteZoneLayer,
+        'Project Sites': projectSiteLayer,
+        'Forbidden Zones': forbiddenLayer,
+        'Eroded Zones': erodedLayer,
+        'Warning Zones': warningLayer,
+      },
+      { position: 'topleft', collapsed: true }
+    ).addTo(map);
+    baseLayerControl.getContainer().dataset.guideLayers = 'true';
+    const layerVisibilityControl = connectMapLayerVisibility(map, {
+      orthophoto, points: pointLayer, siteZones: siteZoneLayer,
+      projectSites: projectSiteLayer, forbidden: forbiddenLayer,
+      eroded: erodedLayer, warnings: warningLayer,
+    }, useMapStore);
+
     // Bottom-left legend so admins can read what each dashed colour means
     // without having to hover every polygon. Sits above the scale bar.
     const legendControl = L.control({ position: 'bottomleft' });
@@ -400,6 +412,7 @@ export default function MapView() {
     // Store refs
     layersRef.current = {
       baseLayerControl,
+      layerVisibilityControl,
       orthophoto,
       pointLayer,
       forbiddenLayer,
@@ -470,6 +483,7 @@ export default function MapView() {
 
     return () => {
       observer.disconnect();
+      layerVisibilityControl.dispose();
       map.remove();
       mapRef.current = null;
       useMapStore.getState().setMapInstance(null);
@@ -503,19 +517,13 @@ export default function MapView() {
     const layers = layersRef.current;
     if (!map || !layers.pointLayer) return;
 
-    const toggle = (layer, visible) => {
-      if (visible && !map.hasLayer(layer)) map.addLayer(layer);
-      if (!visible && map.hasLayer(layer)) map.removeLayer(layer);
-    };
-
-    toggle(layers.pointLayer, layerVisibility.points);
-    toggle(layers.orthophoto, layerVisibility.orthophoto);
     const showSharedZones = !isMonitoringMapMode || monitoringOrganizationId == null;
-    toggle(layers.forbiddenLayer, layerVisibility.forbidden && showSharedZones);
-    toggle(layers.erodedLayer, layerVisibility.eroded && showSharedZones);
-    toggle(layers.warningLayer, layerVisibility.warnings && showSharedZones);
-    toggle(layers.siteZoneLayer, layerVisibility.siteZones);
-    toggle(layers.projectSiteLayer, layerVisibility.projectSites);
+    layers.layerVisibilityControl.sync({
+      ...layerVisibility,
+      forbidden: layerVisibility.forbidden && showSharedZones,
+      eroded: layerVisibility.eroded && showSharedZones,
+      warnings: layerVisibility.warnings && showSharedZones,
+    });
   }, [layerVisibility, isMonitoringMapMode, monitoringOrganizationId]);
 
   // Sync points — skip the redraw entirely when only unrelated store fields

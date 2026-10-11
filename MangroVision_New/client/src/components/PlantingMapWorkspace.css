@@ -1,0 +1,109 @@
+.planting-workspace-panel > .planting-workspace-header {
+  padding: 15px 12px 10px;
+}
+
+.planting-workspace-header > h2 {
+  padding: 0 6px;
+  margin-bottom: 12px;
+}
+
+.planting-tool-nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface-muted);
+  border-radius: 10px;
+}
+
+.planting-tool-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 58px;
+  padding: 6px 2px;
+  border-radius: 7px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  text-decoration: none;
+}
+
+.planting-tool-link:hover {
+  background: var(--surface-hover);
+  color: var(--green-700);
+}
+
+.planting-tool-link.active {
+  background: var(--surface-base);
+  color: var(--green-700);
+  box-shadow: var(--shadow-xs);
+}
+
+.planting-tool-link:focus-visible {
+  outline: 2px solid var(--green-700);
+  outline-offset: 2px;
+}
+
+.planting-tool-link[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.planting-workspace-pages {
+  flex: 1;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.planting-workspace-pages > * {
+  pointer-events: auto;
+}
+
+.planting-workspace-full-page {
+  position: absolute;
+  inset: 0;
+}
+
+.content-layer > .planting-workspace-full-page {
+  pointer-events: none;
+}
+
+.planting-workspace-full-page > .planting-workspace-pages {
+  height: 100%;
+}
+
+.planting-tool-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.planting-tool-panel > .planting-tool-summary {
+  padding: 10px 14px;
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.planting-tool-summary h3 {
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+@media (max-width: 600px) {
+  .floating-panel.planting-workspace-panel {
+    width: min(var(--panel-width), calc(100% - 16px));
+    right: 8px;
+    top: 56px;
+  }
+
+  .panel-toggle:not(.panel-toggle-hidden):has(+ .planting-workspace-panel) {
+    right: 16px;
+  }
+}

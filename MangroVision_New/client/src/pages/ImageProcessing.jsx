@@ -491,6 +491,7 @@ export default function ImageProcessing() {
 
   return (
     <Panel
+      plantingTool
       title="Analyze Image"
       subtitle={result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
       openKey={openPanel}
