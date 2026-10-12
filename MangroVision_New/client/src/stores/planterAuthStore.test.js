@@ -4,7 +4,7 @@ import { cwd } from 'node:process';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
-let server, dom, usePlanterAuthStore, requests, unauthorized, rejectLogin, offline;
+let server, dom, usePlanterAuthStore, requests, unauthorized, rejectLogin, offline, loginFailure;
 const savedGlobals = new Map();
 const firstCode = 'K7MP-4R9X';
 const secondCode = 'ABCD-EFGH';
@@ -24,13 +24,14 @@ before(async () => {
       const path = new URL(input, 'https://field.example.test').pathname;
       const body = init.body ? JSON.parse(init.body) : null;
       requests.push({ path, body });
+      if (path.endsWith('/login') && loginFailure) return loginFailure();
       if (path.endsWith('/login') && rejectLogin) return Response.json({ detail: [
-        { loc: ['body', 'access_code'], msg: 'This planter code is incorrect or no longer valid.' },
+        { loc: ['body', 'access_code'], type: 'credential_error', msg: 'This planter code is incorrect or no longer valid.' },
       ] }, { status: 401 });
       if (path.endsWith('/logout')) return Response.json({ status: 'ok' });
       if (path.endsWith('/session') && unauthorized) return Response.json({}, { status: 401 });
       return Response.json({ planter: { id: 7, participant_count: 10,
-        participant_slot: body?.access_code === secondCode ? 2 : 1 },
+        participant_slot: body?.access_code === secondCode.replace('-', '') ? 2 : 1 },
         ...(path.endsWith('/field-points') ? { points: savedPoints, project_sites: { features: [] } } : {}),
       });
     },
@@ -60,12 +61,13 @@ beforeEach(() => {
   sessionStorage.clear();
   requests = [];
   unauthorized = rejectLogin = offline = false;
+  loginFailure = null;
   usePlanterAuthStore.setState({ token: null, planter: null, isAuthenticated: false, status: 'idle', error: '' });
 });
 
 test('sign-in sends only the personal code and keeps credentials out of browser storage', async () => {
   await usePlanterAuthStore.getState().login(` ${firstCode} `);
-  assert.deepEqual(requests[0].body, { access_code: firstCode });
+  assert.deepEqual(requests[0].body, { access_code: 'K7MP4R9X' });
   assert.equal(usePlanterAuthStore.getState().planter.participant_slot, 1);
   for (const storage of [localStorage, sessionStorage]) {
     for (let index = 0; index < storage.length; index += 1) {
@@ -85,7 +87,7 @@ test('sign-in after doing nothing and logging out resumes the same participant o
   const fresh = (await server.ssrLoadModule('/src/stores/planterAuthStore.js')).usePlanterAuthStore;
   assert.equal(fresh.getState().isAuthenticated, false);
   await fresh.getState().login(firstCode);
-  assert.deepEqual(requests.at(-1).body, { access_code: firstCode });
+  assert.deepEqual(requests.at(-1).body, { access_code: 'K7MP4R9X' });
   assert.equal(fresh.getState().planter.participant_slot, 1);
 });
 
@@ -98,7 +100,7 @@ test('a fresh browser on a different field domain uses the same code without rec
     globalThis.localStorage = anotherBrowser.window.localStorage;
     globalThis.sessionStorage = anotherBrowser.window.sessionStorage;
     await usePlanterAuthStore.getState().login(firstCode);
-    assert.deepEqual(requests.at(-1).body, { access_code: firstCode });
+    assert.deepEqual(requests.at(-1).body, { access_code: 'K7MP4R9X' });
     assert.equal(usePlanterAuthStore.getState().planter.participant_slot, 1);
     assert.equal(localStorage.getItem('mv_participant_device'), null);
   } finally {
@@ -129,7 +131,7 @@ test('session expiry and cleared site data do not require a saved device identit
   sessionStorage.clear();
   await usePlanterAuthStore.getState().login(firstCode);
   assert.equal(usePlanterAuthStore.getState().planter.participant_slot, 1);
-  assert.deepEqual(requests.at(-1).body, { access_code: firstCode });
+  assert.deepEqual(requests.at(-1).body, { access_code: 'K7MP4R9X' });
 });
 
 test('loading assignments after code sign-in restores saved points and planting progress', async () => {
@@ -150,7 +152,7 @@ test('blocked browser storage does not prevent code sign-in', async () => {
   try {
     await usePlanterAuthStore.getState().login(firstCode);
     assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
-    assert.deepEqual(requests.at(-1).body, { access_code: firstCode });
+    assert.deepEqual(requests.at(-1).body, { access_code: 'K7MP4R9X' });
   } finally {
     globalThis.localStorage = dom.window.localStorage;
     globalThis.sessionStorage = dom.window.sessionStorage;
@@ -160,7 +162,7 @@ test('blocked browser storage does not prevent code sign-in', async () => {
 test('incorrect or revoked codes show the credential error and allow a corrected retry', async () => {
   rejectLogin = true;
   await assert.rejects(usePlanterAuthStore.getState().login(firstCode), (error) => {
-    assert.match(error.message, /Check your planter code/);
+    assert.match(error.message, /incorrect or no longer valid/);
     assert.equal(error.status, 401);
     assert.match(error.detail[0].msg, /incorrect or no longer valid/);
     return true;
@@ -180,4 +182,28 @@ test('a connection failure leaves sign-in retryable with a clear error', async (
   offline = false;
   await usePlanterAuthStore.getState().login(firstCode);
   assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+});
+
+test('mobile pasted dashes and spaces authenticate with the same canonical code', async () => {
+  for (const code of ['k7mp–4r9x', ' K7MP—4R9X ', 'K7MP\u20114R9X', 'K7MP 4R9X']) {
+    await usePlanterAuthStore.getState().login(code);
+    assert.deepEqual(requests.at(-1).body, { access_code: 'K7MP4R9X' });
+    assert.equal(usePlanterAuthStore.getState().planter.participant_slot, 1);
+  }
+});
+
+test('an outdated backend explains service failure instead of blaming the code', async () => {
+  loginFailure = () => Response.json({ detail: [{ loc: ['body', 'device_key'], type: 'missing', msg: 'Field required' }] }, { status: 422 });
+  await assert.rejects(usePlanterAuthStore.getState().login(firstCode), /temporarily unavailable.*contact LGU staff/);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+});
+
+test('throttling gives the retry time and server failures stay separate from code errors', async () => {
+  loginFailure = () => Response.json({ detail: [] }, { status: 429, headers: { 'Retry-After': '125' } });
+  await assert.rejects(usePlanterAuthStore.getState().login(firstCode), /Try again in 3 minutes/);
+  loginFailure = () => new Response('Unavailable', { status: 502 });
+  await assert.rejects(usePlanterAuthStore.getState().login(firstCode), /sign-in service is temporarily unavailable/);
+  loginFailure = () => Response.json({ planter: {} });
+  await assert.rejects(usePlanterAuthStore.getState().login(firstCode), /Could not verify your sign-in/);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
 });

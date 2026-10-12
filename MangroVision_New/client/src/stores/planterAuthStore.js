@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { submissionError } from '../utils/formValidation';
+import { normalizePlanterCode } from '../utils/planterCode';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -44,14 +45,26 @@ export const usePlanterAuthStore = create((set, get) => ({
       const res = await fetch(`${API}/api/planter-auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ access_code: accessCode.trim() }),
+        body: JSON.stringify({ access_code: normalizePlanterCode(accessCode) }),
       });
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
-        const error = submissionError(payload.detail, 'Could not sign in. Check your planter code and try again.', res.status);
+        const credentialIssue = Array.isArray(payload.detail) && payload.detail.find((issue) =>
+          issue.loc?.includes('access_code') && issue.type === 'credential_error');
+        const error = submissionError(payload.detail, 'Planter sign-in is temporarily unavailable. Refresh the page and try again, or contact LGU staff.', res.status);
+        if (credentialIssue && res.status < 500 && res.status !== 429) error.message = credentialIssue.msg;
+        if (res.status === 429) {
+          const seconds = Number(res.headers.get('Retry-After'));
+          error.message = seconds > 0 && Number.isFinite(seconds)
+            ? `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} ${seconds <= 60 ? 'minute' : 'minutes'}.`
+            : 'Too many sign-in attempts. Wait a few minutes and try again.';
+        } else if (res.status >= 500) error.message = 'The sign-in service is temporarily unavailable. Try again shortly, or contact LGU staff.';
         throw error;
       }
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!data?.planter?.id || !data?.planter?.participant_slot) {
+        throw new Error('Could not verify your sign-in. Please try again, or contact LGU staff.');
+      }
       storePlanter(data.planter);
       welcome('login');
       set({

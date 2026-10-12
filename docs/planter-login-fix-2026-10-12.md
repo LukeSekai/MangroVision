@@ -1,5 +1,45 @@
 # Planter sign-in server error, October 12, 2026
 
+## Latest follow-up: frontend and running backend mismatch
+
+The mobile page had the updated code-only sign-in, while the running testing
+backend still required `device_key`. A dummy code-only request to both the local
+API and the public website returned HTTP 422 for that missing field. The request
+failed before checking the planter code. The current source already accepted
+only `access_code`; restarting the managed testing stack loaded that source.
+
+The matching backend and frontend are now active at
+<https://mangrovision-user-testing.vercel.app/field>. No migration, code reissuance,
+account reset or encryption-key change was needed.
+
+Additional fixes:
+
+- Sign-in explains invalid codes, connection failures, temporary service failures
+  and throttling separately. Editing the code clears a previous service error;
+  code corrections appear beside the input without a second error summary.
+- Both frontend and backend accept common pasted dash characters, spaces and
+  lowercase letters, preserving the same eight-character code identity.
+- Sign-in help text uses a neutral color. The form can scroll on short screens.
+- `deploy_testing.py` checks the running API's login schema before publishing.
+  It refuses a backend that still requires a device ID or other credentials.
+- The request-review dialog keeps its compact title, reference, close button and
+  action footer visible while the details and form scroll.
+
+Verification: 27 isolated PostgreSQL checks and 26 frontend checks passed, along
+with ESLint, the local production build and Vercel's deployment build. The seven
+request-review checks were rerun after the header adjustment. Fictional previews
+of sign-in, request review and rescheduling passed viewport and action visibility
+checks on desktop, short laptop, phone and landscape screens.
+
+With the user's explicit permission, the existing code shown in their screenshot
+was tested twice against the public site with separate fresh cookie jars. Both
+restored the same participant and saved progress. The participant's planting
+records matched before and after, and both test sessions were signed out.
+Public readiness and the deployed frontend's sign-in and dialog changes were
+also verified. Private code values were never printed or committed.
+
+## Earlier investigation: incorrect timestamp column
+
 The code-login implementation updated `planters.last_login_at`, but the actual
 database column is `planters.last_login`. A valid code could therefore fail with
 a database column error and the API's generic HTTP 500 response. Readiness still

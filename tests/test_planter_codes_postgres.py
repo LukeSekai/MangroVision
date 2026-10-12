@@ -27,6 +27,13 @@ def login(value):
     return codes.authenticate_code(value, address='test-peer')
 
 
+@pytest.mark.parametrize('separator', ['-', ' ', '\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015', '\u2212', '\ufe63', '\uff0d'])
+def test_mobile_pasted_code_separators_preserve_identity(separator):
+    assert codes.normalize_code(f' k7mp{separator}4r9x ') == 'K7MP4R9X'
+    with pytest.raises(codes.CodeError):
+        codes.normalize_code('K7MP/4R9X')
+
+
 def test_issuing_existing_codes_preserves_all_records_and_is_idempotent(workspace):
     org, account = seed(workspace)
     identity = 'cd' * 24

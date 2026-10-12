@@ -42,7 +42,7 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
     acceptCaution: { label: 'Schedule warnings' }, decisionNotes: { label: 'Reason', aliases: ['decision_notes'] },
   });
   useEffect(() => {
-    formRoot.current?.closest('.modal-content')?.scrollTo(0, 0);
+    formRoot.current?.closest('.modal-body')?.scrollTo(0, 0);
     formRoot.current?.querySelector('select')?.focus({ preventScroll: true });
   }, []);
   const update = (event) => {
@@ -97,7 +97,7 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
     finally { inFlight.current = false; setBusy(false); }
   };
 
-  return createPortal(<Modal open title={`Review website request · ${request.reference}`} variant="info" className="modal-card-wide website-review-dialog" busy={busy}
+  return createPortal(<Modal open title={<><span className="website-review-heading">Review website request</span><span className="website-review-reference">{request.reference}</span></>} variant="info" className="modal-card-wide website-review-dialog" busy={busy}
     cancelLabel="Close" confirmLabel={rescheduling ? 'Confirm new schedule' : confirming ? 'Confirm appointment' : 'Decline request'} onConfirm={save} onCancel={onClose}>
     <form className="website-review" noValidate onChangeCapture={feedback.onChange} aria-busy={busy} ref={formRoot} onSubmit={save}>
       <dl className="website-request-details">

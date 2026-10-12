@@ -12,6 +12,7 @@ import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
 import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts } from '../utils/projectSiteInfo';
 import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
 import useFormFeedback from '../utils/useFormFeedback';
+import { isPlanterCode } from '../utils/planterCode';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
 import FieldActivities from '../components/FieldActivities';
 import { usePlanterAuthStore } from '../stores/planterAuthStore';
@@ -121,10 +122,14 @@ export function AuthScreen() {
   const storeError = usePlanterAuthStore((state) => state.error);
   const [localError, setLocalError] = useState('');
   const feedback = useFormFeedback({
-    access_code: { label: 'Planter code', validate: (value) => /^[A-HJ-NP-Z2-9]{8}$/.test(value.replace(/[\s-]/g, '').toUpperCase()) ? '' : 'Enter your eight-character planter code, for example K7MP-4R9X.' },
+    access_code: { label: 'Planter code', validate: (value) => isPlanterCode(value) ? '' : 'Enter your eight-character planter code, for example K7MP-4R9X.' },
   });
   const [form, setForm] = useState({ access_code: '' });
-  const update = (field) => (event) => setForm((current) => ({ ...current, [field]: event.target.value }));
+  const update = (field) => (event) => {
+    setLocalError('');
+    usePlanterAuthStore.setState({ error: '' });
+    setForm((current) => ({ ...current, [field]: event.target.value }));
+  };
   const submitting = storeStatus === 'loading';
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -145,7 +150,6 @@ export function AuthScreen() {
     <h1 className="field-auth-subtitle">Planter sign in</h1>
     <p className="field-label-help">Enter your individual code from your group leader or LGU staff.</p>
     <form className="field-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
-      <FormErrorSummary feedback={feedback} />
       <fieldset className="field-auth-fields" disabled={submitting}>
         <label className="field-label">Planter code
           <input {...feedback.props('access_code')} className="field-input field-access-code" type="text" value={form.access_code}
