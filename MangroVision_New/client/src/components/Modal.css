@@ -52,6 +52,7 @@
   -webkit-backdrop-filter: blur(6px);
   animation: modal-fade-in 180ms ease-out;
 }
+.modal-backdrop[hidden] { display: none; }
 
 .modal-card {
   position: relative;

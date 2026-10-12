@@ -1,26 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
-import {
-  CartesianGrid,
-  Line,
-  LineChart,
-  ReferenceLine,
-  ReferenceArea,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import Modal from '../components/Modal';
+import TideChart from '../components/TideChart';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { formRequest } from '../utils/formValidation';
 import WebsiteRequests from '../components/WebsiteRequests';
 import useTideForecasts from '../utils/useTideForecasts';
 import {
-  COASTAL_FORECAST_KEY, PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, finiteNumber, forecastIssue,
-  forecastPlantingGuide, guideLevelState, coloredTideSeries,
+  COASTAL_FORECAST_KEY, PLANTING_STATES, assessGraphWindow, assessGraphTime, chartLevelSeries, dayLevelSeries, finiteNumber, forecastIssue,
+  forecastPlantingGuide, guideLevelState,
 } from '../utils/plantingTides';
 import { useAuthStore } from '../stores/authStore';
 import { groupCalendarSchedules } from '../utils/calendarScheduleGroups';
@@ -66,15 +56,6 @@ function formatDate(value, includeTime = false) {
   return new Intl.DateTimeFormat(undefined, includeTime
     ? { dateStyle: 'medium', timeStyle: 'short', timeZone: TIMEZONE }
     : { dateStyle: 'medium', timeZone: TIMEZONE }).format(date);
-}
-
-function formatShortDate(value) {
-  if (!value) return 'â€”';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short', day: 'numeric', timeZone: TIMEZONE,
-  }).format(date);
 }
 
 function formatClock(value) {
@@ -204,6 +185,16 @@ function scheduleStartTime(schedule) {
     : '';
 }
 
+function scheduleEndTime(schedule) {
+  if (schedule?.end_time) return schedule.end_time;
+  const parsed = schedule?.end_at ? new Date(schedule.end_at) : null;
+  return parsed && !Number.isNaN(parsed.getTime())
+    ? new Intl.DateTimeFormat('en-GB', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: TIMEZONE,
+    }).format(parsed)
+    : '';
+}
+
 function normalizeSchedule(schedule) {
   const organization = schedule?.organization;
   return {
@@ -217,7 +208,7 @@ function normalizeSchedule(schedule) {
     project_site_name: schedule?.project_site_name ?? schedule?.site_name ?? schedule?.project?.name ?? '',
     scheduled_date: scheduleDate(schedule),
     start_time: scheduleStartTime(schedule),
-    end_time: schedule?.end_time ?? '',
+    end_time: scheduleEndTime(schedule),
     expected_participants: schedule?.expected_participants ?? schedule?.expected_planters ?? schedule?.participants ?? null,
     inspection_interval_days: schedule?.inspection_interval_days ?? schedule?.interval_days ?? null,
     status: schedule?.status ?? 'requested',
@@ -255,7 +246,7 @@ function scheduleStatusLabel(value) {
 
 function scheduleTimeLabel(schedule) {
   const start = scheduleStartTime(schedule);
-  const end = schedule?.end_time;
+  const end = scheduleEndTime(schedule);
   if (!start) return 'Time not set';
   return end ? `${formatClock(start)} - ${formatClock(end)}` : formatClock(start);
 }
@@ -322,7 +313,6 @@ function PlantingBadge({ assessment }) {
 function PlantingLegend() {
   return <div className="schedule-planting-legend" aria-label="Planting color guide">
     {['safe', 'unsafe'].map((status) => <PlantingBadge key={status} assessment={{ status }} />)}
-    <small>Colors help you plan when to plant. The calendar shows confirmed, in-progress and completed activities. Review pending requests below.</small>
   </div>;
 }
 
@@ -337,7 +327,7 @@ function ScheduleCalendarEvent({ group, assessment, onOpen }) {
   const state = PLANTING_STATES[assessment.status] || PLANTING_STATES.unknown;
   return <button type="button" className={`schedule-calendar-event planting-${assessment.status}`} onClick={() => onOpen(group)}
     aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${organizationLabel}. ${isPlantingAppointment(schedule) ? state.label : appointmentTypeLabel(schedule.appointment_type)}. View activity details.`}>
-    <span className="schedule-entry-top"><time>{scheduleStartTime(schedule) ? formatClock(scheduleStartTime(schedule)) : 'Time not set'}</time></span>
+    <span className="schedule-entry-top"><time>{scheduleTimeLabel(schedule)}</time></span>
     <strong className="schedule-entry-title">{schedule.title}</strong>
     <small>{appointmentTypeLabel(schedule.appointment_type)}</small>
     <span className="schedule-entry-organizations">{organizationLabel}</span>
@@ -353,8 +343,8 @@ function TideTime({ tide, guide, onOpen }) {
   const state = PLANTING_STATES[status];
   if (onOpen) return <button type="button" className={`schedule-calendar-tide is-compact planting-${status}`} onClick={() => onOpen(tide)}
     aria-haspopup="dialog" aria-label={`${scheduleStatusLabel(tideKind(tide))} tide at ${tideClock(tide)}. ${state.label}. View tide details.`}>
-    <time>{tideClock(tide)}</time>
-    <span>{scheduleStatusLabel(tideKind(tide))} tide</span>
+    <strong>{scheduleStatusLabel(tideKind(tide))} tide</strong>
+    <time dateTime={new Date(tide.occurred_at).toISOString()}>{tideClock(tide)}</time>
   </button>;
   return <div className={`schedule-calendar-tide planting-${status}`} title={`${formatDate(tide.occurred_at, true)}, ${formatHeight(tide.height_m)}. ${state.label} using the graph's estimated planting limit.`}>
     <span>{scheduleStatusLabel(tideKind(tide))} tide · {formatDate(tide.occurred_at, true).split(',').pop()?.trim()}</span>
@@ -401,7 +391,7 @@ function ScheduleDetails({ schedule, showOrganization = true }) {
   </dl>;
 }
 
-function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
+function CalendarEntryDetails({ entry, assessment, guide, payload, now, onClose, onEdit }) {
   if (!entry) return null;
   const schedule = entry.kind === 'schedule' ? entry.schedule : null;
   const schedules = schedule ? arrayOf(entry.schedules) : [];
@@ -410,7 +400,7 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
   const advice = schedule ? assessment : { status: tidePlantingState(tide, guide) };
   const editSchedule = (item) => { onClose(); onEdit(item); };
   return <Modal open title={schedule ? schedule.title : `${scheduleStatusLabel(tideKind(tide))} tide`}
-    className={`modal-card-wide schedule-details-modal${grouped ? ' is-grouped' : ''}`} variant="info"
+    className={`modal-card-wide schedule-details-modal${grouped ? ' is-grouped' : ''}${tide ? ' is-tide' : ''}`} variant="info"
     confirmLabel={schedule && !grouped ? 'Edit activity' : 'Close'} cancelLabel={schedule && !grouped ? 'Close' : null}
     onCancel={onClose} onConfirm={schedule && !grouped ? () => editSchedule(schedule) : onClose}>
     <div className="schedule-entry-details">
@@ -434,15 +424,40 @@ function CalendarEntryDetails({ entry, assessment, guide, onClose, onEdit }) {
             <ScheduleDetails schedule={item} showOrganization={false} />
           </section>)}
         </div>
-      </> : schedule ? <ScheduleDetails schedule={schedule} /> : <dl>
+      </> : schedule ? <ScheduleDetails schedule={schedule} /> : <><dl>
         <div><dt>Water level</dt><dd>{formatHeight(tide.height_m)}</dd></div>
-        <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide.threshold)}</dd></div>
-      </dl>}
+        <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide?.threshold)}</dd></div>
+      </dl><DailyTideDetails tide={tide} payload={payload} guide={guide} now={now} /></>}
     </div>
   </Modal>;
 }
 
-function TideForecast({ payload, tides, loading, error, site, onRetry }) {
+function DailyTideDetails({ tide, payload, guide, now }) {
+  const [openedAt] = useState(Date.now);
+  const day = dateInManila(new Date(tide.occurred_at));
+  const rows = dayLevelSeries(payload, day);
+  const validRows = rows.filter((row) => row.height_m !== null);
+  const dayStart = Date.parse(`${day}T00:00:00+08:00`);
+  const dayEnd = dayStart + 86400_000;
+  const issue = payload ? forecastIssue(payload, now ?? openedAt) || (guide.status === 'unknown' ? 'Some hourly water levels are missing.' : '') : '';
+  const tides = normalizeTideEvents(payload).filter((event) => dateInManila(new Date(event.occurred_at)) === day);
+  return <section className="schedule-tide-day-detail" aria-label={`Daily tide forecast for ${day}`}>
+    <h3>Water levels for this day</h3>
+    {issue ? <p className="schedule-tide-day-warning" role="status">{issue}</p> : null}
+    {validRows.length >= 2 ? <>
+      <div className="schedule-graph-legend" aria-label="Daily planting color guide">
+        <span className="is-safe"><i aria-hidden="true" />Water low enough</span>
+        <span className="is-unsafe"><i aria-hidden="true" />Water too high</span>
+      </div>
+      <TideChart rows={rows} guide={guide} tides={tides} day={day} selectedTide={tide}
+        datumLabel={payload.datum === 'MSL' ? 'meters from average sea level' : 'meters; starting level not confirmed'} />
+      {validRows[0].occurred_at > dayStart || validRows.at(-1).occurred_at < dayEnd
+        ? <p className="schedule-tide-day-note">Some hours are outside this forecast.</p> : null}
+    </> : <p className="schedule-tide-day-note">Hourly water levels are unavailable for this day.</p>}
+  </section>;
+}
+
+function TideForecast({ payload, tides = [], loading, error, site, onRetry }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -450,104 +465,53 @@ function TideForecast({ payload, tides, loading, error, site, onRetry }) {
   }, []);
   const samples = chartLevelSeries(payload);
   const rows = samples.length ? samples : tides.map((row) => ({ ...row, occurred_at: new Date(row.occurred_at).getTime() }));
-  const issue = forecastIssue(payload, now);
   // Keep the visible curve colored from the displayed readings even when they
   // need refreshing. Scheduling assessments still require a current forecast.
   const guide = forecastPlantingGuide({ site, payload, now, allowOutdated: true });
+  const issue = forecastIssue(payload, now) || (guide.status === 'unknown'
+    ? 'Some water levels are missing. Refresh tides to see the forecast.' : '');
   const { threshold, preview, percentage } = guide;
   const usable = guide.status !== 'unknown';
-  const chartData = coloredTideSeries(rows, guide);
-  const values = rows.map((row) => row.height_m).filter((value) => value !== null);
-  if (threshold !== null) values.push(threshold);
-  const lowest = Math.min(0, ...values);
-  const highest = Math.max(0, ...values);
-  const padding = Math.max(0.15, (highest - lowest) * 0.15);
-  const domain = [Math.floor((lowest - padding) * 10) / 10, Math.ceil((highest + padding) * 10) / 10];
+  const tideEvents = tides.length ? tides : normalizeTideEvents(payload);
   const datumLabel = payload?.datum === 'MSL' ? 'meters from average sea level' : 'meters; starting level not confirmed';
   const referenceLabel = preview ? 'Estimated planting limit' : 'Measured ground height';
   const statusLabel = (height) => {
     const state = guideLevelState(height, guide);
-    return preview && state !== 'unknown'
-      ? state === 'safe' ? 'Safe to plant (estimated)' : 'Not safe to plant (estimated)'
-      : PLANTING_STATES[state].label;
+    return state === 'safe' ? 'Water low enough · Good time to plant'
+      : state === 'unsafe' ? guide.status === 'safe' ? 'Water too high · Avoid planting' : 'Avoid planting'
+        : 'Planting guidance unavailable';
   };
 
   return (
     <section className="schedule-panel schedule-tide-panel" aria-labelledby="standalone-tide-title">
       <div className="schedule-panel-head">
         <div>
-          <span className="schedule-step">Planting conditions</span>
           <h2 id="standalone-tide-title">When to plant</h2>
+          <p>Estimated times. Check water and weather at the site.</p>
         </div>
         <div className="schedule-tide-tools">
           <button type="button" onClick={onRetry} disabled={loading}>{loading ? 'Loading tides...' : 'Refresh tides'}</button>
         </div>
       </div>
-      {issue && !loading ? <Message type="warning">{issue}{payload?.stale && payload.message ? ` ${payload.message}` : ''}</Message> : null}
+      {issue && !loading && !error ? <Message type="warning">{issue}</Message> : null}
       {loading ? <Loading label="Loading the tide forecast..." /> : null}
       {error ? <Message>{error}</Message> : null}
-      {!loading && !error && !chartData.length ? (
-        <div className="schedule-empty"><strong>Tide forecast unavailable</strong><p>{payload?.message || 'No water levels are available yet. Please refresh the tides.'}</p></div>
-      ) : null}
-      <div className="schedule-graph-legend" aria-label="Planting color guide">
-        <span className="is-safe"><i aria-hidden="true" />{preview ? 'Safe to plant (estimated)' : 'Safe to plant'}</span>
-        <span className="is-unsafe"><i aria-hidden="true" />{preview ? 'Not safe to plant (estimated)' : 'Not safe to plant'}</span>
-        {!usable ? <span className="is-unknown"><i aria-hidden="true" />Tide forecast unavailable</span> : null}
-        <span className="schedule-reference-key">{referenceLabel}{threshold !== null ? `: ${threshold.toFixed(2)} m` : ': unknown'}</span>
-      </div>
-      {chartData.length ? (
-        <>
-          <div className="schedule-tide-chart" role="img" aria-label={`Expected water level (${datumLabel}); Date and time (Philippine time). ${referenceLabel}: ${threshold === null ? 'unknown' : `${threshold.toFixed(2)} m`}. Green shows estimated planting times. Red means avoid planting. Ground should be underwater no more than 30% of the time. Check the planting area before going.`}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData} margin={{ top: 24, right: 18, bottom: 30, left: 14 }}>
-                <CartesianGrid stroke="#dbe4e7" strokeDasharray="3 5" vertical={false} />
-                <XAxis dataKey="occurred_at" type="number" domain={['dataMin', 'dataMax']} tickFormatter={formatShortDate} minTickGap={40}
-                  label={{ value: 'Date and time (Philippine time)', position: 'bottom', offset: 12, fill: '#334155', fontSize: 12 }} />
-                <YAxis domain={domain} tickFormatter={(value) => `${Number(value.toFixed(2))} m`} width={64}
-                  label={{ value: 'Water level (meters)', angle: -90, position: 'insideLeft', dx: -10, style: { textAnchor: 'middle', fontSize: 11 }, fill: '#334155' }} />
-                {usable && threshold !== null ? <>
-                  <ReferenceArea y1={domain[0]} y2={threshold} fill={guide.status === 'safe' ? '#16a34a' : '#dc2626'} fillOpacity={0.07} />
-                  <ReferenceArea y1={threshold} y2={domain[1]} fill="#dc2626" fillOpacity={0.07} />
-                  <ReferenceLine y={threshold} stroke="#475569" strokeWidth={1.5} strokeDasharray="6 4" />
-                </> : null}
-                <Tooltip content={({ active, payload: points, label }) => {
-                  const row = points?.find((point) => point.value !== null)?.payload;
-                  return active && row ? <div className="schedule-tide-tooltip">
-                    <strong>{formatDate(label, true)}</strong>
-                    <span>Water level: {formatHeight(row.height_m)}</span>
-                    <span style={{ color: PLANTING_STATES[guideLevelState(row.height_m, guide)].color }}>{statusLabel(row.height_m)}</span>
-                    {threshold !== null ? <small>{referenceLabel}: {formatHeight(threshold)}</small> : null}
-                  </div> : null;
-                }} />
-                {Object.entries(PLANTING_STATES).map(([state, style]) => (
-                  <Line key={state} type="linear" dataKey={state} name={style.label} stroke={samples.length ? style.color : 'none'} strokeWidth={3}
-                    connectNulls={false} isAnimationActive={false} dot={samples.length ? false : { r: 3, fill: style.color }} activeDot={{ r: 5, strokeWidth: 2 }} />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
+      {!loading && !error && rows.length ? (
+        <div className="schedule-tide-chart-section">
+          <div className="schedule-graph-legend" aria-label="Planting color guide">
+            <span className="is-safe"><i aria-hidden="true" />Water low enough · Good time to plant</span>
+            <span className="is-unsafe"><i aria-hidden="true" />{guide.status === 'safe' ? 'Water too high' : 'Avoid planting'}</span>
+            {!usable ? <span className="is-unknown"><i aria-hidden="true" />Time unavailable</span> : null}
+            <span className="schedule-reference-key">{referenceLabel}{threshold !== null ? `: ${threshold.toFixed(2)} m` : ': unknown'}</span>
           </div>
-          <div className={`schedule-inundation-summary is-${usable && !preview ? guide.status : 'unknown'}`} role="status">
-            <strong>{preview ? 'Estimated planting guide' : guide.label}</strong>
-            <span>{percentage !== null
-              ? `${percentage.toFixed(1)}% underwater / ${(100 - percentage).toFixed(1)}% above water during the dates shown`
-              : 'We cannot estimate time underwater yet'}</span>
-            <p>{preview
-              ? 'The dashed line is an estimated planting limit. Green suggests a good time to plant; red means avoid planting. This guide uses an estimated ground height. Check the actual ground, water and weather at your planting area before going.'
-              : 'Green means water is below the ground or just reaches it, and the area is expected to be underwater no more than 30% of the time. The ground must also be at or above average sea level. Red means avoid planting. Check local conditions before going.'}</p>
-          </div>
-          <p className="schedule-threshold-note">Time the ground is underwater:</p>
-          <div className="schedule-inundation-scale" aria-label="How much time the ground is underwater">
-            <span className="is-safe"><strong>0–30%</strong> Good for planting</span>
-            <span className="is-marginal"><strong>&gt;30–50%</strong> Check the area first</span>
-            <span className="is-unsafe"><strong>&gt;50%</strong> Avoid planting</span>
-            <span className="is-unsafe"><strong>100%</strong> Underwater the whole time</span>
-          </div>
+          <TideChart rows={rows} guide={guide} tides={tideEvents} datumLabel={datumLabel}
+            connectPoints={samples.filter((row) => row.height_m !== null).length >= 2} />
           <details className="schedule-table-fallback">
-            <summary>See water levels in a table</summary>
+            <summary>Water levels</summary>
             <div className="schedule-table-wrap">
               <table>
                 <thead><tr><th scope="col">Date and time (Philippine time)</th><th scope="col">Water level ({datumLabel})</th><th scope="col">Planting advice{preview ? ' (estimated)' : ''}</th></tr></thead>
-                <tbody>{rows.map((tide) => (
+                <tbody>{rows.filter((row) => row.height_m !== null).map((tide) => (
                   <tr key={tide.occurred_at}>
                     <td>{formatDate(tide.occurred_at, true)}</td><td>{formatHeight(tide.height_m)}</td>
                     <td style={{ color: PLANTING_STATES[guideLevelState(tide.height_m, guide)].color }}>{statusLabel(tide.height_m)}</td>
@@ -556,15 +520,28 @@ function TideForecast({ payload, tides, loading, error, site, onRetry }) {
               </table>
             </div>
           </details>
-        </>
+        </div>
       ) : null}
-      <footer className="schedule-tide-source">
-        <span>{payload?.datum === 'MSL' ? 'Water heights are measured from average sea level.' : 'The starting level for water measurements has not been confirmed.'}</span>
-        <span>Choose ground that is underwater no more than 30% of the time. These estimates cover only the dates shown; check the area over time too.</span>
-        <a href="https://cms.zsl.org/sites/default/files/2023-02/1%20Manual%20-%20Community-based%20Mangrove%20Rehabilitation.pdf" target="_blank" rel="noreferrer">Why 30%? Read the planting guide</a>
-        {payload?.attribution ? <span>{payload.attribution_url
-          ? <a href={payload.attribution_url} target="_blank" rel="noreferrer">{payload.attribution}</a> : payload.attribution}</span> : null}
-      </footer>
+      <details className="schedule-estimate-details">
+        <summary>How these times are estimated</summary>
+        <div>
+          <p>High tide marks the highest water level. Low tide marks the lowest. The graph's colors compare water levels with the planting limit.</p>
+          <p>{preview
+            ? 'This guide uses an estimated ground height. Check the actual ground height and water at your site.'
+            : 'This guide uses the measured ground height for this site.'}</p>
+          <dl>
+            <div><dt>{referenceLabel}</dt><dd>{threshold === null ? 'Unavailable' : formatHeight(threshold)}</dd></div>
+            <div><dt>Estimated time underwater</dt><dd>{percentage === null ? 'Unavailable' : `${percentage.toFixed(1)}% of the full forecast`}</dd></div>
+          </dl>
+          <p>Green suggests a planting time when water is below the limit. The ground must also be at or above average sea level and underwater no more than 30% of the time. A short forecast cannot confirm long-term site conditions.</p>
+          <p>{payload?.datum === 'MSL' ? 'Water heights are measured from average sea level.' : 'The starting level for water measurements has not been confirmed.'}</p>
+          <a href="https://cms.zsl.org/sites/default/files/2023-02/1%20Manual%20-%20Community-based%20Mangrove%20Rehabilitation.pdf" target="_blank" rel="noreferrer">Read the planting guide</a>
+        </div>
+      </details>
+      {payload?.attribution ? <footer className="schedule-tide-source">
+        {payload.attribution_url
+          ? <a href={payload.attribution_url} target="_blank" rel="noreferrer">{payload.attribution}</a> : payload.attribution}
+      </footer> : null}
     </section>
   );
 }
@@ -976,23 +953,26 @@ export default function Scheduling() {
     <main className="scheduling-page">
       <header className="schedule-header">
         <div>
-          <div className="schedule-eyebrow">LIKE activities and community planting</div>
           <h1>Scheduling</h1>
-          <p>Review website appointments and coordinate field visits, clean-up drives, and tree planting with partner organizations.</p>
+          <p>Plan activities and review pending requests.</p>
         </div>
         <button type="button" className="schedule-refresh" onClick={refreshSchedules} disabled={loading}>â†» {loading ? 'Refreshingâ€¦' : 'Refresh schedules'}</button>
       </header>
+
+      <WebsiteRequests token={token} reloadKey={reloadKey} organizations={organizations} schedules={schedules}
+        assessmentFor={assessmentFor} renderAdvice={(assessment) => <PlantingBadge assessment={assessment} />}
+        reviewRequest={reviewRequest} onReview={setReviewRequest}
+        onClose={() => setReviewRequest(null)} onChanged={() => setReloadKey((value) => value + 1)} />
 
       <TideForecast payload={tidePayload} tides={tides} loading={tideLoading} error={tideError} onRetry={() => setTideRetryKey((value) => value + 1)} />
 
       <section className="schedule-panel" aria-labelledby="organization-schedules-title">
         <div className="schedule-panel-head schedule-toolbar">
           <div>
-            <span className="schedule-step">Plan a date, confirm it, then choose a planting area</span>
-            <h2 id="organization-schedules-title">Organization schedules</h2>
-            <p>The calendar shows approved activities. Use List to manage staff drafts and activity history, and review website requests below. For tree planting, choose an organization planting area after confirmation.</p>
+            <h2 id="organization-schedules-title">Schedules</h2>
+            <p>Calendar shows approved activities. List shows all schedules.</p>
           </div>
-          <button type="button" className="schedule-primary" onClick={openCreate}>+ Add new schedule</button>
+          <button type="button" className="schedule-primary" onClick={openCreate}>+ Add schedule</button>
         </div>
 
         {error ? <Message>{error}</Message> : null}
@@ -1005,7 +985,7 @@ export default function Scheduling() {
         </div>
 
         <PlantingLegend />
-        <p className="schedule-threshold-note">Colors follow the graph above. Click an activity or tide time for details.</p>
+        <p className="schedule-threshold-note">Click an activity or tide time for details.</p>
         <div className="schedule-view-head">
           <div className="schedule-view-toggle" aria-label="Schedule view">
             <button type="button" className={view === 'calendar' ? 'is-active' : ''} onClick={() => setView('calendar')}>Calendar</button>
@@ -1036,7 +1016,7 @@ export default function Scheduling() {
                       <time dateTime={cell.date}>{cell.day}</time>
                       <div className="schedule-calendar-events">
                         {daySchedules.map((group) => <ScheduleCalendarEvent key={group.key} group={group} assessment={assessmentFor(group.schedule)} onOpen={(item) => setCalendarEntry({ kind: 'schedule', schedule: item.schedule, schedules: item.schedules })} />)}
-                        {dayTides.slice(0, 4).map((tide) => (
+                        {dayTides.map((tide) => (
                           <TideTime key={`${tide.occurred_at}-${tideKind(tide)}`} tide={tide} guide={calendarGuide} onOpen={(item) => setCalendarEntry({ kind: 'tide', tide: item })} />
                         ))}
                       </div>
@@ -1078,12 +1058,7 @@ export default function Scheduling() {
       </section>
 
       <CalendarEntryDetails entry={calendarEntry} assessment={calendarEntry?.kind === 'schedule' ? assessmentFor(calendarEntry.schedule) : null}
-        guide={calendarGuide} onClose={() => setCalendarEntry(null)} onEdit={openEdit} />
-
-      <WebsiteRequests token={token} reloadKey={reloadKey} organizations={organizations} schedules={schedules}
-        assessmentFor={assessmentFor} renderAdvice={(assessment) => <PlantingBadge assessment={assessment} />}
-        reviewRequest={reviewRequest} onReview={setReviewRequest}
-        onClose={() => setReviewRequest(null)} onChanged={() => setReloadKey((value) => value + 1)} />
+        guide={calendarGuide} payload={tidePayload} now={now} onClose={() => setCalendarEntry(null)} onEdit={openEdit} />
 
       <HighTideCaution selection={timeCaution}
         onContinue={() => {

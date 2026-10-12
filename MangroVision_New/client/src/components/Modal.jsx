@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import './Modal.css';
 
 const VARIANT_ICONS = {
@@ -56,11 +56,13 @@ export default function Modal({
   onConfirm,
   onCancel,
   className = '',
+  keepMounted = false,
   // Optional override for the modal header icon. When provided, replaces the
   // variant icon (question mark / warning triangle / etc) with arbitrary
   // node — used by the welcome modal to show the MangroVision logo.
   icon,
 }) {
+  const modalId = useId();
   const cardRef = useRef(null);
   const previouslyFocusedRef = useRef(null);
   const confirmButtonRef = useRef(null);
@@ -129,7 +131,7 @@ export default function Modal({
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!open && !keepMounted) return null;
 
   const confirmClass = VARIANT_BUTTON_CLASS[variant] || VARIANT_BUTTON_CLASS.default;
   const showCancel = typeof onCancel === 'function' && cancelLabel;
@@ -137,15 +139,15 @@ export default function Modal({
   const variantIcon = icon ?? (VARIANT_ICONS[variant] || VARIANT_ICONS.default);
 
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={busy ? undefined : onCancel}>
+    <div className="modal-backdrop" role="presentation" hidden={!open} inert={!open} onMouseDown={busy || !open ? undefined : onCancel}>
       <div
         ref={cardRef}
         className={`modal-card modal-card-${variant} ${className}`.trim()}
         role="dialog"
         tabIndex={-1}
         aria-modal="true"
-        aria-labelledby="app-modal-title"
-        aria-describedby="app-modal-body"
+        aria-labelledby={`${modalId}-title`}
+        aria-describedby={`${modalId}-body`}
         onMouseDown={(event) => event.stopPropagation()}
       >
         {typeof onCancel === 'function' && (
@@ -168,9 +170,9 @@ export default function Modal({
             {variantIcon}
           </div>
 
-          <h2 id="app-modal-title" className="modal-title">{title}</h2>
+          <h2 id={`${modalId}-title`} className="modal-title">{title}</h2>
 
-          <div id="app-modal-body" className="modal-body">{children}</div>
+          <div id={`${modalId}-body`} className="modal-body">{children}</div>
         </div>
 
         <div className={`modal-actions${showCancel && showConfirm ? ' modal-actions-split' : ''}`}>

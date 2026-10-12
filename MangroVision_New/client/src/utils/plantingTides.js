@@ -1,7 +1,7 @@
 // Provisional exposed-substrate rule, NOT an ecological or personnel-safety rating.
 export const PLANTING_STATES = Object.freeze({
-  safe: { color: '#15803D', symbol: '\u2713', label: 'Safe to plant' },
-  unsafe: { color: '#B91C1C', symbol: '\u00d7', label: 'Not safe to plant' },
+  safe: { color: '#15803D', symbol: '\u2713', label: 'Good time to plant' },
+  unsafe: { color: '#B91C1C', symbol: '\u00d7', label: 'Avoid planting' },
   unknown: { color: '#4B5563', symbol: '\u2014', label: 'Tide forecast unavailable' },
 });
 
@@ -74,6 +74,31 @@ export function chartLevelSeries(payload) {
     return previous && row.occurred_at - previous.occurred_at > 3600_000
       ? [{ occurred_at: (previous.occurred_at + row.occurred_at) / 2, height_m: null }, row] : [row];
   });
+}
+
+// Limit a chart to one Philippine day. Only interpolate midnight when two
+// adjacent valid hourly readings cover it; never extend a forecast or fill gaps.
+export function dayLevelSeries(payload, day) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day))) return [];
+  const start = Date.parse(`${day}T00:00:00+08:00`);
+  if (!Number.isFinite(start) || new Date(start + 8 * 3600_000).toISOString().slice(0, 10) !== day) return [];
+  const end = start + 86400_000;
+  const rows = chartLevelSeries(payload);
+  const result = rows.filter((row) => row.occurred_at >= start && row.occurred_at <= end);
+  for (const at of [start, end]) {
+    if (result.some((row) => row.occurred_at === at)) continue;
+    for (let i = 1; i < rows.length; i += 1) {
+      const a = rows[i - 1];
+      const b = rows[i];
+      if (a.occurred_at >= at || b.occurred_at <= at) continue;
+      if (a.height_m !== null && b.height_m !== null && b.occurred_at - a.occurred_at <= 3600_000) {
+        result.push({ occurred_at: at, height_m: a.height_m + (b.height_m - a.height_m)
+          * (at - a.occurred_at) / (b.occurred_at - a.occurred_at) });
+      }
+      break;
+    }
+  }
+  return result.sort((a, b) => a.occurred_at - b.occurred_at);
 }
 
 // Integrate time above ground, interpolating crossings between hourly samples.

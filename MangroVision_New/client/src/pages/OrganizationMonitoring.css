@@ -92,6 +92,16 @@
   gap: 14px;
 }
 
+.org-monitoring-visit-tabs { display: flex; gap: 6px; margin-bottom: 18px; padding: 5px; width: fit-content; max-width: 100%; border: 1px solid var(--border-light); border-radius: 12px; background: var(--surface-muted); }
+.org-monitoring-visit-tabs button { display: inline-flex; align-items: center; gap: 9px; min-height: 38px; padding: 9px 14px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); font-size: 0.78rem; font-weight: 700; cursor: pointer; }
+.org-monitoring-visit-tabs button[aria-selected="true"] { background: white; border-color: var(--green-200); color: var(--green-800); box-shadow: var(--shadow-xs); }
+.org-monitoring-visit-tabs button > span { min-width: 22px; padding: 2px 6px; border-radius: 20px; background: var(--border-light); font-size: 0.67rem; text-align: center; }
+.org-monitoring-visit-tabs button[aria-selected="true"] > span { background: var(--green-100); color: var(--green-800); }
+.org-monitoring-visit-date { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 12px; color: var(--text-secondary); font-size: 0.69rem; }
+.monitoring-visit-empty { padding: 24px 14px; border: 1px dashed var(--border-medium); border-radius: var(--radius-lg); color: var(--text-secondary); font-size: 0.8rem; text-align: center; }
+.monitoring-visit-empty strong { display: block; color: var(--green-900); }
+.monitoring-visit-empty p { margin-top: 6px; line-height: 1.5; }
+
 .org-monitoring-organization-card {
   display: flex;
   flex-direction: column;
@@ -649,5 +659,3 @@
   .org-monitoring-map-toolbar { align-items: stretch; flex-direction: column; gap: 8px; }
   .org-monitoring-map-modal .modal-content { padding: 22px 12px 12px; }
 }
-.monitoring-due-filter { display: flex; align-items: center; gap: 8px; width: fit-content; max-width: 100%; margin: 12px 0 16px; padding: 9px 12px; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: var(--surface-base); color: var(--text-secondary); font-size: 0.8125rem; }
-.monitoring-due-filter input { accent-color: var(--green-700); flex-shrink: 0; }

@@ -14,6 +14,11 @@ export const POINT_STATUS_COLORS = {
   skipped: '#9ca3af', unavailable: '#f97316', eroded_unavailable: '#f97316',
 };
 
+export const PLANNED_SPECIES_COLORS = {
+  rhizophora: '#db2777',
+  bungalon: '#16a34a',
+};
+
 export function pointStatusLabel(status) {
   return POINT_STATUS_LABELS[status] || 'Status unknown';
 }

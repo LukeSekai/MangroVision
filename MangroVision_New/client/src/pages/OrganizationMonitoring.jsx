@@ -1,11 +1,12 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import Modal from '../components/Modal';
-import OrganizationHistory from '../components/OrganizationHistory';
+import SitesToMonitor from '../components/SitesToMonitor';
 import AutomaticGrowth from '../components/AutomaticGrowth';
 import RestorationReportDialog from '../components/RestorationReportDialog';
 import { growthStageLabel } from '../utils/mangroveGrowth';
 import { monitoringCounts, visitFormFromLatest } from '../utils/organizationMonitoring';
+import { monitoringSchedule, monitoringScheduleLabel } from '../utils/monitoringSchedule';
 import { deathLocationCounts } from '../utils/monitoringLocations';
 import { PanelCard } from '../components/Panel';
 import { useAuthStore } from '../stores/authStore';
@@ -66,14 +67,6 @@ function VisitIcon() {
   );
 }
 
-function HistoryIcon() {
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /><path d="M12 7v5l3 2" />
-    </svg>
-  );
-}
-
 function OrganizationCardHeading({ name }) {
   return <span className="org-monitoring-organization-head">
     <span className="org-monitoring-organization-icon" aria-hidden="true">
@@ -85,17 +78,18 @@ function OrganizationCardHeading({ name }) {
   </span>;
 }
 
-function OrganizationCardAction({ label, locked = false }) {
+function OrganizationCardAction({ label }) {
   return <span className="org-monitoring-card-action">
     {label}
-    {!locked && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>}
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
   </span>;
 }
 
 export default function OrganizationMonitoring() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const dueOnly = searchParams.get('filter') === 'due';
+  const [today, setToday] = useState(manilaDateInputValue);
+  const scheduleDay = useRef(today);
   const requestedSiteId = searchParams.get('project_site_id') || '';
   const [siteContext, setSiteContext] = useState({ id: '', site: null, error: '' });
   const [siteRevision, setSiteRevision] = useState(0);
@@ -112,7 +106,6 @@ export default function OrganizationMonitoring() {
   const loadedVisit = useRef(null);
   const [organizations, setOrganizations] = useState([]);
   const [deathReasons, setDeathReasons] = useState([]);
-  const [historyOrganization, setHistoryOrganization] = useState(null);
   const [selectedOrganizationId, setSelectedOrganizationId] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -206,8 +199,43 @@ export default function OrganizationMonitoring() {
   const scopedOrganizations = requestedSiteId
     ? organizations.filter((organization) => followUpOrganizationId != null && String(organization.id) === String(followUpOrganizationId))
     : organizations;
-  const visibleOrganizations = scopedOrganizations.filter((organization) => !dueOnly || organization.monitoring_available === true);
+  const dueToday = scopedOrganizations.filter((organization) => monitoringSchedule(organization, today).status === 'today');
+  const overdue = scopedOrganizations.filter((organization) => monitoringSchedule(organization, today).status === 'overdue')
+    .sort((a, b) => String(a.next_monitoring_date).localeCompare(String(b.next_monitoring_date)) || a.name.localeCompare(b.name));
+  // Existing dashboard links still lead to actionable work when only overdue visits exist.
+  const visitTab = searchParams.get('tab') === 'overdue'
+    || (!searchParams.has('tab') && searchParams.get('filter') === 'due' && !dueToday.length && overdue.length)
+    ? 'overdue' : 'today';
+  const visibleOrganizations = visitTab === 'overdue' ? overdue : dueToday;
   const siteMapPath = `/map?project_site_id=${encodeURIComponent(requestedSiteId)}&focus=site_points`;
+
+  useEffect(() => {
+    const refreshDate = () => setToday(manilaDateInputValue());
+    const timer = window.setInterval(refreshDate, 60_000);
+    window.addEventListener('focus', refreshDate);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refreshDate); };
+  }, []);
+
+  useEffect(() => {
+    if (scheduleDay.current === today) return;
+    scheduleDay.current = today;
+    void loadWorkspace({ quiet: true });
+  }, [today, loadWorkspace]);
+
+  const selectVisitTab = (value) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', value);
+    next.delete('filter');
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleTabKey = (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 'today' : event.key === 'End' ? 'overdue' : visitTab === 'today' ? 'overdue' : 'today';
+    selectVisitTab(next);
+    document.getElementById(`monitoring-tab-${next}`)?.focus();
+  };
 
   const selectedOrganization = useMemo(
     () => organizations.find(
@@ -395,13 +423,6 @@ export default function OrganizationMonitoring() {
         </div>
       </section>}
 
-      <label className="monitoring-due-filter"><input type="checkbox" checked={dueOnly} onChange={(event) => {
-        const next = new URLSearchParams(searchParams);
-        if (event.target.checked) next.set('filter', 'due'); else next.delete('filter');
-        setSearchParams(next);
-      }} /> Show organizations due for a visit</label>
-      {dueOnly && !overviewUnavailable && !loadError && (!requestedSiteId || scopedOrganizations.length > 0) && !visibleOrganizations.length
-        ? <p role="status">No organizations are due for a monitoring visit. Clear the filter to see upcoming visits.</p> : null}
       <div className="org-monitoring-kpis" aria-label="Monitoring overview">
         <article><span>Organizations</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.length}</strong><small>Participating in monitoring</small></article>
         <article><span>Seedlings planted</span><strong>{overviewUnavailable ? '—' : scopedOrganizations.reduce((sum, item) => sum + Number(item.total_planted ?? item.current_planted_points ?? 0), 0).toLocaleString()}</strong><small>Includes recorded deaths and replacement plantings</small></article>
@@ -416,54 +437,57 @@ export default function OrganizationMonitoring() {
         panelKey="organization-summary"
         title="Record a monitoring visit"
         icon={<SummaryIcon />}
+        badge={overviewUnavailable ? '—' : dueToday.length + overdue.length}
         className="org-monitoring-summary-card"
       >
-        {loading || siteContextLoading ? <div className="org-monitoring-muted">Loading organizations...</div> : null}
-        {!loading && organizations.length === 0 ? (
-          <div className="org-monitoring-muted">
-            No organizations are registered yet. Create a planting schedule or organization first.
-          </div>
-        ) : null}
-        {organizations.length > 0 ? (
+        <div className="org-monitoring-visit-tabs" role="tablist" aria-label="Monitoring visit schedule">
+          {[['today', 'Due today', dueToday.length], ['overdue', 'Overdue', overdue.length]].map(([value, label, total]) => (
+            <button key={value} type="button" id={`monitoring-tab-${value}`} role="tab"
+              aria-selected={visitTab === value} aria-controls="monitoring-visit-queue" tabIndex={visitTab === value ? 0 : -1}
+              onClick={() => selectVisitTab(value)} onKeyDown={handleTabKey}>
+              {label} <span>{overviewUnavailable ? '—' : total}</span>
+            </button>
+          ))}
+        </div>
+        <div id="monitoring-visit-queue" role="tabpanel" aria-labelledby={`monitoring-tab-${visitTab}`}>
+          {loading || siteContextLoading ? <p className="monitoring-visit-empty" role="status">Loading scheduled visits…</p>
+            : loadError || siteContextUnavailable ? <p className="org-monitoring-muted">Scheduled visits are unavailable until the page can be refreshed.</p>
+              : !visibleOrganizations.length ? <div className="monitoring-visit-empty" role="status">
+                <strong>{visitTab === 'today' ? 'No monitoring visits due today' : 'No overdue monitoring visits'}</strong>
+                <p>{visitTab === 'today' ? 'Upcoming monitoring dates are listed in Sites to Monitor below.' : 'Organizations with missed monitoring dates will appear here.'}</p>
+              </div> : null}
           <div className="org-monitoring-organization-list">
-            {visibleOrganizations.map((organization) => {
+            {!overviewUnavailable && !loadError && visibleOrganizations.map((organization) => {
               const organizationLatest = organization.latest_record || null;
-              const hasPlantedSeedlings = Number(organization.total_planted ?? organization.current_planted_points ?? 0) > 0;
-              const monitoringAvailable = organization.monitoring_available === true;
+              const schedule = monitoringSchedule(organization, today);
               return (
                 <button
                   key={organization.id}
                   type="button"
-                  className={`org-monitoring-organization-card${monitoringAvailable ? '' : ' is-not-due'}`}
+                  className="org-monitoring-organization-card"
                   onClick={() => openVisitModal(organization.id)}
-                  disabled={!monitoringAvailable}
                   aria-haspopup="dialog"
                 >
                   <OrganizationCardHeading name={organization.name} />
-                  {monitoringAvailable ? (
-                    <span className="org-monitoring-organization-metrics">
-                      <span><strong>{organization.total_planted ?? organization.current_planted_points ?? 0}</strong>Planted</span>
-                      <span><strong>{organization.alive_seedlings ?? 0}</strong>Alive now</span>
-                      <span><strong>{organization.monitoring_record_count || 0}</strong>Visits</span>
-                      <span><strong>{organizationLatest ? `${organizationLatest.survival_rate_pct ?? 0}%` : '—'}</strong>Survival</span>
-                    </span>
-                  ) : (
-                    <span className="org-monitoring-waiting-message">
-                      <strong>{hasPlantedSeedlings ? 'Not time to monitor yet' : 'No seedlings to monitor'}</strong>
-                      <small>{hasPlantedSeedlings && organization.next_monitoring_date
-                        ? `Available on ${formatDate(organization.next_monitoring_date)}`
-                        : 'Monitoring starts two weeks after planting.'}</small>
-                    </span>
-                  )}
+                  <span className="org-monitoring-visit-date">
+                    <span className={`monitoring-schedule-status is-${schedule.status}`}>{monitoringScheduleLabel(schedule)}</span>
+                    <span>Scheduled {formatDate(organization.next_monitoring_date)}</span>
+                  </span>
+                  <span className="org-monitoring-organization-metrics">
+                    <span><strong>{organization.total_planted ?? organization.current_planted_points ?? 0}</strong>Planted</span>
+                    <span><strong>{organization.alive_seedlings ?? 0}</strong>Alive now</span>
+                    <span><strong>{organization.monitoring_record_count || 0}</strong>Visits</span>
+                    <span><strong>{organizationLatest?.survival_rate_pct == null ? '—' : `${organizationLatest.survival_rate_pct}%`}</strong>Survival</span>
+                  </span>
                   <span className="org-monitoring-organization-footer">
-                    {monitoringAvailable ? <span className="org-monitoring-organization-growth">{organizationLatest?.growth_snapshot?.label || growthStageLabel(organizationLatest?.growth_stage)}</span> : null}
-                    <OrganizationCardAction label={monitoringAvailable ? 'Record visit' : 'Locked'} locked={!monitoringAvailable} />
+                    <span className="org-monitoring-organization-growth">{organizationLatest?.growth_snapshot?.label || growthStageLabel(organizationLatest?.growth_stage)}</span>
+                    <OrganizationCardAction label="Record visit" />
                   </span>
                 </button>
               );
             })}
           </div>
-        ) : null}
+        </div>
       </PanelCard>
 
       <Modal
@@ -608,29 +632,9 @@ export default function OrganizationMonitoring() {
         </form>
       </Modal>
 
-      <PanelCard
-        panelKey="organization-history"
-        title="Monitoring History"
-        icon={<HistoryIcon />}
-        badge={overviewUnavailable ? '—' : scopedOrganizations.length}
-        className="org-monitoring-history-card"
-      >
-        {loading || siteContextLoading ? <p className="org-monitoring-muted">Loading organizations...</p> : null}
-        {!loading && !organizations.length ? <p className="org-monitoring-muted">No organizations to display yet.</p> : null}
-        <div className="org-monitoring-organization-list">
-          {scopedOrganizations.map((organization) => <button key={organization.id} type="button"
-            className="org-monitoring-organization-card is-history" onClick={() => setHistoryOrganization(organization)} aria-haspopup="dialog">
-            <OrganizationCardHeading name={organization.name} />
-            <span className="org-monitoring-organization-metrics">
-              <span><strong>{organization.monitoring_record_count || 0}</strong>Visits</span>
-              <span className="org-monitoring-last-visit"><strong>{organization.latest_record ? formatDate(organization.latest_record.monitored_at) : '—'}</strong>{organization.latest_record ? 'Last visit' : 'No visits yet'}</span>
-            </span>
-            <span className="org-monitoring-organization-footer"><OrganizationCardAction label="View history" /></span>
-          </button>)}
-        </div>
-      </PanelCard>
+      <SitesToMonitor key={requestedSiteId || 'all-sites'} organizations={organizations} requestedSiteId={requestedSiteId}
+        token={token} today={today} onRefresh={() => loadWorkspace({ quiet: true })} />
       </div>
-      {historyOrganization && (!requestedSiteId || String(historyOrganization.id) === String(followUpOrganizationId)) ? <OrganizationHistory key={historyOrganization.id} organization={historyOrganization} onChanged={() => loadWorkspace({ quiet: true })} onClose={() => setHistoryOrganization(null)} /> : null}
       {reportOpen && <RestorationReportDialog initialSelection={{ type: 'monitoring' }} onClose={() => setReportOpen(false)} />}
     </div>
   );

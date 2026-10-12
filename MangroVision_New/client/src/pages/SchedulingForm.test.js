@@ -8,7 +8,7 @@ import { scheduleContactFields } from '../utils/scheduleContact.js';
 import { manilaToday } from '../like/booking.js';
 
 let server, dom, root, createRoot, Scheduling, useAuthStore;
-let schedules, writes, requests, onWrite;
+let schedules, writes, requests, onWrite, tidePayload, forecastReads;
 const globals = new Map();
 const date = '2035-06-12';
 
@@ -17,7 +17,13 @@ before(async () => {
   for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
     navigator: dom.window.navigator, HTMLElement: dom.window.HTMLElement, Element: dom.window.Element,
     SVGElement: dom.window.SVGElement, Event: dom.window.Event, localStorage: dom.window.localStorage, sessionStorage: dom.window.sessionStorage,
-    IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window), fetch: globalThis.fetch,
+    ResizeObserver: class {
+      constructor(callback) { this.callback = callback; }
+      observe() { this.callback([{ contentRect: { width: 1000, height: 280 } }]); }
+      disconnect() {}
+    },
+    IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window), fetch: globalThis.fetch,
   })) {
     globals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -25,7 +31,8 @@ before(async () => {
   ({ createRoot } = await import('react-dom/client'));
   window.HTMLElement.prototype.scrollTo = () => {};
   server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null, ws: false },
-    cacheDir: 'node_modules/.vite-manual-scheduling-tests', optimizeDeps: { noDiscovery: true, include: [] } });
+    cacheDir: 'node_modules/.vite-manual-scheduling-tests', optimizeDeps: { noDiscovery: true, include: [] },
+  });
   ({ default: Scheduling } = await server.ssrLoadModule('/src/pages/Scheduling.jsx'));
   ({ useAuthStore } = await server.ssrLoadModule('/src/stores/authStore.js'));
 });
@@ -38,6 +45,7 @@ after(async () => {
 beforeEach(() => {
   root = createRoot(document.getElementById('root'));
   schedules = []; writes = []; requests = []; onWrite = null;
+  tidePayload = { available: false, message: 'Forecast unavailable.' }; forecastReads = 0;
   useAuthStore.setState({ token: 'test-cookie', isAuthenticated: true });
   globalThis.fetch = async (url, options = {}) => {
     if (options.body) {
@@ -47,7 +55,7 @@ beforeEach(() => {
     }
     if (String(url).includes('/planting-schedules')) return Response.json({ schedules, organizations: [], project_sites: [] });
     if (String(url).includes('/like-appointments')) return Response.json({ requests });
-    if (String(url).includes('/tides/forecast')) return Response.json({ available: false, message: 'Forecast unavailable.' });
+    if (String(url).includes('/tides/forecast')) { forecastReads += 1; return Response.json(tidePayload); }
     assert.fail(`Unexpected request: ${url}`);
   };
 });
@@ -80,9 +88,63 @@ async function fill(type) {
     startTime: '08:00', endTime: '09:30', expectedParticipants: '10', notes: 'Meet at the gate.' })) await change(name, value);
 }
 
+test('weekly overview stays visible while calendar tide entries open the correct hourly graph without refetching', async () => {
+  const today = manilaToday();
+  const start = Date.parse(`${today}T00:00:00+08:00`);
+  const tomorrow = manilaToday(new Date(start + 86400000));
+  tidePayload = { available: true, stale: false, series_available: true, fetched_at: Date.now() / 1000,
+    datum: 'MSL', datum_reference: 'test',
+    heights: Array.from({ length: 49 }, (_, hour) => ({ timestamp: start / 1000 + hour * 3600,
+      height_m: hour === 2 || hour === 29 ? 4 : 0 })),
+    extremes: [2, 14, 29, 42].map((hour) => ({ timestamp: start / 1000 + hour * 3600,
+      type: hour === 2 || hour === 29 ? 'High' : 'Low', height_m: hour === 2 || hour === 29 ? 4 : 0 })),
+  };
+  await render();
+  const weekly = document.querySelector('.schedule-tide-panel .schedule-tide-chart');
+  assert.ok(weekly.querySelector('.recharts-line-curve')?.getAttribute('d'));
+  assert.equal(document.querySelector('.schedule-day-picker'), null);
+  assert.equal(document.querySelector('.schedule-tide-times'), null);
+  assert.equal(document.querySelector('.schedule-planting-times'), null);
+  const tideButtons = [...document.querySelectorAll('.schedule-calendar-tide')];
+  assert.equal(tideButtons.length, 4);
+  assert.equal(forecastReads, 1);
+  const high = tideButtons.find((button) => button.querySelector('time').dateTime === new Date(start + 2 * 3600000).toISOString());
+  assert.match(high.querySelector('strong').textContent, /High tide/);
+  await act(async () => { high.focus(); high.click(); });
+  let modal = document.querySelector('.schedule-details-modal.is-tide');
+  assert.match(modal.querySelector('.modal-title').textContent, /High tide/);
+  assert.equal(modal.querySelector('.schedule-detail-when strong').textContent, '2:00 AM');
+  assert.match(modal.querySelector('.schedule-tide-day-chart').getAttribute('aria-label'), new RegExp(`hourly view for ${today}`));
+  assert.ok(modal.querySelector('.recharts-line-curve')?.getAttribute('d'));
+  assert.match(modal.querySelector('.schedule-tide-day-chart').textContent, /Time \(Philippine time\)/);
+  assert.match(modal.querySelector('.schedule-tide-day-chart').textContent, /High tide/);
+  assert.match(modal.querySelector('.schedule-tide-day-chart').textContent, /Low tide/);
+  assert.equal(forecastReads, 1);
+  await click('Close');
+  assert.equal(document.querySelector('.schedule-details-modal'), null);
+  assert.ok(document.activeElement === high, 'closing returns focus to the tide entry');
+  assert.ok(document.querySelector('.schedule-tide-panel .schedule-tide-chart') === weekly, 'the weekly graph stays mounted');
+  const low = tideButtons.find((button) => button.querySelector('time').dateTime === new Date(start + 42 * 3600000).toISOString());
+  assert.match(low.querySelector('strong').textContent, /Low tide/);
+  await act(async () => { low.focus(); low.click(); });
+  modal = document.querySelector('.schedule-details-modal.is-tide');
+  assert.match(modal.querySelector('.modal-title').textContent, /Low tide/);
+  assert.equal(modal.querySelector('.schedule-detail-when strong').textContent, '6:00 PM');
+  assert.match(modal.querySelector('.schedule-tide-day-chart').getAttribute('aria-label'), new RegExp(`hourly view for ${tomorrow}`));
+  assert.equal(forecastReads, 1);
+  await click('Close');
+  assert.ok(document.activeElement === low, 'closing returns focus to the second tide entry');
+  tidePayload = { ...tidePayload, stale: true };
+  await click('Refresh tides');
+  assert.equal(forecastReads, 2);
+  assert.match(document.querySelector('.schedule-tide-panel .schedule-message').textContent, /out of date/);
+  assert.ok(document.querySelector('.schedule-tide-panel .recharts-line-curve'));
+  assert.deepEqual(writes, []);
+});
+
 for (const [type, label] of [['field_visit', 'Field visit'], ['clean_up_drive', 'Clean-up drive'], ['tree_planting', 'Tree planting']]) {
   test(`manual ${type} requires website details and keeps its activity choice`, async () => {
-    await render(); await click('+ Add new schedule');
+    await render(); await click('+ Add schedule');
     assert.equal(document.querySelector('.modal-backdrop').parentElement, document.body);
     assert.equal(document.querySelector('[name="title"]'), null);
     assert.deepEqual([...document.querySelector('[name="appointmentType"]').options].map((option) => option.textContent),
@@ -108,7 +170,7 @@ for (const [type, label] of [['field_visit', 'Field visit'], ['clean_up_drive', 
 }
 
 test('manual errors stop missing, invalid and past booking details before saving', async () => {
-  await render(); await click('+ Add new schedule'); await submit();
+  await render(); await click('+ Add schedule'); await submit();
   assert.equal(writes.length, 0);
   await fill('field_visit');
   for (const [name, bad, good] of [['phone', 'abc1234567', '09123456789'], ['email', 'broken', 'head@example.org'],

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import Modal from './Modal';
 import { growthStageLabel } from '../utils/mangroveGrowth';
 import AutomaticGrowth from './AutomaticGrowth';
 import DeathLocationEditor from './DeathLocationEditor';
@@ -10,7 +9,7 @@ const dateLabel = (value) => new Date(value).toLocaleDateString(undefined, {
   timeZone: 'Asia/Manila', month: 'short', day: 'numeric', year: 'numeric',
 });
 
-export default function OrganizationHistory({ organization, onClose, onChanged }) {
+export default function OrganizationHistory({ organization, onChanged, onEditingChange, active = true, refreshKey = 0 }) {
   const [editing, setEditing] = useState(null);
   const [records, setRecords] = useState([]);
   const [beforeId, setBeforeId] = useState(null);
@@ -18,10 +17,17 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [historyRevision, setHistoryRevision] = useState(refreshKey);
   const loadedPage = useRef(null);
 
+  if (historyRevision !== refreshKey) {
+    setHistoryRevision(refreshKey);
+    setBeforeId(null);
+  }
+
   useEffect(() => {
-    const key = `${organization.id}:${beforeId}:${retry}`;
+    if (!active) return undefined;
+    const key = `${organization.id}:${beforeId}:${retry}:${refreshKey}`;
     if (loadedPage.current === key) return undefined;
     const controller = new AbortController();
     async function load() {
@@ -44,7 +50,7 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
     }
     void load();
     return () => controller.abort();
-  }, [organization.id, beforeId, retry]);
+  }, [organization.id, beforeId, retry, active, refreshKey]);
 
   useEffect(() => {
     const refresh = () => {
@@ -55,13 +61,12 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
     return () => window.removeEventListener('mv:data-changed', refresh);
   }, []);
 
-  if (editing) return createPortal(<DeathLocationEditor key={editing.id} record={editing} onClose={() => setEditing(null)} onSaved={(updated) => {
+  const closeEditor = () => { setEditing(null); onEditingChange?.(false); };
+  if (editing) return createPortal(<DeathLocationEditor key={editing.id} record={editing} onClose={closeEditor} onSaved={(updated) => {
     setRecords((current) => current.map((item) => item.id === updated.id ? updated : item));
-    setEditing(null); onChanged?.();
+    closeEditor(); onChanged?.();
   }} />, document.body);
-  return createPortal(<Modal open title={<>Monitoring history<span className="org-monitoring-history-organization">{organization.name}</span></>} className="modal-card-wide org-monitoring-history-modal"
-    variant="info" confirmLabel="Close history" cancelLabel={null} onConfirm={onClose} onCancel={onClose}>
-    <div className="org-monitoring-history-visits">
+  return <div className="org-monitoring-history-visits org-monitoring-history-inline" aria-busy={loading}>
       {!loading && !error && !records.length ? <p className="org-monitoring-muted">No monitoring visits recorded for this organization yet.</p> : null}
       {records.map((record) => <article key={record.id} className="org-monitoring-record">
         <div className="org-monitoring-record-head">
@@ -87,13 +92,12 @@ export default function OrganizationHistory({ organization, onClose, onChanged }
         </dl>
         {record.location_review_required ? <p className="org-monitoring-record-location-review">Location matching needs review: this older visit has inconsistent death counts.</p> : <div className="org-monitoring-record-locations">
           <p><strong>{record.reported_dead_count ?? 0}</strong> reported dead · <strong>{record.located_dead_count ?? 0}</strong> located · <strong>{record.unlocated_dead_count ?? 0}</strong> still to locate</p>
-          {record.reported_dead_count > 0 ? <button className="btn btn-secondary org-monitoring-location-action" type="button" onClick={() => setEditing(record)}>{record.unlocated_dead_count > 0 ? 'Identify remaining locations' : 'Review death locations'}</button> : null}
+          {record.reported_dead_count > 0 ? <button className="btn btn-secondary org-monitoring-location-action" type="button" onClick={() => { setEditing(record); onEditingChange?.(true); }}>{record.unlocated_dead_count > 0 ? 'Identify remaining locations' : 'Review death locations'}</button> : null}
         </div>}
         <footer className="org-monitoring-record-footer"><small>Recorded by {record.inspector_name || 'LGU staff'}</small></footer>
       </article>)}
       {loading ? <p role="status">Loading visit history...</p> : null}
       {error ? <div className="org-monitoring-message is-error" role="alert">{error} <button className="btn btn-secondary btn-sm" type="button" onClick={() => setRetry((value) => value + 1)}>Try again</button></div> : null}
       {!loading && !error && nextId !== null ? <button type="button" className="org-monitoring-load-older" onClick={() => setBeforeId(nextId)}>Load older visits</button> : null}
-    </div>
-  </Modal>, document.body);
+  </div>;
 }

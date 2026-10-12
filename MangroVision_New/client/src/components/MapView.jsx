@@ -10,7 +10,7 @@ import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
 import { getMapPointStatus } from '../utils/mapPointStats';
 import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSitePointCounts } from '../utils/projectSiteInfo';
-import { POINT_STATUS_COLORS as STATUS_COLORS, pointStatusLabel } from '../utils/pointStatus';
+import { POINT_STATUS_COLORS as STATUS_COLORS, PLANNED_SPECIES_COLORS as SPECIES_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
 import { connectMapLayerVisibility } from '../utils/mapLayerVisibility';
@@ -38,11 +38,6 @@ L.Icon.Default.mergeOptions({
 // the generic 'planned' green when the analysis didn't record a species
 // (legacy data). Status colors above still take precedence for any point
 // that has already moved past 'planned'.
-const SPECIES_COLORS = {
-  rhizophora: '#db2777',  // magenta/rose-600
-  bungalon: '#16a34a',    // green-600 — green
-};
-
 const SPECIES_LABELS = {
   rhizophora: 'Rhizophora — 2 m spacing',
   bungalon: 'Bungalon — 1 m spacing',

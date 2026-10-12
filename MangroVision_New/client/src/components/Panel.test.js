@@ -4,6 +4,7 @@ import { act, createElement, useState } from 'react';
 import { MemoryRouter, Route, useNavigate } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
+import { manilaDateKey } from '../utils/monitoringSchedule.js';
 
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore, originalStartProcess;
 let PlantingMapWorkspace, Sidebar, MapView;
@@ -26,7 +27,7 @@ before(async () => {
       if (options?.method === 'POST') mutations.push({ path, body: options.body instanceof FormData ? Object.fromEntries(options.body) : JSON.parse(options.body || '{}') });
       if (responses.has(path)) {
         const value = responses.get(path);
-        return typeof value === 'function' ? value(options) : value instanceof Response ? value : Response.json(value);
+        return typeof value === 'function' ? value(options, new URL(input, window.location.origin)) : value instanceof Response ? value : Response.json(value);
       }
       if (path === '/api/planting-schedules') return Response.json({ schedules: [] });
       if (['/api/planters/', '/api/assignments/'].includes(path)) return Response.json([]);
@@ -75,7 +76,7 @@ after(async () => {
 
 beforeEach(() => {
   requests = [];
-  responses = new Map([['/api/analyses/', []]]);
+  responses = new Map([['/api/analyses/', []], ['/api/project-sites', { features: [] }], ['/api/planters/map-points', []]]);
   mutations = [];
   useMapStore.getState().resetWorkspaceData();
   useMapStore.setState({ stats: { analyses: [], points: [], total_analyses: 0 } });
@@ -691,27 +692,48 @@ test('history shows an empty filtered state, resets filters and handles a broken
   assert.equal(document.querySelector('.analysis-history-open').disabled, false);
 });
 
-test('inspect-plants-due links filter available monitoring visits and can show upcoming visits again', async () => {
+test('monitoring tabs separate today and overdue visits, hide locked organizations and support keyboard navigation', async () => {
+  const today = manilaDateKey();
+  const yesterday = manilaDateKey(new Date(Date.now() - 86_400_000));
   responses.set('/api/monitoring/organizations', { organizations: [
-    { id: 1, name: 'Due organization', total_planted: 100, monitoring_available: true },
-    { id: 2, name: 'Upcoming organization', total_planted: 100, monitoring_available: false },
+    { id: 1, name: 'Due organization', total_planted: 100, monitoring_available: true, next_monitoring_date: today },
+    { id: 2, name: 'Upcoming organization', total_planted: 100, monitoring_available: false, next_monitoring_date: '2099-10-20' },
+    { id: 3, name: 'Late organization', total_planted: 100, monitoring_available: true, next_monitoring_date: yesterday },
+    { id: 4, name: 'Empty organization', total_planted: 0, monitoring_available: false },
   ] });
-  await render(pages.get('OrganizationMonitoring'), '/page?filter=due');
+  await render(pages.get('OrganizationMonitoring'));
   const list = () => document.querySelector('.org-monitoring-organization-list');
   assert.match(list().textContent, /Due organization/);
-  assert.doesNotMatch(list().textContent, /Upcoming organization/);
-  const filter = document.querySelector('.monitoring-due-filter input');
-  assert.equal(filter.checked, true);
-  await click(filter);
-  assert.match(list().textContent, /Upcoming organization/);
-  assert.equal(list().querySelectorAll('button:disabled').length, 1);
+  assert.doesNotMatch(list().textContent, /Upcoming organization|Late organization|Empty organization|Locked/);
+  assert.equal(document.getElementById('monitoring-tab-today').getAttribute('aria-selected'), 'true');
+  assert.equal(document.querySelector('.monitoring-due-filter'), null);
+  await click(document.getElementById('monitoring-tab-overdue'));
+  assert.match(list().textContent, /Late organization/);
+  assert.match(list().textContent, /1 day overdue/);
+  assert.doesNotMatch(list().textContent, /Due organization|Upcoming organization/);
+  await act(async () => document.getElementById('monitoring-tab-overdue').dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })));
+  assert.equal(document.getElementById('monitoring-tab-today').getAttribute('aria-selected'), 'true');
+  assert.equal(document.activeElement.id, 'monitoring-tab-today');
   assert.equal(mutations.length, 0);
 });
 
-test('site follow-up links show the responsible organization and retain monitoring locks', async () => {
+test('existing dashboard due links open overdue work when no visits are due today', async () => {
   responses.set('/api/monitoring/organizations', { organizations: [
-    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true },
-    { id: 2, name: 'Site owner', total_planted: 100, monitoring_available: false },
+    { id: 1, name: 'Overdue owner', total_planted: 100, monitoring_available: true, next_monitoring_date: manilaDateKey(new Date(Date.now() - 86_400_000)) },
+  ] });
+  await render(pages.get('OrganizationMonitoring'), '/page?filter=due');
+  assert.equal(document.getElementById('monitoring-tab-overdue').getAttribute('aria-selected'), 'true');
+  assert.match(document.querySelector('#monitoring-visit-queue').textContent, /Overdue owner/);
+});
+
+test('site follow-up links show only the requested site and exclude its upcoming owner from visit tabs', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true, next_monitoring_date: manilaDateKey() },
+    { id: 2, name: 'Site owner', total_planted: 100, monitoring_available: false, next_monitoring_date: '2099-10-20' },
+  ] });
+  responses.set('/api/project-sites', { features: [
+    { id: 12, properties: { name: 'North planting site', organization_id: 2, organization_name: 'Site owner' } },
+    { id: 13, properties: { name: 'Other site', organization_id: 1, organization_name: 'Other organization' } },
   ] });
   responses.set('/api/project-sites/12', { type: 'Feature', id: 12,
     properties: { name: 'North planting site', organization_id: 2, organization_name: 'Site owner' } });
@@ -720,42 +742,245 @@ test('site follow-up links show the responsible organization and retain monitori
   assert.match(context.textContent, /Follow-up for North planting site/);
   assert.match(context.textContent, /Monitoring visits cover all of its planting sites/);
   const list = () => document.querySelector('.org-monitoring-organization-list');
-  assert.match(list().textContent, /Site owner/);
-  assert.doesNotMatch(list().textContent, /Other organization/);
-  assert.equal(list().querySelector('button').disabled, true);
+  assert.doesNotMatch(list().textContent, /Site owner|Other organization/);
+  assert.match(document.querySelector('#monitoring-visit-queue').textContent, /No monitoring visits due today/);
   assert.equal(context.querySelector('a').getAttribute('href'), '/map?project_site_id=12&focus=site_points');
-  const history = () => document.querySelector('.org-monitoring-history-card');
-  await click(history().querySelector('.panel-card-header'));
-  assert.match(history().textContent, /Site owner/);
-  assert.doesNotMatch(history().textContent, /Other organization/);
-  await click(document.querySelector('.monitoring-due-filter input'));
-  assert.doesNotMatch(list().textContent, /Site owner/);
-  assert.match(document.querySelector('.org-monitoring-content').textContent, /No organizations are due/);
-  await click(document.querySelector('.monitoring-due-filter input'));
+  const sites = () => document.querySelector('.monitoring-sites-section');
+  assert.match(sites().textContent, /Site owner|North planting site/);
+  assert.doesNotMatch(sites().textContent, /Other organization|Other site/);
+  assert.equal(sites().querySelector('.panel-card-header'), null);
+  assert.equal(sites().closest('.modal-backdrop'), null);
   await click([...context.querySelectorAll('button')].find((button) => button.textContent === 'Show all organizations'));
   assert.equal(document.querySelector('.monitoring-site-context'), null);
   assert.match(list().textContent, /Other organization/);
-  assert.match(list().textContent, /Site owner/);
-  assert.match(history().textContent, /Other organization/);
+  assert.doesNotMatch(list().textContent, /Site owner/);
+  assert.match(sites().textContent, /Other organization/);
   assert.equal(mutations.length, 0);
 });
 
 test('failed site lookups never show unrelated organizations and can be retried', async () => {
   responses.set('/api/monitoring/organizations', { organizations: [
-    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true },
+    { id: 1, name: 'Other organization', total_planted: 100, monitoring_available: true, next_monitoring_date: manilaDateKey() },
   ] });
   responses.set('/api/project-sites/12', new Response(JSON.stringify({ detail: 'Project site not found.' }), { status: 404 }));
   await render(pages.get('OrganizationMonitoring'), '/page?project_site_id=12');
   assert.match(document.querySelector('.monitoring-site-context [role="alert"]').textContent, /Project site not found/);
   assert.doesNotMatch(document.querySelector('.org-monitoring-organization-list').textContent, /Other organization/);
   assert.ok([...document.querySelectorAll('.org-monitoring-kpis strong')].every((element) => element.textContent === '—'));
-  await click(document.querySelector('.org-monitoring-history-card .panel-card-header'));
-  assert.doesNotMatch(document.querySelector('.org-monitoring-history-card').textContent, /Other organization/);
+  assert.doesNotMatch(document.querySelector('.monitoring-sites-section').textContent, /Other organization/);
   responses.set('/api/project-sites/12', { type: 'Feature', id: 12,
     properties: { name: 'Restored site', organization_id: 1, organization_name: 'Other organization' } });
   await click([...document.querySelectorAll('.monitoring-site-context button')].find((button) => button.textContent === 'Retry'));
   assert.match(document.querySelector('.monitoring-site-context').textContent, /Restored site/);
   assert.match(document.querySelector('.org-monitoring-organization-list').textContent, /Other organization/);
+  assert.equal(mutations.length, 0);
+});
+
+test('Sites to Monitor shows each site’s map area, never requests analysis pictures, and keeps five sites per page', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Site owner', total_planted: 100, alive_seedlings: 90, monitoring_available: true, next_monitoring_date: manilaDateKey() },
+  ] });
+  const sites = Array.from({ length: 12 }, (_, index) => {
+    const lon = 122.624 + index * 0.00025;
+    return { id: index + 1,
+      properties: { name: `Planting area ${index + 1}`, organization_id: 1, organization_name: 'Site owner', point_count: 20 },
+      geometry: index === 1 ? null : { type: 'Polygon', coordinates: [[
+        [lon, 10.780], [lon + 0.00015, 10.780], [lon + 0.00015, 10.78015], [lon, 10.78015], [lon, 10.780],
+      ]] },
+    };
+  });
+  responses.set('/api/project-sites', { features: sites });
+  responses.set('/api/planters/map-points', [
+    { id: 11, source_project_site_id: 1, latitude: 10.78004, longitude: 122.62403, species: 'rhizophora' },
+    { id: 12, source_project_site_id: 1, latitude: 10.78007, longitude: 122.62405, planting_status: 'planted' },
+    { id: 13, source_site_id: 1, latitude: 10.78009, longitude: 122.62407, death_at: '2026-10-12' },
+    { id: 14, source_project_site_id: 1, latitude: 10.78011, longitude: 122.62409, eroded_unavailable: true },
+    { id: 15, source_project_site_id: 1, latitude: 10.78012, longitude: 122.62411, assignment_status: 'pending' },
+    { id: '11', source_project_site_id: '1', latitude: 10.78004, longitude: 122.62403 },
+    { id: 16, source_project_site_id: 1, latitude: 10.78007, longitude: 122.62405, deleted_at: '2026-10-12' },
+    { id: 17, source_project_site_id: 6, source_organization_id: 1, latitude: 10.78007, longitude: 122.6253, planting_status: 'planted' },
+    { id: 18, source_organization_id: 1, latitude: 10.78007, longitude: 122.62405 },
+  ]);
+  responses.set('/api/analyses/', [{ id: 50, project_site_id: 1, analyzed_at: '2026-10-12', result_preview_url: '/area-one.jpg' },
+    { id: 51, project_site_id: 6, analyzed_at: '2026-10-12', result_preview_url: '/area-six.jpg' }]);
+  await render(pages.get('OrganizationMonitoring'));
+  const section = () => document.querySelector('.monitoring-sites-section');
+  const rows = () => [...section().querySelectorAll('.monitoring-site-row')];
+  const pagination = () => section().querySelector('.monitoring-sites-pagination');
+  const next = () => [...pagination().querySelectorAll('button')].find((button) => button.textContent === 'Next');
+  const previous = () => [...pagination().querySelectorAll('button')].find((button) => button.textContent === 'Previous');
+  assert.equal(rows().length, 5);
+  const firstTile = rows()[0].querySelector('img').getAttribute('src');
+  assert.match(firstTile, /^https:\/\/mt\d\.google\.com\/vt\//);
+  assert.match(rows()[0].querySelector('[data-map-layer="orthophoto"]').getAttribute('src'), /^\/tiles\/FINAL\//);
+  assert.ok(rows()[0].querySelector('.monitoring-site-map-outline path').getAttribute('d'));
+  const pointDots = () => [...rows()[0].querySelectorAll('.monitoring-site-map-point')];
+  assert.deepEqual(pointDots().map((dot) => dot.getAttribute('data-point-id')), ['11', '12', '13', '14', '15']);
+  assert.deepEqual(pointDots().map((dot) => dot.getAttribute('fill')), ['#db2777', '#eab308', '#7f1d1d', '#f97316', '#2563eb']);
+  assert.match(rows()[0].querySelector('[role="img"]').getAttribute('aria-label'), /Planting area 1.*boundary outlined/);
+  assert.match(rows()[0].querySelector('[role="img"]').getAttribute('aria-label'), /5 planting points/);
+  assert.equal(requests.filter((path) => path === '/api/planters/map-points').length, 1);
+  assert.equal(requests.includes('/api/analyses/'), false);
+  assert.equal(rows()[0].querySelector('.monitoring-site-open').getAttribute('aria-label'), 'View site Planting area 1');
+  assert.equal(rows()[0].querySelector('.monitoring-site-history-button').textContent, '');
+  assert.equal(rows()[0].querySelector('a'), null);
+  assert.match(rows()[1].textContent, /Site boundary unavailable/);
+  assert.equal(previous().disabled, true);
+  assert.match(pagination().textContent, /Showing 1–5 of 12 sites/);
+  await click(next());
+  assert.equal(rows().length, 5);
+  assert.equal(rows()[0].querySelector('h3').textContent, 'Planting area 6');
+  assert.notEqual(rows()[0].querySelector('img').getAttribute('src'), firstTile);
+  assert.deepEqual(pointDots().map((dot) => dot.getAttribute('data-point-id')), ['17']);
+  assert.equal(requests.filter((path) => path === '/api/planters/map-points').length, 1);
+  const savedSection = section(), savedRow = rows()[0], savedTile = rows()[0].querySelector('img');
+  const readsBeforeReturn = requests.length;
+  await click(document.querySelector('[data-nav="away"]'));
+  await click(document.querySelector('[data-nav="back"]'));
+  assert.equal(section(), savedSection);
+  assert.equal(rows()[0], savedRow);
+  assert.equal(rows()[0].querySelector('img'), savedTile);
+  assert.match(pagination().textContent, /Page 2 of 3/);
+  assert.equal(requests.length, readsBeforeReturn);
+  assert.doesNotMatch(section().textContent, /Loading monitoring sites|Refreshing sites/);
+  await click(next());
+  assert.equal(rows().length, 2);
+  assert.equal(next().disabled, true);
+  assert.match(pagination().textContent, /Page 3 of 3/);
+  await click(previous());
+  assert.equal(rows()[0].querySelector('h3').textContent, 'Planting area 6');
+  await act(async () => rows()[0].querySelectorAll('img').forEach((tile) => tile.dispatchEvent(new window.Event('error'))));
+  assert.match(rows()[0].textContent, /Map imagery unavailable/);
+  assert.ok(rows()[0].querySelector('.monitoring-site-map-outline path'));
+  assert.ok(rows()[0].querySelector('.monitoring-site-open'));
+  await click(section().querySelector('.monitoring-sites-header button'));
+  assert.ok(rows()[0].querySelector('img'));
+  assert.doesNotMatch(rows()[0].textContent, /Map imagery unavailable/);
+  assert.equal(requests.includes('/api/analyses/'), false);
+  // If sites disappear while this page is open, the remaining last page stays reachable.
+  responses.set('/api/project-sites', { features: sites.slice(0, 3) });
+  await act(async () => window.dispatchEvent(new Event('mv:data-changed')));
+  await settle();
+  assert.equal(rows().length, 3);
+  assert.match(pagination().textContent, /Page 1 of 1/);
+  assert.equal(next().disabled, true);
+  assert.equal(previous().disabled, true);
+  assert.equal(mutations.length, 0);
+});
+
+test('Sites to Monitor keeps area previews available when points fail, and Refresh restores the dots', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [] });
+  responses.set('/api/project-sites', { features: [{ id: 1, properties: { name: 'North site' },
+    geometry: { type: 'Polygon', coordinates: [[[122.624, 10.780], [122.62415, 10.780],
+      [122.62415, 10.78015], [122.624, 10.78015], [122.624, 10.780]]] } }] });
+  responses.set('/api/planters/map-points', () => Response.json({}, { status: 503 }));
+  await render(pages.get('OrganizationMonitoring'));
+  const section = () => document.querySelector('.monitoring-sites-section');
+  assert.match(section().querySelector('[role="alert"]').textContent, /Could not load planting points/);
+  assert.ok(section().querySelector('.monitoring-site-map-outline path'));
+  assert.equal(section().querySelectorAll('.monitoring-site-map-point').length, 0);
+  responses.set('/api/planters/map-points', [{ id: 98, source_project_site_id: 1, latitude: 10.78007, longitude: 122.62405, planting_status: 'planted' }]);
+  await click(section().querySelector('.monitoring-sites-header button'));
+  assert.equal(section().querySelector('[role="alert"]'), null);
+  assert.equal(section().querySelector('.monitoring-site-map-point').getAttribute('data-point-id'), '98');
+  assert.equal(mutations.length, 0);
+});
+
+test('site selection uses the monitoring modal layout and switches to cached history without changing the list', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'North organization', total_planted: 100, alive_seedlings: 90, monitoring_record_count: 1, monitoring_available: true, next_monitoring_date: manilaDateKey() },
+    { id: 2, name: 'South organization', total_planted: 200, alive_seedlings: 150, monitoring_record_count: 1, monitoring_available: true, next_monitoring_date: manilaDateKey() },
+  ] });
+  const geometry = { type: 'Polygon', coordinates: [[[122.624, 10.780], [122.62415, 10.780],
+    [122.62415, 10.78015], [122.624, 10.78015], [122.624, 10.780]]] };
+  responses.set('/api/project-sites', { features: [
+    { id: 1, geometry, properties: { name: 'North area', organization_id: 1, organization_name: 'North organization',
+      notes: 'Enter from the north path.', centroid_lat: 10.78007, centroid_lon: 122.62407 } },
+    { id: 2, geometry, properties: { name: 'South area', organization_id: 2, organization_name: 'South organization' } },
+  ] });
+  responses.set('/api/planters/map-points', [{ id: 98, source_project_site_id: 1, latitude: 10.78007, longitude: 122.62405, planting_status: 'planted' }]);
+  const historyOwners = [];
+  responses.set('/api/monitoring/organization-records', (_options, url) => {
+    const owner = Number(url.searchParams.get('organization_id'));
+    historyOwners.push(owner);
+    return Response.json({ records: [{ id: owner * 100, organization_id: owner, monitored_at: '2026-10-09',
+      alive_count: 90, dead_count: 10, new_dead_count: 0, survival_rate_pct: 90, health_status: 'good',
+      actions_taken: `Visit actions for organization ${owner}`, reported_dead_count: owner === 2 ? 1 : 0,
+      located_dead_count: 0, unlocated_dead_count: owner === 2 ? 1 : 0, inspector_name: 'LGU officer' }], next_before_id: null });
+  });
+  responses.set('/api/monitoring/organizations/2/planting-locations', { points: [] });
+  await render(pages.get('OrganizationMonitoring'));
+  const section = () => document.querySelector('.monitoring-sites-section');
+  const row = (id) => section().querySelector(`[data-site-id="${id}"]`);
+  await click(row(1).querySelector('.monitoring-site-open'));
+  const dialog = () => document.querySelector('.monitoring-site-modal');
+  const detail = () => dialog().querySelector('.monitoring-site-details');
+  const info = () => detail().querySelector('.monitoring-site-detail-content');
+  const history = () => detail().querySelector('.monitoring-site-history');
+  const clock = () => detail().querySelector('.monitoring-site-detail-actions .monitoring-site-history-button');
+  assert.equal(document.getElementById('planting-map-route'), null);
+  assert.equal(dialog().getAttribute('role'), 'dialog');
+  assert.equal(dialog().getAttribute('aria-modal'), 'true');
+  assert.equal(dialog().classList.contains('org-monitoring-visit-modal'), true);
+  assert.equal(dialog().closest('.modal-backdrop').hidden, false);
+  assert.equal(document.getElementById(dialog().getAttribute('aria-labelledby')).textContent, 'Site details');
+  assert.equal(section().contains(dialog()), false);
+  assert.equal(section().querySelector('.monitoring-sites-list').hidden, false);
+  assert.equal(section().querySelectorAll('.monitoring-site-row').length, 2);
+  assert.equal(info().hidden, false);
+  assert.match(info().textContent, /Enter from the north path/);
+  assert.match(info().textContent, /10.780070° N, 122.624070° E/);
+  assert.equal(info().querySelector('.monitoring-site-map-large svg').getAttribute('viewBox'), '0 0 800 450');
+  assert.equal(info().querySelectorAll('.monitoring-site-map-point').length, 1);
+  assert.deepEqual(historyOwners, []);
+  const savedMap = info().querySelector('.monitoring-site-map-large');
+  await click(clock());
+  assert.equal(info().hidden, true);
+  assert.equal(history().hidden, false);
+  assert.match(history().textContent, /Visit actions for organization 1/);
+  assert.equal(dialog().querySelector('.modal-title').textContent, 'Monitoring history');
+  assert.equal(document.querySelector('.org-monitoring-history-modal'), null);
+  assert.deepEqual(historyOwners, [1]);
+  await click(clock());
+  assert.equal(info().hidden, false);
+  assert.equal(history().hidden, true);
+  assert.equal(info().querySelector('.monitoring-site-map-large'), savedMap);
+  await click(clock());
+  assert.deepEqual(historyOwners, [1]);
+  const savedHistory = history(), readsBeforeReturn = requests.length;
+  await click(document.querySelector('[data-nav="away"]'));
+  await click(document.querySelector('[data-nav="back"]'));
+  assert.equal(history(), savedHistory);
+  assert.equal(history().hidden, false);
+  assert.match(history().textContent, /Visit actions for organization 1/);
+  assert.equal(requests.length, readsBeforeReturn);
+  await click(dialog().querySelector('.modal-action-btn'));
+  assert.equal(section().querySelector('.monitoring-sites-list').hidden, false);
+  assert.equal(dialog().closest('.modal-backdrop').hidden, true);
+  await click(row(1).querySelector('.monitoring-site-history-button'));
+  assert.equal(dialog().closest('.modal-backdrop').hidden, false);
+  assert.deepEqual(historyOwners, [1]);
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await settle();
+  assert.equal(dialog().closest('.modal-backdrop').hidden, true);
+  assert.equal(document.activeElement, row(1).querySelector('.monitoring-site-open'));
+  await click(row(2).querySelector('.monitoring-site-history-button'));
+  assert.match(detail().querySelector('h3').textContent, /South area/);
+  assert.deepEqual(historyOwners, [1, 2]);
+  assert.match(history().textContent, /Visit actions for organization 2/);
+  assert.doesNotMatch(history().textContent, /Visit actions for organization 1/);
+  await click(history().querySelector('.org-monitoring-location-action'));
+  assert.equal(dialog().closest('.modal-backdrop').hidden, true);
+  const locationEditor = [...document.querySelectorAll('.modal-card')]
+    .find((card) => card.querySelector('.modal-title')?.textContent === 'Identify or correct death locations');
+  assert.ok(locationEditor);
+  assert.equal(locationEditor.closest('.modal-backdrop').hidden, false);
+  const titles = [...document.querySelectorAll('.modal-title')].map((title) => title.id);
+  assert.equal(new Set(titles).size, titles.length);
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await settle();
+  assert.equal(dialog().closest('.modal-backdrop').hidden, false);
+  assert.equal(dialog().querySelector('.modal-title').textContent, 'Monitoring history');
   assert.equal(mutations.length, 0);
 });
 
