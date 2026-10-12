@@ -130,10 +130,30 @@ test('field access needs only a planter code, without recovery or registration',
   await submit();
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /\/planter-auth\/login$/);
-  assert.equal(calls[0].body.access_code, 'K7MP-4R9X');
+  assert.equal(calls[0].body.access_code, 'K7MP4R9X');
   assert.equal(calls[0].body.password, undefined);
   assert.equal(calls[0].body.username, undefined);
-  assert.deepEqual(calls[0].body, { access_code: 'K7MP-4R9X' });
+  assert.deepEqual(calls[0].body, { access_code: 'K7MP4R9X' });
+});
+
+test('planter sign-in places code errors beside the input and clears service errors when editing', async () => {
+  let attempt = 0;
+  globalThis.fetch = async () => ++attempt === 1
+    ? Response.json({ detail: [{ loc: ['body', 'device_key'], type: 'missing', msg: 'Field required' }] }, { status: 422 })
+    : Response.json({ detail: [{ loc: ['body', 'access_code'], type: 'credential_error', msg: 'Check this code with your group leader.' }] }, { status: 401 });
+  await act(async () => root.render(createElement(AuthScreen)));
+  await change('access_code', 'k7mp–4r9x');
+  await submit();
+  assert.match(document.querySelector('[role="alert"]').textContent, /temporarily unavailable/);
+  assert.equal(document.querySelector('[name="access_code"]').getAttribute('aria-invalid'), 'false');
+  await change('access_code', 'ABCD-EFGH');
+  assert.equal(document.querySelector('.field-error'), null);
+  await submit();
+  await settle();
+  assert.equal(document.activeElement.name, 'access_code');
+  assert.match(document.querySelector('.form-field-error').textContent, /group leader/);
+  assert.equal(document.querySelector('.field-error'), null);
+  assert.equal(document.querySelector('.form-error-summary'), null);
 });
 
 test('staff create individual codes with participant count and no credentials', async () => {

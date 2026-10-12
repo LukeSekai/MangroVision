@@ -25,7 +25,7 @@ class CodeError(ValueError):
 
 
 def normalize_code(value):
-    code = re.sub(r'[\s-]', '', str(value or '')).upper()
+    code = re.sub(r'[\s\-\u2010-\u2015\u2212\ufe63\uff0d]', '', str(value or '')).upper()
     if len(code) != 8 or any(char not in ALPHABET for char in code):
         raise CodeError('Enter your eight-character planter code, for example K7MP-4R9X.')
     return code

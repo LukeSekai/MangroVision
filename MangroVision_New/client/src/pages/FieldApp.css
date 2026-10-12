@@ -606,10 +606,11 @@
   inset: 0;
   background: linear-gradient(160deg, #0f172a 0%, #065f46 100%);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   padding: 16px;
   color: #0f172a;
+  overflow-y: auto;
 }
 
 .field-auth-card {
@@ -618,6 +619,7 @@
   border-radius: 16px;
   padding: 22px 22px 26px;
   box-shadow: 0 20px 50px rgba(2, 6, 23, 0.35);
+  margin-block: auto;
 }
 
 .field-auth-title {
@@ -683,6 +685,16 @@
   margin: 0;
   padding: 0;
   min-width: 0;
+}
+
+.field-auth-card .field-label-help {
+  color: #64748b;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.field-auth-fields .field-label-help {
+  margin: 0;
 }
 
 .field-label {

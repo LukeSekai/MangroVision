@@ -14,6 +14,18 @@ CLIENT = ROOT / 'client'
 STATE = ROOT / '.dev-server' / 'testing.json'
 
 
+def verify_planter_login_contract(backend):
+    """Readiness alone cannot detect an old, still-running login implementation."""
+    with urlopen(f'{backend}/openapi.json', timeout=30) as response:
+        document = json.load(response)
+    operation = document.get('paths', {}).get('/api/planter-auth/login', {}).get('post', {})
+    schema = operation.get('requestBody', {}).get('content', {}).get('application/json', {}).get('schema', {})
+    if '$ref' in schema:
+        schema = document.get('components', {}).get('schemas', {}).get(schema['$ref'].rsplit('/', 1)[-1], {})
+    if set(schema.get('required', [])) != {'access_code'} or 'access_code' not in schema.get('properties', {}):
+        raise RuntimeError('The running backend does not support code-only planter sign-in. Restart start_testing.py with the updated code before deploying.')
+
+
 def main():
     if not STATE.is_file():
         raise RuntimeError('Start start_testing.py first; no running tunnel is recorded.')
@@ -24,6 +36,7 @@ def main():
     with urlopen(f'{backend}/api/health/ready', timeout=30) as response:
         if json.load(response).get('status') != 'ready':
             raise RuntimeError('The laptop API, database, and storage must be ready before deployment.')
+    verify_planter_login_contract(backend)
     local_cli = ROOT.parent / 'tmp' / 'vercel-cli' / 'node_modules' / 'vercel' / 'dist' / 'vc.js'
     if local_cli.is_file() and shutil.which('node'):
         command = [shutil.which('node'), str(local_cli)]
