@@ -119,6 +119,11 @@
 .analysis-history-empty { padding: 36px 16px; text-align: center; border: 1px dashed var(--border-medium); border-radius: var(--radius-lg); }
 .analysis-history-empty strong { display: block; color: var(--text-primary); font-size: 0.9rem; }
 .analysis-history-empty p { margin-top: 6px; color: var(--text-muted); font-size: 0.8rem; }
+.analysis-history-pagination { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 12px 0; border-top: 1px solid var(--border-light); }
+.analysis-history-pagination p { margin: 0; color: var(--text-secondary); font-size: 0.75rem; }
+.analysis-history-pagination > div { display: flex; align-items: center; gap: 10px; }
+.analysis-history-pagination span { white-space: nowrap; color: var(--text-secondary); font-size: 0.75rem; }
+.analysis-history-pagination .btn { min-height: 40px; }
 .analysis-history-modal .modal-actions { flex-shrink: 0; padding: 14px 24px; }
 .analysis-history-modal .modal-actions .modal-action-btn { flex: 0 0 auto; margin-left: auto; }
 
@@ -145,4 +150,6 @@
   .analysis-history-metrics { gap: 8px 6px; margin-top: 10px; }
   .analysis-history-metrics strong { font-size: 0.75rem; }
   .analysis-history-modal .modal-actions { padding: 12px 14px; }
+  .analysis-history-pagination p { width: 100%; text-align: center; }
+  .analysis-history-pagination > div { width: 100%; justify-content: space-between; }
 }

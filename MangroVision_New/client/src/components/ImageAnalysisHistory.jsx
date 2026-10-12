@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import './ImageAnalysisHistory.css';
@@ -8,6 +8,7 @@ import {
 } from '../utils/analysisHistory.js';
 
 const API = import.meta.env.VITE_API_BASE || '';
+const PAGE_SIZE = 5;
 
 function ResultThumbnail({ analysis }) {
   const [failed, setFailed] = useState(false);
@@ -36,6 +37,8 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [refresh, setRefresh] = useState(0);
+  const [page, setPage] = useState(1);
+  const listRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
@@ -63,10 +66,26 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
 
   const saved = entries ?? analyses;
   const filtered = filterAnalysisHistory(saved, filters);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  if (page !== currentPage) setPage(currentPage);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageEntries = filtered.slice(start, start + PAGE_SIZE);
   const months = analysisDateOptions(saved);
   const hasFilters = ['search', 'date'].some(key => filters[key] !== DEFAULT_HISTORY_FILTERS[key]);
-  const updateFilter = (key, value) => setFilters(current => ({ ...current, [key]: value }));
+  const updateFilter = (key, value) => {
+    setFilters(current => ({ ...current, [key]: value }));
+    setPage(1);
+  };
+  const resetFilters = () => {
+    setFilters(DEFAULT_HISTORY_FILTERS);
+    setPage(1);
+  };
   const options = values => values.map(([value, label]) => <option key={value} value={value}>{label}</option>);
+
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = 0;
+  }, [currentPage, filters, open]);
 
   return createPortal(
     <Modal open={open} title="Image Analysis History" variant="info" className="analysis-history-modal"
@@ -98,19 +117,19 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
         <div className="analysis-history-toolbar">
           <p role="status" aria-live="polite">{loading ? 'Loading saved results…' : `${filtered.length} of ${saved.length} saved ${saved.length === 1 ? 'analysis' : 'analyses'}`}</p>
           <div>
-            {hasFilters && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setFilters(DEFAULT_HISTORY_FILTERS)}>Reset filters</button>}
+            {hasFilters && <button type="button" className="btn btn-ghost btn-sm" onClick={resetFilters}>Reset filters</button>}
             <button type="button" className="btn btn-ghost btn-sm" onClick={() => setRefresh(current => current + 1)} disabled={loading || Boolean(openingId)}>Refresh</button>
           </div>
         </div>
         {(loadError || error) && <p className="analytics-error" role="alert">{error || loadError}</p>}
       </div>
-      <div className="analytics-history-list" aria-busy={loading || Boolean(openingId)}>
+      <div ref={listRef} id="analysis-history-list" className="analytics-history-list" aria-busy={loading || Boolean(openingId)}>
         {filtered.length === 0 ? (
           <div className="analysis-history-empty">
             <strong>{loading ? 'Loading history…' : saved.length ? 'No analyses match these filters' : loadError ? 'History could not be loaded' : 'No saved analyses yet'}</strong>
             <p>{loading ? 'Saved results will appear here.' : saved.length ? 'Change the filters or search another filename.' : loadError ? 'Select Refresh to try again.' : 'Analyze an image and save its result to see it here.'}</p>
           </div>
-        ) : filtered.map(analysis => {
+        ) : pageEntries.map(analysis => {
           const isOpening = openingId === analysis.id;
           const name = analysis.source_image_name || analysis.image_name;
           const coverage = canopyCoverage(analysis);
@@ -147,6 +166,16 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
           );
         })}
       </div>
+      {filtered.length > 0 && <nav className="analysis-history-pagination" aria-label="Analysis history pages">
+        <p role="status" aria-live="polite">Showing {start + 1}–{Math.min(start + PAGE_SIZE, filtered.length)} of {filtered.length} {filtered.length === 1 ? 'analysis' : 'analyses'}</p>
+        <div>
+          <button type="button" className="btn btn-secondary btn-sm" aria-controls="analysis-history-list"
+            onClick={() => setPage(currentPage - 1)} disabled={currentPage === 1 || loading || Boolean(openingId) || deleteBusy}>Previous</button>
+          <span>Page {currentPage} of {pageCount}</span>
+          <button type="button" className="btn btn-secondary btn-sm" aria-controls="analysis-history-list"
+            onClick={() => setPage(currentPage + 1)} disabled={currentPage === pageCount || loading || Boolean(openingId) || deleteBusy}>Next</button>
+        </div>
+      </nav>}
     </Modal>, document.body,
   );
 }
