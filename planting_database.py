@@ -2305,7 +2305,7 @@ def _matching_project_site_id(
     row = conn.execute("""
         SELECT MIN(id) AS site_id, COUNT(*) AS match_count
         FROM project_sites
-        WHERE extensions.ST_Covers(
+        WHERE deleted_at IS NULL AND area_released_at IS NULL AND extensions.ST_Covers(
             geometry,
             extensions.ST_SetSRID(extensions.ST_MakePoint(?, ?), 4326)
         )
@@ -2320,8 +2320,9 @@ def _point_project_site_owner_sql(linked_site_column: str) -> str:
     belongs to its one covering boundary, even if its image links elsewhere.
     """
     return f"""COALESCE(
-        MIN(ps.id) FILTER (WHERE ps.id = {linked_site_column}),
-        CASE WHEN COUNT(ps.id) = 1 THEN MIN(ps.id) END
+        MIN(ps.id) FILTER (WHERE ps.id = {linked_site_column} AND ps.deleted_at IS NULL AND ps.area_released_at IS NULL),
+        CASE WHEN COUNT(ps.id) FILTER (WHERE ps.deleted_at IS NULL AND ps.area_released_at IS NULL) = 1
+             THEN MIN(ps.id) FILTER (WHERE ps.deleted_at IS NULL AND ps.area_released_at IS NULL) END
     )"""
 
 
@@ -4289,7 +4290,7 @@ def _create_planter_assignment(
     if planter["status"] != "active" or planter.get("merged_into_planter_id") is not None or planter.get("organization_id") is None:
         raise ValueError("Choose an active organization account.")
     if site_zone_id is None:
-        sites = conn.execute("SELECT id FROM project_sites WHERE organization_id = ? ORDER BY id", (planter["organization_id"],)).fetchall()
+        sites = conn.execute("SELECT id FROM project_sites WHERE organization_id = ? AND deleted_at IS NULL AND area_released_at IS NULL ORDER BY id", (planter["organization_id"],)).fetchall()
         if len(sites) == 1:
             site_zone_id = sites[0]["id"]
     normalized_site_zone_id = None
@@ -4301,7 +4302,7 @@ def _create_planter_assignment(
         except (TypeError, ValueError) as error:
             raise ValueError("Invalid project site id.") from error
         selected_site = conn.execute(
-            "SELECT id, organization_id FROM site_zones WHERE id = ?",
+            "SELECT id, organization_id FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR SHARE",
             (normalized_site_zone_id,),
         ).fetchone()
         if not selected_site:
@@ -6639,13 +6640,15 @@ def _project_site_feature(row: Any, counts: Optional[dict] = None) -> dict:
         "updated_at": row["updated_at"],
         "is_stable_project_site": True,
         "tide_calibration": json.loads(row["tide_calibration"]) if row.get("tide_calibration") else None,
+        "deleted_at": row.get("deleted_at"),
+        "area_released_at": row.get("area_released_at"),
     }
     props.update(counts or {})
     return {
         "type": "Feature",
         "id": int(row["id"]),
         "properties": props,
-        "geometry": geometry,
+        "geometry": None if row.get("deleted_at") or row.get("area_released_at") else geometry,
     }
 
 
@@ -6696,9 +6699,10 @@ def list_project_sites() -> List[dict]:
             SELECT sz.id, sz.name, sz.notes, sz.polygon_geojson,
                    sz.organization_id, o.name AS organization_name,
                    sz.inspection_interval_days,
-                   sz.created_at, sz.updated_at, sz.tide_calibration
+                   sz.created_at, sz.updated_at, sz.tide_calibration, sz.deleted_at, sz.area_released_at
             FROM project_sites sz
             LEFT JOIN organizations o ON o.id = sz.organization_id
+            WHERE sz.deleted_at IS NULL
             ORDER BY sz.name COLLATE NOCASE, sz.id
         """).fetchall()
         counts = _project_site_counts(conn)
@@ -6714,7 +6718,7 @@ def get_project_site(site_id: int) -> Optional[dict]:
             SELECT sz.id, sz.name, sz.notes, sz.polygon_geojson,
                    sz.organization_id, o.name AS organization_name,
                    sz.inspection_interval_days,
-                   sz.created_at, sz.updated_at, sz.tide_calibration
+                   sz.created_at, sz.updated_at, sz.tide_calibration, sz.deleted_at, sz.area_released_at
             FROM project_sites sz
             LEFT JOIN organizations o ON o.id = sz.organization_id
             WHERE sz.id = ?
@@ -6794,7 +6798,7 @@ def _auto_link_project_site(conn: Any, site_id: int, polygon_text: str) -> None:
             SELECT a.id, MIN(ps.id) AS project_site_id
             FROM analyses a
             JOIN project_sites ps
-              ON extensions.ST_Covers(ps.geometry, a.center_location)
+              ON ps.deleted_at IS NULL AND ps.area_released_at IS NULL AND extensions.ST_Covers(ps.geometry, a.center_location)
             WHERE a.project_site_id IS NULL AND a.center_location IS NOT NULL
             GROUP BY a.id
             HAVING COUNT(ps.id) = 1 AND MIN(ps.id) = ?
@@ -6826,7 +6830,7 @@ def _auto_link_project_site(conn: Any, site_id: int, polygon_text: str) -> None:
         ), unambiguous AS (
             SELECT ac.id, MIN(ps.id) AS project_site_id
             FROM assignment_centers ac
-            JOIN project_sites ps ON extensions.ST_Covers(ps.geometry, ac.center)
+            JOIN project_sites ps ON ps.deleted_at IS NULL AND ps.area_released_at IS NULL AND extensions.ST_Covers(ps.geometry, ac.center)
             GROUP BY ac.id
             HAVING COUNT(ps.id) = 1 AND MIN(ps.id) = ?
         )
@@ -6904,7 +6908,7 @@ def update_project_site(
     conn = _get_connection()
     try:
         existing = conn.execute(
-            "SELECT * FROM site_zones WHERE id = ? FOR UPDATE", (int(site_id),)
+            "SELECT * FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR UPDATE", (int(site_id),)
         ).fetchone()
         if not existing:
             return None
@@ -6942,7 +6946,7 @@ def set_project_site_tide_calibration(site_id: int, calibration: Optional[dict])
     conn = _get_connection()
     try:
         row = conn.execute(
-            "SELECT polygon_geojson FROM project_sites WHERE id = ? FOR UPDATE", (int(site_id),),
+            "SELECT polygon_geojson FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR UPDATE", (int(site_id),),
         ).fetchone()
         if not row:
             return None
@@ -6966,111 +6970,15 @@ def set_project_site_tide_calibration(site_id: int, calibration: Optional[dict])
     return get_project_site(site_id)
 
 
-def delete_project_site(site_id: int) -> bool:
-    """Remove a boundary before planting, retaining its saved planning records."""
-    conn = _get_connection()
+def delete_project_site(site_id: int, expected_version=None, user_id=None) -> bool:
+    """Remove an all-dead site from active use while preserving its history."""
+    from mangrovision_db.site_actions import apply_site_action, preview_site_actions
     try:
-        site_id = int(site_id)
-        # Hold the parent row through the checks and deletion. Concurrent
-        # assignments/events must finish their foreign-key checks first or wait.
-        site = conn.execute(
-            "SELECT id FROM site_zones WHERE id = ? FOR UPDATE", (site_id,)
-        ).fetchone()
-        if site is None:
-            return False
-        conn.execute("""
-            SELECT pap.id FROM planter_assignment_points pap
-            JOIN planter_assignments pa ON pa.id = pap.assignment_id
-            WHERE pa.site_zone_id = ? ORDER BY pap.id FOR UPDATE OF pap
-        """, (site_id,)).fetchall()
-        conn.execute("""
-            SELECT pp.id FROM planting_points pp
-            WHERE EXISTS (SELECT 1 FROM project_sites ps WHERE ps.id = ?
-                          AND extensions.ST_Covers(ps.geometry, pp.location))
-               OR EXISTS (SELECT 1 FROM planter_assignment_points pap
-                          JOIN planter_assignments pa ON pa.id = pap.assignment_id
-                          WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id)
-            ORDER BY pp.id FOR UPDATE OF pp
-        """, (site_id, site_id)).fetchall()
-        linked = conn.execute(f"""
-            WITH resolved_points AS (
-                SELECT pp.id, {_point_project_site_owner_sql('a.site_zone_id')} AS site_id
-                FROM planting_points pp JOIN analyses a ON a.id = pp.analysis_id
-                LEFT JOIN project_sites ps ON extensions.ST_Covers(ps.geometry, pp.location)
-                GROUP BY pp.id
-            ), site_points AS (
-                SELECT pp.id, pp.status, pp.planted_at, pp.planted_date, pp.death_at
-                FROM planting_points pp
-                JOIN resolved_points rp ON rp.id = pp.id
-                WHERE rp.site_id = ? OR EXISTS(
-                    SELECT 1 FROM planter_assignment_points pap
-                    JOIN planter_assignments pa ON pa.id = pap.assignment_id
-                    WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id
-                )
-            )
-            SELECT
-                EXISTS(
-                    SELECT 1 FROM planting_events
-                    WHERE site_zone_id = ? OR (
-                        site_zone_id IS NULL AND (
-                            planting_point_id IN (SELECT id FROM site_points)
-                            OR assignment_id IN (
-                                SELECT id FROM planter_assignments WHERE site_zone_id = ?
-                            )
-                        )
-                    )
-                ) AS has_events,
-                EXISTS(
-                    SELECT 1 FROM site_points
-                    WHERE status = 'planted' OR planted_at IS NOT NULL
-                       OR planted_date IS NOT NULL OR death_at IS NOT NULL
-                ) AS has_planted_points,
-                EXISTS(
-                    SELECT 1 FROM planter_assignment_points pap
-                    JOIN planter_assignments pa ON pa.id = pap.assignment_id
-                    WHERE pa.site_zone_id = ?
-                      AND (pap.status = 'completed' OR pap.completed_at IS NOT NULL)
-                ) AS has_completed_points
-        """, (site_id,) * 5).fetchone()
-        if any(linked[key] for key in linked.keys()):
-            raise ValueError(
-                "This project site has recorded planting history and cannot be deleted."
-            )
-        # Release unplanted allocations before removing their boundary. Keeping
-        # them active would allow planting under an organization with no site.
-        conn.execute("""
-            UPDATE planting_points pp SET status = 'planned'
-            WHERE pp.status IN ('planned', 'skipped') AND EXISTS (
-                SELECT 1 FROM planter_assignment_points pap
-                JOIN planter_assignments pa ON pa.id = pap.assignment_id
-                WHERE pa.site_zone_id = ? AND pap.planting_point_id = pp.id
-                  AND pap.released_at IS NULL
-            )
-        """, (site_id,))
-        conn.execute("""
-            UPDATE planter_assignment_points pap SET released_at = CURRENT_TIMESTAMP
-            FROM planter_assignments pa
-            WHERE pap.assignment_id = pa.id AND pa.site_zone_id = ?
-              AND pap.released_at IS NULL
-        """, (site_id,))
-        conn.execute("""
-            UPDATE planter_assignments SET status = 'archived'
-            WHERE site_zone_id = ? AND status = 'active'
-        """, (site_id,))
-        # Schedules use RESTRICT, so detach their planning link explicitly.
-        # Saved analyses, points and archived assignment evidence remain.
-        conn.execute(
-            "UPDATE planting_schedules SET project_site_id = NULL WHERE project_site_id = ?",
-            (site_id,),
-        )
-        cursor = conn.execute("DELETE FROM site_zones WHERE id = ?", (site_id,))
-        conn.commit()
-        return cursor.rowcount > 0
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+        version = expected_version or preview_site_actions(site_id)['version']
+        apply_site_action(site_id, 'delete', version, user_id)
+        return True
+    except KeyError:
+        return False
 
 
 def _clean_schedule_status(value: Any) -> str:
@@ -7434,7 +7342,7 @@ def update_planting_schedule(
                 except (TypeError, ValueError) as error:
                     raise ValueError("project_site_id must be a whole number.") from error
                 selected_site = conn.execute(
-                    "SELECT * FROM site_zones WHERE id = ?", (values["project_site_id"],),
+                    "SELECT * FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR SHARE", (values["project_site_id"],),
                 ).fetchone()
                 if not selected_site:
                     raise ValueError("Selected project site was not found.")

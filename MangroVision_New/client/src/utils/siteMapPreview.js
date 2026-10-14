@@ -56,10 +56,13 @@ export function groupSitePreviewPoints(points) {
   return groups;
 }
 
-export function buildSiteMapPreview(geometry, { satellite, orthophoto, points = [], width = 320, height = 180, padding = 18 }) {
+export function buildSiteMapPreview(geometry, { satellite, orthophoto, points = [], width = 320, height = 180, padding = 18, frameGeometry }) {
   const polygons = projectedPolygons(geometry);
   if (!polygons) return null;
-  const { minX, maxX, minY, maxY } = polygons.flat(2).reduce((bounds, [x, y]) => ({
+  // Before/after comparisons share the original frame so a smaller boundary
+  // does not appear larger just because it was automatically zoomed in.
+  const frame = projectedPolygons(frameGeometry) || polygons;
+  const { minX, maxX, minY, maxY } = frame.flat(2).reduce((bounds, [x, y]) => ({
     minX: Math.min(bounds.minX, x), maxX: Math.max(bounds.maxX, x),
     minY: Math.min(bounds.minY, y), maxY: Math.max(bounds.maxY, y),
   }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });

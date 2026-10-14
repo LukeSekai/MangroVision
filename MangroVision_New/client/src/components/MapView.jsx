@@ -14,6 +14,8 @@ import { POINT_STATUS_COLORS as STATUS_COLORS, PLANNED_SPECIES_COLORS as SPECIES
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
 import { connectMapLayerVisibility } from '../utils/mapLayerVisibility';
+import { bindZoneInfo, zoneName } from '../utils/zoneInfo';
+import { focusMapArea } from '../utils/organizationArea';
 import './MapView.css';
 import './ProjectSiteInfo.css';
 
@@ -70,6 +72,14 @@ const FOCUSED_PROJECT_SITE_STYLE = {
   fillOpacity: 0.12,
   dashArray: null,
 };
+
+// All boundaries share the points' renderer for hover hit-testing. Keep
+// points above hazards, hazards above assignment zones, and sites at the back.
+function orderZoneLayers(layers) {
+  for (const key of ['warningLayer', 'erodedLayer', 'forbiddenLayer', 'siteZoneLayer', 'projectSiteLayer']) {
+    layers[key]?.eachLayer((layer) => layer.bringToBack());
+  }
+}
 
 const getPointRadius = (zoom, selected = false) => {
   const base = zoom >= 22
@@ -270,72 +280,26 @@ export default function MapView() {
     L.control.scale({ position: 'bottomleft', metric: true, imperial: false }).addTo(map);
 
 
-    // Custom pane so zone polygons render UNDER point markers. Default
-    // overlayPane is z-index 400; placing zones at 350 keeps them visually
-    // behind the SVG circle markers (still in overlayPane at 400), and lets
-    // clicks pass through to the points on top.
-    map.createPane('zonesPane');
-    map.getPane('zonesPane').style.zIndex = 350;
-
     // Data layers
     const pointLayer = L.layerGroup().addTo(map);
 
-    // Zone tooltip helper. Reads optional GeoJSON properties (label, zone_type,
-    // name, fid) and falls back to a generic description so admins always know
-    // what the dashed polygon represents on hover. Tooltip is sticky so it
-    // tracks the cursor inside the polygon body.
-    const bindZoneTooltip = (kind) => (feature, layer) => {
-      const props = feature?.properties || {};
-      const label = props.label || props.name;
-      const description = kind === 'forbidden'
-        ? 'Restricted area — no planting allowed'
-        : 'Eroded area — covered points stay visible but are unavailable until this zone is removed';
-      const titleHtml = label
-        ? escapeHtml(label)
-        : (kind === 'forbidden' ? 'Forbidden zone' : 'Eroded zone');
-      layer.bindTooltip(
-        `<div class="zone-tooltip-inner">
-          <div class="zone-tooltip-title">${titleHtml}</div>
-          <div class="zone-tooltip-detail">${description}</div>
-        </div>`,
-        { className: `zone-tooltip zone-tooltip-${kind}`, sticky: true, direction: 'top' },
-      );
-    };
-
     const forbiddenLayer = L.geoJSON(null, {
-      pane: 'zonesPane',
+      pane: 'overlayPane',
       style: { color: '#dc2626', weight: 2, fillColor: '#dc2626', fillOpacity: 0.15, dashArray: '6 4' },
-      onEachFeature: bindZoneTooltip('forbidden'),
     }).addTo(map);
     const erodedLayer = L.geoJSON(null, {
-      pane: 'zonesPane',
+      pane: 'overlayPane',
       style: { color: '#ea580c', weight: 2, fillColor: '#ea580c', fillOpacity: 0.15, dashArray: '6 4' },
-      onEachFeature: bindZoneTooltip('eroded'),
     }).addTo(map);
     const warningLayer = L.geoJSON(null, {
-      pane: 'zonesPane',
+      pane: 'overlayPane',
       style: { color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.14, dashArray: '4 4' },
-      onEachFeature: (feature, layer) => {
-        const props = feature?.properties || {};
-        const detail = [
-          props.warning_label || 'Planner warning',
-          props.severity ? `Severity: ${props.severity}` : '',
-          props.notes || '',
-        ].filter(Boolean).map(escapeHtml).join('<br />');
-        layer.bindTooltip(
-          `<div class="zone-tooltip-inner">
-            <div class="zone-tooltip-title">${escapeHtml(props.name || 'Warning zone')}</div>
-            <div class="zone-tooltip-detail">${detail}</div>
-          </div>`,
-          { className: 'zone-tooltip zone-tooltip-warning', sticky: true, direction: 'top' },
-        );
-      },
     }).addTo(map);
 
     // Assignment zones are derived from each assignment. They remain neutral:
     // legacy death records do not establish verified ecological survival.
     const siteZoneLayer = L.geoJSON(null, {
-      pane: 'zonesPane',
+      pane: 'overlayPane',
       style: { color: '#475569', weight: 2, fillColor: '#475569', fillOpacity: 0.10 },
     });
     const projectSiteLayer = L.geoJSON(null, {
@@ -423,6 +387,25 @@ export default function MapView() {
     };
     mapRef.current = map;
     useMapStore.getState().setMapInstance(map);
+
+    let focusedZone = null;
+    map.on('zonefocus', ({ feature, kind }) => {
+      const key = { site: 'projectSiteLayer', eroded: 'erodedLayer', warning: 'warningLayer', forbidden: 'forbiddenLayer' }[kind];
+      const group = layersRef.current[key];
+      const layer = group?.getLayers().find((candidate) => candidate.feature === feature);
+      const bounds = layer?.getBounds();
+      if (!bounds?.isValid()) return;
+
+      if (focusedZone) focusedZone.group.resetStyle(focusedZone.layer);
+      focusedZone = { group, layer };
+      const visibilityKey = { site: 'projectSites', eroded: 'eroded', warning: 'warnings', forbidden: 'forbidden' }[kind];
+      useMapStore.getState().showLayers([visibilityKey]);
+      if (!map.hasLayer(group)) group.addTo(map);
+      layer.setStyle({ weight: 4, fillOpacity: 0.22 });
+      orderZoneLayers(layersRef.current);
+      focusMapArea(map, bounds);
+      layer.openTooltip(bounds.getCenter());
+    });
 
     // Persist user pans + zooms back to the store so other map-bearing pages
     // inherit the same view when they mount.
@@ -519,6 +502,7 @@ export default function MapView() {
       eroded: layerVisibility.eroded && showSharedZones,
       warnings: layerVisibility.warnings && showSharedZones,
     });
+    orderZoneLayers(layers);
   }, [layerVisibility, isMonitoringMapMode, monitoringOrganizationId]);
 
   // Sync points — skip the redraw entirely when only unrelated store fields
@@ -541,7 +525,6 @@ export default function MapView() {
       ? filterMonitoringPoints(spacedPoints, monitoringOrganizationId)
       : spacedPoints;
     const displayPoints = filterMapPoints(scopedPoints, {
-      includeDead: isAnalyticsMode || isMonitoringMapMode,
       deadOnly: isMonitoringMapMode && showDeadPointsOnly,
     }).filter((point) => point.inside_visible_map !== false);
     const assignmentScopeKey = isPlanterMode
@@ -872,19 +855,25 @@ export default function MapView() {
 
   // Sync zones
   useEffect(() => {
-    const { forbiddenLayer, erodedLayer, warningLayer } = layersRef.current;
-    if (forbiddenZones && forbiddenLayer) {
-      forbiddenLayer.clearLayers();
-      try { forbiddenLayer.addData(forbiddenZones); } catch { /* skip */ }
+    for (const [key, collection, kind] of [
+      ['forbiddenLayer', forbiddenZones, 'forbidden'],
+      ['erodedLayer', erodedZones, 'eroded'],
+      ['warningLayer', warningZones, 'warning'],
+    ]) {
+      const group = layersRef.current[key];
+      if (!group) continue;
+      group.clearLayers();
+      (collection?.features || []).forEach((feature, index) => {
+        try {
+          const layer = L.geoJSON(feature, { ...group.options });
+          layer.eachLayer((boundary) => {
+            bindZoneInfo(boundary, feature, index, kind);
+            group.addLayer(boundary);
+          });
+        } catch { /* Skip a malformed boundary without changing list indexes. */ }
+      });
     }
-    if (erodedZones && erodedLayer) {
-      erodedLayer.clearLayers();
-      try { erodedLayer.addData(erodedZones); } catch { /* skip */ }
-    }
-    if (warningZones && warningLayer) {
-      warningLayer.clearLayers();
-      try { warningLayer.addData(warningZones); } catch { /* skip */ }
-    }
+    orderZoneLayers(layersRef.current);
   }, [forbiddenZones, erodedZones, warningZones]);
 
   // Sync assignment zones. Legacy current/death counts are operational
@@ -911,7 +900,7 @@ export default function MapView() {
       const fillColor = '#64748b';
 
       const layer = L.geoJSON(feature, {
-        pane: 'zonesPane',
+        pane: 'overlayPane',
         style: {
           color: fillColor,
           weight: 2,
@@ -942,6 +931,7 @@ export default function MapView() {
 
       layer.addTo(siteZoneLayer);
     });
+    orderZoneLayers(layersRef.current);
   }, [siteZones, siteZoneMortality, isMonitoringMapMode, monitoringOrganizationId]);
 
   // Stable project sites are parent boundaries; assignment zones continue to
@@ -957,14 +947,16 @@ export default function MapView() {
     for (const feature of visibleProjectSites.features) {
       try { projectSiteLayer.addData(feature); } catch { /* skip malformed site */ }
     }
-    projectSiteLayer.eachLayer((layer) => {
-      bindProjectSiteInfo(layer, layer.feature, {
+    projectSiteLayer.getLayers().forEach((layer, index) => {
+      bindProjectSiteInfo(layer, { ...layer.feature, properties: {
+        ...layer.feature.properties, name: zoneName(layer.feature, index, 'site'),
+      } }, {
         counts: pointsLoaded
           ? (sitePointCounts.get(String(projectSiteId(layer.feature))) || emptyProjectSiteCounts())
           : null,
       });
-      layer.bringToBack();
     });
+    orderZoneLayers(layersRef.current);
   }, [projectSites, sitePointCounts, pointsLoaded, isMonitoringMapMode, monitoringOrganizationId]);
 
   // Sync the preview, or retain just the projected photo boundary after save.

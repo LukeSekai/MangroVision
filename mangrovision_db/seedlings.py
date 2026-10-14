@@ -59,7 +59,7 @@ def record_lgu_planting(*, point_ids: list[int], project_site_id: int, planted_d
     marks = ",".join("?" for _ in ids)
     conn = get_connection()
     try:
-        site = conn.execute("SELECT id, name FROM project_sites WHERE id = ?", (site_id,)).fetchone()
+        site = conn.execute("SELECT id, name FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR SHARE", (site_id,)).fetchone()
         if not site:
             raise ValueError("Selected project site was not found.")
         rows = conn.execute(f"""

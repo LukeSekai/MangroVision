@@ -62,6 +62,7 @@ _ACTIVITIES = {
     ("PUT", "/api/project-sites/{id}"): ("project_site.updated", "Updated a project site."),
     ("PATCH", "/api/project-sites/{id}"): ("project_site.updated", "Updated a project site."),
     ("DELETE", "/api/project-sites/{id}"): ("project_site.deleted", "Deleted a project site."),
+    ("POST", "/api/project-sites/{id}/release"): ("project_site.area_released", "Released unplanted and dead locations from a project site."),
     ("PUT", "/api/project-sites/{id}/tide-calibration"): ("project_site.tide_calibrated", "Updated a project site's tide calibration."),
     ("PUT", "/api/zones/eroded"): ("zone.eroded_replaced", "Saved the eroded-zone map."),
     ("POST", "/api/zones/eroded"): ("zone.eroded_created", "Added an eroded zone."),

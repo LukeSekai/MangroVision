@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
@@ -8,6 +8,10 @@ import Modal from '../components/Modal';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { submissionError } from '../utils/formValidation';
+import { zoneName as getZoneName } from '../utils/zoneInfo';
+import { focusMapArea, organizationAreaFeatures } from '../utils/organizationArea';
+import { filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
+import ProjectSiteActions from '../components/ProjectSiteActions';
 import './ErodedZoneEditor.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -66,6 +70,8 @@ export default function ErodedZoneEditor() {
   const forbiddenZones = useMapStore((s) => s.forbiddenZones);
   const warningZones = useMapStore((s) => s.warningZones);
   const projectSites = useMapStore((s) => s.projectSites);
+  const siteZones = useMapStore((s) => s.siteZones);
+  const showLayers = useMapStore((s) => s.showLayers);
   const fetchZones = useMapStore((s) => s.fetchZones);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const points = useMapStore((s) => s.points);
@@ -78,8 +84,11 @@ export default function ErodedZoneEditor() {
   const [clearAllOpen, setClearAllOpen] = useState(false);
   const [clearAllBusy, setClearAllBusy] = useState(false);
   const [drawing, setDrawing] = useState(false);
+  const [selectedZone, setSelectedZone] = useState(null);
   const [drawLayer, setDrawLayer] = useState(null);
   const [drawnCoords, setDrawnCoords] = useState(null);
+  const [boundaryStatus, setBoundaryStatus] = useState('idle');
+  const [boundaryRetry, setBoundaryRetry] = useState(0);
   const [coveredCount, setCoveredCount] = useState(0);
   const [zoneName, setZoneName] = useState('');
   // Stable project sites are parent boundaries; assignment zones remain
@@ -101,12 +110,17 @@ export default function ErodedZoneEditor() {
   });
   const [warningDeleting, setWarningDeleting] = useState(null);
   const [pendingWarningDelete, setPendingWarningDelete] = useState(null);
-  const [projectSiteDeleting, setProjectSiteDeleting] = useState(null);
-  const [pendingProjectSiteDelete, setPendingProjectSiteDelete] = useState(null);
-  const [projectSiteDeleteError, setProjectSiteDeleteError] = useState('');
+  const [siteActionsId, setSiteActionsId] = useState(null);
+  const [siteActionMessage, setSiteActionMessage] = useState('');
+  const [siteSearch, setSiteSearch] = useState('');
+  const siteSearchInput = useRef(null);
   const zoneLocked = processing;
   const warningFeatures = warningZones?.features || [];
   const projectSiteFeatures = projectSites?.features || [];
+  const siteQuery = siteSearch.trim().toLowerCase();
+  const matchingProjectSites = projectSiteFeatures.map((feature, index) => ({ feature, index }))
+    .filter(({ feature, index }) => !siteQuery || [getZoneName(feature, index, 'site'), feature.properties?.organization_name]
+      .some((value) => String(value || '').toLowerCase().includes(siteQuery)));
   const organizationOptions = (() => {
     const sources = projectSites?.organizations || projectSites?.organization_options || [];
     const options = new Map();
@@ -126,6 +140,38 @@ export default function ErodedZoneEditor() {
   const selectedProjectOrganization = organizationOptions.find(
     (organization) => String(organization.id) === String(projectSiteOrganizationId),
   );
+  const ownerAreas = useMemo(() => organizationAreaFeatures(projectSites, siteZones, projectSiteOrganizationId),
+    [projectSites, siteZones, projectSiteOrganizationId]);
+  const coveredPoints = useMemo(() => (drawingKind === 'site'
+    ? filterMonitoringPoints(points, projectSiteOrganizationId) : points)
+    .filter((point) => !point.deleted_at && !point.is_deleted && point.inside_visible_map !== false),
+  [points, drawingKind, projectSiteOrganizationId]);
+
+  const chooseProjectOrganization = (organizationId) => {
+    setProjectSiteOrganizationId(organizationId);
+    feedback.clear();
+    const organization = organizationOptions.find((option) => String(option.id) === String(organizationId));
+    setZoneName(organization?.name || '');
+    setSaveMsgText('');
+    setSaveMsgIsError(false);
+    setBoundaryStatus(drawnCoords ? 'checking' : 'idle');
+    if (!organizationId) return;
+    const features = organizationAreaFeatures(projectSites, siteZones, organizationId);
+    if (!features.length) {
+      setSaveMsgText('No mapped area is assigned to this organization. Assign its area before drawing a project site.');
+      setSaveMsgIsError(true);
+      return;
+    }
+    try {
+      const organizationFeatures = organizationAreaFeatures({ ...projectSites, released_areas: null }, siteZones, organizationId);
+      const bounds = L.geoJSON({ type: 'FeatureCollection', features: organizationFeatures.length ? organizationFeatures : features }).getBounds();
+      showLayers(['projectSites', 'siteZones', 'points']);
+      if (!focusMapArea(mapInstance, bounds)) throw new Error('Area unavailable');
+    } catch {
+      setSaveMsgText('Could not show the organization’s area. Refresh the map and try again.');
+      setSaveMsgIsError(true);
+    }
+  };
 
   useEffect(() => {
     if (loaded.current) return;
@@ -137,6 +183,45 @@ export default function ErodedZoneEditor() {
   const erodedFeatures = erodedZones?.features || [];
   const forbiddenFeatures = forbiddenZones?.features || [];
 
+  useEffect(() => {
+    if (!drawnCoords || (drawingKind === 'site' && !projectSiteOrganizationId)) return undefined;
+    const controller = new AbortController();
+    let active = true;
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    const checkBoundary = async () => {
+      try {
+        const response = await fetch(`${API}${drawingKind === 'site' ? '/api/project-sites/validate-boundary' : '/api/zones/validate-boundary'}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ geometry: { type: 'Polygon', coordinates: [drawnCoords] },
+            ...(drawingKind === 'site' ? { organization_id: Number(projectSiteOrganizationId) } : {}),
+          }),
+          signal: controller.signal,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!active) return;
+        const valid = response.ok && result.valid === true;
+        setBoundaryStatus(valid ? 'valid' : response.status === 400 ? 'invalid' : 'failed');
+        setSaveMsgText(valid ? 'Zone boundary checked. Ready to save.'
+          : typeof result.detail === 'string' ? result.detail : 'Could not check the map boundary. Please try again.');
+        setSaveMsgIsError(!valid);
+        setCoveredCount(coveredPointCount(drawnCoords.map(([longitude, latitude]) => [latitude, longitude]), coveredPoints));
+        drawLayer?.eachLayer((layer) => layer.setStyle?.({
+          color: valid ? KIND_COLORS[drawingKind] : '#dc2626',
+          fillColor: valid ? KIND_COLORS[drawingKind] : '#dc2626',
+        }));
+      } catch {
+        if (!active) return;
+        setBoundaryStatus('failed');
+        setSaveMsgText('Could not check the map boundary. Check your connection and try again.');
+        setSaveMsgIsError(true);
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+    checkBoundary();
+    return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
+  }, [drawnCoords, drawingKind, drawLayer, boundaryRetry, projectSiteOrganizationId, coveredPoints]);
+
   // Start freehand drawing mode. Holding for a short moment prevents an
   // accidental pan from becoming a project boundary; after the hold the
   // editor traces the user's pointer and continuously counts enclosed points.
@@ -146,8 +231,10 @@ export default function ErodedZoneEditor() {
       setSaveMsgIsError(true);
       return;
     }
-    if (drawingKind === 'site' && !projectSiteOrganizationId) {
-      setSaveMsgText('Select the organization that owns this project site before drawing it.');
+    if (drawingKind === 'site' && (!projectSiteOrganizationId || !ownerAreas.length)) {
+      setSaveMsgText(projectSiteOrganizationId
+        ? 'No mapped area is assigned to this organization. Assign its area before drawing a project site.'
+        : 'Select the organization that owns this project site before drawing it.');
       setSaveMsgIsError(true);
       return;
     }
@@ -156,6 +243,7 @@ export default function ErodedZoneEditor() {
     setSaveMsgText('');
     setSaveMsgIsError(false);
     setDrawnCoords(null);
+    setBoundaryStatus('idle');
     setCoveredCount(0);
 
     const layer = L.featureGroup().addTo(mapInstance);
@@ -168,11 +256,13 @@ export default function ErodedZoneEditor() {
     let activePointerId = null;
     let tracing = false;
     let lastContainerPoint = null;
+    let startingContainerPoint = null;
+    let beganTowardRight = false;
 
     if (draggingWasEnabled) mapInstance.dragging.disable();
     container.style.cursor = 'crosshair';
     container.style.touchAction = 'none';
-    setSaveMsgText('Press and hold on the map, then drag around the points you want.');
+    setSaveMsgText('Start on the left side. Press and hold, drag right, then trace the rest of the outline.');
 
     const eventLatLng = (event) => {
       const containerPoint = L.DomEvent.getMousePosition(event, container);
@@ -192,7 +282,7 @@ export default function ErodedZoneEditor() {
           fillOpacity: 0.2,
         }).addTo(layer);
       }
-      const count = coveredPointCount(trace, points);
+      const count = coveredPointCount(trace, coveredPoints);
       setCoveredCount(count);
       setSaveMsgText(`${count} mapped point${count === 1 ? '' : 's'} currently covered. Release to finish.`);
       setSaveMsgIsError(false);
@@ -232,7 +322,7 @@ export default function ErodedZoneEditor() {
       }
 
       const closed = [...trace, trace[0]];
-      const count = coveredPointCount(trace, points);
+      const count = coveredPointCount(trace, coveredPoints);
       layer.clearLayers();
       L.polygon(closed, {
         color: previewColor,
@@ -242,7 +332,8 @@ export default function ErodedZoneEditor() {
       }).addTo(layer);
       setCoveredCount(count);
       setDrawnCoords(closed.map(([lat, lng]) => [lng, lat]));
-      setSaveMsgText(`Zone ready: ${count} mapped point${count === 1 ? '' : 's'} covered. Review or save it.`);
+      setBoundaryStatus('checking');
+      setSaveMsgText('Checking the zone boundary...');
       setSaveMsgIsError(false);
       layer._cleanupFn();
     };
@@ -252,6 +343,8 @@ export default function ErodedZoneEditor() {
       event.preventDefault();
       activePointerId = event.pointerId;
       lastContainerPoint = null;
+      startingContainerPoint = eventLatLng(event).containerPoint;
+      beganTowardRight = false;
       try { container.setPointerCapture(event.pointerId); } catch { /* optional */ }
       holdTimer = window.setTimeout(() => {
         tracing = true;
@@ -263,6 +356,22 @@ export default function ErodedZoneEditor() {
     const onPointerMove = (event) => {
       if (!tracing || event.pointerId !== activePointerId) return;
       event.preventDefault();
+      if (!beganTowardRight) {
+        const movementX = eventLatLng(event).containerPoint.x - startingContainerPoint.x;
+        if (movementX < -5) {
+          trace.length = 0;
+          layer.clearLayers();
+          setCoveredCount(0);
+          setSaveMsgText('Start on the left side and drag right to begin the outline.');
+          setSaveMsgIsError(true);
+          tracing = false;
+          activePointerId = null;
+          if (container.hasPointerCapture?.(event.pointerId)) container.releasePointerCapture(event.pointerId);
+          return;
+        }
+        if (movementX < 5) return;
+        beganTowardRight = true;
+      }
       appendTracePoint(event);
     };
 
@@ -284,10 +393,10 @@ export default function ErodedZoneEditor() {
       container.style.touchAction = '';
       if (draggingWasEnabled) mapInstance.dragging.enable();
     };
-  }, [mapInstance, zoneLocked, drawingKind, projectSiteOrganizationId, points]);
+  }, [mapInstance, zoneLocked, drawingKind, projectSiteOrganizationId, coveredPoints, ownerAreas]);
 
   // Cancel drawing
-  const cancelDrawing = useCallback(() => {
+  const cancelDrawing = useCallback(({ keepOwner = false } = {}) => {
     if (drawLayer) {
       if (drawLayer._cleanupFn) drawLayer._cleanupFn();
       if (mapInstance && mapInstance.hasLayer(drawLayer)) {
@@ -297,10 +406,11 @@ export default function ErodedZoneEditor() {
     setDrawing(false);
     setDrawLayer(null);
     setDrawnCoords(null);
+    setBoundaryStatus('idle');
     setCoveredCount(0);
     setZoneName('');
     setZoneNotes('');
-    setProjectSiteOrganizationId('');
+    if (!keepOwner) setProjectSiteOrganizationId('');
     setWarningType('deep_mud');
     setWarningSeverity('medium');
     setSaveMsgText('');
@@ -329,6 +439,7 @@ export default function ErodedZoneEditor() {
   // parent areas while assignment polygons remain automatically derived.
   const saveZone = async () => {
     if (!drawnCoords) return;
+    if (boundaryStatus !== 'valid') return;
     if (zoneLocked) {
       setSaveMsgText('Zone editing is locked while image processing is running.');
       setSaveMsgIsError(true);
@@ -415,38 +526,6 @@ export default function ErodedZoneEditor() {
       }
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleDeleteProjectSite = async (site) => {
-    const siteId = site?.id ?? site?.properties?.id;
-    if (!siteId) return;
-    if (zoneLocked) {
-      setPendingProjectSiteDelete(null);
-      setSaveMsgText('Zone editing is locked while image processing is running.');
-      setSaveMsgIsError(true);
-      return;
-    }
-    setProjectSiteDeleting(siteId);
-    setProjectSiteDeleteError('');
-    setSaveMsgText('');
-    setSaveMsgIsError(false);
-    try {
-      if (!adminToken) throw new Error('Your LGU session has expired. Sign in again to delete a project site.');
-      const res = await fetch(
-        `${API}/api/project-sites/${siteId}`,
-        { method: 'DELETE' },
-      );
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || 'Failed to delete project site');
-      }
-      setPendingProjectSiteDelete(null);
-      await Promise.all([fetchZones(), fetchPoints()]);
-    } catch (err) {
-      setProjectSiteDeleteError(err.message || 'Failed to delete project site');
-    } finally {
-      setProjectSiteDeleting(null);
     }
   };
 
@@ -552,8 +631,10 @@ export default function ErodedZoneEditor() {
     window.URL.revokeObjectURL(url);
   };
 
-  const getZoneName = (feature, index, prefix) => {
-    return feature?.properties?.name || feature?.properties?.label || `${prefix} Zone ${index + 1}`;
+  const focusZone = (feature, kind) => {
+    if (!mapInstance || drawing) return;
+    setSelectedZone(feature);
+    mapInstance.fire('zonefocus', { feature, kind });
   };
 
   const getZoneArea = (feature) => {
@@ -626,17 +707,7 @@ export default function ErodedZoneEditor() {
                   id="project-site-organization"
                   className="form-input"
                   value={projectSiteOrganizationId}
-                  onChange={(event) => {
-                    const organizationId = event.target.value;
-                    const organization = organizationOptions.find(
-                      (option) => String(option.id) === String(organizationId),
-                    );
-                    setProjectSiteOrganizationId(organizationId);
-                    feedback.clear();
-                    setZoneName(organization?.name || '');
-                    setSaveMsgText('');
-                    setSaveMsgIsError(false);
-                  }}
+                  onChange={(event) => chooseProjectOrganization(event.target.value)}
                   disabled={zoneLocked}
                   required
                 >
@@ -655,7 +726,7 @@ export default function ErodedZoneEditor() {
               className="btn btn-primary btn-sm"
               style={{ width: '100%' }}
               onClick={startDrawing}
-              disabled={zoneLocked || (drawingKind === 'site' && !projectSiteOrganizationId)}
+              disabled={zoneLocked || !mapInstance || (drawingKind === 'site' && (!projectSiteOrganizationId || !ownerAreas.length))}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               {drawingKind === 'warning'
@@ -666,10 +737,10 @@ export default function ErodedZoneEditor() {
             </button>
             <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
               {drawingKind === 'warning'
-                ? 'Warning zones mark plantable points with expert notes such as deep mud, difficult access, or low survival confidence. They do not block assignment.'
+                ? 'Draw inside the drone map. Warning zones mark hazards such as deep mud or difficult access. They do not block assignment.'
                 : drawingKind === 'site'
-                  ? 'Long-press the map, then drag a loop around the wanted points. The live count helps you adjust the boundary before saving.'
-                  : 'Click points on the map to draw an erosion polygon. Covered planting points stay visible but become Unavailable for planting. Removing the zone returns unassigned points to Planned. Click the first green point to close it.'}
+                  ? 'Choose the owner to show its area. Draw inside its area or released land available to other organizations.'
+                  : 'Start on the left, drag right, then trace a closed area inside the drone map. Covered points become unavailable for planting.'}
             </p>
             <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
           </div>
@@ -677,7 +748,7 @@ export default function ErodedZoneEditor() {
           <div>
             <div className="drawing-active">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-              <span>Long-press, then drag around the wanted points</span>
+              <span>Start on the left. Hold, drag right, then trace the outline.</span>
             </div>
             <div className="zone-covered-count" role="status" aria-live="polite">
               <strong>{coveredCount}</strong>
@@ -691,18 +762,29 @@ export default function ErodedZoneEditor() {
         ) : (
           <div className="save-form" onChangeCapture={feedback.onChange}>
             <FormErrorSummary feedback={feedback} />
+            <FormMessage error={saveMsgIsError ? saveMsgText : ""}
+              loading={boundaryStatus === 'checking' ? 'Checking the zone boundary...' : ""} />
+            {['invalid', 'failed'].includes(boundaryStatus) && <div className="zone-actions" style={{ marginTop: 8 }}>
+              {boundaryStatus === 'failed' && <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked}
+                onClick={() => {
+                  setBoundaryStatus('checking'); setBoundaryRetry((value) => value + 1);
+                  setSaveMsgText('Checking the zone boundary...'); setSaveMsgIsError(false);
+                }}>Try again</button>}
+              <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked || (drawingKind === 'site' && !ownerAreas.length)}
+                onClick={() => { cancelDrawing({ keepOwner: drawingKind === 'site' }); startDrawing(); }}>Redraw zone</button>
+            </div>}
             {drawingKind === 'site' && <label className="form-group">
               <span className="form-label">Organization owner *</span>
               <select {...feedback.props('organization_id')} className="form-input" required disabled={saving} value={projectSiteOrganizationId}
-                onChange={(event) => setProjectSiteOrganizationId(event.target.value)}>
+                onChange={(event) => chooseProjectOrganization(event.target.value)}>
                 <option value="">Select an organization</option>
                 {organizationOptions.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
               </select>
               <FieldError feedback={feedback} field="organization_id" />
             </label>}
-            <div className="zone-covered-count is-ready" role="status">
+            <div className={`zone-covered-count${boundaryStatus === 'valid' ? ' is-ready' : ''}`} role="status">
               <strong>{coveredCount}</strong>
-              <span>mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
+              <span>{drawingKind === 'site' ? 'organization ' : ''}mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
             </div>
             <div className="form-group">
               <label className="form-label">
@@ -767,9 +849,11 @@ export default function ErodedZoneEditor() {
               </div>
             )}
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={saveZone} disabled={saving || zoneLocked}>
+              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={saveZone} disabled={saving || zoneLocked || boundaryStatus !== 'valid'}>
                 {saving
                   ? 'Saving...'
+                  : boundaryStatus === 'checking'
+                    ? 'Checking boundary...'
                   : drawingKind === 'warning'
                     ? 'Save Warning Zone'
                     : drawingKind === 'site'
@@ -778,7 +862,7 @@ export default function ErodedZoneEditor() {
               </button>
               <button className="btn btn-ghost btn-sm" onClick={cancelDrawing}>Cancel</button>
             </div>
-            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
+            <FormMessage success={!saveMsgIsError && boundaryStatus !== 'checking' ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
           </div>
         )}
       </PanelCard>
@@ -789,40 +873,58 @@ export default function ErodedZoneEditor() {
         badge={projectSiteFeatures.length}
         icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={KIND_COLORS.site} strokeWidth="2"><path d="M3 12l9-9 9 9-9 9-9-9z"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>}
       >
+        <FormMessage success={siteActionMessage} />
+        {projectSiteFeatures.length > 0 && <>
+          <div className="project-site-search">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" />
+            </svg>
+            <input ref={siteSearchInput} type="search" aria-label="Search project sites" placeholder="Search sites or organizations"
+              value={siteSearch} onChange={(event) => { setSiteSearch(event.target.value); setSiteActionsId(null); }} />
+            {siteSearch && <button type="button" aria-label="Clear site search"
+              onClick={() => { setSiteSearch(''); siteSearchInput.current?.focus(); }}>Clear</button>}
+          </div>
+          {siteQuery && matchingProjectSites.length > 0 && <p className="project-site-search-count" role="status">
+            {matchingProjectSites.length} of {projectSiteFeatures.length} sites
+          </p>}
+        </>}
         <div className="zone-list">
           {projectSiteFeatures.length === 0 ? (
             <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
               No stable project sites yet. Draw one to group assignments and inspections across seasons.
             </p>
+          ) : matchingProjectSites.length === 0 ? (
+            <p className="project-site-search-empty" role="status">No sites match “{siteSearch.trim()}”.</p>
           ) : (
-            projectSiteFeatures.map((feature, index) => {
+            matchingProjectSites.map(({ feature, index }) => {
               const props = feature.properties || {};
               const siteId = feature.id ?? props.id;
               return (
                 <div key={siteId ?? index} className="zone-row project-site-row">
-                  <div className="zone-dot" style={{ background: KIND_COLORS.site }} />
-                  <div className="zone-info">
-                    <span className="zone-name">{props.name || `Project Site ${index + 1}`}</span>
+                  <button type="button" className="zone-locate" onClick={() => focusZone(feature, 'site')}
+                    aria-label={`Show ${getZoneName(feature, index, 'site')} on map`}
+                    aria-pressed={selectedZone === feature} disabled={!mapInstance || drawing || !feature.geometry}>
+                  <span className="zone-dot" style={{ background: KIND_COLORS.site }} aria-hidden="true" />
+                  <span className="zone-info">
+                    <span className="zone-name">{getZoneName(feature, index, 'site')}</span>
                     <span className="zone-area">
                       {props.organization_name ? `Owned by ${props.organization_name}` : 'Legacy site owner not recorded'}
                       {props.notes ? ` - ${props.notes}` : ''}
                       {props.assignment_count != null ? ` - ${props.assignment_count} assignments` : ''}
+                      {props.area_released_at ? ' - Area fully released' : ''}
                     </span>
-                  </div>
-                  <button
-                    className="btn btn-ghost btn-sm btn-icon"
-                    onClick={() => {
-                      setProjectSiteDeleteError('');
-                      setPendingProjectSiteDelete(feature);
-                    }}
-                    disabled={projectSiteDeleting === siteId || zoneLocked}
-                    title={`Delete ${props.name || 'project site'}`}
-                    aria-label={`Delete ${props.name || 'project site'}`}
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
+                  </span>
                   </button>
+                  <ProjectSiteActions site={feature} open={siteActionsId === siteId}
+                    onToggle={(open) => setSiteActionsId(open ? siteId : null)} locked={zoneLocked || drawing}
+                    onComplete={async (action) => {
+                      setSiteActionsId(null);
+                      setSiteActionMessage(action === 'release' ? 'Area released. Planting history preserved.' : 'Site removed from the active map. History preserved.');
+                      setSaveMsgText(action === 'release' ? 'Area released. Planting history preserved.' : 'Site deleted from the active map. History preserved.');
+                      setSaveMsgIsError(false);
+                      await Promise.all([fetchZones(), fetchPoints()]);
+                      window.dispatchEvent(new Event('mv:data-changed'));
+                    }} />
                 </div>
               );
             })
@@ -850,17 +952,21 @@ export default function ErodedZoneEditor() {
           ) : (
             erodedFeatures.map((f, i) => (
               <div key={i} className="zone-row">
-                <div className="zone-dot" style={{ background: '#ea580c' }} />
-                <div className="zone-info">
-                  <span className="zone-name">{getZoneName(f, i, 'Eroded')}</span>
+                <button type="button" className="zone-locate" onClick={() => focusZone(f, 'eroded')}
+                  aria-label={`Show ${getZoneName(f, i, 'eroded')} on map`}
+                  aria-pressed={selectedZone === f} disabled={!mapInstance || drawing}>
+                <span className="zone-dot" style={{ background: '#ea580c' }} aria-hidden="true" />
+                <span className="zone-info">
+                  <span className="zone-name">{getZoneName(f, i, 'eroded')}</span>
                   {getZoneArea(f) && <span className="zone-area">{getZoneArea(f)}</span>}
-                </div>
+                </span>
+                </button>
                 <button
                   className="btn btn-ghost btn-sm btn-icon"
                   onClick={() => setPendingDeleteIndex(i)}
                   disabled={deleting === i || zoneLocked}
-                  title={`Delete ${getZoneName(f, i, 'Eroded')}`}
-                  aria-label={`Delete ${getZoneName(f, i, 'Eroded')}`}
+                  title={`Delete ${getZoneName(f, i, 'eroded')}`}
+                  aria-label={`Delete ${getZoneName(f, i, 'eroded')}`}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                     <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -884,28 +990,32 @@ export default function ErodedZoneEditor() {
               No warning zones yet. Draw one to tag plantable points with expert caution notes.
             </p>
           ) : (
-            warningFeatures.map((f) => {
+            warningFeatures.map((f, i) => {
               const props = f.properties || {};
               const severity = props.severity || 'medium';
               return (
-                <div key={props.id} className="zone-row warning-zone-row">
-                  <div className="zone-dot" style={{ background: KIND_COLORS.warning }} />
-                  <div className="zone-info">
-                    <span className="zone-name">{props.name}</span>
+                <div key={props.id ?? i} className="zone-row warning-zone-row">
+                  <button type="button" className="zone-locate" onClick={() => focusZone(f, 'warning')}
+                    aria-label={`Show ${getZoneName(f, i, 'warning')} on map`}
+                    aria-pressed={selectedZone === f} disabled={!mapInstance || drawing}>
+                  <span className="zone-dot" style={{ background: KIND_COLORS.warning }} aria-hidden="true" />
+                  <span className="zone-info">
+                    <span className="zone-name">{getZoneName(f, i, 'warning')}</span>
                     <span className="zone-area">
                       {(props.warning_label || 'Planner warning')} - {severity}
                       {props.notes ? ` - ${props.notes}` : ''}
                     </span>
-                  </div>
+                  </span>
                   <span className={`warning-severity warning-severity-${severity}`}>
                     {severity}
                   </span>
+                  </button>
                   <button
                     className="btn btn-ghost btn-sm btn-icon"
                     onClick={() => setPendingWarningDelete(props)}
                     disabled={warningDeleting === props.id || zoneLocked}
-                    title={`Delete ${props.name}`}
-                    aria-label={`Delete ${props.name}`}
+                    title={`Delete ${getZoneName(f, i, 'warning')}`}
+                    aria-label={`Delete ${getZoneName(f, i, 'warning')}`}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -931,11 +1041,15 @@ export default function ErodedZoneEditor() {
           ) : (
             forbiddenFeatures.map((f, i) => (
               <div key={i} className="zone-row">
-                <div className="zone-dot" style={{ background: '#dc2626' }} />
-                <div className="zone-info">
-                  <span className="zone-name">{getZoneName(f, i, 'Forbidden')}</span>
+                <button type="button" className="zone-locate" onClick={() => focusZone(f, 'forbidden')}
+                  aria-label={`Show ${getZoneName(f, i, 'forbidden')} on map`}
+                  aria-pressed={selectedZone === f} disabled={!mapInstance || drawing}>
+                <span className="zone-dot" style={{ background: '#dc2626' }} aria-hidden="true" />
+                <span className="zone-info">
+                  <span className="zone-name">{getZoneName(f, i, 'forbidden')}</span>
                   {getZoneArea(f) && <span className="zone-area">{getZoneArea(f)}</span>}
-                </div>
+                </span>
+                </button>
                 <span className="badge badge-forbidden" style={{ fontSize: '0.5625rem' }}>Read-only</span>
               </div>
             ))
@@ -944,7 +1058,7 @@ export default function ErodedZoneEditor() {
       </PanelCard>
       <Modal
         open={pendingDeleteIndex !== null}
-        title={`Delete "${pendingDeleteIndex !== null ? getZoneName(erodedFeatures[pendingDeleteIndex], pendingDeleteIndex, 'Eroded') : ''}"?`}
+        title={`Delete "${pendingDeleteIndex !== null ? getZoneName(erodedFeatures[pendingDeleteIndex], pendingDeleteIndex, 'eroded') : ''}"?`}
         variant="danger"
         confirmLabel="Delete zone"
         cancelLabel="Cancel"
@@ -966,33 +1080,6 @@ export default function ErodedZoneEditor() {
         onCancel={() => { if (!clearAllBusy) setClearAllOpen(false); }}
       >
         <p>This permanently removes all drawn eroded zones. This action cannot be undone.</p>
-      </Modal>
-
-      <Modal
-        open={pendingProjectSiteDelete !== null}
-        title={`Delete "${pendingProjectSiteDelete?.properties?.name || 'project site'}"?`}
-        variant="danger"
-        confirmLabel="Delete project site"
-        cancelLabel="Cancel"
-        busy={projectSiteDeleting !== null}
-        onConfirm={() => handleDeleteProjectSite(pendingProjectSiteDelete)}
-        onCancel={() => {
-          if (projectSiteDeleting === null) {
-            setPendingProjectSiteDelete(null);
-            setProjectSiteDeleteError('');
-          }
-        }}
-      >
-        <p>
-          You can delete this boundary if no planting has been recorded. Unplanted assignments
-          will be released and their points will return to planned. Saved image analyses and
-          mapped points will remain available.
-        </p>
-        {projectSiteDeleteError ? (
-          <p role="alert" style={{ color: '#991b1b', fontWeight: 600, marginTop: 10 }}>
-            {projectSiteDeleteError}
-          </p>
-        ) : null}
       </Modal>
 
       <Modal

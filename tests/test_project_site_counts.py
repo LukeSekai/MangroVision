@@ -9,7 +9,7 @@ def test_grouped_site_counts_preserve_membership_without_join_multiplication():
     conn.row_factory = sqlite3.Row
     try:
         conn.executescript('''
-            CREATE TABLE site_zones (id INTEGER, geometry TEXT);
+            CREATE TABLE site_zones (id INTEGER, geometry TEXT, deleted_at TEXT, area_released_at TEXT);
             CREATE VIEW project_sites AS SELECT * FROM site_zones;
             CREATE TABLE analyses (id INTEGER, site_zone_id INTEGER);
             CREATE TABLE planter_assignments (id INTEGER, site_zone_id INTEGER);
@@ -17,7 +17,7 @@ def test_grouped_site_counts_preserve_membership_without_join_multiplication():
             CREATE TABLE planter_assignment_points
                 (assignment_id INTEGER, planting_point_id INTEGER, released_at TEXT);
             CREATE TABLE planting_schedules (project_site_id INTEGER);
-            INSERT INTO site_zones VALUES (1,'1'),(2,'2,3'),(3,'');
+            INSERT INTO site_zones(id,geometry) VALUES (1,'1'),(2,'2,3'),(3,'');
             INSERT INTO analyses VALUES (1,1),(2,1),(3,NULL);
             INSERT INTO planter_assignments VALUES (1,1),(2,1),(3,2);
             INSERT INTO planting_points VALUES (1,1,1),(2,2,2),(3,3,3),(4,3,4);

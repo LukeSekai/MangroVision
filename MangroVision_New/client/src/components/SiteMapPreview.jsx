@@ -3,14 +3,14 @@ import { GOOGLE_SATELLITE_URL, GOOGLE_SATELLITE_MAX_NATIVE_ZOOM } from '../confi
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { buildSiteMapPreview } from '../utils/siteMapPreview';
 
-export default function SiteMapPreview({ site, name, points = [], large = false }) {
+export default function SiteMapPreview({ site, name, points = [], large = false, frameGeometry }) {
   const [failedTiles, setFailedTiles] = useState(new Set());
   const preview = useMemo(() => buildSiteMapPreview(site.geometry, {
     satellite: { url: GOOGLE_SATELLITE_URL, maxNativeZoom: GOOGLE_SATELLITE_MAX_NATIVE_ZOOM },
     orthophoto: { url: ORTHOPHOTO_TILE_URL, maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM, bounds: ORTHOPHOTO_BOUNDS },
-    points,
+    points, frameGeometry,
     width: large ? 800 : 320, height: large ? 450 : 180, padding: large ? 28 : 18,
-  }), [site.geometry, points, large]);
+  }), [site.geometry, points, large, frameGeometry]);
   const radius = preview ? Math.max(1.2, Math.min(2.6, (preview.zoom - 15) * 0.4 + 1.1)) : 0;
   return <div className={`monitoring-site-thumbnail monitoring-site-map-preview${large ? ' monitoring-site-map-large' : ''}`} role="img"
     aria-label={preview ? `Map of ${name} with its site boundary outlined and ${preview.markers.length} planting points` : `Map preview unavailable for ${name}`}>

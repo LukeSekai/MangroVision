@@ -153,8 +153,9 @@ def project_site_context(
             FROM project_sites ps
             CROSS JOIN requested
             LEFT JOIN organizations o ON o.id = ps.organization_id
-            WHERE extensions.ST_Covers(ps.geometry, requested.center)
-               OR extensions.ST_Intersects(ps.geometry, requested.footprint)
+            WHERE ps.deleted_at IS NULL AND ps.area_released_at IS NULL AND (
+                extensions.ST_Covers(ps.geometry, requested.center)
+                OR extensions.ST_Intersects(ps.geometry, requested.footprint))
             ORDER BY covers_center DESC, ps.id
         """, (
             float(longitude),

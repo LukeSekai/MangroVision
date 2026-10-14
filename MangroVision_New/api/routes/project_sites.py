@@ -3,8 +3,11 @@
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
+from shapely.geometry import shape
+from shapely.ops import unary_union
+from sqlalchemy.exc import SQLAlchemyError
 
 from api.runtime_state import is_processing_active
 from planting_database import (
@@ -14,10 +17,13 @@ from planting_database import (
     get_project_site,
     list_organizations,
     list_project_sites,
+    list_site_zones,
     update_project_site,
     set_project_site_tide_calibration,
 )
 from .tides import tides_forecast
+from .zones import _checked_zone_polygon, _require_zone_inside_map
+from mangrovision_db.site_actions import apply_site_action, available_released_areas, preview_site_actions
 
 router = APIRouter()
 
@@ -49,6 +55,60 @@ class ProjectSiteCreate(BaseModel):
     notes: Optional[str] = None
     analysis_ids: Optional[list[int]] = None
     assignment_ids: Optional[list[int]] = None
+
+
+class ProjectSiteBoundary(BaseModel):
+    organization_id: int = Field(gt=0)
+    geometry: dict
+
+
+def _require_organization_boundary(organization_id: int, geometry: dict):
+    polygon = _checked_zone_polygon(geometry)
+    _require_zone_inside_map(geometry)
+    try:
+        sites = [feature for feature in list_project_sites()
+                 if (feature.get('geometry') or {}).get('type') in {'Polygon', 'MultiPolygon'}]
+        assignments = list_site_zones()
+        def owned(features):
+            return [feature for feature in features
+                    if str((feature.get("properties") or {}).get("organization_id")) == str(organization_id)]
+
+        def polygons(features):
+            output = []
+            for feature in features:
+                candidate = shape(feature.get("geometry") or {})
+                if candidate.geom_type not in {"Polygon", "MultiPolygon"} or not candidate.is_valid or candidate.is_empty:
+                    raise ValueError("Invalid recorded organization area")
+                output.append(candidate)
+            return output
+
+        own_features = (owned(sites) or owned(assignments)) + available_released_areas()['features']
+        if not own_features:
+            raise HTTPException(status_code=400, detail="No mapped area is assigned to this organization. Assign its area before drawing a project site.")
+        allowed = unary_union(polygons(own_features))
+        if not allowed.covers(polygon):
+            raise HTTPException(status_code=400, detail="This site extends outside the selected organization's area. Redraw it inside that area.")
+        # Shared edges are allowed; an area belonging to another owner is not.
+        recorded_owners = {str((feature.get('properties') or {}).get('organization_id')) for feature in sites}
+        other_areas = sites + [feature for feature in assignments
+                              if str((feature.get('properties') or {}).get('organization_id')) not in recorded_owners]
+        others = [feature for feature in other_areas
+                  if (feature.get("properties") or {}).get("organization_id") is not None
+                  and str(feature["properties"]["organization_id"]) != str(organization_id)]
+        if others and unary_union(polygons(others)).intersection(polygon).area > 0:
+            raise HTTPException(status_code=400, detail="This site overlaps another organization's area. Redraw it inside the selected organization's area.")
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=503, detail="Could not check the organization's area. Refresh the map and try again.") from error
+
+
+@router.post("/validate-boundary")
+def validate_project_site_boundary(body: ProjectSiteBoundary):
+    _require_lgu_user()
+    _raise_if_processing_active()
+    _require_organization_boundary(body.organization_id, body.geometry)
+    return {"valid": True}
 
 
 class ProjectSiteUpdate(BaseModel):
@@ -114,7 +174,37 @@ def project_sites():
         "name": "project_sites",
         "features": list_project_sites(),
         "organizations": list_organizations(),
+        "released_areas": available_released_areas(),
     }
+
+
+class SiteActionBody(BaseModel):
+    version: str = Field(min_length=64, max_length=64)
+
+
+@router.get('/{site_id}/actions')
+def site_actions(site_id: int):
+    _require_lgu_user()
+    try:
+        return preview_site_actions(site_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail='Project site not found.') from error
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail='Could not check this site. Please try again.') from error
+
+
+@router.post('/{site_id}/release')
+def release_project_site_area(site_id: int, body: SiteActionBody):
+    user = _require_lgu_user()
+    _raise_if_processing_active()
+    try:
+        return apply_site_action(site_id, 'release', body.version, int(user['id']))
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail='Project site not found.') from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail='Could not release this area. Review the site and try again.') from error
 
 
 @router.get("/{site_id}")
@@ -130,6 +220,7 @@ def project_site(site_id: int):
 def add_project_site(body: ProjectSiteCreate):
     _require_lgu_user()
     _raise_if_processing_active()
+    _require_organization_boundary(body.organization_id, body.geometry)
     try:
         return create_project_site(
             name=body.name,
@@ -146,6 +237,14 @@ def add_project_site(body: ProjectSiteCreate):
 def _update_project_site(site_id: int, body: ProjectSiteUpdate):
     _require_lgu_user()
     _raise_if_processing_active()
+    if body.geometry is not None:
+        existing = get_project_site(site_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="Project site not found.")
+        owner_id = existing.get("properties", {}).get("organization_id")
+        if owner_id is None:
+            raise HTTPException(status_code=400, detail="This project site has no organization owner. Assign its owner before changing the boundary.")
+        _require_organization_boundary(int(owner_id), body.geometry)
     try:
         result = update_project_site(
             site_id=site_id,
@@ -173,13 +272,15 @@ def edit_project_site(site_id: int, body: ProjectSiteUpdate):
 
 
 @router.delete("/{site_id}")
-def remove_project_site(site_id: int):
-    _require_lgu_user()
+def remove_project_site(site_id: int, version: str = Query(min_length=64, max_length=64)):
+    user = _require_lgu_user()
     _raise_if_processing_active()
     try:
-        removed = delete_project_site(site_id)
+        removed = delete_project_site(site_id, expected_version=version, user_id=int(user['id']))
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail='Could not delete this site. Review the site and try again.') from error
     if not removed:
         raise HTTPException(status_code=404, detail="Project site not found.")
     return {"status": "deleted", "id": site_id}

@@ -4,6 +4,26 @@
   gap: 2px;
 }
 
+.project-site-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--border-medium);
+  border-radius: var(--radius-md);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+}
+.project-site-search:focus-within { border-color: var(--green-700); box-shadow: 0 0 0 2px var(--green-50); }
+.project-site-search > svg { flex-shrink: 0; }
+.project-site-search input { flex: 1; min-width: 0; min-height: 38px; padding: 8px 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: .75rem; color: var(--text-primary); }
+.project-site-search input::placeholder { color: var(--text-secondary); }
+.project-site-search input::-webkit-search-cancel-button { display: none; }
+.project-site-search button { min-height: 32px; padding: 4px 2px; border: 0; border-radius: 4px; background: transparent; color: var(--green-700); font: inherit; font-size: .7rem; font-weight: 650; cursor: pointer; }
+.project-site-search button:focus-visible { outline: 2px solid var(--green-700); outline-offset: 2px; }
+.project-site-search-count, .project-site-search-empty { margin: 0 0 8px; color: var(--text-secondary); font-size: .75rem; line-height: 1.5; }
+
 .zone-lock-banner {
   display: flex;
   flex-direction: column;
@@ -220,7 +240,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
+  padding: 0 8px 0 0;
   border-radius: var(--radius-md);
   transition: background var(--duration-fast) var(--ease-out);
 }
@@ -228,6 +248,26 @@
 .zone-row:hover {
   background: var(--surface-hover);
 }
+
+.zone-locate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.zone-locate[aria-pressed="true"] { background: var(--green-50); }
+.zone-locate:focus-visible { outline: 2px solid var(--green-700); outline-offset: -2px; }
+.zone-locate:disabled { cursor: default; opacity: 0.65; }
 
 .zone-dot {
   width: 8px;

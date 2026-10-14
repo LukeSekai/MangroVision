@@ -24,7 +24,7 @@ before(async () => {
     fetch: async (input, options) => {
       const path = new URL(input, window.location.origin).pathname;
       requests.push(path);
-      if (options?.method === 'POST') mutations.push({ path, body: options.body instanceof FormData ? Object.fromEntries(options.body) : JSON.parse(options.body || '{}') });
+      if (options?.method === 'POST' && !['/api/zones/validate-boundary', '/api/project-sites/validate-boundary'].includes(path)) mutations.push({ path, body: options.body instanceof FormData ? Object.fromEntries(options.body) : JSON.parse(options.body || '{}') });
       if (responses.has(path)) {
         const value = responses.get(path);
         return typeof value === 'function' ? value(options, new URL(input, window.location.origin)) : value instanceof Response ? value : Response.json(value);
@@ -43,6 +43,17 @@ before(async () => {
   }
   // Give the collapse animation a real measurement despite JSDOM having no layout.
   Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', { configurable: true, get: () => 120 });
+  // JSDOM has no paint engine. Keep Leaflet's real Canvas renderer, polygon
+  // hit-testing and mouse events, supplying only dimensions and paint methods.
+  window.HTMLCanvasElement.prototype.getContext = function () {
+    return new Proxy({}, { get: (target, key) => target[key] ?? (() => {}) });
+  };
+  Object.defineProperty(window.HTMLElement.prototype, 'clientWidth', {
+    configurable: true, get() { return this.classList.contains('map-container') ? 1200 : 0; },
+  });
+  Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', {
+    configurable: true, get() { return this.classList.contains('map-container') ? 800 : 0; },
+  });
   ({ createRoot } = await import('react-dom/client'));
   server = await createServer({ configFile: false, appType: 'custom',
     server: { middlewareMode: true, hmr: false, watch: null, ws: false },
@@ -195,6 +206,577 @@ test('upper-left layers stay in sync with shared map state and survive tool chan
   assert.equal(layerInput('Warning Zones').checked, false);
   assert.equal(layerInput('OpenStreetMap').checked, true);
   assert.equal(useMapStore.getState().mapInstance, map);
+  assert.equal(mutations.length, 0);
+});
+
+function zoneFixtures() {
+  const rectangle = (id, west, south, east, north, properties = {}) => ({
+    type: 'Feature', id, properties,
+    geometry: { type: 'Polygon', coordinates: [[[west, south], [east, south], [east, north], [west, north], [west, south]]] },
+  });
+  const collection = (...features) => ({ type: 'FeatureCollection', features });
+  const eroded = rectangle(1, 122.6250, 10.7799, 122.6252, 10.7801,
+    { name: 'Eroded zone 1', description: 'Washed-out ground.' });
+  const secondEroded = rectangle(2, 122.6254, 10.7799, 122.6256, 10.7801);
+  const warning = rectangle(3, 122.6250, 10.7803, 122.6252, 10.7805,
+    { id: 3, name: 'Deep mud', warning_label: 'Difficult access', severity: 'high', notes: '<img src=x onerror=alert(1)>' });
+  const forbidden = rectangle(4, 122.6254, 10.7803, 122.6256, 10.7805,
+    { name: 'Do not plant', label: 'Legacy label' });
+  const site = rectangle(5, 122.6247, 10.7796, 122.6259, 10.7808,
+    { name: 'Community site', organization_name: 'Community', organization_id: 11 });
+  const assignment = rectangle(6, 122.6248, 10.7797, 122.6258, 10.7807,
+    { name: 'Assignment 6' });
+  useMapStore.setState({
+    center: [122.6253, 10.7800], zoom: 18, pointsLoaded: true,
+    points: [{ id: 101, point_num: 101, latitude: 10.7800, longitude: 122.6251,
+      planting_status: 'planned', species: 'bungalon', source_project_site_id: 5 }],
+    erodedZones: collection(eroded, secondEroded), warningZones: collection(warning),
+    forbiddenZones: collection(forbidden), projectSites: collection(site), siteZones: collection(assignment),
+  });
+  return { eroded, secondEroded, warning, forbidden, site, assignment };
+}
+
+function boundaryFor(map, feature) {
+  let found;
+  map.eachLayer((layer) => { if (layer.feature === feature) found = layer; });
+  return found;
+}
+
+async function hoverMap(map, layer, latitude, longitude) {
+  await settle(45); // Allow Leaflet's hover throttle to expire.
+  const point = map.latLngToContainerPoint([latitude, longitude]);
+  await act(async () => layer._renderer._container.dispatchEvent(new window.MouseEvent('mousemove', {
+    bubbles: true, clientX: point.x, clientY: point.y,
+  })));
+}
+
+test('recording a death keeps its marker and site membership across all planting tools until release', async () => {
+  const zones = zoneFixtures();
+  const planted = { ...useMapStore.getState().points[0], planting_status: 'planted',
+    map_status: 'planted', source_organization_id: 11, death_at: null };
+  const otherLiving = { ...planted, id: 102, point_num: 102, latitude: 10.7802, longitude: 122.6253 };
+  useMapStore.setState({ points: [planted, otherLiving] });
+  responses.set('/api/planters/map-points/101/death', { death_at: '2026-10-14',
+    death_reason: 'Not determined', death_reason_category: 'unknown', death_notes: '' });
+  await renderPlantingWorkspace('/zones');
+  const map = useMapStore.getState().mapInstance;
+  const markerFor = (id) => {
+    let found;
+    map.eachLayer((layer) => { if (layer.options?.mgPointId === id) found = layer; });
+    return found;
+  };
+  const siteCount = (status) => {
+    const content = boundaryFor(map, zones.site).getPopup().getContent();
+    return content().querySelector(`.project-site-info-stat.is-${status} dd`).textContent;
+  };
+  assert.equal(markerFor(101).options.mgDead, false);
+  await act(async () => useMapStore.getState().markPointDead(101, 'unknown', ''));
+  // A cached monitoring filter must not hide living or dead markers in the
+  // planting tools, including while navigating away and returning.
+  await act(async () => useMapStore.setState({ showDeadPointsOnly: true }));
+  for (const path of ['/zones', '/map', '/planters', '/processing', '/zones']) {
+    await click(toolLink(path));
+    assert.equal(useMapStore.getState().mapInstance, map);
+    const deadMarker = markerFor(101);
+    assert.ok(deadMarker, `the dead seedling must remain visible on ${path}`);
+    assert.equal(deadMarker.options.mgDead, true);
+    assert.equal(deadMarker.options.fillColor, '#7f1d1d');
+    assert.match(deadMarker.getPopup().getContent(), /Cause:.*Not determined/);
+    assert.ok(markerFor(102), `living seedlings must remain visible on ${path}`);
+    assert.equal(siteCount('dead'), '1');
+    assert.equal(siteCount('planted'), '1');
+    assert.equal(useMapStore.getState().points.find((point) => point.id === 101).source_project_site_id, 5);
+  }
+  // Explicit release refreshes the physical point's current status and owner;
+  // the location can remain available on the map without belonging to the site.
+  await act(async () => useMapStore.setState({ points: [
+    { ...planted, planting_status: 'planned', map_status: 'planned', source_project_site_id: null,
+      source_site_id: null, source_organization_id: null }, otherLiving,
+  ] }));
+  assert.equal(markerFor(101).options.mgDead, false);
+  assert.equal(siteCount('dead'), '0');
+  assert.equal(siteCount('planted'), '1');
+  assert.deepEqual(requests.filter((path) => /release|reset-to-planned|replanting/.test(path)), []);
+});
+
+test('zone hover labels work through the point canvas and identify overlapping boundaries', async () => {
+  const zones = zoneFixtures();
+  await renderPlantingWorkspace('/zones');
+  const map = useMapStore.getState().mapInstance;
+  const eroded = boundaryFor(map, zones.eroded);
+  let marker;
+  map.eachLayer((layer) => { if (layer.options?.mgPointId === 101) marker = layer; });
+  assert.ok(eroded);
+  assert.ok(marker);
+  assert.ok(eroded._renderer === marker._renderer, 'zones must share point-canvas hit-testing');
+  await hoverMap(map, eroded, 10.78006, 122.62506);
+  assert.equal(document.querySelector('.leaflet-tooltip .zone-tooltip-title')?.textContent, 'Eroded zone 1');
+  assert.match(document.querySelector('.leaflet-tooltip')?.textContent, /Washed-out ground/);
+
+  await hoverMap(map, eroded, 10.7800, 122.6251);
+  assert.equal(marker.isTooltipOpen(), true);
+  const point = map.latLngToContainerPoint([10.7800, 122.6251]);
+  await act(async () => marker._renderer._container.dispatchEvent(new window.MouseEvent('click', {
+    bubbles: true, clientX: point.x, clientY: point.y,
+  })));
+  assert.equal(useMapStore.getState().selectedPointId, 101);
+  map.closePopup();
+
+  const warning = boundaryFor(map, zones.warning);
+  await hoverMap(map, warning, 10.7804, 122.6251);
+  assert.equal(document.querySelector('.leaflet-tooltip .zone-tooltip-title')?.textContent, 'Deep mud');
+  const info = document.querySelector('.leaflet-tooltip');
+  assert.match(info.textContent, /Difficult access.*Severity: high/);
+  assert.match(info.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.equal(info.querySelector('img'), null, 'saved notes must remain text');
+  await hoverMap(map, boundaryFor(map, zones.forbidden), 10.7804, 122.6255);
+  assert.equal(document.querySelector('.leaflet-tooltip .zone-tooltip-title')?.textContent, 'Do not plant');
+  assert.match(document.querySelector('.leaflet-tooltip').textContent, /No planting allowed/);
+  await hoverMap(map, boundaryFor(map, zones.secondEroded), 10.7800, 122.6255);
+  assert.equal(document.querySelector('.leaflet-tooltip .zone-tooltip-title')?.textContent, 'Eroded Zone 2');
+  assert.equal(mutations.length, 0);
+});
+
+test('each zone list locates its own boundary, reveals hidden layers and keeps deletion separate', async () => {
+  const zones = zoneFixtures();
+  await renderPlantingWorkspace('/zones');
+  const map = useMapStore.getState().mapInstance;
+  const frames = [];
+  const fitBounds = map.fitBounds.bind(map);
+  map.fitBounds = (bounds, options) => { frames.push({ bounds, options }); return fitBounds(bounds, options); };
+  const findButton = (name) => document.querySelector(`.zone-locate[aria-label="Show ${name} on map"]`);
+  const openList = async (title) => {
+    const header = [...document.querySelectorAll('.panel-card-header')].find((element) => element.textContent.includes(title));
+    if (header.getAttribute('aria-expanded') !== 'true') await click(header);
+  };
+  for (const [title, name, feature, visibility] of [
+    ['Eroded Zones', 'Eroded zone 1', zones.eroded, 'eroded'],
+    ['Eroded Zones', 'Eroded Zone 2', zones.secondEroded, 'eroded'],
+    ['Warning Zones', 'Deep mud', zones.warning, 'warnings'],
+    ['Forbidden Zones', 'Do not plant', zones.forbidden, 'forbidden'],
+    ['Project Sites', 'Community site', zones.site, 'projectSites'],
+  ]) {
+    await openList(title);
+    await act(async () => useMapStore.getState().toggleLayer(visibility));
+    assert.equal(useMapStore.getState().layerVisibility[visibility], false);
+    await click(findButton(name));
+    const boundary = boundaryFor(map, feature);
+    assert.ok(frames.at(-1).bounds.equals(boundary.getBounds()));
+    assert.equal(useMapStore.getState().layerVisibility[visibility], true);
+    assert.equal(findButton(name).getAttribute('aria-pressed'), 'true');
+    assert.equal(boundary.options.weight, 4);
+    assert.ok(map.getBounds().contains(boundary.getBounds()));
+    assert.ok(map.latLngToContainerPoint(boundary.getBounds().getCenter()).x < map.getSize().x - 436);
+    assert.equal(boundary.isTooltipOpen(), true);
+    assert.equal(document.querySelectorAll('.zone-locate[aria-pressed="true"]').length, 1);
+    assert.equal(frames.at(-1).options.paddingBottomRight[0], 436);
+  }
+  assert.equal(boundaryFor(map, zones.eroded).options.weight, 2);
+  // Repeated selection must navigate again after a user has panned away.
+  const frameCount = frames.length;
+  await click(findButton('Community site'));
+  assert.equal(frames.length, frameCount + 1);
+  await openList('Eroded Zones');
+  await click(document.querySelector('[aria-label="Delete Eroded zone 1"]'));
+  assert.match(document.querySelector('[role="dialog"]').textContent, /Delete "Eroded zone 1"/);
+  assert.equal(frames.length, frameCount + 1, 'delete must not move the map');
+  assert.equal(mutations.length, 0);
+});
+
+const namedButton = (name) => [...document.querySelectorAll('[data-guide-panel="Zone Editor"] button')]
+  .find((button) => button.textContent.trim() === name);
+
+async function drawZone(kind, { start = true, corners = [[10.7799, 122.6250], [10.7799, 122.6252], [10.7801, 122.6252], [10.7801, 122.6250]] } = {}) {
+  if (start) {
+    const drawHeader = [...document.querySelectorAll('.panel-card-header')].find((element) => element.textContent.includes('Draw Zone'));
+    if (drawHeader.getAttribute('aria-expanded') !== 'true') await click(drawHeader);
+    await click(namedButton(kind === 'warning' ? 'Warning' : 'Eroded'));
+    await click(namedButton(kind === 'warning' ? 'Draw New Warning Zone' : 'Draw New Eroded Zone'));
+  }
+  const map = useMapStore.getState().mapInstance;
+  const container = map.getContainer();
+  const pointer = (type, latlng) => {
+    const point = map.latLngToContainerPoint(latlng);
+    const event = new window.MouseEvent(type, { bubbles: true, button: 0, clientX: point.x, clientY: point.y });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+    return event;
+  };
+  await act(async () => container.dispatchEvent(pointer('pointerdown', corners[0])));
+  await settle(375);
+  for (const corner of corners.slice(1)) {
+    await act(async () => container.dispatchEvent(pointer('pointermove', corner)));
+  }
+  await act(async () => window.dispatchEvent(pointer('pointerup', corners[0])));
+  await settle();
+}
+
+for (const kind of ['warning', 'eroded']) {
+  test(`${kind} drawing outside the map blocks Save and can be redrawn inside`, async () => {
+    zoneFixtures();
+    const checks = [];
+    responses.set('/api/zones/validate-boundary', (options) => {
+      checks.push(JSON.parse(options.body));
+      return Response.json({ detail: 'This zone extends outside the mapped area. Redraw it fully inside the drone map.' }, { status: 400 });
+    });
+    await renderPlantingWorkspace('/zones');
+    await drawZone(kind);
+    const label = kind === 'warning' ? 'Save Warning Zone' : 'Save Zone';
+    assert.equal(namedButton(label).disabled, true);
+    assert.match(document.querySelector('.save-form [role="alert"]').textContent, /outside the mapped area.*Redraw/);
+    assert.equal(checks.length, 1);
+    const ring = checks[0].geometry.coordinates[0];
+    assert.equal(ring.length, 5);
+    assert.deepEqual(ring[0], ring.at(-1));
+    assert.ok(ring[0][0] > 122 && ring[0][1] < 11, 'send GeoJSON longitude/latitude ordering');
+    await click(namedButton(label));
+    assert.equal(mutations.length, 0);
+
+    responses.set('/api/zones/validate-boundary', { valid: true });
+    responses.set(`/api/zones/${kind === 'warning' ? 'warnings' : 'eroded'}`, { id: 8 });
+    await click(namedButton('Redraw zone'));
+    assert.equal(document.querySelector('.save-form'), null);
+    await drawZone(kind, { start: false });
+    assert.equal(namedButton(label).disabled, false);
+    assert.equal(document.querySelector('.save-form [role="alert"]'), null);
+    await click(namedButton(label));
+    assert.equal(mutations.length, 1);
+    assert.equal(mutations[0].path, `/api/zones/${kind === 'warning' ? 'warnings' : 'eroded'}`);
+    assert.match(document.querySelector('[data-guide-panel="Zone Editor"]').textContent, /zone saved|Zone saved/);
+  });
+}
+
+test('failed map-boundary checks keep Save disabled and offer a retry', async () => {
+  zoneFixtures();
+  responses.set('/api/zones/validate-boundary', Response.json({ detail: 'Could not check the map boundary. Please try again.' }, { status: 503 }));
+  await renderPlantingWorkspace('/zones');
+  await drawZone('warning');
+  assert.equal(namedButton('Save Warning Zone').disabled, true);
+  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /Could not check the map boundary/);
+  responses.set('/api/zones/validate-boundary', { valid: true });
+  await click(namedButton('Try again'));
+  await settle();
+  assert.equal(namedButton('Save Warning Zone').disabled, false);
+  assert.equal(requests.filter((path) => path === '/api/zones/validate-boundary').length, 2);
+  assert.equal(mutations.length, 0);
+});
+
+test('cancelling a pending map-boundary check ignores its late response', async () => {
+  zoneFixtures();
+  let finishCheck;
+  responses.set('/api/zones/validate-boundary', () => new Promise((resolve) => { finishCheck = resolve; }));
+  await renderPlantingWorkspace('/zones');
+  await drawZone('eroded');
+  assert.equal(namedButton('Checking boundary...').disabled, true);
+  assert.match(document.querySelector('.save-form').textContent, /Checking the zone boundary/);
+  await click(namedButton('Cancel'));
+  await act(async () => finishCheck(Response.json({ valid: true })));
+  await settle();
+  assert.equal(document.querySelector('.save-form'), null);
+  assert.doesNotMatch(document.querySelector('[data-guide-panel="Zone Editor"]').textContent, /Ready to save|Checking the zone boundary/);
+  assert.ok(namedButton('Draw New Eroded Zone'));
+  assert.equal(mutations.length, 0);
+});
+
+test('a timed-out boundary check ends with a retryable error instead of enabling Save', async () => {
+  zoneFixtures();
+  responses.set('/api/zones/validate-boundary', (options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new window.DOMException('Timed out', 'AbortError')), { once: true });
+  }));
+  const originalTimeout = window.setTimeout;
+  window.setTimeout = (callback, delay, ...args) => originalTimeout.call(window, callback, delay === 15000 ? 1 : delay, ...args);
+  try {
+    await renderPlantingWorkspace('/zones');
+    await drawZone('eroded');
+    assert.equal(namedButton('Save Zone').disabled, true);
+    assert.match(document.querySelector('.save-form [role="alert"]').textContent, /Check your connection and try again/);
+    assert.ok(namedButton('Try again'));
+    assert.equal(mutations.length, 0);
+  } finally {
+    window.setTimeout = originalTimeout;
+  }
+});
+
+async function selectSiteOwner(id) {
+  const select = document.querySelector('.project-site-owner-first select') || document.querySelector('.save-form select');
+  await act(async () => { select.value = String(id); select.dispatchEvent(new Event('change', { bubbles: true })); });
+  await settle();
+}
+
+async function openProjectSiteDrawing() {
+  const drawHeader = [...document.querySelectorAll('.panel-card-header')].find((element) => element.textContent.includes('Draw Zone'));
+  if (drawHeader.getAttribute('aria-expanded') !== 'true') await click(drawHeader);
+  await click(namedButton('Project Site'));
+}
+
+test('choosing a project-site owner frames its area and rejects drawing outside it', async () => {
+  const zones = zoneFixtures();
+  useMapStore.setState({ points: [{ ...useMapStore.getState().points[0], source_organization_id: 11 }] });
+  responses.set('/api/project-sites/validate-boundary', (options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.organization_id, 11);
+    return Response.json({ detail: "This site extends outside the selected organization's area. Redraw it inside that area." }, { status: 400 });
+  });
+  await renderPlantingWorkspace('/zones');
+  await openProjectSiteDrawing();
+  assert.equal(namedButton('Draw New Project Site').disabled, true);
+  const map = useMapStore.getState().mapInstance;
+  const frames = [];
+  const fitBounds = map.fitBounds.bind(map);
+  map.fitBounds = (bounds, options) => { frames.push(bounds); return fitBounds(bounds, options); };
+  await selectSiteOwner(11);
+  assert.ok(frames.at(-1).equals(boundaryFor(map, zones.site).getBounds()));
+  assert.equal(namedButton('Draw New Project Site').disabled, false);
+  await click(namedButton('Draw New Project Site'));
+  await drawZone('site', { start: false });
+  assert.equal(namedButton('Save Project Site').disabled, true);
+  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /outside the selected organization's area/);
+  await click(namedButton('Save Project Site'));
+  assert.equal(mutations.length, 0);
+  responses.set('/api/project-sites/validate-boundary', { valid: true });
+  responses.set('/api/project-sites', { id: 8 });
+  await click(namedButton('Redraw zone'));
+  await drawZone('site', { start: false });
+  assert.equal(document.querySelector('.save-form select').value, '11', 'redraw retains the chosen owner');
+  assert.match(document.querySelector('.zone-covered-count').textContent, /1organization mapped point/);
+  assert.equal(namedButton('Save Project Site').disabled, false);
+  await click(namedButton('Save Project Site'));
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].path, '/api/project-sites');
+  assert.equal(mutations[0].body.organization_id, 11);
+});
+
+test('an organization without a recorded area cannot start a project-site drawing', async () => {
+  zoneFixtures();
+  useMapStore.setState({ projectSites: { ...useMapStore.getState().projectSites,
+    organizations: [{ id: 99, name: 'No area yet' }] } });
+  await renderPlantingWorkspace('/zones');
+  await openProjectSiteDrawing();
+  await selectSiteOwner(99);
+  assert.equal(namedButton('Draw New Project Site').disabled, true);
+  assert.match(document.querySelector('[data-guide-panel="Zone Editor"] [role="alert"]').textContent, /No mapped area is assigned to this organization/);
+  assert.equal(mutations.length, 0);
+});
+
+test('changing the project-site owner cancels the previous boundary approval', async () => {
+  const zones = zoneFixtures();
+  const otherSite = { ...zones.site, id: 15, properties: { organization_id: 22, organization_name: 'CICT', name: 'CICT' } };
+  useMapStore.setState({ projectSites: { features: [zones.site, otherSite] } });
+  let finishPrevious;
+  responses.set('/api/project-sites/validate-boundary', (options) => {
+    if (JSON.parse(options.body).organization_id === 11) return new Promise((resolve) => { finishPrevious = resolve; });
+    return Response.json({ detail: "This site extends outside the selected organization's area." }, { status: 400 });
+  });
+  await renderPlantingWorkspace('/zones');
+  await openProjectSiteDrawing();
+  await selectSiteOwner(11);
+  await click(namedButton('Draw New Project Site'));
+  await drawZone('site', { start: false });
+  assert.equal(namedButton('Checking boundary...').disabled, true);
+  await selectSiteOwner(22);
+  assert.equal(namedButton('Save Project Site').disabled, true);
+  await act(async () => finishPrevious(Response.json({ valid: true })));
+  await settle();
+  assert.equal(namedButton('Save Project Site').disabled, true);
+  assert.equal(document.querySelector('.save-form select').value, '22');
+  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /outside the selected organization/);
+  assert.equal(mutations.length, 0);
+});
+
+test('an outline must begin from left to right and can then close back to the left', async () => {
+  zoneFixtures();
+  responses.set('/api/zones/validate-boundary', { valid: true });
+  await renderPlantingWorkspace('/zones');
+  await drawZone('eroded', { corners: [[10.7799, 122.6252], [10.7799, 122.6250], [10.7801, 122.6250], [10.7801, 122.6252]] });
+  assert.equal(document.querySelector('.save-form'), null);
+  assert.match(document.querySelector('[data-guide-panel="Zone Editor"] [role="alert"]').textContent, /Start on the left side and drag right/);
+  assert.equal(requests.includes('/api/zones/validate-boundary'), false);
+  await drawZone('eroded', { start: false });
+  assert.equal(namedButton('Save Zone').disabled, false);
+  assert.equal(requests.filter((path) => path === '/api/zones/validate-boundary').length, 1);
+  assert.equal(mutations.length, 0);
+});
+
+function siteActionPlan(zones, overrides = {}) {
+  return { site_id: 5, name: 'Community site', version: 'a'.repeat(64),
+    counts: { living: 1, dead: 1, unplanted: 2, release: 3, historical_planted: 2, historical_dead: 1 },
+    can_release: true, can_delete: false,
+    release_reason: '', delete_reason: 'Delete is available only when all seedlings are recorded dead and no unplanted points remain.',
+    before_geometry: zones.site.geometry, after_geometry: zones.eroded.geometry,
+    points: [{ id:101, point_num:101, latitude:10.78, longitude:122.6251, status:'planted' }], ...overrides };
+}
+
+test('Project Sites search finds WVSU at the end and keeps each site’s map and actions distinct', async () => {
+  const zones = zoneFixtures();
+  const otherSites = Array.from({ length: 9 }, (_, index) => ({ ...zones.site, id: 30 + index,
+    properties: { name: `Area ${index + 1}`, organization_name: `Volunteer team ${index + 1}`, organization_id: 30 + index } }));
+  const fullName = { ...zones.site, id: 19, properties: { name: 'West Visayas State University', organization_name: 'West Visayas State University', organization_id: 28 } };
+  const wvsu = { ...zones.site, id: 11, properties: { name: 'WVSU', organization_name: 'WVSU', organization_id: 10 } };
+  useMapStore.setState({ projectSites: { type: 'FeatureCollection', features: [zones.site, ...otherSites, fullName, wvsu] } });
+  responses.set('/api/project-sites/11/actions', siteActionPlan(zones, { site_id: 11, name: 'WVSU' }));
+  await renderPlantingWorkspace('/zones');
+  const card = document.querySelector('[data-guide-card="Project Sites"]');
+  await click(card.querySelector('.panel-card-header'));
+  assert.equal(card.querySelectorAll('.project-site-row').length, 12);
+  assert.equal(card.querySelector('.panel-card-badge').textContent, '12');
+  const input = card.querySelector('[aria-label="Search project sites"]');
+  const search = async (value) => act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(input, value);
+    input.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await search(' WvsU ');
+  assert.equal(card.querySelectorAll('.project-site-row').length, 1);
+  assert.equal(card.querySelector('.zone-name').textContent, 'WVSU');
+  assert.equal(card.querySelector('[role="status"]').textContent.trim(), '1 of 12 sites');
+  const map = useMapStore.getState().mapInstance;
+  assert.ok(boundaryFor(map, wvsu));
+  assert.ok(boundaryFor(map, fullName), 'search must not remove other map areas');
+  let focused;
+  map.on('zonefocus', (event) => { focused = event.feature; });
+  await click(card.querySelector('[aria-label="Show WVSU on map"]'));
+  assert.equal(focused, wvsu);
+  await click(card.querySelector('[aria-label="Actions for WVSU"]'));
+  await settle();
+  assert.ok(requests.includes('/api/project-sites/11/actions'));
+  assert.equal(document.querySelector('.site-actions-menu').getAttribute('aria-label'), 'Actions for WVSU');
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  await search('state UNIVERSITY');
+  assert.equal(card.querySelectorAll('.project-site-row').length, 1);
+  assert.equal(card.querySelector('.zone-name').textContent, 'West Visayas State University');
+  await search('volunteer team 2');
+  assert.equal(card.querySelector('.zone-name').textContent, 'Area 2');
+  await search('not a known site');
+  assert.equal(card.querySelectorAll('.project-site-row').length, 0);
+  assert.match(card.querySelector('[role="status"]').textContent, /No sites match/);
+  await click(card.querySelector('[aria-label="Clear site search"]'));
+  assert.equal(card.querySelectorAll('.project-site-row').length, 12);
+  assert.equal(input.value, '');
+  assert.equal(document.activeElement, input);
+  assert.equal(useMapStore.getState().projectSites.features.length, 12);
+  assert.equal(mutations.length, 0);
+});
+
+test('project-site dots show Release and guarded Delete without moving the map', async () => {
+  const zones = zoneFixtures();
+  responses.set('/api/project-sites/5/actions', siteActionPlan(zones));
+  await renderPlantingWorkspace('/zones');
+  const header = [...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Project Sites'));
+  await click(header);
+  const trigger = document.querySelector('[aria-label="Actions for Community site"]');
+  assert.equal(document.querySelector('[aria-label="Delete Community site"]'), null);
+  const map = useMapStore.getState().mapInstance;
+  const center = map.getCenter();
+  await click(trigger);
+  await settle();
+  assert.ok(map.getCenter().equals(center));
+  const items = [...document.querySelectorAll('.site-actions-menu [role="menuitem"]')];
+  assert.deepEqual(items.map((item) => item.textContent), ['Release area', 'Delete site']);
+  assert.equal(items[0].getAttribute('aria-disabled'), 'false');
+  assert.equal(items[1].getAttribute('aria-disabled'), 'true');
+  assert.match(document.querySelector('.site-actions-menu').textContent, /all seedlings are recorded dead/);
+  await click(items[1]);
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  await click(items[0]);
+  const dialog = document.querySelector('[role="dialog"]');
+  assert.equal(dialog.closest('.modal-backdrop').parentElement, document.body);
+  assert.equal(document.querySelector('.planting-workspace-panel').contains(dialog), false);
+  assert.equal(dialog.querySelector('.modal-title').textContent, 'Release area');
+  assert.equal(dialog.querySelector('.site-action-name').textContent, 'Community site');
+  assert.ok(dialog.querySelector('[aria-label="Close modal"]'));
+  assert.match(dialog.textContent, /Site history stays saved/);
+  assert.match(dialog.textContent, /2 planted · 1 recorded deaths/);
+  assert.equal(dialog.querySelectorAll('.site-action-boundaries [role="img"]').length, 2);
+  assert.equal(mutations.length, 0);
+  await click([...dialog.querySelectorAll('button')].find((item) => item.textContent === 'Cancel'));
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(mutations.length, 0);
+  await click(trigger);
+  await settle();
+  await click(document.querySelector('.site-actions-menu [role="menuitem"]'));
+  await click(document.querySelector('[role="dialog"] [aria-label="Close modal"]'));
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(document.activeElement, trigger);
+  assert.equal(mutations.length, 0);
+});
+
+test('release confirms the preview version once and refreshes shared map data', async () => {
+  const zones = zoneFixtures();
+  responses.set('/api/project-sites/5/actions', siteActionPlan(zones));
+  responses.set('/api/project-sites/5/release', { status:'released', id:5 });
+  await renderPlantingWorkspace('/zones');
+  await click([...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Project Sites')));
+  await click(document.querySelector('[aria-label="Actions for Community site"]'));
+  await settle();
+  await click(document.querySelector('.site-actions-menu [role="menuitem"]'));
+  const confirm = [...document.querySelector('[role="dialog"]').querySelectorAll('button')].find((item) => item.textContent === 'Release area');
+  await click(confirm);
+  assert.equal(mutations.filter((item) => item.path === '/api/project-sites/5/release').length, 1);
+  assert.deepEqual(mutations.find((item) => item.path === '/api/project-sites/5/release').body, { version:'a'.repeat(64) });
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.match(document.querySelector('[data-guide-panel="Zone Editor"]').textContent, /Planting history preserved/);
+});
+
+test('a changed release preview blocks confirmation until the updated area is reviewed', async () => {
+  const zones = zoneFixtures();
+  responses.set('/api/project-sites/5/actions', siteActionPlan(zones));
+  responses.set('/api/project-sites/5/release', Response.json({ detail:'This site changed after the preview. Review the updated counts and boundary before confirming.' }, { status:409 }));
+  await renderPlantingWorkspace('/zones');
+  await click([...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Project Sites')));
+  await click(document.querySelector('[aria-label="Actions for Community site"]'));
+  await settle();
+  await click(document.querySelector('.site-actions-menu [role="menuitem"]'));
+  await click([...document.querySelector('[role="dialog"]').querySelectorAll('button')].find((item) => item.textContent === 'Release area'));
+  assert.match(document.querySelector('[role="dialog"] [role="alert"]').textContent, /changed after the preview/);
+  assert.equal([...document.querySelector('[role="dialog"]').querySelectorAll('button')].some((item) => item.textContent === 'Release area'), false);
+  responses.set('/api/project-sites/5/actions', siteActionPlan(zones, { version:'b'.repeat(64) }));
+  await click([...document.querySelector('[role="dialog"]').querySelectorAll('button')].find((item) => item.textContent === 'Review updated area'));
+  await settle();
+  assert.ok([...document.querySelector('[role="dialog"]').querySelectorAll('button')].some((item) => item.textContent === 'Release area'));
+  assert.equal(mutations.length, 1);
+});
+
+test('all-dead sites offer Delete and send its reviewed version without losing history wording', async () => {
+  const zones = zoneFixtures();
+  responses.set('/api/project-sites/5/actions', siteActionPlan(zones, {
+    can_delete:true, after_geometry:null,
+    counts:{ living:0, dead:2, unplanted:0, release:2, historical_planted:2, historical_dead:2 },
+  }));
+  let deleted = 0;
+  responses.set('/api/project-sites/5', (options, url) => {
+    assert.equal(options.method, 'DELETE');
+    assert.equal(url.searchParams.get('version'), 'a'.repeat(64));
+    deleted += 1;
+    return Response.json({ status:'deleted', id:5 });
+  });
+  await renderPlantingWorkspace('/zones');
+  await click([...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Project Sites')));
+  await click(document.querySelector('[aria-label="Actions for Community site"]'));
+  await settle();
+  const item = [...document.querySelectorAll('.site-actions-menu [role="menuitem"]')].find((element) => element.textContent === 'Delete site');
+  assert.equal(item.getAttribute('aria-disabled'), 'false');
+  await click(item);
+  assert.match(document.querySelector('[role="dialog"]').textContent, /Planting records, deaths and survival rate are kept for this site/);
+  await click([...document.querySelector('[role="dialog"]').querySelectorAll('button')].find((element) => element.textContent === 'Delete site'));
+  assert.equal(deleted, 1);
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+});
+
+test('site menus support keyboard dismissal and failed checks cannot enable actions', async () => {
+  zoneFixtures();
+  responses.set('/api/project-sites/5/actions', Response.json({ detail:'Could not check this site. Please try again.' }, { status:503 }));
+  await renderPlantingWorkspace('/zones');
+  await click([...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Project Sites')));
+  const trigger = document.querySelector('[aria-label="Actions for Community site"]');
+  await click(trigger);
+  await settle();
+  assert.match(document.querySelector('.site-actions-menu [role="alert"]').textContent, /Could not check this site/);
+  assert.ok([...document.querySelectorAll('.site-actions-menu [role="menuitem"]')].every((item) => item.getAttribute('aria-disabled') === 'true'));
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key:'ArrowDown', bubbles:true })));
+  assert.equal(document.activeElement.textContent, 'Delete site');
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key:'Escape', bubbles:true })));
+  assert.equal(document.querySelector('.site-actions-menu'), null);
+  assert.ok(document.activeElement === trigger);
   assert.equal(mutations.length, 0);
 });
 

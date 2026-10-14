@@ -3,6 +3,11 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Any, Optional
+import logging
+import math
+
+from shapely import get_coordinates
+from shapely.geometry import shape
 
 from api.runtime_state import is_processing_active
 from planting_database import (
@@ -25,6 +30,67 @@ from mangrovision_db.zones import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+OUTSIDE_MAP_MESSAGE = "This zone extends outside the mapped area. Redraw it fully inside the drone map."
+
+
+def _load_zone_coverage():
+    # Use the same irregular imagery/GIS intersection as planting points and
+    # image analysis, rather than the rectangular tile bounds or satellite map.
+    from canopy_detection.ortho_matcher import _ensure_active_ortho
+    from canopy_detection.orthophoto_coverage import visible_gis_coverage
+
+    return visible_gis_coverage(
+        _ensure_active_ortho(), feature_collection("gis_coverage").get("features", [])
+    )
+
+
+def _checked_zone_polygon(geometry):
+    try:
+        if not isinstance(geometry, dict) or geometry.get("type") not in {"Polygon", "MultiPolygon"}:
+            raise ValueError("Not a polygon")
+        polygon = shape(geometry)
+        coordinates = get_coordinates(polygon)
+        if (polygon.is_empty or not polygon.is_valid or polygon.area <= 0
+                or any(not math.isfinite(x) or not math.isfinite(y)
+                       or abs(x) > 180 or abs(y) > 90 for x, y in coordinates)):
+            raise ValueError("Invalid polygon")
+        return polygon
+    except Exception as error:
+        raise HTTPException(
+            status_code=400,
+            detail="The zone boundary is invalid. Draw a closed area without crossing its own outline.",
+        ) from error
+
+
+def _require_zone_inside_map(geometry, coverage=None):
+    polygon = _checked_zone_polygon(geometry)
+    try:
+        coverage = _load_zone_coverage() if coverage is None else coverage
+        if coverage is None or coverage.is_empty or not coverage.is_valid:
+            raise ValueError("No valid map boundary")
+        inside = coverage.covers(polygon)
+    except Exception as error:
+        logger.warning("Could not check the zone against the visible map boundary: %s", type(error).__name__)
+        raise HTTPException(
+            status_code=503, detail="Could not check the map boundary. Please try again.",
+        ) from error
+    if not inside:
+        raise HTTPException(status_code=400, detail=OUTSIDE_MAP_MESSAGE)
+    return coverage
+
+
+class ZoneBoundaryBody(BaseModel):
+    geometry: dict
+
+
+@router.post("/validate-boundary")
+def validate_zone_boundary(body: ZoneBoundaryBody):
+    _raise_if_processing_active()
+    _require_lgu_user()
+    _require_zone_inside_map(body.geometry)
+    return {"valid": True}
 
 def _raise_if_processing_active():
     if is_processing_active():
@@ -61,6 +127,13 @@ class SaveErodedBody(BaseModel):
 def save_eroded_zones(body: SaveErodedBody):
     _raise_if_processing_active()
     user = _require_lgu_user()
+    # Check the entire replacement before the repository can save any feature.
+    # An empty collection remains usable for clearing old zones without imagery.
+    coverage = None
+    for feature in body.features:
+        coverage = _require_zone_inside_map(
+            feature.get("geometry") if isinstance(feature, dict) else None, coverage,
+        )
     try:
         collection = replace_zone_collection("eroded", body.features, int(user["id"]))
     except ValueError as error:
@@ -85,6 +158,7 @@ def add_eroded_zone(feature: dict):
     """Create one erosion zone with a stable database ID."""
     _raise_if_processing_active()
     user = _require_lgu_user()
+    _require_zone_inside_map(feature.get("geometry"))
     try:
         saved = create_zone("eroded", feature, int(user["id"]))
     except ValueError as error:
@@ -168,6 +242,7 @@ def get_warning_zone_endpoint(zone_id: int):
 def create_warning_zone_endpoint(body: WarningZoneCreate):
     _raise_if_processing_active()
     _require_lgu_user()
+    _require_zone_inside_map(body.geometry)
     try:
         zone_id = create_warning_zone(
             body.name,
@@ -187,6 +262,8 @@ def update_warning_zone_endpoint(zone_id: int, body: WarningZoneUpdate):
     _require_lgu_user()
     if get_warning_zone(zone_id) is None:
         raise HTTPException(status_code=404, detail="Warning zone not found")
+    if body.geometry is not None:
+        _require_zone_inside_map(body.geometry)
     try:
         return update_warning_zone(
             zone_id,
