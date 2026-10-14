@@ -353,7 +353,6 @@ test('each zone list locates its own boundary, reveals hidden layers and keeps d
     ['Eroded Zones', 'Eroded zone 1', zones.eroded, 'eroded'],
     ['Eroded Zones', 'Eroded Zone 2', zones.secondEroded, 'eroded'],
     ['Warning Zones', 'Deep mud', zones.warning, 'warnings'],
-    ['Forbidden Zones', 'Do not plant', zones.forbidden, 'forbidden'],
     ['Project Sites', 'Community site', zones.site, 'projectSites'],
   ]) {
     await openList(title);
@@ -929,6 +928,31 @@ test('Quick Assign links points to the selected planting activity and requires a
   await click(assign);
   assert.equal(mutations.length, 1);
   assert.equal(mutations[0].body.planting_schedule_id, 32);
+});
+
+test('Quick Assign links an activity without an area to the selected project site', async () => {
+  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
+  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
+  responses.set('/api/planting-schedules', { schedules: [{
+    id: 31, organization_id: 22, project_site_id: null, appointment_type: 'tree_planting',
+    status: 'confirmed', title: 'Confirmed activity', date: '2090-01-01',
+  }] });
+  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1] });
+  useMapStore.setState({ projectSites: { features: [{ id: 15, properties: { name: 'Demo site', organization_id: 22 } }] },
+    points: [{ id: 1, point_num: 1, analysis_id: 1, latitude: 10.5, longitude: 122.5,
+      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
+  await render(pages.get('PlanterManagement'));
+  await act(async () => {
+    const organization = document.getElementById('assign-organization');
+    organization.value = '22'; organization.dispatchEvent(new window.Event('change', { bubbles: true }));
+  });
+  await settle();
+  assert.match(document.body.textContent, /Its planting area will use the selected project site/);
+  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 1 Point/.test(button.textContent));
+  await click(assign);
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].body.planting_schedule_id, 31);
+  assert.equal(mutations[0].body.site_zone_id, 15);
 });
 
 test('review-analysis links open history when there is no current result', async () => {

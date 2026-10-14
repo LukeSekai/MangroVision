@@ -67,7 +67,6 @@ export default function ErodedZoneEditor() {
   const loaded = useRef(false);
   const adminToken = useAuthStore((s) => s.token);
   const erodedZones = useMapStore((s) => s.erodedZones);
-  const forbiddenZones = useMapStore((s) => s.forbiddenZones);
   const warningZones = useMapStore((s) => s.warningZones);
   const projectSites = useMapStore((s) => s.projectSites);
   const siteZones = useMapStore((s) => s.siteZones);
@@ -181,7 +180,6 @@ export default function ErodedZoneEditor() {
   }, [fetchPoints, fetchZones]);
 
   const erodedFeatures = erodedZones?.features || [];
-  const forbiddenFeatures = forbiddenZones?.features || [];
 
   useEffect(() => {
     if (!drawnCoords || (drawingKind === 'site' && !projectSiteOrganizationId)) return undefined;
@@ -643,7 +641,7 @@ export default function ErodedZoneEditor() {
   };
 
   return (
-    <Panel plantingTool title="Zone Editor" subtitle={`${projectSiteFeatures.length + erodedFeatures.length + forbiddenFeatures.length + warningFeatures.length} zones total`}>
+    <Panel plantingTool title="Zone Editor" subtitle={`${projectSiteFeatures.length + erodedFeatures.length + warningFeatures.length} zones total`}>
       {zoneLocked && (
         <div className="zone-lock-banner">
           <strong>Zone editing locked</strong>
@@ -1028,34 +1026,6 @@ export default function ErodedZoneEditor() {
         </div>
       </PanelCard>
 
-      {/* Forbidden Zones */}
-      <PanelCard
-        title="Forbidden Zones"
-        badge={forbiddenFeatures.length}
-        icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/></svg>}
-        defaultOpen={false}
-      >
-        <div className="zone-list">
-          {forbiddenFeatures.length === 0 ? (
-            <p className="text-sm" style={{ color: 'var(--text-muted)' }}>No forbidden zones defined</p>
-          ) : (
-            forbiddenFeatures.map((f, i) => (
-              <div key={i} className="zone-row">
-                <button type="button" className="zone-locate" onClick={() => focusZone(f, 'forbidden')}
-                  aria-label={`Show ${getZoneName(f, i, 'forbidden')} on map`}
-                  aria-pressed={selectedZone === f} disabled={!mapInstance || drawing}>
-                <span className="zone-dot" style={{ background: '#dc2626' }} aria-hidden="true" />
-                <span className="zone-info">
-                  <span className="zone-name">{getZoneName(f, i, 'forbidden')}</span>
-                  {getZoneArea(f) && <span className="zone-area">{getZoneArea(f)}</span>}
-                </span>
-                </button>
-                <span className="badge badge-forbidden" style={{ fontSize: '0.5625rem' }}>Read-only</span>
-              </div>
-            ))
-          )}
-        </div>
-      </PanelCard>
       <Modal
         open={pendingDeleteIndex !== null}
         title={`Delete "${pendingDeleteIndex !== null ? getZoneName(erodedFeatures[pendingDeleteIndex], pendingDeleteIndex, 'eroded') : ''}"?`}

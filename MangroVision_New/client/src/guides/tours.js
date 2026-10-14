@@ -35,7 +35,6 @@ export const STAFF_TOURS = [
       step('/zones', zoneCard('Project Sites'), 'Review organization sites', 'Select a site to focus its area. Open its three-dot menu to Release area or Delete site. Release frees unplanted and dead locations and keeps living seedlings. Delete is available only when all seedlings are dead. Review the counts and new boundary before confirming. Planting and death history stays with the original site.'),
       step('/zones', zoneCard('Eroded Zones'), 'Handle eroded areas', 'Points inside eroded zones remain visible but become unavailable for planting. Removing an eroded zone makes eligible points available again. Review the zone carefully before deleting it. You can also export eroded zones as GeoJSON.'),
       step('/zones', zoneCard('Warning Zones'), 'Review hazards', 'Warning zones describe conditions such as deep mud and their severity. Review these with the field team before working in the area.'),
-      step('/zones', zoneCard('Forbidden Zones'), 'Respect exclusions', 'Forbidden Zones displays the configured planting exclusions. Compare these boundaries with the study area when reviewing analysis and generated planting locations.'),
     ],
   },
   {
@@ -66,14 +65,15 @@ export const STAFF_TOURS = [
   },
   {
     id: 'scheduling', title: 'Schedules and website requests', path: '/scheduling',
-    description: 'Review tide guidance, create schedules, confirm appointments and choose sites.',
+    description: 'Review tide guidance, approve or decline requests, create schedules and choose sites.',
     steps: [
       step('/scheduling', '.schedule-header', 'Coordinate organization activities', 'Scheduling brings together staff-entered activities and requests from the LIKE website. Review upcoming visits, clean-up drives and tree-planting activities here.'),
-      step('/scheduling', '.website-requests .schedule-toolbar', 'Review pending requests', 'Pending requests appear above the tide graph. Open a request, review its organization and activity details, contact the organization, then confirm or decline it.'),
+      step('/scheduling', '.website-requests .schedule-toolbar', 'Approve or decline requests', 'Requests use Pending, Approved and Declined decisions. Open a pending request, review its organization and activity details, contact the organization, then approve or decline it. Approval records the agreed schedule; the activity remains Pending until completed.'),
       step('/scheduling', '.schedule-tide-panel', 'Check the weekly tide forecast', 'The graph shows water levels and estimated planting conditions across the forecast. Daily High tide and Low tide times appear in the calendar below. Click a tide time to open its details and that day’s hourly graph. Check actual water and weather at the site.'),
       step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-toolbar', 'Add an organization schedule', 'Choose Add schedule. Select or enter the organization, activity type, date, start and end times and participant information, then review the form before saving.'),
-      step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-view-toggle', 'Use the calendar or list', 'Calendar shows activities and tide times by date. List shows organization schedules with their status and available actions. Open an activity to review its details.'),
-      step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-toolbar', 'Confirm and choose a planting area', 'After confirming a tree-planting schedule, choose the organization planting area. Create missing areas in Zone Editor first. Review the scheduled activity before assigning available points.'),
+      step('/scheduling', '.schedule-kpis', 'Review activity progress', 'Activities use Completed, Pending and Cancelled progress groups. Pending includes activities awaiting approval or completion. Missed activities show a follow-up notice within Pending. Select a group to open its records in List. Completed activities are read-only and offer View.'),
+      step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-view-toggle', 'Use the calendar or list', 'Calendar shows approved activities and tide times by date. List lets you switch between All schedules and the three activity groups. A Missed label asks for progress follow-up; planting records and date locks still apply. Open an activity to review its details.'),
+      step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-toolbar', 'Approve and choose a planting area', 'After approving a tree-planting schedule, choose the organization planting area. Create missing areas in Zone Editor first. Review the scheduled activity before assigning available points.'),
     ],
   },
   {
@@ -83,7 +83,7 @@ export const STAFF_TOURS = [
       step('/planters', '[data-guide-panel="Planting Assignments"] .floating-panel-header', 'Allocate planting work', 'Planting Assignments connects saved available points with an organization and project site. Prepare the organization through Scheduling and create its site in Zone Editor first.'),
       step('/planters', '#assign-organization', 'Choose the organization', 'Open Assign available points and select the organization. Points may be reserved before its shared field account is registered.'),
       step('/planters', '#assign-site', 'Choose its project site', 'Choose a site owned by that organization. The map locates it and the form checks available points. If none are available, review the site, saved analysis and eroded zones.'),
-      step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant confirmed activity when one is available. Check that the activity and site match the planned field visit.'),
+      step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant confirmed activity when one is available. If it has no area yet, assigning points links it to the selected project site. Its date remains editable until an assigned point is recorded as planted.'),
       step('/planters', '#organization-point-count', 'Set the allocation size', 'Enter how many available points to assign. Review the count, species and participant allocation before using Assign. Participants receive staggered zigzag strips, with later batches balancing existing allocations.'),
       step('/planters', assignCard('Field Share Link'), 'Share the field workspace', 'Open Field Share Link and copy the field link for participants. On a local setup, use the provided link-generation controls if needed. Keep the current link while participants work.'),
       step('/planters', assignCard('Planter codes'), 'Manage individual planter codes', 'Give each participant only their own code. It opens their same participant number and assigned points on any browser. Replace or revoke a code here when needed; their planting records stay saved.'),

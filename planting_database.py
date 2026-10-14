@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from mangrovision_db import DatabaseError, get_connection as _postgres_connection
 from mangrovision_db.activity import append_activity
 from mangrovision_db.activity_rules import (
-    ActivityConflict, activity_work, lock_assignment_activity,
+    ActivityConflict, activity_work, ensure_activity_editable, lock_assignment_activity,
     resolve_assignment_activity, validate_activity_change,
 )
 from mangrovision_db.config import get_settings
@@ -4323,7 +4323,7 @@ def _create_planter_assignment(
 
     planting_schedule_id, assignment_date = resolve_assignment_activity(
         conn, int(planter['organization_id']), normalized_site_zone_id,
-        assignment_date, planting_schedule_id,
+        assignment_date, planting_schedule_id, actor_user_id=assigned_by_user_id,
     )
 
     placeholders = ",".join("?" for _ in point_ids)
@@ -7107,6 +7107,8 @@ def _planting_schedule_row(conn: Any, schedule_id: int) -> Optional[dict]:
         "recorded_planting_count": int(row['planting_count']),
         "linked_assignment_count": int(row['assignment_count']),
         "edit_lock_reason": (
+            'This activity is completed and read-only. It cannot be edited, reopened, cancelled, or deleted.'
+            if row['status'] == 'completed' else
             'Planting has been recorded. Activity details and deletion are locked; contact details and notes can be corrected.'
             if int(row['planting_count']) > 0 else None
         ),
@@ -7267,6 +7269,7 @@ def update_planting_schedule(
         if not current:
             conn.rollback()
             return None
+        ensure_activity_editable(dict(current))
         values = dict(current)
         current_status = str(current["status"] or "").strip().lower()
         current_org_key = _organization_key(current["organization"])
@@ -7447,6 +7450,7 @@ def delete_planting_schedule(schedule_id: int, *, deleted_by_user_id: Optional[i
         current = conn.execute('SELECT * FROM planting_schedules WHERE id = ? FOR UPDATE', (int(schedule_id),)).fetchone()
         if not current:
             return False
+        ensure_activity_editable(dict(current))
         work = activity_work(conn, int(schedule_id))
         if work['plantings']:
             raise ActivityConflict('This activity has recorded planting and cannot be deleted. Its planting history must be preserved.')

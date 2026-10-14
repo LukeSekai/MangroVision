@@ -17,6 +17,7 @@ import { groupCalendarSchedules } from '../utils/calendarScheduleGroups';
 import { APPOINTMENT_TYPES, appointmentTypeLabel, isPlantingAppointment } from '../utils/appointmentTypes';
 import { bookingErrors } from '../like/booking';
 import { scheduleContactFields, scheduleContactSummary } from '../utils/scheduleContact';
+import { SCHEDULE_TRACKING_GROUPS, scheduleProgressStatus, scheduleStatusForProgress, scheduleTrackingState } from '../utils/scheduleTracking';
 import './Scheduling.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -233,7 +234,7 @@ function makeScheduleForm(schedule = null) {
       : ''),
     expectedParticipants: schedule?.expected_participants ?? '',
     inspectionIntervalDays: 14,
-    status: schedule?.status ?? 'requested',
+    status: scheduleProgressStatus(schedule?.status),
     notes: schedule?.notes ?? '',
   };
 }
@@ -242,6 +243,26 @@ function scheduleStatusLabel(value) {
   if (String(value).toLowerCase() === 'requested') return 'Pending confirmation';
   const clean = String(value || 'requested').replaceAll('_', ' ');
   return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+function scheduleEmailNotice(saved) {
+  if (saved?.email_update?.status === 'missing_recipient') {
+    return ' No email was queued. Add the organization’s notification email to send the current details. Planters can view the saved schedule.';
+  }
+  if (!saved?.email_update) return '';
+  return saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the organization.'
+    : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the organization.'
+      : ' A confirmation email is queued for the organization.';
+}
+
+function scheduleProgressHint(schedule) {
+  if (!schedule) return 'Save the pending schedule, then use Approve in List after coordinating with the organization.';
+  if (scheduleProgressStatus(schedule.status) === 'completed') return 'Completed activities are read-only.';
+  if (scheduleProgressStatus(schedule.status) !== 'pending') {
+    return 'Select Pending to reopen this activity for approval.';
+  }
+  return scheduleTrackingState(schedule).approved ? 'This schedule is approved. Pending keeps its approval until you mark it completed.'
+    : 'Use Approve in List to approve this schedule. Approval keeps the activity Pending.';
 }
 
 function scheduleTimeLabel(schedule) {
@@ -374,20 +395,21 @@ function HighTideCaution({ selection, onContinue, onBack }) {
   </Modal>;
 }
 
-function ScheduleDetails({ schedule, showOrganization = true }) {
+function ScheduleDetails({ schedule, showOrganization = true, showStatus = true }) {
   return <dl>
     <div><dt>Appointment type</dt><dd>{appointmentTypeLabel(schedule.appointment_type)}</dd></div>
-    <div><dt>Status</dt><dd>{scheduleStatusLabel(schedule.status)}</dd></div>
+    {showStatus ? <div><dt>Status</dt><dd>{scheduleStatusLabel(scheduleProgressStatus(schedule.status))}</dd></div> : null}
+    {scheduleProgressStatus(schedule.status) === 'pending' ? <div><dt>Approval</dt><dd>{scheduleTrackingState(schedule).approved ? 'Approved' : 'Awaiting approval'}</dd></div> : null}
     <div><dt>Source</dt><dd>{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</dd></div>
-    {showOrganization ? <div><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
-    {isPlantingAppointment(schedule) ? <div><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div> : null}
+    {showOrganization ? <div className="schedule-detail-wide"><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
+    {isPlantingAppointment(schedule) ? <div className="schedule-detail-wide"><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div> : null}
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
     {isPlantingAppointment(schedule) ? <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div> : null}
-    {schedule.contact ? <div><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
-    {schedule.notification_email ? <div><dt>Notification email</dt><dd>{schedule.notification_email}</dd></div> : null}
+    {schedule.contact ? <div className="schedule-detail-wide"><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
+    {schedule.notification_email ? <div className="schedule-detail-wide"><dt>Notification email</dt><dd>{schedule.notification_email}</dd></div> : null}
     {schedule.notification_delivery ? <div><dt>Organization email</dt><dd>{schedule.notification_delivery.awaiting_retry ? 'Delivery failed; queued for automatic retry'
       : schedule.notification_delivery.status === 'sent' ? 'Sent' : schedule.notification_delivery.status === 'sending' ? 'Sending' : 'Queued'}</dd></div> : null}
-    {schedule.notes ? <div><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
+    {schedule.notes ? <div className="schedule-detail-wide schedule-detail-notes"><dt>Notes</dt><dd>{schedule.notes}</dd></div> : null}
   </dl>;
 }
 
@@ -396,32 +418,44 @@ function CalendarEntryDetails({ entry, assessment, guide, payload, now, onClose,
   const schedule = entry.kind === 'schedule' ? entry.schedule : null;
   const schedules = schedule ? arrayOf(entry.schedules) : [];
   const grouped = schedules.length > 1;
+  const canEdit = schedule && scheduleProgressStatus(schedule.status) !== 'completed';
+  const displayedSchedules = grouped ? schedules : schedule ? [schedule] : [];
+  const hasCompleted = displayedSchedules.some((item) => scheduleProgressStatus(item.status) === 'completed');
+  const allCompleted = displayedSchedules.length > 0 && displayedSchedules.every((item) => scheduleProgressStatus(item.status) === 'completed');
   const tide = entry.kind === 'tide' ? entry.tide : null;
   const advice = schedule ? assessment : { status: tidePlantingState(tide, guide) };
   const editSchedule = (item) => { onClose(); onEdit(item); };
-  return <Modal open title={schedule ? schedule.title : `${scheduleStatusLabel(tideKind(tide))} tide`}
+  return createPortal(<Modal open title={schedule ? schedule.title : `${scheduleStatusLabel(tideKind(tide))} tide`}
     className={`modal-card-wide schedule-details-modal${grouped ? ' is-grouped' : ''}${tide ? ' is-tide' : ''}`} variant="info"
-    confirmLabel={schedule && !grouped ? 'Edit activity' : 'Close'} cancelLabel={schedule && !grouped ? 'Close' : null}
-    onCancel={onClose} onConfirm={schedule && !grouped ? () => editSchedule(schedule) : onClose}>
+    confirmLabel={canEdit && !grouped ? 'Edit activity' : 'Close'} cancelLabel={canEdit && !grouped ? 'Close' : null}
+    onCancel={onClose} onConfirm={canEdit && !grouped ? () => editSchedule(schedule) : onClose}>
     <div className="schedule-entry-details">
       <div className="schedule-detail-when">
         <strong>{schedule ? scheduleTimeLabel(schedule) : tideClock(tide)}</strong>
         <span>{schedule ? formatDate(`${scheduleDate(schedule)}T12:00:00+08:00`) : formatDate(tide.occurred_at)} · Philippine time</span>
       </div>
+      {hasCompleted ? <div className="schedule-readonly-notice" role="note">
+        <span>Read-only</span><p>Completed activities cannot be edited or reopened.</p>
+      </div> : null}
       <div className="schedule-detail-advice">
-        {schedule && !isPlantingAppointment(schedule) ? <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong> : <PlantingBadge assessment={advice} />}
-        <p>{schedule ? assessment.reason : 'Uses the same estimated planting limit as the graph. Check your planting area before going.'}</p>
+        {allCompleted && isPlantingAppointment(schedule) && advice?.status === 'unknown'
+          ? <p>Tide forecast is unavailable for this recorded activity date.</p>
+          : <>{schedule && !isPlantingAppointment(schedule) ? <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong> : <PlantingBadge assessment={advice} />}
+            <p>{schedule ? assessment.reason : 'Uses the same estimated planting limit as the graph. Check your planting area before going.'}</p></>}
       </div>
       {grouped ? <>
-        <p className="schedule-group-summary">{schedules.length} separate activities at this time. View or edit each organization's activity below.</p>
+        <p className="schedule-group-summary">{schedules.length} organization activities at this time</p>
         <div className="schedule-group-list" role="region" aria-label="Organization activities" tabIndex={0}>
           {schedules.map((item) => <section className="schedule-group-item" key={item.id}>
             <div className="schedule-group-item-header">
               <h3>{item.organization_name || 'Organization not set'}</h3>
+              <span className={`schedule-status is-${scheduleProgressStatus(item.status)}`}>{scheduleStatusLabel(scheduleProgressStatus(item.status))}</span>
+            </div>
+            <ScheduleDetails schedule={item} showOrganization={false} showStatus={false} />
+            {scheduleProgressStatus(item.status) !== 'completed' ? <div className="schedule-group-actions">
               <button type="button" className="schedule-group-edit" onClick={() => editSchedule(item)}
                 aria-label={`Edit activity for ${item.organization_name || 'this organization'}`}>Edit activity</button>
-            </div>
-            <ScheduleDetails schedule={item} showOrganization={false} />
+            </div> : null}
           </section>)}
         </div>
       </> : schedule ? <ScheduleDetails schedule={schedule} /> : <><dl>
@@ -429,7 +463,7 @@ function CalendarEntryDetails({ entry, assessment, guide, payload, now, onClose,
         <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide?.threshold)}</dd></div>
       </dl><DailyTideDetails tide={tide} payload={payload} guide={guide} now={now} /></>}
     </div>
-  </Modal>;
+  </Modal>, document.body);
 }
 
 function DailyTideDetails({ tide, payload, guide, now }) {
@@ -558,6 +592,7 @@ export default function Scheduling() {
   const [tideRetryKey, setTideRetryKey] = useState(0);
   const [now, setNow] = useState(() => Date.now());
   const [view, setView] = useState('calendar');
+  const [trackingFilter, setTrackingFilter] = useState('all');
   const [calendarEntry, setCalendarEntry] = useState(null);
   const [month, setMonth] = useState(() => dateInManila().slice(0, 7));
   const [formOpen, setFormOpen] = useState(false);
@@ -589,6 +624,10 @@ export default function Scheduling() {
   const [assignmentSiteId, setAssignmentSiteId] = useState('');
   const [assignmentError, setAssignmentError] = useState('');
   const [assignmentSaving, setAssignmentSaving] = useState(false);
+  const [confirmingSchedule, setConfirmingSchedule] = useState(null);
+  const [confirmationError, setConfirmationError] = useState('');
+  const [confirmationSaving, setConfirmationSaving] = useState(false);
+  const confirmationInFlight = useRef(false);
   const formPlanting = form.appointmentType === 'tree_planting';
   const originalContact = scheduleContactFields(editingSchedule || {});
 
@@ -659,9 +698,21 @@ export default function Scheduling() {
       `${a.scheduled_date}T${a.start_time}`.localeCompare(`${b.scheduled_date}T${b.start_time}`)
     ));
   }, [apiData]);
-  const approvedSchedules = useMemo(() => schedules.filter((schedule) => (
-    ['confirmed', 'in_progress', 'completed'].includes(String(schedule.status).toLowerCase())
-  )), [schedules]);
+  const trackedSchedules = useMemo(() => schedules.map((schedule) => ({
+    schedule, tracking: scheduleTrackingState(schedule, now),
+  })), [schedules, now]);
+  const trackingCounts = useMemo(() => Object.fromEntries(SCHEDULE_TRACKING_GROUPS.map(({ key }) => (
+    [key, trackedSchedules.filter(({ tracking }) => tracking[key]).length]
+  ))), [trackedSchedules]);
+  const approvedSchedules = useMemo(() => trackedSchedules.filter(({ tracking }) => tracking.approved)
+    .map(({ schedule }) => schedule), [trackedSchedules]);
+  const visibleSchedules = useMemo(() => trackedSchedules
+    .filter(({ tracking }) => trackingFilter === 'all' || tracking[trackingFilter]), [trackedSchedules, trackingFilter]);
+  const activeTrackingGroup = SCHEDULE_TRACKING_GROUPS.find(({ key }) => key === trackingFilter);
+  const showTrackingGroup = (key) => {
+    setTrackingFilter(key);
+    setView('list');
+  };
   const organizations = useMemo(() => {
     const merged = new Map();
     arrayOf(apiData?.organizations).forEach((source) => {
@@ -744,8 +795,6 @@ export default function Scheduling() {
     : [], [assigningSchedule, projectSites]);
 
   const today = dateInManila();
-  const upcoming = approvedSchedules.filter((schedule) => schedule.scheduled_date >= today && String(schedule.status).toLowerCase() !== 'completed');
-  const confirmed = upcoming.filter((schedule) => String(schedule.status).toLowerCase() === 'confirmed').length;
   const selectedDateTides = form.date ? arrayOf(tidesByDate.get(form.date)) : [];
 
   const openCreate = () => {
@@ -761,6 +810,10 @@ export default function Scheduling() {
   };
 
   const openEdit = (schedule) => {
+    if (scheduleProgressStatus(schedule.status) === 'completed') {
+      setCalendarEntry({ kind: 'schedule', schedule });
+      return;
+    }
     feedback.clear();
     lastWarnedTime.current = null;
     acceptedUnsafeTime.current = null;
@@ -792,12 +845,7 @@ export default function Scheduling() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(request.body),
       });
-      const emailNotice = saved?.email_update?.status === 'missing_recipient'
-        ? ' No email was queued. Add the organization’s notification email to send the current details. Planters can view the saved schedule.'
-        : saved?.email_update ? (saved.email_update.kind === 'cancellation' ? ' A cancellation email is queued for the organization.'
-          : saved.email_update.kind === 'update' ? ' An email with the revised details is queued for the organization.'
-            : ' A confirmation email is queued for the organization.') : '';
-      setNotice((request.method === 'PUT' ? 'Appointment updated.' : 'Appointment created.') + emailNotice);
+      setNotice((request.method === 'PUT' ? 'Appointment updated.' : 'Appointment created.') + scheduleEmailNotice(saved));
       setFormOpen(false);
       setEditingSchedule(null);
       setMonth(request.body.date.slice(0, 7));
@@ -817,6 +865,10 @@ export default function Scheduling() {
     event?.preventDefault?.();
     if (saveInFlight.current || timeCaution) return;
     setFormError('');
+    if (editingSchedule && scheduleProgressStatus(editingSchedule.status) === 'completed') {
+      setFormError('This activity is completed and read-only. It cannot be edited or reopened.');
+      return;
+    }
     if (!token) {
       setFormError('Sign in as LGU staff to save planting schedules.');
       return;
@@ -875,7 +927,7 @@ export default function Scheduling() {
       // alias fields that older running API processes may reject as extras.
       expected_planters: participants,
       inspection_interval_days: intervalDays,
-      status: form.status,
+      status: scheduleStatusForProgress(form.status, editingSchedule?.status),
       notes: form.notes.trim() || null,
     };
     const path = editingSchedule
@@ -883,6 +935,38 @@ export default function Scheduling() {
       : '/api/planting-schedules';
     const request = { path, method: editingSchedule ? 'PUT' : 'POST', body };
     await persistSchedule(request);
+  };
+
+  const openConfirmation = (schedule) => {
+    setConfirmationError('');
+    setNotice('');
+    setConfirmingSchedule(schedule);
+  };
+
+  const confirmSchedule = async () => {
+    if (!confirmingSchedule || confirmationInFlight.current) return;
+    if (!token) {
+      setConfirmationError('Sign in as LGU staff to approve schedules.');
+      return;
+    }
+    confirmationInFlight.current = true;
+    setConfirmationSaving(true);
+    setConfirmationError('');
+    try {
+      const saved = await fetchJson(`/api/planting-schedules/${encodeURIComponent(confirmingSchedule.id)}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status: 'confirmed' }),
+      });
+      setNotice('Schedule approved. It remains Pending until completed.' + scheduleEmailNotice(saved));
+      setConfirmingSchedule(null);
+      refreshSchedules();
+    } catch (failure) {
+      setConfirmationError(failure.uncertain
+        ? 'Could not verify whether approval was saved. Close this dialog and refresh the schedules before trying again.'
+        : failure.message || 'Could not approve the schedule.');
+    } finally {
+      confirmationInFlight.current = false;
+      setConfirmationSaving(false);
+    }
   };
 
   const openAssignment = (schedule) => {
@@ -904,7 +988,7 @@ export default function Scheduling() {
       return;
     }
     if (String(assigningSchedule.status).toLowerCase() !== 'confirmed' || assigningSchedule.project_site_id) {
-      setAssignmentError('Only a confirmed schedule without a planting area can be assigned.');
+      setAssignmentError('Only an approved schedule without a planting area can be assigned.');
       return;
     }
     const site = assignmentSites.find((option) => String(option.id) === String(assignmentSiteId));
@@ -921,7 +1005,7 @@ export default function Scheduling() {
       });
       setAssigningSchedule(null);
       setAssignmentSiteId('');
-      setNotice(`Planting area â€œ${site.name}â€ assigned to the confirmed schedule.`);
+      setNotice(`Planting area â€œ${site.name}â€ assigned to the approved schedule.`);
       setReloadKey((value) => value + 1);
     } catch (saveError) {
       if (!assignmentFeedback.fromServer(saveError)) setAssignmentError(saveError.message || 'Could not assign the planting area.');
@@ -970,7 +1054,7 @@ export default function Scheduling() {
         <div className="schedule-panel-head schedule-toolbar">
           <div>
             <h2 id="organization-schedules-title">Schedules</h2>
-            <p>Calendar shows approved activities. List shows all schedules.</p>
+            <p>Choose a group to review its schedules in List. Calendar shows approved activities.</p>
           </div>
           <button type="button" className="schedule-primary" onClick={openCreate}>+ Add schedule</button>
         </div>
@@ -978,10 +1062,15 @@ export default function Scheduling() {
         {error ? <Message>{error}</Message> : null}
         <FormMessage success={notice} />
 
-        <div className="schedule-kpis">
-          <article><span>Upcoming schedules</span><strong>{formatCount(upcoming.length)}</strong><small>By organization</small></article>
-          <article><span>Confirmed schedules</span><strong>{formatCount(confirmed)}</strong><small>LGU-approved activities</small></article>
-          <article><span>Expected participants</span><strong>{formatCount(upcoming.reduce((sum, row) => sum + (numberOrNull(row.expected_participants) || 0), 0))}</strong><small>Across upcoming activities</small></article>
+        <div className="schedule-kpis" aria-label="Activity schedule groups">
+          {SCHEDULE_TRACKING_GROUPS.map((group) => <button type="button" key={group.key}
+            className={`schedule-tracking-card is-${group.key}`}
+            aria-label={`Show ${group.label.toLowerCase()}`}
+            aria-pressed={view === 'list' && trackingFilter === group.key}
+            aria-controls="schedule-results" onClick={() => showTrackingGroup(group.key)} disabled={loading && !apiData}>
+            <span>{group.label}</span><strong>{loading && !apiData ? '—' : formatCount(trackingCounts[group.key])}</strong>
+            <small>{group.description}</small>
+          </button>)}
         </div>
 
         <PlantingLegend />
@@ -1001,6 +1090,19 @@ export default function Scheduling() {
           ) : null}
         </div>
 
+        {view === 'list' ? <div className="schedule-list-controls">
+          <label>Show<select aria-label="Filter schedules" value={trackingFilter}
+            onChange={(event) => setTrackingFilter(event.target.value)}>
+            <option value="all">All schedules ({formatCount(schedules.length)})</option>
+            {SCHEDULE_TRACKING_GROUPS.map((group) => <option key={group.key} value={group.key}>
+              {group.label} ({formatCount(trackingCounts[group.key])})
+            </option>)}
+          </select></label>
+          <p role="status">{formatCount(visibleSchedules.length)} of {formatCount(schedules.length)} activity schedules
+            {activeTrackingGroup ? ` · ${activeTrackingGroup.description}` : ' · Includes completed and cancelled records'}</p>
+        </div> : null}
+
+        <div id="schedule-results">
         {loading && !apiData ? <Loading label="Loading organization schedulesâ€¦" /> : view === 'calendar' ? (
           <div className="schedule-calendar" role="grid" aria-label={`Planting schedule for ${monthLabel(month)}`}>
             <div className="schedule-calendar-row is-header" role="row">
@@ -1026,12 +1128,12 @@ export default function Scheduling() {
               </div>
             ))}
           </div>
-        ) : schedules.length ? (
+        ) : visibleSchedules.length ? (
           <div className="schedule-table-wrap">
             <table>
-              <caption className="sr-only">Organization schedules</caption>
+              <caption className="sr-only">{activeTrackingGroup ? `${activeTrackingGroup.label}: organization schedules` : 'Organization schedules'}</caption>
               <thead><tr><th scope="col">Date</th><th scope="col">Activity</th><th scope="col">Planting area</th><th scope="col">Days between plant checks</th><th scope="col">Status</th><th scope="col">Activity guidance</th><th scope="col">Actions</th></tr></thead>
-              <tbody>{schedules.map((schedule) => {
+              <tbody>{visibleSchedules.map(({ schedule, tracking }) => {
                 const planting = isPlantingAppointment(schedule);
                 const canAssign = planting && String(schedule.status).toLowerCase() === 'confirmed' && !schedule.project_site_id;
                 return (
@@ -1040,12 +1142,18 @@ export default function Scheduling() {
                     <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
                     <td>{planting ? schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen') : 'Not needed'}</td>
                     <td>{planting ? schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set' : 'Not applicable'}</td>
-                    <td><span className={`schedule-status is-${String(schedule.status).toLowerCase()}`}>{scheduleStatusLabel(schedule.status)}</span></td>
+                    <td><span className={`schedule-status is-${scheduleProgressStatus(schedule.status)}`}>{scheduleStatusLabel(scheduleProgressStatus(schedule.status))}</span>
+                      {tracking.pending ? <small>{tracking.approved ? 'Schedule approved' : 'Awaiting approval'}</small> : null}
+                      {tracking.missed ? <><span className="schedule-status is-missed">Missed · follow-up needed</span>
+                        <small>{schedule.planting_started ? 'Planting started; planning details are locked.' : 'Scheduled end time has passed; review activity progress.'}</small></> : null}</td>
                     <td>{planting ? <PlantingBadge assessment={assessmentFor(schedule)} /> : <strong>{appointmentTypeLabel(schedule.appointment_type)}</strong>}<small>{assessmentFor(schedule).reason}</small></td>
                     <td><div className="schedule-row-actions">
-                      {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
-                      <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
-                      <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel confirmed activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
+                      {tracking.completed ? <button type="button" onClick={() => setCalendarEntry({ kind: 'schedule', schedule })}>View</button> : <>
+                        {tracking.needs_confirmation && !schedule.planting_started ? <button type="button" className="is-primary" onClick={() => openConfirmation(schedule)}>Approve</button> : null}
+                        {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
+                        <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
+                        <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel approved activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
+                      </>}
                     </div></td>
                   </tr>
                 );
@@ -1053,8 +1161,15 @@ export default function Scheduling() {
             </table>
           </div>
         ) : (
-          <div className="schedule-empty"><strong>No planting schedules yet</strong><p>Check the tide forecast, then create the first organization planting schedule.</p></div>
+          <div className="schedule-empty">
+            <strong>{activeTrackingGroup ? activeTrackingGroup.empty : 'No planting schedules yet'}</strong>
+            <p>{activeTrackingGroup ? trackingFilter === 'pending'
+              ? 'There are no activities awaiting approval or completion. Website requests awaiting review are listed above.'
+              : 'Choose All schedules to review other activity records.'
+              : 'Check the tide forecast, then create the first organization planting schedule.'}</p>
+          </div>
         )}
+        </div>
       </section>
 
       <CalendarEntryDetails entry={calendarEntry} assessment={calendarEntry?.kind === 'schedule' ? assessmentFor(calendarEntry.schedule) : null}
@@ -1168,14 +1283,11 @@ export default function Scheduling() {
             <label>
               <span>Status *</span>
               <select {...feedback.props('status')} value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))} required>
-                {!editingSchedule?.planting_started ? <option value="requested">Pending confirmation</option> : null}
-                {!editingSchedule?.planting_started || editingSchedule.status === 'confirmed' ? <option value="confirmed">Confirmed</option> : null}
-                {editingSchedule && !editingSchedule.planting_started ? <option value="tentative">Tentative</option> : null}
-                {editingSchedule && editingSchedule.status !== 'completed' ? <option value="in_progress">In progress</option> : null}
-                {editingSchedule && !['requested', 'confirmed', 'tentative', 'in_progress', 'completed', 'cancelled'].includes(editingSchedule.status) ? <option value={editingSchedule.status}>{scheduleStatusLabel(editingSchedule.status)}</option> : null}
-                {editingSchedule ? <option value="completed">Completed</option> : null}
-                {editingSchedule && !editingSchedule.planting_started ? <option value="cancelled">Cancelled</option> : null}
+                <option value="completed" disabled={!editingSchedule}>Completed</option>
+                <option value="pending" disabled={editingSchedule?.planting_started && editingSchedule.status === 'completed'}>Pending</option>
+                <option value="cancelled" disabled={!editingSchedule || editingSchedule.planting_started}>Cancelled</option>
               </select>
+              <small>{scheduleProgressHint(editingSchedule)}</small>
               <FieldError feedback={feedback} field="status" />
             </label>
             <label className="schedule-form-notes">
@@ -1192,9 +1304,20 @@ export default function Scheduling() {
               )) : <small>High and low tide times are not available for this date yet.</small>}
             </div>
           ) : null}
-          <p className="schedule-form-footnote">{formPlanting ? 'Choose a planting area after confirming the activity. ' : ''}All times are Philippine time.</p>
+          <p className="schedule-form-footnote">{formPlanting ? 'Choose a planting area after approving the activity. ' : ''}All times are Philippine time.</p>
         </form>
       </Modal>, document.body)}
+
+      <Modal open={Boolean(confirmingSchedule)} title="Approve schedule" confirmLabel="Approve schedule" cancelLabel="Close"
+        busy={confirmationSaving} onConfirm={confirmSchedule} onCancel={() => { if (!confirmationSaving) setConfirmingSchedule(null); }} variant="success">
+        {confirmingSchedule ? <div className="schedule-confirmation">
+          <p>Approve <strong>{confirmingSchedule.title}</strong> for <strong>{confirmingSchedule.organization_name}</strong> at the agreed date and time.</p>
+          <p>{formatDate(`${confirmingSchedule.scheduled_date}T12:00:00+08:00`)} · {scheduleTimeLabel(confirmingSchedule)} (Philippine time)</p>
+          <p>The activity will appear on Calendar and remain Pending until marked Completed.</p>
+          {scheduleTrackingState(confirmingSchedule, now).missed ? <p>The scheduled end has already passed. Review the activity’s progress and agreed time before approving.</p> : null}
+          <FormMessage error={confirmationError} />
+        </div> : null}
+      </Modal>
 
       <Modal
         open={Boolean(assigningSchedule)}
@@ -1210,7 +1333,7 @@ export default function Scheduling() {
       >
         <div className="schedule-assignment-form" onChangeCapture={assignmentFeedback.onChange}>
           <FormErrorSummary feedback={assignmentFeedback} />
-          <p><strong>{assigningSchedule?.title}</strong> is confirmed for {assigningSchedule?.organization_name}.</p>
+          <p><strong>{assigningSchedule?.title}</strong> is approved for {assigningSchedule?.organization_name}.</p>
           {assignmentError ? <Message>{assignmentError}</Message> : null}
           <label>
             <span>Organization’s planting area *</span>

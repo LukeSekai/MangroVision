@@ -7,9 +7,19 @@
 - Each assignment batch can reference its planting activity. Planters shows a **Planting activity** selector for confirmed or ongoing tree-planting activities owned by the chosen organization and site.
 - The API validates that selection. It can infer a unique activity on the assignment date, but asks for a selection when the match is ambiguous or a site's eligible activity uses another date.
 - Once the linked batch has any planting-event history, the activity's organization, area, title, dates, expected counts, and inspection interval cannot change. Cancellation and deletion are rejected.
-- Contact and notes remain editable and are audited. Progress can advance to in progress or completed; a completed activity with planting history cannot be reopened.
+- Contact and notes remain editable and are audited until completion. Progress can advance to in progress or completed. Every completed activity is read-only, including activities without planting records: dates, counts, contacts, notes, status changes, reopening and deletion are blocked by the API.
+- Scheduling displays three progress choices: Completed, Pending and Cancelled.
+  Approving a pending schedule approves its agreed time and makes it eligible
+  for the calendar and planting assignments; it remains Pending until completed.
+  Saving Pending preserves an existing confirmation or ongoing planting state.
+  Recorded planting disables cancellation, and every completed activity
+  cannot return to Pending. Missed activities retain a follow-up notice within Pending.
 - A separate future activity at the same site remains editable. Unscheduled planting remains available where there is no eligible activity.
 - An activity with assigned but unplanted points cannot change organization or area, or be deleted, until those assignments are removed.
+- An activity remains reschedulable while its assignment has no recorded
+  planting. Selecting an activity without an area when assigning points links
+  it to the selected organization-owned project site in the same transaction.
+  Staff do not have to assign its area separately in Scheduling first.
 - Planting and schedule changes lock the activity row. A database trigger also prevents planting into an activity that has been made ineligible.
 
 ### Website bookings
@@ -27,6 +37,44 @@
 Migration `20261009_0015` links only one-to-one historical matches by organization, site, and Philippine assignment date. It does not guess between activities.
 
 The read-only assessment on October 9 found **14 assignment batches, no unique matches, and 13 unmatched batches with planting history**. These records remain intact but are not covered by a specific activity lock until their activity association is established. New assignments use the explicit association described above.
+
+## October 14: missing activity-area association
+
+San Isidro's confirmed website activity had no planting area, so its point
+assignment was treated as unscheduled and its eight planting events did not
+activate the schedule lock. The user-authorized repair restored the audited
+October 10, 05:30–06:30 Philippine schedule and linked its existing assignment
+and area. Planting dates, points, accounts, codes and email history were retained.
+The repair was audited after verifying a fresh encrypted database/storage backup;
+it sent no email. Other historical associations were not inferred or changed.
+
+The assignment form includes eligible activities that have no area yet. The API
+links the chosen activity to the selected site atomically with point assignment.
+Zero recorded planting allows rescheduling before completion; the first planted
+point locks planning details, even when the assignment is unfinished. Notes,
+contact corrections and allowed progress updates remain available until the
+activity is completed. A separate future activity keeps its own lock scope.
+
+## October 15: completed activities are read-only
+
+Completed activities expose only View in Scheduling's List and Calendar.
+The API returns a conflict for every edit, reopening, cancellation or deletion,
+including notes/contact changes and activities with no recorded planting.
+  Completion remains separate from request approval.
+
+At the user's explicit request, all 21 existing activities displayed as Pending
+were marked Completed in one audited transaction. This includes three legacy
+`scheduled` records; all inspected activities had already started. There are
+24 completed schedules and zero pending schedules after this correction.
+Only status and update timestamps changed. Dates, planting events, points,
+assignments, accounts, individual codes, organizations and email history were
+verified unchanged. No email was queued or sent by the correction.
+
+A fresh encrypted database/private-storage backup was made first:
+`backups/mangrovision-20261014T165139Z.tar.enc` (the filename uses UTC).
+The dump checksum, all 136 object checksums and dump readability were verified;
+this was not a full restore rehearsal. The ignored operation report and backup
+verification are retained under `backups/pending-activity-completion-*`.
 
 ## Verification
 

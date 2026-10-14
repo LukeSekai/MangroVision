@@ -193,7 +193,7 @@ export default function PlanterManagement() {
     ? assignProjectSiteChoice : defaultSiteId;
   const activityOptions = plantingSchedules.filter((activity) =>
     Number(activity.organization_id) === Number(assignOrganizationId)
-    && Number(activity.project_site_id) === Number(assignProjectSiteId)
+    && (activity.project_site_id == null || Number(activity.project_site_id) === Number(assignProjectSiteId))
     && activity.appointment_type === 'tree_planting'
     && ['confirmed', 'in_progress'].includes(activity.status));
   const assignmentActivity = activityOptions.find((activity) => String(activity.id) === String(assignmentActivityChoice))
@@ -548,7 +548,9 @@ export default function PlanterManagement() {
             </select>
             <FieldError feedback={feedback} field="activity" />
             <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {activityOptions.length ? 'These points belong to the selected activity.' : 'No confirmed planting activity is available for this site.'}
+              {assignmentActivity?.project_site_id == null && assignmentActivity
+                ? 'These points belong to the selected activity. Its planting area will use the selected project site.'
+                : activityOptions.length ? 'These points belong to the selected activity.' : 'No confirmed planting activity is available for this site.'}
             </span>
           </div>
 

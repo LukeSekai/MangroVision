@@ -13,6 +13,7 @@ let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, 
 let requests, scheduleRows, mapPoints, appointmentRows, approvals, useAuthStore;
 let goalSaves, goalSaveFailure, savedGoalSettings;
 let followUpRows;
+let scheduleSaves, scheduleSaveFailure;
 const bundlePath = resolve(`node_modules/.retained-routes-${process.pid}.mjs`);
 const originalGlobals = new Map();
 const rows = [1, 2].map((id) => ({
@@ -78,13 +79,26 @@ before(async () => {
       id: 1, summary: 'A retained activity record', created_at: '2026-10-06T01:00:00Z', actor_type: 'system',
     }] });
     if (url.pathname === '/api/planting-schedules') return Response.json({ schedules: scheduleRows, organizations: [], project_sites: [] });
+    if (/^\/api\/planting-schedules\/\d+$/.test(url.pathname) && ['PUT', 'PATCH'].includes(options.method)) {
+      const id = Number(url.pathname.split('/').pop());
+      const body = JSON.parse(options.body || '{}');
+      scheduleSaves.push({ id, method: options.method, body });
+      if (scheduleSaveFailure) return Response.json({ detail: 'Planting has been recorded. Planning details are locked.' }, { status: 409 });
+      const index = scheduleRows.findIndex((row) => row.id === id);
+      scheduleRows[index] = { ...scheduleRows[index], ...body };
+      return Response.json({ ...scheduleRows[index], ...(options.method === 'PATCH' ? { email_update: { status: 'queued', kind: 'confirmation' } } : {}) });
+    }
     if (url.pathname === '/api/like-appointments/summary') return Response.json({ pending_count: appointmentRows.filter((row) => row.status === 'pending').length });
     if (url.pathname === '/api/like-appointments') return Response.json({ requests: appointmentRows });
     if (url.pathname.endsWith('/review') && url.pathname.startsWith('/api/like-appointments/')) {
       const decision = JSON.parse(options.body || '{}');
       approvals.push(decision);
-      appointmentRows[0] = { ...appointmentRows[0], status: 'confirmed', schedule_id: 11, email_status: 'pending' };
-      return Response.json({ status: 'confirmed' });
+      const id = Number(url.pathname.split('/').at(-2));
+      const index = appointmentRows.findIndex((row) => row.id === id);
+      appointmentRows[index] = { ...appointmentRows[index], status: decision.action,
+        decision_notes: decision.decision_notes,
+        ...(decision.action === 'confirmed' ? { schedule_id: 11, email_status: 'pending' } : {}) };
+      return Response.json({ status: decision.action });
     }
     if (url.pathname === '/api/tides/forecast') return Response.json({ available: false, message: 'Forecast unavailable', events: [] });
     throw new Error(`Unexpected test request: ${url.pathname}`);
@@ -137,6 +151,8 @@ beforeEach(() => {
   goalSaveFailure = false;
   savedGoalSettings = new Map();
   followUpRows = [];
+  scheduleSaves = [];
+  scheduleSaveFailure = false;
   useAuthStore.setState({ user: null });
   window.dispatchEvent(new Event('mv:invalidate-reads'));
   root = createRoot(document.getElementById('root'));
@@ -188,6 +204,8 @@ test('follow-up card lists affected sites and links to their exact map and monit
   await click('.dash-kpi-action');
   const dialog = document.querySelector('.dash-follow-up-dialog');
   assert.ok(dialog);
+  assert.equal(dialog.closest('.modal-backdrop').parentElement, document.body,
+    'Follow-up details must open above the workspace content and header');
   for (const text of [/North planting site/, /Monitoring overdue.*4 pending inspections/s, /Survival below target.*55%/s]) {
     assert.match(dialog.textContent, text);
   }
@@ -273,9 +291,9 @@ test('matching calendar activities open all organizations and edit the selected 
   scheduleRows = [1, 2, 3].map((id) => ({
     id, organization_id: id, organization_name: `Organization ${id}`,
     project_site_id: id, project_site_name: `Planting area ${id}`,
-    title: 'Tentative follow-up planting activity', date,
+    title: 'Follow-up planting activity', date,
     start_at: `${date}T07:30:00+08:00`, end_at: `${date}T11:30:00+08:00`,
-    start_time: '07:30', end_time: '11:30', status: 'tentative',
+    start_time: '07:30', end_time: '11:30', status: 'confirmed',
     expected_participants: 20, seedlings: 60, inspection_interval_days: 14,
   }));
   await render('scheduling');
@@ -283,6 +301,8 @@ test('matching calendar activities open all organizations and edit the selected 
   assert.equal(cards.length, 1);
   assert.match(cards[0].textContent, /3 organizations/);
   await click(cards[0]);
+  assert.equal(document.querySelector('.schedule-details-modal').closest('.modal-backdrop').parentElement, document.body,
+    'Activity details must escape the content layer below the workspace header');
   const organizations = document.querySelectorAll('.schedule-group-item');
   assert.equal(organizations.length, 3);
   organizations.forEach((item, index) => {
@@ -291,7 +311,8 @@ test('matching calendar activities open all organizations and edit the selected 
   });
   await click(organizations[1].querySelector('.schedule-group-edit'));
   assert.equal(document.querySelector('.schedule-form input[list="schedule-organizations"]').value, 'Organization 2');
-  assert.equal(document.querySelector('.schedule-form input[maxlength="180"]').value, 'Tentative follow-up planting activity');
+  assert.equal(document.querySelector('.schedule-form select[name="appointmentType"]').value, 'tree_planting');
+  assert.equal(document.querySelector('.schedule-form input[name="startTime"]').value, '07:30');
   assert.equal(requests.filter((url) => !url.startsWith('/api/planting-schedules') && !url.startsWith('/api/tides/forecast') && !url.startsWith('/api/like-appointments')).length, 0);
 });
 
@@ -452,6 +473,79 @@ test('Scheduling retains its calendar and tide forecast when returning, and Refr
   assert.equal(count('/api/tides/forecast'), 2);
 });
 
+test('Scheduling shows only completed, pending and cancelled groups without changing records', async () => {
+  const common = { organization: 'Test group', organization_id: 4, project_site_id: 10,
+    project_site_name: 'Test area', appointment_type: 'tree_planting', expected_participants: 10,
+    inspection_interval_days: 14 };
+  scheduleRows = [
+    { ...common, id: 1, title: 'Awaiting confirmation', status: 'requested', start_at: '2090-01-01T07:00:00+08:00', end_at: '2090-01-01T08:00:00+08:00' },
+    { ...common, id: 2, title: 'Tentative activity', status: 'tentative', start_at: '2090-01-02T07:00:00+08:00', end_at: '2090-01-02T08:00:00+08:00' },
+    { ...common, id: 3, title: 'Unfinished planted activity', status: 'confirmed', planting_started: true, recorded_planting_count: 1,
+      start_at: '2000-01-01T07:00:00+08:00', end_at: '2000-01-01T08:00:00+08:00' },
+    { ...common, id: 4, title: 'Ongoing overdue activity', status: 'in_progress', start_at: '2000-01-02T07:00:00+08:00', end_at: '2000-01-02T08:00:00+08:00' },
+    { ...common, id: 5, title: 'Future confirmed activity', status: 'confirmed', start_at: '2090-01-03T07:00:00+08:00', end_at: '2090-01-03T08:00:00+08:00' },
+    { ...common, id: 6, title: 'Completed historical activity', status: 'completed', start_at: '2000-01-03T07:00:00+08:00', end_at: '2000-01-03T08:00:00+08:00' },
+    { ...common, id: 7, title: 'Cancelled historical activity', status: 'cancelled', start_at: '2000-01-04T07:00:00+08:00', end_at: '2000-01-04T08:00:00+08:00' },
+  ];
+  const original = JSON.stringify(scheduleRows);
+  await render('scheduling');
+  const card = (key) => document.querySelector(`.schedule-tracking-card.is-${key}`);
+  assert.equal(document.querySelectorAll('.schedule-tracking-card').length, 3);
+  assert.equal(card('completed').querySelector('strong').textContent, '1');
+  assert.equal(card('pending').querySelector('strong').textContent, '5');
+  assert.equal(card('cancelled').querySelector('strong').textContent, '1');
+  const scheduleReads = count('/api/planting-schedules');
+  await click(card('pending'));
+  const resultRows = () => [...document.querySelectorAll('#schedule-results tbody tr')];
+  assert.equal(resultRows().length, 5);
+  assert.match(document.querySelector('#schedule-results').textContent, /Awaiting confirmation/);
+  assert.match(document.querySelector('#schedule-results').textContent, /Future confirmed activity/);
+  assert.equal(document.querySelectorAll('#schedule-results .schedule-status.is-missed').length, 2);
+  assert.match(document.querySelector('#schedule-results').textContent, /Unfinished planted activity/);
+  assert.match(document.querySelector('#schedule-results').textContent, /Planting started; planning details are locked/);
+  assert.ok(resultRows().every((row) => row.querySelector('.schedule-status.is-pending')));
+  const deletePlanted = [...resultRows()[0].querySelectorAll('button')].find((button) => button.textContent === 'Delete');
+  assert.equal(deletePlanted.disabled, true);
+  assert.doesNotMatch(document.querySelector('#schedule-results').textContent, /Completed historical|Cancelled historical/);
+  await click('[data-page="activity"]');
+  await click('[data-page="scheduling"]');
+  assert.equal(document.querySelector('[aria-label="Filter schedules"]').value, 'pending');
+  assert.equal(resultRows().length, 5);
+  await click(card('completed'));
+  assert.equal(resultRows().length, 1);
+  assert.match(document.querySelector('#schedule-results').textContent, /Completed historical activity/);
+  await click(card('cancelled'));
+  assert.equal(resultRows().length, 1);
+  assert.match(document.querySelector('#schedule-results').textContent, /Cancelled historical activity/);
+  const filter = document.querySelector('[aria-label="Filter schedules"]');
+  await act(async () => { filter.value = 'all'; filter.dispatchEvent(new Event('change', { bubbles: true })); });
+  assert.equal(resultRows().length, 7);
+  assert.equal(count('/api/planting-schedules'), scheduleReads);
+  assert.equal(JSON.stringify(scheduleRows), original);
+  assert.equal(approvals.length, 0);
+});
+
+test('Scheduling groups keep approved calendar entries and show honest empty queues', async () => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).map(({ type, value }) => [type, value]));
+  const day = `${parts.year}-${parts.month}-${parts.day}`;
+  scheduleRows = ['requested', 'tentative', 'confirmed', 'in_progress', 'completed', 'cancelled'].map((status, index) => ({
+    id: index + 1, title: `${status} test activity`, organization: 'Test group', status, appointment_type: 'tree_planting',
+    start_at: `${day}T07:00:00+08:00`, end_at: `${day}T08:00:00+08:00`,
+  }));
+  await render('scheduling');
+  const calendar = document.querySelector('.schedule-calendar');
+  assert.equal(calendar.querySelectorAll('.schedule-calendar-event').length, 3);
+  assert.doesNotMatch(calendar.textContent, /requested test activity|tentative test activity|cancelled test activity/);
+  scheduleRows = [];
+  await click('.schedule-refresh');
+  await settle();
+  await click('.schedule-tracking-card.is-pending');
+  assert.match(document.querySelector('#schedule-results').textContent, /No pending schedules/);
+  assert.equal(document.querySelector('#schedule-results table'), null);
+});
+
 test('recorded planting locks planning inputs and deletion but permits notes and progress', async () => {
   useAuthStore.setState({ user: { id: 1, role: 'lgu' } });
   scheduleRows = [{ id: 12, title: 'Demo planting', organization: 'Demo group', organization_id: 4,
@@ -466,14 +560,96 @@ test('recorded planting locks planning inputs and deletion but permits notes and
   assert.ok(remove.disabled);
   await click([...document.querySelectorAll('button')].find((button) => button.textContent === 'Update notes / status'));
   const form = document.querySelector('.schedule-form');
-  for (const field of ['organizationName', 'title', 'date', 'startTime', 'endTime', 'expectedParticipants', 'seedlings']) {
+  for (const field of ['organizationName', 'date', 'startTime', 'endTime', 'expectedParticipants']) {
     const input = [...form.querySelectorAll('input')].find((element) => element.name === field);
     assert.ok(input?.disabled, `${field} must be locked`);
   }
   assert.equal(form.querySelector('textarea').disabled, false);
-  const status = form.querySelector('select');
-  assert.deepEqual([...status.options].map((option) => option.value), ['confirmed', 'in_progress', 'completed']);
+  assert.ok(form.querySelector('select[name="appointmentType"]').disabled);
+  const status = form.querySelector('select[name="status"]');
+  assert.deepEqual([...status.options].map((option) => option.value), ['completed', 'pending', 'cancelled']);
+  assert.equal(status.value, 'pending');
+  assert.equal(status.querySelector('[value="cancelled"]').disabled, true);
   assert.match(form.textContent, /Planning details are locked/);
+  await click(document.querySelector('.modal-actions .btn-primary'));
+  assert.equal(scheduleSaves.length, 1);
+  assert.equal(scheduleSaves[0].body.status, 'confirmed', 'Saving Pending must preserve the planted activity’s approval');
+  await click([...document.querySelectorAll('button')].find((button) => button.textContent === 'Update notes / status'));
+  const nextStatus = document.querySelector('.schedule-form select[name="status"]');
+  await act(async () => { nextStatus.value = 'completed'; nextStatus.dispatchEvent(new Event('change', { bubbles: true })); });
+  await click(document.querySelector('.modal-actions .btn-primary'));
+  assert.equal(scheduleSaves[1].body.status, 'completed');
+  assert.equal([...document.querySelectorAll('#schedule-results button')].some((button) => /Edit|Update notes|Delete/.test(button.textContent)), false);
+  await click([...document.querySelectorAll('#schedule-results button')].find((button) => button.textContent === 'View'));
+  assert.match(document.querySelector('.schedule-entry-details').textContent, /Read-only.*cannot be edited or reopened/);
+  assert.equal(document.querySelector('.schedule-form'), null);
+});
+
+test('Scheduling completed activities without planting are read-only in List and Calendar', async () => {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(new Date()).map(({ type, value }) => [type, value]));
+  const day = `${parts.year}-${parts.month}-${parts.day}`;
+  scheduleRows = [1, 2].map((id) => ({ id, title: 'Completed shared activity', organization: `Group ${id}`,
+    organization_id: id, status: 'completed', planting_started: false, appointment_type: 'field_visit',
+    start_at: `${day}T07:00:00+08:00`, end_at: `${day}T08:00:00+08:00` }));
+  await render('scheduling');
+  await click('.schedule-calendar-event');
+  const grouped = document.querySelector('.schedule-entry-details');
+  assert.equal(document.querySelector('.schedule-details-modal').closest('.modal-backdrop').parentElement, document.body);
+  assert.equal(grouped.querySelectorAll('.schedule-group-item').length, 2);
+  assert.equal(grouped.querySelectorAll('.schedule-group-edit').length, 0);
+  assert.equal(grouped.querySelectorAll('.schedule-readonly-notice').length, 1);
+  assert.equal(grouped.querySelectorAll('.schedule-group-item-header .schedule-status.is-completed').length, 2);
+  assert.ok([...grouped.querySelectorAll('.schedule-group-item dt')].every((label) => !['Editing', 'Status'].includes(label.textContent)),
+    'Shared lock text and card status must not repeat inside each detail list');
+  assert.equal([...document.querySelectorAll('.modal-actions button')].some((button) => button.textContent === 'Edit activity'), false);
+  await click('.modal-actions .btn-primary');
+  await click('.schedule-tracking-card.is-completed');
+  const buttons = [...document.querySelectorAll('#schedule-results button')];
+  assert.deepEqual(buttons.map((button) => button.textContent), ['View', 'View']);
+  await click(buttons[0]);
+  assert.match(document.querySelector('.schedule-entry-details').textContent, /Read-only/);
+  assert.equal(document.querySelectorAll('.schedule-readonly-notice').length, 1);
+  assert.equal(document.querySelector('.schedule-form'), null);
+  assert.equal([...document.querySelectorAll('.modal-actions button')].some((button) => button.textContent === 'Edit activity'), false);
+  assert.equal(scheduleSaves.length, 0);
+});
+
+test('Scheduling Approve approves the saved time while the activity stays Pending', async () => {
+  useAuthStore.setState({ user: { id: 1, role: 'lgu' } });
+  scheduleRows = ['requested', 'tentative', 'confirmed'].map((status, index) => ({
+    id: index + 1, title: `${status} activity`, organization: 'Test group', organization_id: 4, status,
+    appointment_type: 'tree_planting', start_at: '2090-01-01T07:00:00+08:00', end_at: '2090-01-01T08:00:00+08:00',
+  }));
+  await render('scheduling');
+  await click('.schedule-tracking-card.is-pending');
+  const rowButtons = () => [...document.querySelectorAll('#schedule-results button')].filter((button) => button.textContent === 'Approve');
+  assert.equal(rowButtons().length, 2);
+  await click(rowButtons()[0]);
+  assert.equal(scheduleSaves.length, 0, 'Opening confirmation must not save or queue a message');
+  const confirm = [...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Approve schedule');
+  await act(async () => { confirm.click(); confirm.click(); });
+  await settle();
+  assert.deepEqual(scheduleSaves, [{ id: 1, method: 'PATCH', body: { status: 'confirmed' } }]);
+  assert.equal(scheduleRows[0].start_at, '2090-01-01T07:00:00+08:00');
+  assert.equal(document.querySelector('.schedule-tracking-card.is-pending strong').textContent, '3');
+  assert.equal(rowButtons().length, 1);
+  assert.match(document.querySelector('#schedule-results').textContent, /Schedule approved/);
+  assert.match(document.querySelector('.form-message.is-success').textContent, /remains Pending.*confirmation email is queued/s);
+});
+
+test('Scheduling approval keeps the dialog and pending record after a conflict', async () => {
+  scheduleRows = [{ id: 1, title: 'Pending activity', organization: 'Test group', status: 'requested',
+    start_at: '2090-01-01T07:00:00+08:00', end_at: '2090-01-01T08:00:00+08:00' }];
+  scheduleSaveFailure = true;
+  await render('scheduling');
+  await click('.schedule-tracking-card.is-pending');
+  await click([...document.querySelectorAll('#schedule-results button')].find((button) => button.textContent === 'Approve'));
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Approve schedule'));
+  assert.match(document.querySelector('.schedule-confirmation [role="alert"]').textContent, /Planning details are locked/);
+  assert.equal(scheduleRows[0].status, 'requested');
+  assert.equal(scheduleSaves.length, 1);
 });
 
 test('LGU dashboard button opens pending website requests and approval stays in Scheduling', async () => {
@@ -495,14 +671,82 @@ test('LGU dashboard button opens pending website requests and approval stays in 
   assert.match(document.querySelector('.website-request-advice').textContent, /staff availability/);
   assert.equal(document.querySelector('.website-request-advice .planting-badge'), null);
   await click('input[name="contacted"]');
-  const confirm = [...document.querySelectorAll('.modal-card button')].find((button) => button.textContent === 'Confirm and create schedule');
+  const confirm = [...document.querySelectorAll('.modal-card button')].find((button) => button.textContent === 'Approve request');
   await click(confirm);
   assert.equal(approvals.length, 1);
-  assert.equal(approvals[0].email, 'test@example.org');
+  assert.equal(approvals[0].action, 'confirmed');
+  assert.equal(approvals[0].email, undefined, 'The existing request email does not need to be submitted again');
+  assert.equal(appointmentRows[0].email, 'test@example.org');
   assert.equal(approvals[0].contacted, true);
-  assert.match(document.querySelector('.website-request-notice').textContent, /email is queued/);
+  assert.match(document.querySelector('.website-requests [role="status"]').textContent, /email is queued/);
   await click('[data-page="dashboard"]');
   assert.match(document.querySelector('.appointment-notice').textContent, /0 pending requests/);
   await click('.appointment-notice');
   assert.equal(document.querySelector('.website-request-toolbar .is-active').textContent, 'Pending requests');
+});
+
+test('Scheduling filters request decisions separately from linked activity progress', async () => {
+  const common = { contact_name: 'Coordinator', phone: '09123456789', email: 'test@example.org',
+    appointment_type: 'field_visit', title: 'Field visit', participants: 10,
+    start_at: '2090-01-01T07:00:00+08:00', end_at: '2090-01-01T08:00:00+08:00' };
+  appointmentRows = [
+    { ...common, id: 1, organization: 'Pending organization', reference: 'LIKE-PENDING', status: 'pending' },
+    { ...common, id: 2, organization: 'Approved organization', reference: 'LIKE-APPROVED', status: 'confirmed', schedule_id: 11, schedule_status: 'completed' },
+    { ...common, id: 3, organization: 'Declined organization', reference: 'LIKE-DECLINED', status: 'declined', decision_notes: 'Staff unavailable.' },
+  ];
+  const original = JSON.stringify(appointmentRows);
+  await render('scheduling');
+  const requestRows = () => [...document.querySelectorAll('#website-requests tbody tr')];
+  const filter = (label) => [...document.querySelectorAll('.website-request-toolbar button')].find((button) => button.textContent === label);
+  const reads = count('/api/like-appointments');
+  assert.equal(requestRows().length, 1);
+  assert.equal(requestRows()[0].querySelector('.schedule-status').textContent, 'Pending');
+  assert.ok(requestRows()[0].querySelector('.website-review-button'));
+  await click(filter('Approved requests'));
+  assert.equal(requestRows().length, 1);
+  assert.equal(requestRows()[0].querySelector('.schedule-status').textContent, 'Approved');
+  assert.match(requestRows()[0].textContent, /Linked schedule #11 · Completed/);
+  assert.equal(requestRows()[0].querySelector('.website-review-button'), null);
+  assert.equal(filter('Approved requests').getAttribute('aria-pressed'), 'true');
+  assert.equal(count('/api/like-appointments'), reads);
+  await click('[data-page="activity"]');
+  await click('[data-page="scheduling"]');
+  assert.equal(filter('Approved requests').getAttribute('aria-pressed'), 'true');
+  const readsAfterNavigation = count('/api/like-appointments');
+  await click(filter('Declined requests'));
+  assert.equal(requestRows().length, 1);
+  assert.equal(requestRows()[0].querySelector('.schedule-status').textContent, 'Declined');
+  assert.match(requestRows()[0].textContent, /Staff unavailable/);
+  assert.equal(requestRows()[0].querySelector('.website-review-button'), null);
+  await click(filter('Recent requests'));
+  assert.deepEqual(requestRows().map((row) => row.querySelector('.schedule-status').textContent), ['Pending', 'Approved', 'Declined']);
+  assert.equal(count('/api/like-appointments'), readsAfterNavigation);
+  assert.equal(JSON.stringify(appointmentRows), original);
+  assert.equal(approvals.length, 0);
+});
+
+test('Scheduling declined requests require a reason and appear under Declined without a schedule', async () => {
+  useAuthStore.setState({ user: { id: 1, role: 'planner' } });
+  appointmentRows = [{ id: 1, reference: 'LIKE-DECLINE', organization: 'Test organization', contact_name: 'Coordinator',
+    phone: '09123456789', email: 'test@example.org', appointment_type: 'field_visit', title: 'Field visit', participants: 10,
+    start_at: '2090-01-01T07:00:00+08:00', end_at: '2090-01-01T08:00:00+08:00', status: 'pending' }];
+  await render('scheduling');
+  await click('.website-review-button');
+  const decision = document.querySelector('.website-review [name="action"]');
+  await act(async () => { decision.value = 'declined'; decision.dispatchEvent(new Event('change', { bubbles: true })); });
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Decline request'));
+  assert.equal(approvals.length, 0);
+  assert.match(document.querySelector('.website-review').textContent, /Enter.*reason/);
+  const reason = document.querySelector('.website-review textarea');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(reason, 'Staff unavailable.');
+    reason.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Decline request'));
+  assert.deepEqual(approvals, [{ action: 'declined', contacted: false, decision_notes: 'Staff unavailable.' }]);
+  assert.equal(appointmentRows[0].schedule_id, undefined);
+  await click([...document.querySelectorAll('.website-request-toolbar button')].find((button) => button.textContent === 'Declined requests'));
+  assert.equal(document.querySelector('#website-requests .schedule-status').textContent, 'Declined');
+  assert.equal(document.querySelector('#website-requests .website-review-button'), null);
+  assert.equal(scheduleSaves.length, 0);
 });

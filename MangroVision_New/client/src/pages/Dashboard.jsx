@@ -1,4 +1,5 @@
 import { Activity, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import GrowthGuide from '../components/GrowthGuide';
 import AppointmentNotice from '../components/AppointmentNotice';
@@ -571,11 +572,15 @@ function OverviewTab({ data }) {
 }
 
 function SiteFollowUpDialog({ open, data, onClose }) {
+  if (!open) return null;
   const sites = arrayOf(data?.site_attention).filter((site) => arrayOf(site.reasons).length > 0);
   const count = firstNumber(data?.kpis?.sites_requiring_attention?.value, sites.length) ?? 0;
-  return <Modal open={open} title="Sites needing follow-up" variant="info"
+  return createPortal(<Modal open={open} title="Sites needing follow-up" variant="info"
     className="modal-card-wide dash-follow-up-dialog" cancelLabel="Close" onCancel={onClose}>
-    <p className="dash-follow-up-intro">Review each site's flagged conditions, then locate it on the map or open its organization's monitoring records. This list uses your Dashboard filters.</p>
+    <div className="dash-follow-up-summary">
+      {sites.length > 0 ? <span className="dash-follow-up-count">{formatCount(sites.length)} {sites.length === 1 ? 'site' : 'sites'}</span> : null}
+      <p className="dash-follow-up-intro">Sites flagged by your current Dashboard filters. View a site on the map or open Monitoring to follow up.</p>
+    </div>
     {sites.length > 0 ? <ul className="dash-follow-up-list">
       {sites.map((site) => {
         const reasons = new Set(arrayOf(site.reasons));
@@ -585,9 +590,9 @@ function SiteFollowUpDialog({ open, data, onClose }) {
         return <li key={site.site_id} className="dash-follow-up-site">
           <h3>{name}</h3>
           <ul className="dash-follow-up-reasons">
-            {reasons.has('overdue_inspections') && <li><strong>Monitoring overdue.</strong> {formatCount(site.overdue_inspections)} pending inspection{Number(site.overdue_inspections) === 1 ? '' : 's'} past due.</li>}
-            {reasons.has('survival_below_target') && <li><strong>Survival below target.</strong> {formatPercent(site.survival_rate_pct)} of inspected seedlings are alive.</li>}
-            {reasons.has('warning_exposure') && <li><strong>Warning zone exposure.</strong> {formatCount(site.warning_points)} planting point{Number(site.warning_points) === 1 ? '' : 's'} within warning zones.</li>}
+            {reasons.has('overdue_inspections') && <li className="is-overdue"><strong>Monitoring overdue.</strong> {formatCount(site.overdue_inspections)} pending inspection{Number(site.overdue_inspections) === 1 ? '' : 's'} past due.</li>}
+            {reasons.has('survival_below_target') && <li className="is-survival"><strong>Survival below target.</strong> {formatPercent(site.survival_rate_pct)} of inspected seedlings are alive.</li>}
+            {reasons.has('warning_exposure') && <li className="is-warning"><strong>Warning zone exposure.</strong> {formatCount(site.warning_points)} planting point{Number(site.warning_points) === 1 ? '' : 's'} within warning zones.</li>}
           </ul>
           <div className="dash-follow-up-actions">
             <Link to={`/map?project_site_id=${siteId}&focus=${focus}`} onClick={onClose}
@@ -600,7 +605,7 @@ function SiteFollowUpDialog({ open, data, onClose }) {
     </ul> : <p role="status" className="dash-follow-up-empty">{count > 0
       ? 'Site details are unavailable. Refresh the Dashboard to try again.'
       : 'No sites need follow-up for the selected filters.'}</p>}
-  </Modal>;
+  </Modal>, document.body);
 }
 
 function WrappedCategoryTick({ x, y, payload }) {

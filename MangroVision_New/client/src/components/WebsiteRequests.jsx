@@ -6,6 +6,7 @@ import useFormFeedback from '../utils/useFormFeedback';
 import { formRequest } from '../utils/formValidation';
 import { FieldError, FormErrorSummary, FormMessage } from './FormFeedback';
 import { appointmentTypeLabel, isPlantingAppointment } from '../utils/appointmentTypes';
+import { scheduleProgressStatus } from '../utils/scheduleTracking';
 import './WebsiteRequests.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -19,6 +20,18 @@ const manilaParts = (value) => {
 const formatTime = (value) => new Intl.DateTimeFormat('en-PH', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value));
 const formatEndTime = (value) => new Intl.DateTimeFormat('en-PH', { timeStyle: 'short', timeZone: 'Asia/Manila' }).format(new Date(value));
 const isFutureTime = (value) => Date.parse(value) > Date.now();
+const REQUEST_FILTERS = [
+  { key: 'pending', label: 'Pending requests' },
+  { key: 'approved', label: 'Approved requests' },
+  { key: 'declined', label: 'Declined requests' },
+  { key: 'all', label: 'Recent requests' },
+];
+// Approval retains the API's existing confirmed value and linked-booking logic.
+const requestDecision = (status) => status === 'confirmed' ? 'approved' : status;
+const statusLabel = (status) => {
+  const value = String(status || 'unknown').replaceAll('_', ' ');
+  return value.charAt(0).toUpperCase() + value.slice(1);
+};
 
 async function requestJson(path, options = {}) {
   return formRequest(`${API}${path}`, options, 'Could not process the website request. Please check the details and try again.');
@@ -74,11 +87,11 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
       }
       if (!isFutureTime(window.start_at)) {
         if (rescheduling) feedback.reject({ startTime: 'Choose a new date and time in the future.' });
-        else setError('The requested time has passed. Choose “Reschedule and confirm” to agree on a new time.');
+        else setError('The requested time has passed. Choose “Reschedule and approve” to agree on a new time.');
         return;
       }
-      if (!form.contacted) { feedback.reject({ contacted: 'Contact the requester and agree on the date and time before confirming.' }); return; }
-      if (needsCaution && !form.acceptCaution) { feedback.reject({ acceptCaution: 'Review and acknowledge the schedule warnings before confirming.' }); return; }
+      if (!form.contacted) { feedback.reject({ contacted: 'Contact the requester and agree on the date and time before approving.' }); return; }
+      if (needsCaution && !form.acceptCaution) { feedback.reject({ acceptCaution: 'Review and acknowledge the schedule warnings before approving.' }); return; }
     } else if (!form.decisionNotes.trim()) { feedback.reject({ decisionNotes: 'Enter a reason for declining this request.' }); return; }
     const organization = organizations.find((item) => item.name.toLowerCase() === request.organization.trim().toLowerCase());
     inFlight.current = true;
@@ -92,13 +105,13 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
           ...(rescheduling ? window : {}),
         }),
       });
-      onSaved(confirming ? 'Appointment confirmed and recorded in Scheduling. The confirmation email is queued for delivery.' : 'Website request declined.');
+      onSaved(confirming ? 'Request approved and recorded in Scheduling. The activity remains Pending until completed. The confirmation email is queued for delivery.' : 'Website request declined.');
     } catch (issue) { if (!feedback.fromServer(issue)) setError(issue.message); }
     finally { inFlight.current = false; setBusy(false); }
   };
 
   return createPortal(<Modal open title={<><span className="website-review-heading">Review website request</span><span className="website-review-reference">{request.reference}</span></>} variant="info" className="modal-card-wide website-review-dialog" busy={busy}
-    cancelLabel="Close" confirmLabel={rescheduling ? 'Confirm new schedule' : confirming ? 'Confirm appointment' : 'Decline request'} onConfirm={save} onCancel={onClose}>
+    cancelLabel="Close" confirmLabel={rescheduling ? 'Approve new schedule' : confirming ? 'Approve request' : 'Decline request'} onConfirm={save} onCancel={onClose}>
     <form className="website-review" noValidate onChangeCapture={feedback.onChange} aria-busy={busy} ref={formRoot} onSubmit={save}>
       <dl className="website-request-details">
         <div><dt>Organization</dt><dd>{request.organization}</dd></div>
@@ -113,13 +126,13 @@ export function RequestReview({ request, organizations, schedules, assessmentFor
       {request.notes ? <div className="website-request-notes"><strong>Requester notes</strong><p>{request.notes}</p></div> : null}
       <FormErrorSummary feedback={feedback} />
       <FormMessage error={error} loading={busy ? 'Saving the decision…' : ''} onRetry={save} busy={busy} />
-      <label>Decision<select name="action" disabled={busy} value={form.action} onChange={update}><option value="confirmed">Confirm requested schedule</option><option value="rescheduled">Reschedule and confirm</option><option value="declined">Decline request</option></select></label>
+      <label>Decision<select name="action" disabled={busy} value={form.action} onChange={update}><option value="confirmed">Approve requested schedule</option><option value="rescheduled">Reschedule and approve</option><option value="declined">Decline request</option></select></label>
       {confirming ? <>
         {rescheduling ? <fieldset className="website-review-reschedule" disabled={busy}>
           <legend>New schedule</legend>
-          <p>Agree on a new time with the requester before confirming.</p>
+          <p>Agree on a new time with the requester before approving.</p>
           <div className="website-review-times"><label>New date<input {...feedback.props('date')} type="date" value={form.date} onChange={update} required /><FieldError feedback={feedback} field="date" /></label><label>Start time<input {...feedback.props('startTime')} type="time" value={form.startTime} onChange={update} required /><FieldError feedback={feedback} field="startTime" /></label><label>End time<input {...feedback.props('endTime')} type="time" value={form.endTime} onChange={update} required /><FieldError feedback={feedback} field="endTime" /></label></div>
-        </fieldset> : <p className="website-review-hint">Confirmation keeps the requested date and time.</p>}
+        </fieldset> : <p className="website-review-hint">Approval keeps the requested date and time. The activity remains Pending until completed.</p>}
         {!request.email ? <label>Confirmation email<input disabled={busy} {...feedback.props('email')} type="email" value={form.email} onChange={update} required maxLength={254} /><small>This older request has no email address. Obtain it from the requester to send their confirmation{planting ? ' and planter codes' : ''}.</small><FieldError feedback={feedback} field="email" /></label> : null}
         <div className="website-request-advice">{planting ? <>{renderAdvice(advice)}<p>{advice.reason}</p></> : <p>Check staff availability and site conditions for this {appointmentTypeLabel(request.appointment_type).toLowerCase()}.</p>}{conflicts.length ? <p><strong>{conflicts.length} existing {conflicts.length === 1 ? 'schedule overlaps' : 'schedules overlap'} this time.</strong> Check staff and site availability.</p> : null}</div>
         {needsCaution ? <label className="website-review-check"><input disabled={busy} type="checkbox" {...feedback.props('acceptCaution')} checked={form.acceptCaution} onChange={update} /><span>I reviewed the {planting ? 'tide and ' : ''}schedule warnings and assessed whether this activity can proceed.<FieldError feedback={feedback} field="acceptCaution" /></span></label> : null}
@@ -159,14 +172,33 @@ export default function WebsiteRequests({ token, reloadKey, organizations, sched
     return () => { controller.abort(); globalThis.clearInterval(timer); };
   }, [token, reloadKey, refreshKey]);
   const pending = requests.filter((request) => request.status === 'pending');
-  const visible = filter === 'pending' ? pending : requests;
+  const visible = filter === 'all' ? requests : requests.filter((request) => requestDecision(request.status) === filter);
   const saved = (message) => { setNotice(message); onClose(); setRefreshKey((key) => key + 1); onChanged(); window.dispatchEvent(new Event('mv:data-changed')); };
 
   return <section className="schedule-panel website-requests" id="website-requests" tabIndex={-1} aria-labelledby="website-requests-title">
-    <div className="schedule-panel-head schedule-toolbar"><div><span className="schedule-step">LIKE public website</span><h2 id="website-requests-title">Pending requests <span className="website-request-count">{pending.length}</span></h2><p>Review the requested time, contact the organization, then confirm.</p></div><a className="website-preview-link" href="/landing-page" target="_blank" rel="noreferrer">Open LIKE website ↗</a></div>
-    <div className="website-request-toolbar"><div className="schedule-view-toggle"><button type="button" className={filter === 'pending' ? 'is-active' : ''} onClick={() => setFilter('pending')}>Pending requests</button><button type="button" className={filter === 'all' ? 'is-active' : ''} onClick={() => setFilter('all')}>Recent requests</button></div><button type="button" className="schedule-refresh" onClick={() => setRefreshKey((key) => key + 1)}>Refresh requests</button></div>
+    <div className="schedule-panel-head schedule-toolbar"><div><span className="schedule-step">LIKE public website</span><h2 id="website-requests-title">Website requests <span className="website-request-count">{pending.length} pending</span></h2><p>Review the requested time, contact the organization, then approve or decline.</p></div><a className="website-preview-link" href="/landing-page" target="_blank" rel="noreferrer">Open LIKE website ↗</a></div>
+    <div className="website-request-toolbar"><div className="schedule-view-toggle" aria-label="Request filters">
+      {REQUEST_FILTERS.map(({ key, label }) => <button type="button" key={key} className={filter === key ? 'is-active' : ''}
+        aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}
+    </div><button type="button" className="schedule-refresh" onClick={() => setRefreshKey((key) => key + 1)}>Refresh requests</button></div>
     <FormMessage error={error} success={notice} onRetry={() => setRefreshKey((key) => key + 1)} busy={loading} />
-    {loading ? <p className="website-request-empty" role="status">Loading website requests…</p> : visible.length ? <div className="schedule-table-wrap"><table><caption className="sr-only">LIKE website appointment requests</caption><thead><tr><th>Reference and organization</th><th>Preferred time</th><th>Contact person</th><th>Status</th><th>Action</th></tr></thead><tbody>{visible.map((request) => <tr key={request.id}><td><strong>{request.organization}</strong><small>{request.reference}</small><small>{appointmentTypeLabel(request.appointment_type)} · {request.participants} participants</small></td><td>{formatTime(request.start_at)}<small>Until {manilaParts(request.end_at).time} · Philippine time</small></td><td>{request.contact_name}<small>{request.phone}</small></td><td><span className={`schedule-status is-${request.status === 'pending' ? 'requested' : request.status}`}>{request.status}</span>{request.schedule_id ? <small>Linked schedule #{request.schedule_id}{request.schedule_status ? ` · ${request.schedule_status}` : ''}</small> : null}{request.status === 'confirmed' && !request.schedule_id ? <small>Linked schedule was removed.</small> : null}{request.email_status ? <small>{request.email_error ? 'Email awaiting retry' : `${request.email_kind === 'cancellation' ? 'Cancellation' : request.email_kind === 'update' ? 'Update' : 'Confirmation'} email ${request.email_status === 'sent' ? 'sent' : request.email_status === 'sending' ? 'sending' : 'queued'}`}</small> : null}{request.decision_notes ? <small>{request.decision_notes}</small> : null}</td><td>{request.status === 'pending' ? <button className="website-review-button" type="button" onClick={() => onReview(request)}>Review request</button> : <small>Reviewed {request.reviewed_at ? formatTime(request.reviewed_at) : ''}</small>}</td></tr>)}</tbody></table></div> : <p className="website-request-empty">{filter === 'pending' ? 'No pending website requests. New requests will appear here and on the calendar.' : 'No website requests yet.'}</p>}
+    {loading ? <p className="website-request-empty" role="status">Loading website requests…</p> : visible.length ? <div className="schedule-table-wrap"><table>
+      <caption className="sr-only">LIKE website appointment requests</caption>
+      <thead><tr><th>Reference and organization</th><th>Preferred time</th><th>Contact person</th><th>Decision</th><th>Action</th></tr></thead>
+      <tbody>{visible.map((request) => <tr key={request.id}>
+        <td><strong>{request.organization}</strong><small>{request.reference}</small><small>{appointmentTypeLabel(request.appointment_type)} · {request.participants} participants</small></td>
+        <td>{formatTime(request.start_at)}<small>Until {manilaParts(request.end_at).time} · Philippine time</small></td>
+        <td>{request.contact_name}<small>{request.phone}</small></td>
+        <td><span className={`schedule-status is-${requestDecision(request.status)}`}>{statusLabel(requestDecision(request.status))}</span>
+          {request.schedule_id ? <small>Linked schedule #{request.schedule_id}{request.schedule_status ? ` · ${statusLabel(scheduleProgressStatus(request.schedule_status))}` : ''}</small> : null}
+          {request.status === 'confirmed' && !request.schedule_id ? <small>Linked schedule was removed.</small> : null}
+          {request.email_status ? <small>{request.email_error ? 'Email awaiting retry' : `${request.email_kind === 'cancellation' ? 'Cancellation' : request.email_kind === 'update' ? 'Update' : 'Confirmation'} email ${request.email_status === 'sent' ? 'sent' : request.email_status === 'sending' ? 'sending' : 'queued'}`}</small> : null}
+          {request.decision_notes ? <small>{request.decision_notes}</small> : null}
+        </td>
+        <td>{request.status === 'pending' ? <button className="website-review-button" type="button" onClick={() => onReview(request)}>Review request</button> : <small>Reviewed {request.reviewed_at ? formatTime(request.reviewed_at) : ''}</small>}</td>
+      </tr>)}</tbody>
+    </table></div> : <p className="website-request-empty">{filter === 'pending' ? 'No pending website requests. New requests will appear here for review.'
+      : filter === 'all' ? 'No website requests yet.' : `No ${filter} website requests.`}</p>}
     {reviewRequest ? <RequestReview key={reviewRequest.id} request={reviewRequest} organizations={organizations} schedules={schedules} assessmentFor={assessmentFor} renderAdvice={renderAdvice} onClose={onClose} onSaved={saved} /> : null}
   </section>;
 }

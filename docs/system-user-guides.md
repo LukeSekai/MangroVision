@@ -8,11 +8,22 @@ task guide or **Full system workflow**. Use **Next**, **Back**, **Finish**,
 The staff guides cover:
 
 - Workspace navigation, map controls, notifications and account access.
-- Project sites, eroded areas, warnings and forbidden-zone review.
+- Project sites, eroded areas and warning zones.
 - Geotagged image upload, coverage checks, configuration, analysis, result
   review, saving and analysis history.
 - Planting-point statuses, map layers, coverage measurements and exports.
-- Tide guidance, organization schedules and LIKE website appointments.
+- Tide guidance, organization schedules and LIKE website appointments. Scheduling
+  groups and progress choices show only Completed, Pending and Cancelled.
+  Website request decisions show Pending, Approved and Declined, with filters
+  for each and Recent requests for the combined history. Review a pending request
+  to Approve requested schedule, Reschedule and approve, or Decline request.
+  Approval requires requester agreement; decline requires a reason.
+  Use **Approve** in List to approve a pending schedule; it stays Pending until
+  marked Completed. Approval and ongoing planting remain tracked separately.
+  Completed activities have a **View** action and are read-only in List and
+  Calendar; they cannot be edited, reopened, cancelled or deleted.
+  Missed means the scheduled end has passed without completion or cancellation,
+  including unfinished planting; it is a follow-up label, not a saved status change.
 - Organization/site/activity selection, point allocation, field links and
   participant-device management.
 - Monitoring visits, newly recorded deaths, seedling locations, health,

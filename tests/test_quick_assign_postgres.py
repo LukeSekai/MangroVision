@@ -30,7 +30,8 @@ def workspace(monkeypatch):
                           'planter_assignments', 'planter_assignment_points',
                           'planting_events', 'point_death_records', 'auth_sessions',
                           'project_sites', 'analyses', 'planting_points', 'users',
-                          'map_zones', 'replanting_requests', 'activity_logs', 'planting_schedules'):
+                          'map_zones', 'replanting_requests', 'activity_logs', 'planting_schedules',
+                          'activity_schedule_emails', 'like_appointment_emails', 'like_appointment_requests'):
                 connection.execute(text(f'CREATE TEMP TABLE {table} (LIKE mangrovision.{table} INCLUDING ALL)'))
             connection.execute(text('ALTER TABLE pg_temp.planter_assignments ADD COLUMN IF NOT EXISTS planting_schedule_id BIGINT'))
             connection.execute(text('SET LOCAL search_path = pg_temp, mangrovision, extensions, public'))
@@ -98,6 +99,45 @@ def test_linked_image_does_not_expand_saved_boundary(workspace):
         db.create_organization_assignment(1, [96], species='Rhizophora', site_zone_id=1)
     # A failed batch must not leave a reservation account behind.
     assert db.list_planters() == []
+
+
+def test_activity_without_area_reschedules_until_the_first_assigned_point_is_planted(workspace):
+    from mangrovision_db.activity_rules import ActivityConflict
+    activity = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Planting before area selection',
+        start_at='2090-01-01T08:00:00+08:00', end_at='2090-01-01T10:00:00+08:00', status='confirmed')
+    assignment_id = db.create_organization_assignments(1, [1, 2], site_zone_id=1,
+        planting_schedule_id=activity['id'], assigned_by_user_id=1)[0]
+    assert db.get_planting_schedule(activity['id'])['project_site_id'] == 1
+    rescheduled = db.update_planting_schedule(activity['id'],
+        start_at='2090-01-02T08:00:00+08:00', end_at='2090-01-02T10:00:00+08:00')
+    assert rescheduled['date'] == '2090-01-02' and not rescheduled['planting_started']
+    batch = workspace.execute(text('SELECT planter_id, assignment_date, planting_schedule_id FROM planter_assignments WHERE id=:id'),
+                              {'id': assignment_id}).one()
+    assert batch.assignment_date.isoformat() == '2090-01-02' and batch.planting_schedule_id == activity['id']
+    point = workspace.execute(text('SELECT id FROM planter_assignment_points WHERE assignment_id=:id ORDER BY id LIMIT 1'),
+                              {'id': assignment_id}).scalar_one()
+    db.mark_planter_points_completed(batch.planter_id, [point])
+    planted = db.get_planting_schedule(activity['id'])
+    assert planted['recorded_planting_count'] == 1 and planted['planting_started']
+    assert workspace.scalar(text("SELECT count(*) FROM planter_assignment_points WHERE assignment_id=:id AND status='pending'"),
+                            {'id': assignment_id}) == 1
+    with pytest.raises(ActivityConflict, match='already been recorded'):
+        db.update_planting_schedule(activity['id'],
+            start_at='2090-01-03T08:00:00+08:00', end_at='2090-01-03T10:00:00+08:00')
+    assert db.get_planting_schedule(activity['id']) == planted
+
+
+def test_failed_assignment_rolls_back_its_activity_area_link(workspace):
+    activity = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Atomic assignment',
+        start_at='2090-01-01T08:00:00+08:00', end_at='2090-01-01T10:00:00+08:00', status='confirmed')
+    before = db.get_planting_schedule(activity['id'])
+    with pytest.raises(ValueError, match='not inside exactly one project site'):
+        db.create_organization_assignments(1, [96], site_zone_id=1, planting_schedule_id=activity['id'])
+    assert db.get_planting_schedule(activity['id']) == before
+    assert workspace.scalar(text('SELECT count(*) FROM planter_assignments')) == 0
+    assert workspace.scalar(text("SELECT count(*) FROM activity_logs WHERE action='schedule.updated'")) == 0
 
 
 def test_assignment_links_to_activity_then_field_planting_locks_it(workspace):

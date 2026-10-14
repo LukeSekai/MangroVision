@@ -74,7 +74,7 @@ test('pending review shows submitted details without editors or request cancella
   assert.match(document.body.textContent, /Coastal volunteers|coordinator@example.org|Meet at the gate/);
   for (const name of ['organization', 'email', 'date', 'startTime', 'endTime']) assert.equal(document.querySelector(`[name="${name}"]`), null);
   assert.deepEqual([...document.querySelector('[name="action"]').options].map((option) => option.textContent),
-    ['Confirm requested schedule', 'Reschedule and confirm', 'Decline request']);
+    ['Approve requested schedule', 'Reschedule and approve', 'Decline request']);
   assert.doesNotMatch(document.body.textContent, /Cancel request/);
   assert.ok([...document.querySelectorAll('button')].find((button) => button.textContent === 'Close'));
   await submit();
@@ -141,7 +141,7 @@ test('a past request prompts explicit rescheduling instead of exposing editable 
   await render({ request: { ...request, start_at: '2020-06-12T08:00:00+08:00', end_at: '2020-06-12T09:30:00+08:00' } });
   await check('contacted'); await submit();
   assert.equal(calls.length, 0);
-  assert.match(document.body.textContent, /requested time has passed.*Reschedule and confirm/);
+  assert.match(document.body.textContent, /requested time has passed.*Reschedule and approve/);
   assert.equal(document.querySelector('[name="date"]'), null);
   await change('action', 'rescheduled');
   await change('date', '2035-06-12'); await change('endTime', '07:00');

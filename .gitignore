@@ -61,6 +61,7 @@ htmlcov/
 *.spec.mjs
 !MangroVision_New/client/src/components/ActivityAndBooking.test.js
 !MangroVision_New/client/src/utils/activityTides.test.js
+!MangroVision_New/client/src/utils/scheduleTracking.test.js
 # Keep the operational report regression checks with their implementation.
 !MangroVision_New/client/src/utils/restorationReports.test.js
 !MangroVision_New/client/src/pages/RestorationReports.test.js
