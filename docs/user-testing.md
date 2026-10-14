@@ -6,6 +6,17 @@ on the owner's laptop. The laptop runs the existing FastAPI, detector, and
 orthophoto files, with the private database/storage settings in the root `.env`.
 The expert needs the website URL and an authorized MangroVision account.
 
+The Vercel project is **mangrovision**, with these production addresses:
+
+- Staff: <https://mangrovision.vercel.app/>
+- Planters: <https://mangrovision.vercel.app/field>
+- LIKE website: <https://mangrovision.vercel.app/landing-page>
+
+As of October 14, 2026, the previous `mangrovision-user-testing.vercel.app`
+address redirects to this address while preserving the page path. Existing
+planter codes and planting records are retained. Users signing in at the new
+hostname need a new browser session; cookies from the old hostname do not move.
+
 In testing mode, **Field Share Link** uses the same Vercel website's `/field`
 route. Copy that link for planters; no second frontend tunnel is needed. The
 launcher supplies `MANGROVISION_PUBLIC_FRONTEND_URL` to its backend process.
@@ -41,10 +52,13 @@ From the repository root in PowerShell, using this laptop's existing venv:
 .\venv\Scripts\python.exe -X utf8 MangroVision_New/start_testing.py --deploy
 ```
 
-The saved website URL is reused. On the first run on another laptop, provide it:
+The saved website URL is reused. On the first run on another laptop, or when
+replacing a previously saved `mangrovision-user-testing.vercel.app` address,
+provide the current URL explicitly. This updates the backend's trusted origin
+and planter share-link address as well as the saved launcher configuration:
 
 ```powershell
-.\venv\Scripts\python.exe -X utf8 MangroVision_New/start_testing.py --frontend-url https://mangrovision-user-testing.vercel.app --deploy
+.\venv\Scripts\python.exe -X utf8 MangroVision_New/start_testing.py --frontend-url https://mangrovision.vercel.app --deploy
 ```
 
 Wait for Vercel to finish deploying, then share the **website** URL, rather than
@@ -86,7 +100,7 @@ testing ends when its API/tunnel stop; the Vercel frontend itself remains hosted
    ```powershell
    npm.cmd install --prefix tmp/vercel-cli --no-audit --no-fund vercel
    node tmp/vercel-cli/node_modules/vercel/dist/vc.js login
-   node tmp/vercel-cli/node_modules/vercel/dist/vc.js link --yes --project mangrovision-user-testing --scope mangro-vision --cwd MangroVision_New/client
+   node tmp/vercel-cli/node_modules/vercel/dist/vc.js link --yes --project mangrovision --scope mangro-vision --cwd MangroVision_New/client
    ```
 
    Use the appropriate project/team if setting up a different deployment.
