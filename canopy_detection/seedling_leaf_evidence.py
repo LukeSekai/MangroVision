@@ -51,8 +51,19 @@ def filter_seedling_ground_artifacts(image, entries, gsd):
         if len(broad_areas) >= 2 and leaf_area >= min_core_pixels:
             leaf_area = max(leaf_area, sum(broad_areas))
 
-        reason = None
-        if not strong_leaf and leaf_area < np.ceil(.002 / gsd**2):
+        # Olive mud and pale twigs can be locally brighter than wet ground.
+        # Require a connected core with a clear green signal, rather than
+        # letting brightness or a weak tint alone enable either leaf path.
+        pale_core = ((distance_m2 <= .25**2)
+                     & (patch_hue >= 23) & (patch_hue <= 72)
+                     & (patch_sat >= 22) & (patch_exg >= 25)
+                     & (g[y0:y1, x0:x1] >= r[y0:y1, x0:x1]-2)
+                     & (patch_val >= max(170, ground_val+20)))
+        distinct_core = _has_compact_leaf(
+            (broad_leaf & (patch_exg >= 55)) | pale_core, gsd,
+        )
+        reason = None if distinct_core else "weak_leaf_color"
+        if reason is None and not strong_leaf and leaf_area < np.ceil(.002 / gsd**2):
             reason = "insufficient_leaf_support"
             # Sunlit leaves can have almost-white centers. Grow a compact
             # pale region only when it has substantial, independently green

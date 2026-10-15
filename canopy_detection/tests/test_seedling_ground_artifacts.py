@@ -114,6 +114,24 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
         image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
         self.assertEqual(filter_seedling_ground_artifacts(image, [{'center': (80., 80.)}], .01)[0], [])
 
+    def test_compact_brightened_olive_mud_needs_distinct_leaf_color(self):
+        for scale in (1, 2):
+            image = np.full((160, 160, 3), (82, 100, 97), np.uint8)
+            for x, y in ((76, 78), (82, 78), (79, 84)):
+                cv2.circle(image, (x, y), 3, (74, 120, 119), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            kept, metadata = filter_seedling_ground_artifacts(
+                image, [{'center': (80*scale, 80*scale)}], .007/scale,
+            )
+            self.assertEqual(kept, [])
+            self.assertEqual(metadata['seedling_ground_artifact_rejected_reasons'], {'weak_leaf_color': 1})
+
+    def test_near_white_leaf_can_pass_without_saturated_green(self):
+        image = np.full((160, 160, 3), (100, 105, 103), np.uint8)
+        cv2.ellipse(image, (80, 80), (8, 5), 0, 0, 360, (175, 210, 195), -1)
+        entries = [{'center': (80., 80.)}]
+        self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], entries)
+
 
 @unittest.skipUnless(os.environ.get('MANGROVISION_TEST_IMAGE_DIR'), 'Original regression photos are supplied separately')
 class SeedlingPhotoRegressionTests(unittest.TestCase):
