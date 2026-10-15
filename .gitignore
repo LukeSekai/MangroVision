@@ -55,6 +55,7 @@ htmlcov/
 !/tests/test_planter_activities.py
 !/tests/test_organization_credentials_postgres.py
 !/tests/test_planter_codes_postgres.py
+!/tests/test_group_access_postgres.py
 *.test.js
 *.test.mjs
 *.spec.js

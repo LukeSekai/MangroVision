@@ -120,6 +120,42 @@ def test_public_receipt_and_timezone(api, monkeypatch):
     assert captured['start_at'].utcoffset() == timedelta(hours=8)
 
 
+def test_missing_shared_access_setup_is_actionable_and_does_not_send_mail(api, monkeypatch):
+    from mangrovision_db.group_access import SharedAccessSetupError
+    client, routes, staff = api
+    monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: {'id': 1, 'role': 'lgu'})
+    def missing_setup(*args, **kwargs):
+        raise SharedAccessSetupError()
+    monkeypatch.setattr(routes, 'review_appointment', missing_setup)
+    monkeypatch.setattr(routes, 'run_delivery_cycle', lambda **kwargs: pytest.fail('Failed setup started email delivery'))
+    response = client.post('/api/like-appointments/1/review', json={'action': 'confirmed', 'contacted': True})
+    assert response.status_code == 503
+    assert response.json()['detail']['kind'] == 'shared_access_setup_required'
+    assert '20261015_0019' in response.json()['detail']['message']
+
+
+@pytest.mark.parametrize('appointment_type', ['tree_planting', 'field_visit', 'clean_up_drive'])
+def test_public_duration_is_derived_from_start(api, monkeypatch, appointment_type):
+    client, routes, _ = api
+    captured = {}
+    monkeypatch.setattr(routes, 'submit_appointment', lambda values, _: captured.update(values) or {'reference': 'LIKE-TEST'})
+    body = payload()
+    body.update(appointment_type=appointment_type, end_at=(datetime.fromisoformat(body['start_at']) + timedelta(hours=4)).isoformat())
+    assert client.post('/api/public/like/appointments', json=body).status_code == 201
+    assert captured['end_at'] - captured['start_at'] == timedelta(hours=2)
+
+
+def test_two_hour_public_request_cannot_cross_midnight(api, monkeypatch):
+    client, routes, _ = api
+    monkeypatch.setattr(routes, 'submit_appointment', lambda *args: pytest.fail('Overnight request reached storage'))
+    body = payload()
+    start = datetime.fromisoformat(body['start_at']).replace(hour=22)
+    body.update(start_at=start.isoformat(), end_at=start.replace(hour=23).isoformat())
+    response = client.post('/api/public/like/appointments', json=body)
+    assert response.status_code == 422
+    assert 'before 10 PM' in response.text
+
+
 @pytest.mark.parametrize('appointment_type,label', [
     ('field_visit', 'Field visit'), ('clean_up_drive', 'Clean-up drive'), ('tree_planting', 'Tree planting'),
 ])

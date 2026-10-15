@@ -177,6 +177,24 @@ html { scroll-behavior: smooth; scroll-padding-top: 100px; }
 .like-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .like-form-fields .like-button { width: 100%; margin-top: 6px; }
 .like-form-fields .like-field-hint { font-size: 9px; margin: -8px 0 0; }
+.like-form-fields input[readonly] { background: #eff4ec; color: #566650; }
+.like-tide-guide { min-width: 0; border: 1px solid #d8e5cf; border-radius: 9px; background: #f5f9f1; padding: 16px; }
+.like-tide-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.like-tide-heading > strong { font-size: 12px; color: #166534; }
+.like-tide-guide p { margin: 10px 0 0; font-size: 11px; line-height: 1.6; }
+.like-tide-refresh { padding: 7px 0; background: transparent; color: #166534; font-size: 10px; text-decoration: underline; }
+.like-tide-windows { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 10px; }
+.like-tide-windows li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px; background: #fff; border: 1px solid #dce7d5; border-radius: 7px; }
+.like-tide-windows li div { display: grid; gap: 5px; }
+.like-tide-windows strong { font-size: 12px; color: #174d2b; }
+.like-tide-windows span { font-size: 10px; color: #596c51; }
+.like-tide-windows button { min-height: 36px; padding: 8px 12px; background: #166534; color: #fff; border-radius: 5px; font-size: 11px; }
+.like-tide-guide .like-tide-caution { padding: 10px; background: #fff1da; color: #754515; border-radius: 5px; }
+.like-tide-guide .like-tide-match { color: #166534; }
+.like-tide-guide .like-tide-note { font-size: 10px; color: #617059; }
+.like-tide-note a { color: #166534; text-decoration: underline; overflow-wrap: anywhere; }
+.like-tide-guide button:disabled { opacity: .6; cursor: default; }
+.like-tide-guide button:focus-visible { outline: 2px solid #166534; outline-offset: 3px; }
 .like-form-fields .like-consent { display: flex; gap: 9px; align-items: flex-start; font-size: 10px; line-height: 1.6; font-weight: 400; color: #65705f; }
 .like-consent input { accent-color: #166534; width: 15px; height: 15px; flex-shrink: 0; margin: 2px 0 0; }
 .like-form-fields .form-field-error { color: #b91c1c; font-size: 12px; }

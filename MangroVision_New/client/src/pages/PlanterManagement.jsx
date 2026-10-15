@@ -429,7 +429,7 @@ export default function PlanterManagement() {
             )}
           </div>
 
-          {!shareHosted && <p className="text-sm">If the field link changes, share the new link. Participants can use their existing planter codes to resume the same points.</p>}
+          {!shareHosted && <p className="text-sm">If the field link changes, share the new link. Participants can return with the activity’s organization code and their own username.</p>}
           {shareError && <div className="assign-message assign-error">{shareError}</div>}
           {shareCopied && <div className="assign-message assign-success">{shareCopied}</div>}
         </div>
@@ -492,7 +492,7 @@ export default function PlanterManagement() {
                 <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
                 {selectedAssignmentPlanter.registration_pending
                   ? 'Login not created yet · Points can be reserved now'
-                  : `${selectedAssignmentPlanter.participant_count} participants · Individual planter codes`}
+                  : `${selectedAssignmentPlanter.participant_count} participant slots · Shared organization code`}
               </span>
             )}
           </div>
@@ -571,7 +571,7 @@ export default function PlanterManagement() {
               <strong>{pointIdsToAssign.length} points{!selectedAssignmentPlanter.registration_pending && ` / ${selectedAssignmentPlanter.participant_count} participants`}</strong>
               {selectedSpeciesSummary && <span className="text-sm">{selectedSpeciesSummary}</span>}
               {selectedAssignmentPlanter.registration_pending ? (
-                <span className="text-sm">Create the organization’s login in Organization access below. Its device count determines each participant’s share.</span>
+                <span className="text-sm">Select a confirmed planting activity and prepare its organization code below. Its participant count determines the initial allocation.</span>
               ) : <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>}
               <span className="text-sm">All planted points count toward {selectedAssignmentPlanter.organization_name}.</span>
             </div>
@@ -601,10 +601,10 @@ export default function PlanterManagement() {
       </PanelCard>
 
       {selectedAssignmentPlanter && (
-        <PanelCard title="Planter codes" defaultOpen={selectedAssignmentPlanter.registration_pending}>
-          <OrganizationAccess key={selectedAssignmentPlanter.organization_id} organization={selectedAssignmentPlanter}
-            expectedParticipants={assignmentActivity?.expected_planters || 1}
-            onCreated={() => { setAssignSuccess('Planter codes created. Share the code list privately with the group leader.'); void loadData(); }} />
+        <PanelCard title="Organization code" defaultOpen={selectedAssignmentPlanter.registration_pending}>
+          <OrganizationAccess key={`${selectedAssignmentPlanter.organization_id}:${assignmentActivity?.id || ''}`} organization={selectedAssignmentPlanter}
+            activity={assignmentActivity}
+            onCreated={() => { void loadData(); }} />
         </PanelCard>
       )}
 

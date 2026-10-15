@@ -103,11 +103,15 @@ def _message(request, schedule, *, login=None, access_lines=None, kind='confirma
         if parsed.scheme not in {'https', 'http'} or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
             raise ValueError('Configure MANGROVISION_PUBLIC_URL before sending planter login details.')
         access_lines = ['Planter access', f'Open: {base_url}/field']
-        access_lines.extend(f"Participant {entry['participant_slot']}: {entry['code']}"
-                            for entry in login.get('codes', []) if entry.get('code'))
-        access_lines.extend(['Give each participant only their own code. No username or password is needed.',
-            'Use your code on any browser or device to resume the same assigned points. Codes remain valid until LGU staff revoke or replace them.',
-            'Keep this full code list private with the group leader.'])
+        access = login.get('group_code')
+        if access and access.get('code'):
+            access_lines.append(f"Organization code: {access['code']}")
+            access_lines.extend(['Share this one code with all participants in your organization.',
+                'First time: choose a personal username. Returning: enter the same code and username to restore your points and progress.',
+                'If your username is signed in elsewhere, choose Switch here to move access to this browser.',
+                'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.'])
+        else:
+            access_lines = []
     if access_lines and kind != 'cancellation':
         lines.extend(['', *access_lines])
     lines.extend(['', 'For questions or changes, contact the LGU staff who coordinated your appointment.',
@@ -175,8 +179,8 @@ def refresh_schedule_confirmation(conn, current, updated):
             WHERE organization_id = ? AND merged_into_planter_id IS NULL AND status = 'active'
             ORDER BY id LIMIT 1""", (updated['organization_id'],)).fetchone()
         if account and account['username']:
-            from .planter_codes import ensure_codes
-            login = {'codes': ensure_codes(conn, account['id'])}
+            from .group_access import ensure_activity_code
+            login = {'group_code': ensure_activity_code(conn, updated)}
     kind = 'cancellation' if updated['status'] == 'cancelled' else (
         'update' if existing and (existing['status'] == 'sent' or existing['message_kind'] == 'update') else 'confirmation')
     encrypted = _encrypted_message(_message(dict(request), updated, login=login, access_lines=access_lines, kind=kind))

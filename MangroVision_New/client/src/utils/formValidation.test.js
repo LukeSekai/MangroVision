@@ -28,6 +28,13 @@ const input = (attributes, value = '') => {
   return control;
 };
 
+test('an incomplete shared-access setup shows an actionable message without exposing server details', () => {
+  const error = submissionError({ kind: 'shared_access_setup_required', message: 'Private server diagnostic' }, 'Fallback', 503);
+  assert.match(error.message, /database update before planting requests can be approved/);
+  assert.doesNotMatch(error.message, /Private server diagnostic/);
+  assert.deepEqual(serverFieldErrors(error, { email: { label: 'Email', serverTerms: ['email'] } }), {});
+});
+
 test('counts explain missing, fractional and out-of-range values beside the field', () => {
   const count = input({ type: 'number', required: '', min: '1', max: '10', step: '1' });
   assert.equal(controlError(count, 'Participants'), 'Enter participants.');

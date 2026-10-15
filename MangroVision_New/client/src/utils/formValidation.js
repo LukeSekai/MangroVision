@@ -19,7 +19,9 @@ export function controlError(control, label) {
 }
 
 export function submissionError(detail, fallback = 'Could not save. Please try again.', status) {
-  const statusMessage = status === 401 && !Array.isArray(detail) && (!detail || /session|expired/i.test(detail)) ? 'Your session has expired. Sign in again, then retry.'
+  const statusMessage = status === 503 && detail?.kind === 'shared_access_setup_required'
+    ? 'The server needs a database update before planting requests can be approved. Finish the shared planter-code setup, then try again. Your entries are kept.'
+    : status === 401 && !Array.isArray(detail) && (!detail || /session|expired/i.test(detail)) ? 'Your session has expired. Sign in again, then retry.'
     : status === 429 ? 'Too many requests. Please wait before trying again.'
       : status >= 500 ? 'The server could not complete this request. Your entries are kept; please retry.' : '';
   const error = new Error(statusMessage || (typeof detail === 'string' ? detail : fallback));

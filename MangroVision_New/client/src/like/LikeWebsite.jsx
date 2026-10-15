@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { bookingErrors, bookingPayload, manilaToday, submitBooking } from './booking';
+import { appointmentEndTime, bookingErrors, bookingPayload, manilaToday, submitBooking } from './booking';
 import useFormFeedback from '../utils/useFormFeedback';
 import { serverFieldErrors } from '../utils/formValidation';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { APPOINTMENT_TYPES } from '../utils/appointmentTypes';
 import LikeMapDialog from './LikeMapDialog';
+import PlantingTimeSuggestions from './PlantingTimeSuggestions';
 
 function Icon({ name = 'leaf', size = 24, ...props }) {
   const paths = {
@@ -97,7 +98,16 @@ export function AppointmentForm() {
     receiptCard.current?.focus({ preventScroll: true });
     receiptCard.current?.scrollIntoView({ block: 'start' });
   }, [receipt]);
-  const update = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.type === 'checkbox' ? event.target.checked : event.target.value }));
+  const chooseStart = (startTime) => {
+    setForm((current) => ({ ...current, start_time: startTime, end_time: appointmentEndTime(startTime) }));
+    feedback.onChange({ target: { name: 'start_time' } });
+    feedback.onChange({ target: { name: 'end_time' } });
+  };
+  const update = (event) => {
+    const { name, type, checked, value } = event.target;
+    setForm((current) => ({ ...current, [name]: type === 'checkbox' ? checked : value,
+      ...(name === 'start_time' ? { end_time: appointmentEndTime(value) } : {}) }));
+  };
 
   const next = (event) => {
     event.preventDefault();
@@ -163,10 +173,12 @@ export function AppointmentForm() {
         <button className="like-button" type="submit">Continue to schedule <Icon name="arrow" size={18} /></button>
       </div> : <div className="like-form-fields" key="schedule">
         <label>Preferred date <span>*</span><input disabled={busy} {...feedback.props('date')} ref={(node) => { firstField.current = node; feedback.props('date').ref(node); }} type="date" value={form.date} onChange={update} required min={manilaToday()} /><FieldError feedback={feedback} field="date" /></label>
+        {form.appointment_type === 'tree_planting' && <PlantingTimeSuggestions date={form.date} startTime={form.start_time} endTime={appointmentEndTime(form.start_time)} onChoose={chooseStart} busy={busy} />}
         <div className="like-form-row">
-          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required /><FieldError feedback={feedback} field="start_time" /></label>
-          <label>End time <span>*</span><input disabled={busy} {...feedback.props('end_time')} type="time" value={form.end_time} onChange={update} required /><FieldError feedback={feedback} field="end_time" /></label>
+          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required max="21:59" /><FieldError feedback={feedback} field="start_time" /></label>
+          <label>End time <small>automatic</small><input disabled={busy} {...feedback.props('end_time')} type="time" value={appointmentEndTime(form.start_time)} readOnly aria-describedby="like-duration-hint" /><FieldError feedback={feedback} field="end_time" /></label>
         </div>
+        <p className="like-field-hint" id="like-duration-hint">Your visit ends two hours after your chosen start time.</p>
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
         <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
         <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>
@@ -254,7 +266,7 @@ export default function LikeWebsite() {
         <div className="like-faq" data-reveal>{[
           ['Is my appointment confirmed when I submit?', 'Your submission is a request. The LGU reviews your preferred time, staff availability, existing activities, and planting conditions before contacting you for confirmation.'],
           ['What appointments can we request?', 'Choose a field visit, clean-up drive, or tree planting activity. Each request is reviewed by the LGU before confirmation.'],
-          ['Can we choose our preferred time?', 'Yes. Tell us your preferred date, start time, and end time. Staff check availability and site conditions. For tree planting, this includes the tide, so they may suggest a different time.'],
+          ['Can we choose our preferred time?', 'Yes. Choose your preferred date and start time. The end time is set automatically, two hours later. For tree planting, the form suggests times based on MangroVision\'s tide forecast. The LGU checks availability and conditions before confirming.'],
           ['What should our group prepare?', 'Ask LGU staff about appropriate clothing, footwear, materials, and any activity requirements when they confirm your appointment. Final visitor guidelines will be added here once approved.'],
           ['Do we need an account to send a request?', 'No account is needed. Provide your group and contact details so the LGU can coordinate with you.'],
         ].map(([question, answer], index) => <details key={question} open={index === 0}><summary>{question}<span aria-hidden="true">+</span></summary><p>{answer}</p></details>)}</div>

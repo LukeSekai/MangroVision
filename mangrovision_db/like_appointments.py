@@ -22,6 +22,17 @@ class AppointmentRateLimit(ValueError):
     pass
 
 
+def requested_appointment_window(start: datetime) -> tuple[datetime, datetime]:
+    """Public booking slots last two hours on one Philippine date."""
+    if start.tzinfo is None or start.utcoffset() is None:
+        raise ValueError('Appointment times must include a timezone.')
+    start = start.astimezone(timezone(timedelta(hours=8)))
+    end = start + timedelta(hours=2)
+    if end.date() != start.date():
+        raise ValueError('Choose a start time before 10 PM so the two-hour visit ends on the same Philippine date.')
+    return start, end
+
+
 def _staff_row(row):
     result = dict(row)
     result.pop('submission_key', None)
@@ -73,6 +84,7 @@ def submit_appointment(values: dict, peer: str) -> dict:
     if values.get('appointment_type') not in APPOINTMENT_TYPES:
         raise ValueError('Choose a field visit, clean-up drive, or tree planting appointment.')
     values['title'] = APPOINTMENT_TYPES[values['appointment_type']]
+    values['start_at'], values['end_at'] = requested_appointment_window(values['start_at'])
     submission_key = str(values.pop('submission_key'))
     values.pop('website', None)
     fingerprint = hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()
@@ -148,7 +160,7 @@ def appointment_summary() -> dict:
 
 
 def _planter_login(conn, schedule, request, user_id):
-    from .planter_codes import ensure_codes
+    from .group_access import ensure_activity_code
     organization_id = int(schedule['organization_id'])
     conn.execute('SELECT id FROM organizations WHERE id = ? FOR UPDATE', (organization_id,)).fetchone()
     account = conn.execute("""
@@ -158,7 +170,7 @@ def _planter_login(conn, schedule, request, user_id):
     if account and account['status'] != 'active':
         raise ValueError('This organization account is inactive. Reactivate it before confirming tree planting.')
     if account and not is_registration_pending(dict(account)):
-        return {'codes': ensure_codes(conn, account['id'])}
+        return {'group_code': ensure_activity_code(conn, schedule)}
     username = available_username(conn, schedule['organization_name'], organization_id)
     password = organization_password(schedule['organization_name'])
     planter_id = planting.create_planter(
@@ -166,7 +178,7 @@ def _planter_login(conn, schedule, request, user_id):
         phone=request['phone'], organization_id=organization_id,
         participant_count=int(request['participants']), created_by_user_id=user_id, _connection=conn,
     )
-    return {'codes': ensure_codes(conn, planter_id)}
+    return {'group_code': ensure_activity_code(conn, schedule)}
 
 
 def review_appointment(request_id: int, values: dict, user_id: int) -> dict:
@@ -199,6 +211,9 @@ def review_appointment(request_id: int, values: dict, user_id: int) -> dict:
                 email = validate_email(values.get('email') or current['email'] or '', check_deliverability=False).normalized
             except EmailNotValidError as error:
                 raise ValueError('Enter the requester’s valid email address before confirming.') from error
+            if current['appointment_type'] == 'tree_planting':
+                from .group_access import require_shared_access_schema
+                require_shared_access_schema(conn)
             contact = ', '.join(filter(None, [current['contact_name'], current['phone'], email]))[:300]
             schedule = planting.create_planting_schedule(
                 organization=values.get('organization') or current['organization'],

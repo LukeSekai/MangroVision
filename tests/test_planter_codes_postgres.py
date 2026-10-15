@@ -79,7 +79,7 @@ def test_existing_device_bindings_do_not_restrict_code_sign_in(workspace):
     assert workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall() == before
 
 
-def test_fresh_browsers_resume_same_points_when_all_ten_participants_have_signed_in(workspace):
+def test_cached_personal_code_only_api_cannot_create_group_sessions(workspace):
     import sys
     from pathlib import Path
     from fastapi import FastAPI
@@ -107,12 +107,11 @@ def test_fresh_browsers_resume_same_points_when_all_ten_participants_have_signed
                 # the code or block a valid participant from signing in.
                 body.update(device_key='old-browser-key', known_device_keys=[], resume_device=True)
             response = client.post('/api/planter-auth/login', json=body)
-            assert response.status_code == 200
-            assert response.json()['planter']['participant_slot'] == entry['participant_slot']
-            assert response.headers.get('set-cookie')
+            assert response.status_code == 422
+            assert not response.headers.get('set-cookie')
             assert 'device_key' not in response.json()
     slots = workspace.execute(text('SELECT participant_slot FROM auth_sessions ORDER BY id')).scalars().all()
-    assert slots == [*range(1, 11), 1, 1]
+    assert slots == []
     assert workspace.execute(text('SELECT count(*) FROM organization_participants')).scalar_one() == 10
     assert workspace.execute(text('SELECT * FROM planter_assignment_points ORDER BY id')).fetchall() == before
 
@@ -218,14 +217,16 @@ def test_existing_organization_uses_same_codes_for_later_bookings(workspace):
     assert codes.manage_codes(account)['codes'] == original
 
 
-def test_replaced_codes_refresh_pending_emails_and_sending_blocks_changes(workspace):
+def test_replaced_legacy_codes_preserve_shared_pending_emails_and_sending_blocks_changes(workspace):
     confirm(workspace, participants=2)
     account = workspace.execute(text('SELECT id FROM planters')).scalar_one()
-    original = codes.manage_codes(account)['codes'][0]['code']
+    original = codes.manage_codes(account, issue=True)['codes'][0]['code']
+    before = workspace.execute(text('SELECT encrypted_message FROM like_appointment_emails')).scalar_one()
     current = codes.manage_codes(account, slot=1, action='regenerate')['codes'][0]['code']
     encrypted = workspace.execute(text('SELECT encrypted_message FROM like_appointment_emails')).scalar_one()
     message = json.loads(delivery._cipher().decrypt(encrypted.encode()))
-    assert current in message['body'] and original not in message['body']
+    assert current not in message['body'] and original not in message['body']
+    assert before == encrypted and 'Organization code:' in message['body']
     assert 'Username:' not in message['body'] and 'Password:' not in message['body']
     workspace.exec_driver_sql("UPDATE like_appointment_emails SET status='sending'")
     with pytest.raises(codes.CodeError, match='being delivered'):

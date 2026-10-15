@@ -63,3 +63,21 @@ def test_codes_are_staff_only_and_never_cached(devices_api, monkeypatch):
     response = client.post(paths[1], json={'action': 'regenerate'})
     assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
     assert manage.call_args.kwargs == {'slot': 2, 'action': 'regenerate'}
+
+
+def test_shared_activity_codes_are_staff_only_and_never_cached(devices_api, monkeypatch):
+    client, monitoring, _, _, _ = devices_api
+    route = importlib.import_module('api.routes.planters')
+    manage = Mock(return_value={'access': {'code': 'K7MP-4R9X', 'schedule_id': 3}})
+    monkeypatch.setattr(route, 'manage_activity_code', manage)
+    path = '/api/planters/organizations/7/activities/3/access'
+    assert client.get(path).status_code == 401
+    assert client.post(path, json={'action': 'issue'}).status_code == 401
+    manage.assert_not_called()
+    monkeypatch.setattr(monitoring, 'get_user_by_session_token', lambda _: {'id': 7, 'role': 'lgu'})
+    response = client.get(path)
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert manage.call_args.kwargs == {'action': None, 'organization_id': 7}
+    response = client.post(path, json={'action': 'replace'})
+    assert response.status_code == 200 and response.headers['cache-control'] == 'no-store'
+    assert manage.call_args.kwargs == {'action': 'replace', 'organization_id': 7}

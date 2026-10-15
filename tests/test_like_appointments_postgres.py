@@ -79,7 +79,7 @@ def workspace(monkeypatch):
                 created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMPTZ
             );
         """)
-        for name in ('20261006_0013_like_appointments.py', '20261007_0014_like_appointment_delivery.py', '20261009_0015_activity_protection.py', '20261011_0016_activity_notifications.py', '20261012_0017_planter_access_codes.py'):
+        for name in ('20261006_0013_like_appointments.py', '20261007_0014_like_appointment_delivery.py', '20261009_0015_activity_protection.py', '20261011_0016_activity_notifications.py', '20261012_0017_planter_access_codes.py', '20261015_0019_shared_activity_access.py'):
             spec = importlib.util.spec_from_file_location('like_migration', Path(__file__).resolve().parents[1] / 'alembic/versions' / name)
             migration = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(migration)
@@ -109,6 +109,8 @@ def workspace(monkeypatch):
         monkeypatch.setattr(staff_delivery, 'get_connection', TempConnection)
         from mangrovision_db import planter_codes
         monkeypatch.setattr(planter_codes, 'get_connection', TempConnection)
+        from mangrovision_db import group_access
+        monkeypatch.setattr(group_access, 'get_connection', TempConnection)
         from mangrovision_db import planter_activities
         monkeypatch.setattr(planter_activities, 'get_connection', TempConnection)
         monkeypatch.setattr(planting, 'append_activity', lambda *args, **kwargs: None)
@@ -145,6 +147,17 @@ def test_request_is_private_and_does_not_register_an_organization(workspace):
     assert 'submission_key' not in private and 'payload_hash' not in private
 
 
+def test_incomplete_shared_access_schema_keeps_approval_pending_without_side_effects(workspace):
+    from mangrovision_db.group_access import SharedAccessSetupError
+    service.submit_appointment(values(), 'test-peer')
+    workspace.execute(text('ALTER TABLE pg_temp.organization_participants DROP COLUMN username_key CASCADE'))
+    with pytest.raises(SharedAccessSetupError):
+        service.review_appointment(request_id(workspace), {'action': 'confirmed', 'contacted': True}, 1)
+    assert workspace.execute(text('SELECT status FROM like_appointment_requests')).scalar_one() == 'pending'
+    for table in ('planting_schedules', 'organizations', 'planters', 'like_appointment_emails'):
+        assert workspace.execute(text(f'SELECT count(*) FROM {table}')).scalar_one() == 0
+
+
 def test_submit_retries_once_and_rejects_changed_payload(workspace):
     body = values()
     first = service.submit_appointment(body, 'test-peer')
@@ -152,6 +165,14 @@ def test_submit_retries_once_and_rejects_changed_payload(workspace):
     with pytest.raises(service.AppointmentConflict):
         service.submit_appointment({**body, 'participants': 21}, 'test-peer')
     assert workspace.execute(text('SELECT count(*) FROM like_appointment_requests')).scalar() == 1
+
+
+def test_intake_saves_two_hours_and_retries_with_the_canonical_end(workspace):
+    body = values()
+    receipt = service.submit_appointment({**body, 'end_at': body['end_at'] + timedelta(hours=2)}, 'test-peer')
+    assert service.submit_appointment(body, 'test-peer') == receipt
+    row = workspace.execute(text('SELECT start_at, end_at FROM like_appointment_requests')).one()
+    assert row.end_at - row.start_at == timedelta(hours=2)
 
 
 def test_confirmation_is_atomic_and_idempotent(workspace):
@@ -474,10 +495,11 @@ def test_tree_planting_credentials_are_encrypted_delivered_once_and_purged(works
     messages = []
     assert delivery.send_pending_appointment_emails(sender=lambda *args: messages.append(args))['sent'] == 1
     body = messages[0][2]
-    code = next(line.split(': ', 1)[1] for line in body.splitlines() if line.startswith('Participant 1: '))
+    code = next(line.split(': ', 1)[1] for line in body.splitlines() if line.startswith('Organization code: '))
     assert 'Username:' not in body and 'Password:' not in body and 'https://example.org/field' in body
     assert code not in str(service.list_appointments())
-    assert workspace.execute(text('SELECT count(*) FROM planter_access_codes')).scalar_one() == 20
+    assert workspace.execute(text('SELECT count(*) FROM planter_access_codes')).scalar_one() == 0
+    assert workspace.execute(text('SELECT count(*) FROM activity_access_codes')).scalar_one() == 1
     assert account.password_hash not in str(service.list_appointments())
     stored = workspace.execute(text('SELECT status, encrypted_message, sent_at FROM like_appointment_emails')).one()
     assert stored.status == 'sent' and stored.encrypted_message is None and stored.sent_at is not None
@@ -496,8 +518,8 @@ def test_new_group_receives_readable_login_and_both_email_formats(workspace, mon
     monkeypatch.setattr(delivery, '_send_confirmation', lambda *args, **kwargs: calls.append((args, kwargs)))
     assert delivery.send_pending_appointment_emails()['sent'] == 1
     args, kwargs = calls[0]
-    code = next(line.split(': ', 1)[1] for line in args[2].splitlines() if line.startswith('Participant 1: '))
-    assert code in kwargs['html_body'] and 'Individual planter codes' in kwargs['html_body']
+    code = next(line.split(': ', 1)[1] for line in args[2].splitlines() if line.startswith('Organization code: '))
+    assert code in kwargs['html_body'] and 'Organization planting access' in kwargs['html_body']
     assert 'Username:' not in args[2] and 'Password:' not in args[2]
     assert 'Open planter workspace' in kwargs['html_body']
     assert workspace.execute(text('SELECT encrypted_message FROM like_appointment_emails')).scalar_one() is None
@@ -535,14 +557,16 @@ def test_existing_shared_account_and_device_slots_are_preserved(workspace):
     workspace.execute(text("UPDATE organization_participants SET device_key_hash = 'claimed-device' WHERE slot = 1"))
     second = confirm(workspace, participants=30)
     assert first['schedule_id'] != second['schedule_id']
-    assert account == workspace.execute(text('SELECT id, username, password_hash, participant_count FROM planters')).one()
+    after = workspace.execute(text('SELECT id, username, password_hash, participant_count FROM planters')).one()
+    assert account[:3] == after[:3] and after.participant_count == 30
     assert workspace.execute(text('SELECT device_key_hash FROM organization_participants WHERE slot = 1')).scalar() == 'claimed-device'
     messages = []
     delivery.send_pending_appointment_emails(request_id=second['id'], sender=lambda *args: messages.append(args))
     body = messages[0][2]
     assert 'Username:' not in body and 'Password:' not in body
-    assert 'Participant 20:' in body and 'Participant 21:' not in body
-    assert workspace.execute(text('SELECT count(*) FROM planter_access_codes')).scalar_one() == 20
+    assert body.count('Organization code:') == 1 and 'Participant 20:' not in body
+    assert workspace.execute(text('SELECT count(*) FROM planter_access_codes')).scalar_one() == 0
+    assert workspace.execute(text('SELECT count(*) FROM organization_participants')).scalar_one() == 30
 
 
 def test_reserved_account_receives_login_without_losing_its_identity(workspace):
@@ -759,9 +783,10 @@ def test_queued_confirmation_refresh_keeps_original_credentials_and_devices(work
     messages = []
     assert delivery.send_pending_appointment_emails(sender=lambda *args: messages.append(args))['sent'] == 1
     body = messages[0][2]
-    assert 'Participant 1:' in body and 'Password:' not in body and 'Username:' not in body
+    assert 'Organization code:' in body and 'Password:' not in body and 'Username:' not in body
     assert 'Revised activity' in body and 'February 01, 2090' in body and 'Participants: 25' in body
-    assert account == workspace.execute(text('SELECT username, password_hash, participant_count FROM planters')).one()
+    after = workspace.execute(text('SELECT username, password_hash, participant_count FROM planters')).one()
+    assert account[:2] == after[:2] and after.participant_count == 25
     assert workspace.execute(text('SELECT device_key_hash FROM organization_participants WHERE slot = 1')).scalar_one() == 'claimed'
     assert workspace.execute(text('SELECT count(*) FROM like_appointment_emails')).scalar_one() == 1
 
@@ -776,8 +801,9 @@ def test_delivered_confirmation_change_queues_update_without_resetting_login(wor
     messages = []
     assert delivery.send_pending_appointment_emails(sender=lambda *args: messages.append(args))['sent'] == 1
     assert 'updated' in messages[0][1] and 'New agreed title' in messages[0][2]
-    assert 'Password:' not in messages[0][2] and 'Participant 1:' in messages[0][2]
-    assert account == workspace.execute(text('SELECT username, password_hash, participant_count FROM planters')).one()
+    assert 'Password:' not in messages[0][2] and 'Organization code:' in messages[0][2]
+    after = workspace.execute(text('SELECT username, password_hash, participant_count FROM planters')).one()
+    assert account[:2] == after[:2] and after.participant_count == 30
 
 
 def test_contact_notes_only_do_not_queue_another_email(workspace):

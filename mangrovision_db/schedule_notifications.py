@@ -42,7 +42,7 @@ def notification_recipient(schedule):
         return None
 
 
-def activity_message(current, updated, kind):
+def activity_message(current, updated, kind, *, access=None):
     def time_window(schedule):
         zone = ZoneInfo('Asia/Manila')
         start = datetime.fromisoformat(schedule['start_at']).astimezone(zone)
@@ -73,15 +73,25 @@ def activity_message(current, updated, kind):
     if updated.get('expected_planters') is not None:
         details.append(('Expected participants', updated['expected_planters']))
     action_url = None
+    access_lines = []
     if updated.get('appointment_type', 'tree_planting') == 'tree_planting':
         details.append(('Planting area', updated.get('project_site_name') or 'Awaiting staff assignment'))
         base = safe_link(os.getenv('MANGROVISION_PUBLIC_URL', '').strip().rstrip('/'))
         action_url = f'{base}/field' if base else None
+        if kind != 'cancellation' and access and access.get('code'):
+            if not action_url:
+                raise ValueError('Configure MANGROVISION_PUBLIC_URL before sending planting access.')
+            access_lines = ['Planter access', f'Open: {action_url}', f"Organization code: {access['code']}",
+                'Share this one code with all participants in your organization.',
+                'First time: choose a personal username. Returning: use the same code and username to restore your progress.',
+                'Choose Switch here if you need to move an existing login to this browser.',
+                'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.']
+            lines.extend(['', *access_lines])
     return {'subject': f"MangroVision activity {verb}: {updated['title']}", 'body': '\n'.join(lines),
             'html_body': render_activity_email(
                 kind=kind, title=updated['title'], greeting=f"Hello {updated['organization']},",
                 introduction=f'Your MangroVision activity has been {verb}. Please review the current details below.',
-                details=details, action_url=action_url)}
+                details=details, action_url=action_url, access_lines=access_lines)}
 
 
 def queue_schedule_notification(conn, current, updated):
@@ -102,6 +112,8 @@ def queue_schedule_notification(conn, current, updated):
     existing = conn.execute('SELECT * FROM activity_schedule_emails WHERE schedule_id = ? FOR UPDATE', (updated['id'],)).fetchone()
     if existing and existing['status'] == 'sending':
         raise ActivityConflict('The activity email is being delivered. Please retry saving after delivery finishes.')
+    from .group_access import ensure_activity_code
+    access = ensure_activity_code(conn, updated) if kind != 'cancellation' else None
     recipient = notification_recipient(updated)
     if not recipient:
         # An older queued message must never deliver obsolete details.
@@ -114,7 +126,7 @@ def queue_schedule_notification(conn, current, updated):
         site = conn.execute('SELECT name FROM site_zones WHERE id = ?', (updated['project_site_id'],)).fetchone()
         message_schedule['project_site_name'] = site['name'] if site else None
     try:
-        encrypted = delivery._encrypted_message(activity_message(current, message_schedule, kind))
+        encrypted = delivery._encrypted_message(activity_message(current, message_schedule, kind, access=access))
     except ValueError as error:
         raise ValueError('Activity email notifications are unavailable. Ask the administrator to configure the email encryption key, then retry.') from error
     conn.execute("""

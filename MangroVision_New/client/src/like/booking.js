@@ -1,6 +1,23 @@
 import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes.js';
 import { formRequest } from '../utils/formValidation.js';
 
+export const APPOINTMENT_DURATION_MINUTES = 120;
+
+export function appointmentEndTime(start) {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start || '')) return '';
+  const [hours, minutes] = start.split(':').map(Number);
+  const end = hours * 60 + minutes + APPOINTMENT_DURATION_MINUTES;
+  // Public requests use a single Philippine date; never silently wrap midnight.
+  if (end >= 24 * 60) return '';
+  return `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+}
+
+export function validBookingDate(day) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day || '')) return false;
+  const date = new Date(`${day}T00:00:00+08:00`);
+  return Number.isFinite(date.getTime()) && manilaToday(date) === day;
+}
+
 export function manilaToday(now = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit',
@@ -20,14 +37,15 @@ export function bookingErrors(form, step, now = new Date()) {
     if (!APPOINTMENT_TYPES.some((type) => type.value === form.appointment_type)) errors.appointment_type = 'Choose an appointment type.';
   }
   if (!step || step === 2) {
+    const endTime = appointmentEndTime(form.start_time);
     if (!form.date) errors.date = 'Choose your preferred date.';
+    else if (!validBookingDate(form.date)) errors.date = 'Choose a valid date.';
     if (!form.start_time) errors.start_time = 'Choose a start time.';
-    if (!form.end_time) errors.end_time = 'Choose an end time.';
+    else if (!endTime) errors.start_time = 'Choose a valid start time before 10 PM so the two-hour visit ends on the same day.';
     if (form.date && form.date < manilaToday(now)) errors.date = 'Choose a date on or after today.';
     if (form.date && form.date >= manilaToday(now) && form.start_time && new Date(`${form.date}T${form.start_time}:00+08:00`) <= now) {
       errors.start_time = 'Choose a date and time in the future.';
     }
-    if (form.end_time && form.start_time && form.end_time <= form.start_time) errors.end_time = 'End time must be later than start time.';
     if (!Number.isInteger(Number(form.participants)) || Number(form.participants) < 1 || Number(form.participants) > 10000) {
       errors.participants = 'Enter a participant count between 1 and 10,000.';
     }
@@ -44,7 +62,7 @@ export function bookingPayload(form, submissionKey) {
     phone: form.phone.trim(), email: form.email.trim(), appointment_type: form.appointment_type,
     title: appointmentTypeLabel(form.appointment_type),
     start_at: `${form.date}T${form.start_time}:00+08:00`,
-    end_at: `${form.date}T${form.end_time}:00+08:00`,
+    end_at: `${form.date}T${appointmentEndTime(form.start_time)}:00+08:00`,
     participants: Number(form.participants), notes: form.notes.trim() || null,
     consent: true, website: form.website, submission_key: submissionKey,
   };

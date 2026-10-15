@@ -10,6 +10,7 @@ from api.routes.monitoring import _require_lgu_user
 from pydantic import BaseModel, Field
 from mangrovision_db.organization_accounts import list_participant_devices, reset_participant_device
 from mangrovision_db.planter_codes import create_code_account, manage_codes, CodeError
+from mangrovision_db.group_access import manage_activity_code
 
 from api.runtime_state import is_processing_active
 from planting_database import (
@@ -312,6 +313,31 @@ def reset_device(planter_id: int, slot: int):
 
 class ChangeCodeRequest(BaseModel):
     action: Literal['regenerate', 'revoke']
+
+
+class ActivityCodeRequest(BaseModel):
+    action: Literal['issue', 'replace', 'revoke'] = 'issue'
+
+
+def _activity_code_call(organization_id, schedule_id, action=None):
+    try:
+        return manage_activity_code(schedule_id, action=action, organization_id=organization_id)
+    except CodeError as error:
+        raise HTTPException(status_code=error.status, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get('/organizations/{organization_id}/activities/{schedule_id}/access')
+def shared_activity_access(organization_id: int, schedule_id: int, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return _activity_code_call(organization_id, schedule_id)
+
+
+@router.post('/organizations/{organization_id}/activities/{schedule_id}/access')
+def change_shared_activity_access(organization_id: int, schedule_id: int, body: ActivityCodeRequest, response: Response):
+    response.headers['Cache-Control'] = 'no-store'
+    return _activity_code_call(organization_id, schedule_id, body.action)
 
 
 def _codes_call(planter_id, **kwargs):

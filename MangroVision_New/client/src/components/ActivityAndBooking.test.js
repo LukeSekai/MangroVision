@@ -33,6 +33,7 @@ after(async () => {
   }
 });
 beforeEach(() => {
+  localStorage.clear(); sessionStorage.clear();
   root = createRoot(document.getElementById('root'));
   globalThis.fetch = async () => assert.fail('Unexpected network call');
   usePlanterAuthStore.setState({ status: 'idle', error: '', isAuthenticated: false, planter: null, token: null });
@@ -66,7 +67,8 @@ test('website step errors identify and focus the fields without transmitting a r
 
 test('a network retry keeps website inputs and reuses the same submission key', async () => {
   const requests = [];
-  globalThis.fetch = async (_url, options) => {
+  globalThis.fetch = async (url, options) => {
+    if (String(url).includes('/api/tides/forecast')) return Response.json({ available: false });
     requests.push(JSON.parse(options.body));
     if (requests.length === 1) throw new TypeError('Network unavailable');
     return { ok: true, json: async () => ({ reference: 'LIKE-TEST', status: 'pending' }) };
@@ -80,7 +82,9 @@ test('a network retry keeps website inputs and reuses the same submission key', 
   await submit();
   const dateControl = document.querySelector('[name="date"]');
   assert.equal(document.getElementById(dateControl.getAttribute('aria-describedby')).textContent, 'Choose your preferred date.');
-  for (const [name, value] of Object.entries({ date, start_time: '08:00', end_time: '10:00', participants: '20' })) await change(name, value);
+  for (const [name, value] of Object.entries({ date, start_time: '08:00', participants: '20' })) await change(name, value);
+  assert.equal(document.querySelector('[name="end_time"]').value, '10:00');
+  assert.equal(document.querySelector('[name="end_time"]').readOnly, true);
   await act(async () => document.querySelector('[name="consent"]').click());
   await submit();
   assert.match(document.body.textContent, /Check your connection and retry/);
@@ -89,7 +93,77 @@ test('a network retry keeps website inputs and reuses the same submission key', 
   assert.equal(requests.length, 2);
   assert.equal(requests[0].submission_key, requests[1].submission_key);
   assert.equal(requests[0].title, 'Tree planting');
+  assert.equal(requests[0].end_at, `${date}T10:00:00+08:00`);
   assert.match(document.querySelector('[role="status"]').textContent, /LIKE-TEST/);
+});
+
+async function openWebsiteSchedule(type = 'tree_planting') {
+  await act(async () => root.render(createElement(AppointmentForm)));
+  for (const [name, value] of Object.entries({ appointment_type: type, organization: 'Example organization', contact_name: 'Coordinator', phone: '09123456789', email: 'head@example.org' })) await change(name, value);
+  await submit();
+}
+function websiteForecast() {
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(Date.now() + 2 * 86400000));
+  const base = Date.parse(`${date}T00:00:00+08:00`);
+  return { date, payload: { available: true, stale: false, fetched_at: Date.now() / 1000,
+    datum: 'MSL', datum_reference: 'test', series_available: true, source: 'Open-Meteo Marine API',
+    heights: Array.from({ length: 73 }, (_, hour) => ({ timestamp: base / 1000 + hour * 3600,
+      height_m: hour >= 24 || hour === 8 || hour === 9 ? -1 : hour === 7 || hour === 10 ? 0 : 1 })),
+  } };
+}
+
+test('website uses a tide suggestion, fills the two-hour end and warns when the whole visit does not fit', async () => {
+  const { date, payload } = websiteForecast();
+  globalThis.fetch = async () => Response.json(payload);
+  await openWebsiteSchedule();
+  assert.match(document.body.textContent, /Choose a date to see suggested planting times/);
+  await change('date', date); await settle();
+  assert.match(document.body.textContent, /7:00 AM – 10:00 AM/);
+  assert.match(document.body.textContent, /Start by 8:00 AM/);
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Use 7:00 AM').click());
+  assert.equal(document.querySelector('[name="start_time"]').value, '07:00');
+  assert.equal(document.querySelector('[name="end_time"]').value, '09:00');
+  assert.match(document.body.textContent, /full two-hour visit fits/);
+  await change('start_time', '09:00');
+  assert.equal(document.querySelector('[name="end_time"]').value, '11:00');
+  assert.match(document.body.textContent, /rise above the planting limit during your two-hour visit/);
+  await change('date', '2039-01-01');
+  assert.match(document.body.textContent, /does not cover the full daytime period/);
+  assert.equal(document.querySelector('.like-tide-windows'), null);
+  assert.equal(document.querySelector('.like-tide-match'), null);
+  assert.equal(document.querySelector('[name="start_time"]').value, '09:00');
+});
+
+test('failed refresh hides old tide suggestions and recovery restores them without losing chosen times', async () => {
+  const { date, payload } = websiteForecast();
+  let attempts = 0;
+  globalThis.fetch = async () => {
+    if (++attempts === 2) throw new TypeError('Network unavailable');
+    return Response.json(payload);
+  };
+  await openWebsiteSchedule();
+  await change('date', date); await settle();
+  await change('start_time', '07:00');
+  const refresh = () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Refresh tides');
+  await act(async () => refresh().click()); await settle();
+  assert.equal(document.querySelector('.like-tide-windows'), null);
+  assert.equal(document.querySelector('.like-tide-match'), null);
+  assert.match(document.body.textContent, /could not load the tide forecast/);
+  assert.equal(document.querySelector('[name="end_time"]').value, '09:00');
+  await act(async () => refresh().click()); await settle();
+  assert.notEqual(document.querySelector('.like-tide-windows'), null);
+  assert.equal(document.querySelector('[name="start_time"]').value, '07:00');
+});
+
+test('other website activities also use two-hour slots without fetching planting guidance', async () => {
+  await openWebsiteSchedule('field_visit');
+  assert.equal(document.querySelector('.like-tide-guide'), null);
+  await change('start_time', '11:30');
+  assert.equal(document.querySelector('[name="end_time"]').value, '13:30');
+  await change('start_time', '22:00');
+  await submit();
+  assert.match(document.body.textContent, /before 10 PM/);
+  assert.equal(document.activeElement.name, 'date');
 });
 
 test('planter refresh displays revised dates and cancellations, with tide coverage clearly unavailable', async () => {
@@ -111,29 +185,33 @@ test('planter refresh displays revised dates and cancellations, with tide covera
   assert.doesNotMatch(document.body.textContent, /No elevated-water overlap forecast/);
 });
 
-test('field access needs only a planter code, without recovery or registration', async () => {
+test('field access uses a shared code and username, with first-time and returning choices', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, body: JSON.parse(options.body) });
-    return Response.json({ planter: { id: 4, username: 'oton-youth', participant_slot: 1 } });
+    return Response.json({ planter: { id: 4, participant_username: 'Ana', participant_slot: 1, planting_schedule_id: 3 } });
   };
   await act(async () => root.render(createElement(AuthScreen)));
   await settle();
   assert.equal(calls.length, 0);
   assert.doesNotMatch(document.body.textContent, /Register|Create Organization Account/);
-  assert.match(document.body.textContent, /any browser or device/);
+  assert.match(document.body.textContent, /any browser or phone/);
+  assert.match(document.body.textContent, /First time/);
+  assert.match(document.body.textContent, /Returning planter/);
   assert.doesNotMatch(document.body.textContent, /recovery|reset your device/i);
   assert.equal(document.querySelector('[name="recovery_code"]'), null);
   assert.equal(document.querySelector('[name="password"]'), null);
-  assert.equal(document.querySelector('[name="username"]'), null);
+  assert.ok(document.querySelector('[name="username"]'));
   await change('access_code', 'K7MP-4R9X');
+  await change('username', 'Ana');
   await submit();
   assert.equal(calls.length, 1);
   assert.match(calls[0].url, /\/planter-auth\/login$/);
   assert.equal(calls[0].body.access_code, 'K7MP4R9X');
   assert.equal(calls[0].body.password, undefined);
-  assert.equal(calls[0].body.username, undefined);
-  assert.deepEqual(calls[0].body, { access_code: 'K7MP4R9X' });
+  assert.equal(calls[0].body.username, 'Ana');
+  assert.equal(calls[0].body.mode, 'return');
+  assert.match(calls[0].body.browser_key, /^[a-f0-9]{48}$/);
 });
 
 test('planter sign-in places code errors beside the input and clears service errors when editing', async () => {
@@ -143,6 +221,7 @@ test('planter sign-in places code errors beside the input and clears service err
     : Response.json({ detail: [{ loc: ['body', 'access_code'], type: 'credential_error', msg: 'Check this code with your group leader.' }] }, { status: 401 });
   await act(async () => root.render(createElement(AuthScreen)));
   await change('access_code', 'k7mp–4r9x');
+  await change('username', 'Ana');
   await submit();
   assert.match(document.querySelector('[role="alert"]').textContent, /temporarily unavailable/);
   assert.equal(document.querySelector('[name="access_code"]').getAttribute('aria-invalid'), 'false');
@@ -156,50 +235,81 @@ test('planter sign-in places code errors beside the input and clears service err
   assert.equal(document.querySelector('.form-error-summary'), null);
 });
 
-test('staff create individual codes with participant count and no credentials', async () => {
+test('staff issue one code for a 100-person activity', async () => {
   const calls = [];
   let created = 0;
   globalThis.fetch = async (url, options) => {
-    calls.push({ url, body: JSON.parse(options.body) });
-    return Response.json({ id: 4, codes: [{ participant_slot: 1, code: 'K7MP-4R9X', revoked: false }] });
+    calls.push({ url, body: options.body ? JSON.parse(options.body) : null });
+    return Response.json({ access: options.body ? { code: 'K7MP-4R9X', start_at: '2026-10-15T00:00:00Z', end_at: '2026-10-15T03:00:00Z' } : null });
   };
   await act(async () => root.render(createElement(OrganizationAccess, {
     organization: { organization_id: 7, organization_name: 'Oton Youth', registration_pending: true },
-    expectedParticipants: 20, onCreated: () => { created += 1; },
+    activity: { id: 3, title: 'Tree planting', expected_planters: 100 }, onCreated: () => { created += 1; },
   })));
   assert.equal(document.querySelector('[name="username"]'), null);
   assert.equal(document.querySelector('[name="password"]'), null);
-  assert.equal(document.querySelector('[name="participant_count"]').value, '20');
-  await submit();
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].url, /\/api\/planters\/$/);
-  assert.equal(calls[0].body.organization_id, 7);
-  assert.equal(calls[0].body.participant_count, 20);
-  assert.equal(calls[0].body.password, undefined);
-  assert.equal(calls[0].body.username, undefined);
+  assert.match(document.body.textContent, /One code for all 100 participants/);
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Show organization code').click());
+  await settle();
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Create organization code').click());
+  await settle();
+  assert.equal(calls.length, 2);
+  assert.match(calls[1].url, /\/organizations\/7\/activities\/3\/access$/);
+  assert.deepEqual(calls[1].body, { action: 'issue' });
   assert.equal(created, 1);
   assert.match(document.body.textContent, /K7MP-4R9X/);
-  assert.match(document.body.textContent, /Planter codes created/);
+  assert.match(document.body.textContent, /organization code is ready/);
 });
 
 test('existing codes are read without issuance and replacement requires confirmation', async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
-    return Response.json({ planter_id: 4, codes: [{ participant_slot: 1, code: calls.at(-1).method === 'POST' ? 'G6FR-3VD8' : 'K7MP-4R9X', revoked: false }] });
+    return Response.json({ access: { code: calls.at(-1).method === 'POST' ? 'G6FR-3VD8' : 'K7MP-4R9X', revoked: false,
+      start_at: '2026-10-15T00:00:00Z', end_at: '2026-10-15T03:00:00Z' } });
   };
   await act(async () => root.render(createElement(OrganizationAccess, {
     organization: { id: 4, organization_id: 7, organization_name: 'Oton Youth', participant_count: 1, registration_pending: false },
+    activity: { id: 3, title: 'Tree planting', expected_planters: 1 },
   })));
   assert.equal(calls.length, 0);
   const click = async (label) => act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === label).click());
-  await click('Show planter codes'); await settle();
+  await click('Show organization code'); await settle();
   assert.equal(calls[0].method, 'GET');
   assert.match(document.body.textContent, /K7MP-4R9X/);
   await click('Replace code');
   assert.equal(calls.length, 1);
   await click('Confirm'); await settle();
-  assert.match(calls[1].url, /\/4\/participants\/1\/access-code$/);
-  assert.deepEqual(calls[1].body, { action: 'regenerate' });
+  assert.match(calls[1].url, /\/organizations\/7\/activities\/3\/access$/);
+  assert.deepEqual(calls[1].body, { action: 'replace' });
   assert.match(document.body.textContent, /G6FR-3VD8/);
+});
+
+test('switch here requires an explicit click and editing credentials cancels the prompt', async () => {
+  const calls = [];
+  globalThis.fetch = async (_url, options) => {
+    const body = JSON.parse(options.body); calls.push(body);
+    return body.switch_token ? Response.json({ planter: { id: 4, participant_slot: 1, participant_username: 'Ana', planting_schedule_id: 3 } })
+      : Response.json({ detail: { kind: 'session_in_use', message: 'Switch access?', switch_token: 'fictional-ticket' } }, { status: 409 });
+  };
+  await act(async () => root.render(createElement(AuthScreen)));
+  await change('access_code', 'K7MP-4R9X'); await change('username', 'Ana'); await submit();
+  assert.equal(calls.length, 1); assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+  assert.match(document.body.textContent, /other login will end/);
+  await change('username', 'Ben'); assert.equal(document.querySelector('.field-switch-prompt'), null);
+  await change('username', 'Ana'); await submit();
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Switch here').click());
+  await settle();
+  assert.equal(calls.at(-1).switch_token, 'fictional-ticket');
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+});
+
+test('first-time signup on a remembered browser redirects to its existing username', async () => {
+  globalThis.fetch = async () => Response.json({ detail: { kind: 'already_joined', message: 'Return instead.', participant_username: 'Ana' } }, { status: 409 });
+  await act(async () => root.render(createElement(AuthScreen)));
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'First time').click());
+  await change('access_code', 'K7MP-4R9X'); await change('username', 'AnotherName'); await submit();
+  assert.equal(document.querySelector('[name="username"]').value, 'Ana');
+  assert.match(document.body.textContent, /already joined/);
+  assert.equal([...document.querySelectorAll('button')].find((button) => button.textContent === 'Returning planter').getAttribute('aria-pressed'), 'true');
 });

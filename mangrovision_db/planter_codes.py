@@ -134,6 +134,10 @@ def refresh_pending_code_emails(conn, organization_id, codes):
         if request['appointment_type'] != 'tree_planting':
             continue
         schedule = dict(conn.execute('SELECT * FROM planting_schedules WHERE id = ?', (row['schedule_id'],)).fetchone())
+        # Individual codes are transition proofs now. Replacing one must not
+        # overwrite a queued shared activity code with an obsolete code list.
+        if conn.execute('SELECT 1 FROM activity_access_codes WHERE schedule_id = ?', (row['schedule_id'],)).fetchone():
+            continue
         message = _message(request, schedule, login={'codes': codes}, kind=row['message_kind'])
         conn.execute('UPDATE like_appointment_emails SET encrypted_message = ? WHERE id = ?',
                      (_encrypted_message(message), row['id']))

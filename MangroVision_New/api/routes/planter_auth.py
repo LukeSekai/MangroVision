@@ -1,10 +1,11 @@
 """Planter self-service authentication endpoints (mobile /field app)."""
 
-from typing import List, Optional
+from typing import List, Optional, Literal
 
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, Field
-from mangrovision_db.planter_codes import authenticate_code, CodeError
+from mangrovision_db.planter_codes import CodeError
+from mangrovision_db.group_access import authenticate_group, GroupAccessError
 from mangrovision_db.planter_activities import list_planter_activities
 
 from planting_database import (
@@ -37,21 +38,26 @@ def _require_planter() -> dict:
     if planter.get("status") != "active":
         raise HTTPException(status_code=403, detail="This planter account is inactive.")
     if planter.get("participant_slot") is None:
-        raise HTTPException(status_code=401, detail="Sign in again with your individual planter code.")
+        raise HTTPException(status_code=401, detail="Sign in with your organization code and username.")
+    if planter.get('planting_schedule_id') is None:
+        raise HTTPException(status_code=401, detail='Use the activity’s organization code and choose your participant username. Your existing progress is kept.')
     return planter
 
 
 def _assert_point_belongs_to_planter(assignment_point_id: int, planter: dict) -> None:
     allowed = {point["assignment_point_id"] for point in
-               get_planter_field_points(planter["id"], planter["participant_slot"])}
+               get_planter_field_points(planter["id"], planter["participant_slot"], planter['planting_schedule_id'])}
     if assignment_point_id not in allowed:
         raise HTTPException(status_code=403, detail="That point is not assigned to your participant slot.")
 
 
 class PlanterLoginRequest(BaseModel):
     access_code: str = Field(min_length=1, max_length=32)
-    # Cached clients may still send device fields. Pydantic ignores those extras;
-    # only the planter code determines which existing participant signs in.
+    username: str = Field(min_length=1, max_length=64)
+    browser_key: str = Field(min_length=48, max_length=48)
+    mode: Literal['first', 'return'] = 'return'
+    switch_token: Optional[str] = Field(default=None, max_length=2048)
+    previous_code: Optional[str] = Field(default=None, max_length=32)
 
 
 def _planter_public_dict(planter: dict) -> dict:
@@ -71,19 +77,28 @@ def planter_organizations():
 @router.post("/register")
 def register_planter():
     # Keep a clear response for older cached clients, with no account/device writes.
-    raise HTTPException(status_code=410, detail="Planter registration is closed. Use your individual planter code or contact LGU staff.")
+    raise HTTPException(status_code=410, detail="Use First time on the planter sign-in page with your organization code and a username.")
+
+
+def _access_error(error):
+    headers = {'Retry-After': str(error.retry_after)} if error.retry_after else None
+    if isinstance(error, GroupAccessError) and error.kind:
+        detail = {'kind': error.kind, 'message': str(error), **error.details}
+    elif error.status < 500 and error.status != 429 and getattr(error, 'field', 'access_code'):
+        detail = [{'loc': ['body', getattr(error, 'field', 'access_code')], 'type': 'credential_error', 'msg': str(error)}]
+    else:
+        detail = str(error)
+    return HTTPException(status_code=error.status, detail=detail, headers=headers)
 
 
 @router.post("/login")
 def planter_login(body: PlanterLoginRequest, response: Response, request: Request):
     try:
-        planter, token = authenticate_code(body.access_code,
+        planter, token = authenticate_group(body.access_code, body.username, body.browser_key,
+            mode=body.mode, switch_token=body.switch_token, previous_code=body.previous_code,
             address=request.client.host if request.client else 'unknown')
     except CodeError as error:
-        headers = {'Retry-After': str(error.retry_after)} if error.retry_after else None
-        detail = str(error) if error.status in {409, 503} else [
-            {'loc': ['body', 'access_code'], 'type': 'credential_error', 'msg': str(error)}]
-        raise HTTPException(status_code=error.status, detail=detail, headers=headers) from error
+        raise _access_error(error) from error
     except ValueError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     set_planter_session(response, token)
@@ -123,7 +138,7 @@ def my_field_points():
         ]
     return {
         "planter": _planter_public_dict(planter),
-        "points": get_planter_field_points(planter["id"], planter["participant_slot"]),
+        "points": get_planter_field_points(planter["id"], planter["participant_slot"], planter['planting_schedule_id']),
         # An organization's mapped working area is independent of whether
         # this particular planter has been assigned planting points yet.
         "project_sites": {
@@ -138,12 +153,14 @@ def my_field_points():
 def my_points_mark_all_completed(body: MarkPointsCompletedBody):
     planter = _require_planter()
     allowed = {point["assignment_point_id"] for point in
-               get_planter_field_points(planter["id"], planter["participant_slot"])}
+               get_planter_field_points(planter["id"], planter["participant_slot"], planter['planting_schedule_id'])}
     if not set(body.assignment_point_ids).issubset(allowed):
         raise HTTPException(status_code=403, detail="Only points in your participant slot can be completed.")
     try:
         return mark_planter_points_completed(planter["id"], body.assignment_point_ids,
                                              participant_slot=planter["participant_slot"])
+    except CodeError as error:
+        raise _access_error(error) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -159,6 +176,8 @@ def my_point_status(assignment_point_id: int, body: UpdatePointStatusBody):
             actor_planter_id=int(planter["id"]),
             participant_slot=int(planter["participant_slot"]),
         )
+    except CodeError as error:
+        raise _access_error(error) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     return {"status": "updated"}

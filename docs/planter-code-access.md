@@ -1,5 +1,9 @@
 # Individual planter codes
 
+> Superseded in the shared-access source by
+> [Shared planter access](shared-planter-access.md). The following describes the
+> previous individual-code deployment and its retained transition credentials.
+
 ## Active planter access
 
 The planter signs in with one random eight-character code, such as `K7MP-4R9X`.

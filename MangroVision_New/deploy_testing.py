@@ -22,8 +22,9 @@ def verify_planter_login_contract(backend):
     schema = operation.get('requestBody', {}).get('content', {}).get('application/json', {}).get('schema', {})
     if '$ref' in schema:
         schema = document.get('components', {}).get('schemas', {}).get(schema['$ref'].rsplit('/', 1)[-1], {})
-    if set(schema.get('required', [])) != {'access_code'} or 'access_code' not in schema.get('properties', {}):
-        raise RuntimeError('The running backend does not support code-only planter sign-in. Restart start_testing.py with the updated code before deploying.')
+    required = {'access_code', 'username', 'browser_key'}
+    if set(schema.get('required', [])) != required or not {'mode', 'switch_token'} <= set(schema.get('properties', {})):
+        raise RuntimeError('The running backend does not support shared organization codes, usernames and login switching. Restart start_testing.py with the updated code before deploying.')
 
 
 def main():

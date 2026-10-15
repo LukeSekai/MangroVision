@@ -1295,3 +1295,10 @@
 }
 
 .field-access-code { text-transform: uppercase; font-family: monospace; font-size: 1.25rem; letter-spacing: .12em; }
+.field-auth-mode { display: flex; gap: 8px; margin: 16px 0; }
+.field-auth-mode button { flex: 1; padding: 10px 8px; border: 1px solid #c7d6cc; border-radius: 8px; background: #fff; color: #24553a; cursor: pointer; font: inherit; }
+.field-auth-mode button[aria-pressed="true"] { background: #e2f1e7; border-color: #287b4b; font-weight: 600; }
+.field-switch-prompt { padding: 12px; background: #f0f7f2; border: 1px solid #bfd5c7; border-radius: 8px; }
+.field-switch-prompt p { margin: 0 0 12px; line-height: 1.5; }
+.field-switch-prompt .field-btn { margin-top: 8px; width: 100%; }
+.field-switch-prompt .field-submit { width: 100%; }

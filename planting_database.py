@@ -1326,6 +1326,7 @@ def _get_subject_by_session(subject_type: str, token: str) -> Optional[dict]:
         row = conn.execute(f"""
             SELECT {subject_columns}, session.id AS _auth_session_id,
                    session.participant_slot AS _auth_participant_slot,
+                   to_jsonb(session)->>'planting_schedule_id' AS _auth_schedule_id,
                    (session.last_seen_at IS NULL OR session.last_seen_at
                        < CURRENT_TIMESTAMP - INTERVAL '5 minutes') AS _auth_heartbeat_due
             FROM auth_sessions session
@@ -1338,6 +1339,13 @@ def _get_subject_by_session(subject_type: str, token: str) -> Optional[dict]:
         result = dict(row)
         session_id = result.pop("_auth_session_id")
         participant_slot = result.pop("_auth_participant_slot")
+        activity_id = result.pop("_auth_schedule_id")
+        if subject_type == 'planter' and activity_id is not None:
+            from mangrovision_db.group_access import session_details
+            details = session_details(conn, token_hash)
+            if not details:
+                return None
+            result.update(details)
         # Compare timestamps in PostgreSQL: CompatRow converts them to strings.
         # The boolean is preserved and uses the DB clock consistently.
         heartbeat_due = result.pop("_auth_heartbeat_due")
@@ -5022,7 +5030,8 @@ def get_assignment_points(assignment_id: int) -> List[dict]:
     return _annotate_point_advisories(rows)
 
 
-def get_planter_field_points(planter_id: int, participant_slot: Optional[int] = None) -> List[dict]:
+def get_planter_field_points(planter_id: int, participant_slot: Optional[int] = None,
+                            planting_schedule_id: Optional[int] = None) -> List[dict]:
     """Return active and completed assignment points for one planter.
 
     Completed assignments are included so finished points remain on the
@@ -5083,6 +5092,7 @@ def get_planter_field_points(planter_id: int, participant_slot: Optional[int] = 
         JOIN analyses a ON a.id = pp.analysis_id
         WHERE pa.planter_id = ?
           AND (CAST(? AS INTEGER) IS NULL OR pap.participant_slot = ?)
+          AND (CAST(? AS BIGINT) IS NULL OR pa.planting_schedule_id = ?)
           AND pa.status IN ('active', 'completed')
           AND (
                 pa.site_zone_id IS NULL
@@ -5090,7 +5100,7 @@ def get_planter_field_points(planter_id: int, participant_slot: Optional[int] = 
                 OR sz.organization_id = p.organization_id
               )
         ORDER BY pa.assignment_date DESC, pap.sequence_num ASC
-    """, (planter_id, participant_slot, participant_slot)).fetchall()
+    """, (planter_id, participant_slot, participant_slot, planting_schedule_id, planting_schedule_id)).fetchall()
     conn.close()
     return _annotate_point_advisories(rows)
 
@@ -5118,6 +5128,13 @@ def update_assignment_point_status(
     planted_date = completed_at[:10] if completed_at else None
 
     conn = _get_connection()
+    if actor_planter_id is not None and planter_session_token.get():
+        from mangrovision_db.group_access import guard_point_write
+        try:
+            guard_point_write(conn, actor_planter_id, participant_slot, [assignment_point_id])
+        except Exception:
+            conn.close()
+            raise
     conn.execute('SELECT id FROM planting_points WHERE id = (SELECT planting_point_id FROM planter_assignment_points WHERE id = ?) FOR UPDATE', (assignment_point_id,)).fetchone()
     row = conn.execute("""
         SELECT
@@ -5235,6 +5252,13 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
     planted_date = completed_at[:10]
 
     conn = _get_connection()
+    if planter_session_token.get():
+        from mangrovision_db.group_access import guard_point_write
+        try:
+            guard_point_write(conn, planter_id, participant_slot, selected_ids)
+        except Exception:
+            conn.close()
+            raise
     placeholders = ",".join("?" for _ in selected_ids)
     conn.execute(f"""SELECT id FROM planting_points WHERE id IN
         (SELECT planting_point_id FROM planter_assignment_points WHERE id IN ({placeholders})) ORDER BY id FOR UPDATE""", selected_ids).fetchall()
@@ -5258,11 +5282,12 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
         JOIN planting_points pp ON pp.id = pap.planting_point_id
         JOIN analyses a ON a.id = pp.analysis_id
         WHERE pa.planter_id = ?
+          AND (CAST(? AS INTEGER) IS NULL OR pap.participant_slot = ?)
           AND pa.status IN ('active', 'completed')
           AND pap.status != 'completed'
           AND pap.id IN ({placeholders})
         ORDER BY pa.assignment_date DESC, pap.sequence_num ASC
-    """.format(placeholders=placeholders), (planter_id, *selected_ids)).fetchall()
+    """.format(placeholders=placeholders), (planter_id, participant_slot, participant_slot, *selected_ids)).fetchall()
 
     actionable = []
     unavailable_count = 0

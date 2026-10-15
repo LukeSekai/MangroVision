@@ -1,5 +1,10 @@
 # LIKE website and appointment requests
 
+> The shared-access source now sends one activity code and uses personal
+> participant usernames. See [Shared planter access](shared-planter-access.md)
+> for the current flow, timed access, preservation of existing records, and
+> coordinated activation. Individual-code descriptions below are historical.
+
 The public LIKE website is a separate React entry at `/landing-page`. It uses the
 same frontend package and FastAPI backend as MangroVision, with its own CSS and
 no staff workspace, staff map, or chart imports. Visiting `/` or `/index.html` opens
@@ -115,6 +120,29 @@ with optional notes. Both use a future time window on one Philippine date.
 Staff additionally select the appointment status. The fixed 14-day monitoring
 interval appears only for tree planting. Scheduling no longer asks for or shows
 expected seedlings; historical stored values are preserved.
+
+Public website requests now use a two-hour slot. Selecting a start time fills a
+read-only end time (7 AM becomes 9 AM); both the API and intake service derive
+the saved end time from the start. Starts at or after 10 PM are rejected because
+the request must end on the same Philippine date. Staff can still agree on a
+different duration during review or when entering a manual appointment.
+
+For tree planting, the selected date shows suggested windows from the existing
+public `/api/tides/forecast` coastal series, using the same estimated planting
+reference as staff Scheduling. Suggestions cover 6 AM–6 PM, omit past times,
+round boundaries inward to 15 minutes, and require room for the whole two-hour
+visit. Each window shows the latest possible start and a button to fill the
+earliest start. A chosen interval that exceeds the reference shows a caution;
+it remains a request for LGU review rather than an automatic rejection.
+
+Freshness, measurement reference and complete sample coverage are required.
+Loading, failed, stale, missing and out-of-horizon forecasts never produce a
+positive suggestion. Users can refresh the forecast or submit a preferred time
+for LGU review when predictions are unavailable. Dates beyond the returned
+forecast are not extrapolated. The form includes provider attribution and
+explains that the LGU confirms the time and actual conditions. The public form
+does not request private planting areas or saved ground measurements. This
+booking update needs no new database migration.
 
 Manual contacts are saved in the existing contact summary, with email in the
 existing notification-email field. No database migration is needed. Editing

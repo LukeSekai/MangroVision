@@ -10,9 +10,11 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from api.routes.planting_schedules import _require_lgu_user
 from mangrovision_db.like_appointments import (
-    AppointmentConflict, AppointmentRateLimit, appointment_summary, list_appointments, review_appointment, submit_appointment,
+    AppointmentConflict, AppointmentRateLimit, appointment_summary, list_appointments, requested_appointment_window,
+    review_appointment, submit_appointment,
 )
 from mangrovision_db.appointment_email import APPOINTMENT_TYPES, run_delivery_cycle
+from mangrovision_db.group_access import SharedAccessSetupError
 
 public_router = APIRouter()
 staff_router = APIRouter()
@@ -54,6 +56,7 @@ class AppointmentCreate(BaseModel):
     def appointment_window(self):
         if self.end_at <= self.start_at or self.end_at.date() != self.start_at.date():
             raise ValueError('Choose a start and end time on the same Philippine date, with end after start.')
+        self.start_at, self.end_at = requested_appointment_window(self.start_at)
         self.title = APPOINTMENT_TYPES[self.appointment_type]
         return self
 
@@ -121,5 +124,7 @@ def review(request_id: int, body: AppointmentReview, background_tasks: Backgroun
         raise HTTPException(404, str(error)) from error
     except AppointmentConflict as error:
         raise HTTPException(409, str(error)) from error
+    except SharedAccessSetupError as error:
+        raise HTTPException(error.status, {'kind': error.kind, 'message': str(error)}) from error
     except ValueError as error:
         raise HTTPException(400, str(error)) from error

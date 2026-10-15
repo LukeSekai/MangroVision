@@ -38,6 +38,7 @@ _ACTIVITIES = {
     ("POST", "/api/planters/{id}/participants/{id}/reset-device"): ("participant.device_reset", "Reset a participant device."),
     ("POST", "/api/planters/{id}/access-codes"): ("participant.codes_issued", "Issued individual planter codes."),
     ("POST", "/api/planters/{id}/participants/{id}/access-code"): ("participant.code_changed", "Changed a participant access code."),
+    ("POST", "/api/planters/organizations/{id}/activities/{id}/access"): ("activity.access_changed", "Changed organization access for a planting activity."),
     ("POST", "/api/seedlings/lgu-plantings"): ("seedling.planted", "Recorded LGU seedling planting."),
     ("PATCH", "/api/seedlings/records/{id}"): ("seedling.details_updated", "Updated a seedling record."),
     ("PATCH", "/api/assignments/points/{id}/status"): ("point.status_updated", "Updated an assigned planting point."),

@@ -42,13 +42,16 @@ def render_activity_email(*, kind, title, greeting, introduction, details,
             action_url = line.removeprefix('Open: ')
         elif line.startswith('Participant ') and ': ' in line:
             credentials.append(tuple(line.split(': ', 1)))
+        elif line.startswith('Organization code: '):
+            credentials.append(tuple(line.split(': ', 1)))
         elif line != 'Planter access':
             notes.append(line)
     action_url = safe_link(action_url) if kind != 'cancellation' else None
     access = ''
     if credentials:
+        heading = 'Organization planting access' if any(key == 'Organization code' for key, _ in credentials) else 'Individual planter codes'
         access = (
-            '<h2 style="margin:24px 0 10px;font-size:18px;color:#173c2c">Individual planter codes</h2>'
+            f'<h2 style="margin:24px 0 10px;font-size:18px;color:#173c2c">{heading}</h2>'
             '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
             f'style="background:#edf7f1;border:1px solid #d5e6db;border-radius:10px">{rows(credentials)}</table>'
             + ''.join(f'<p style="margin:10px 0;font-size:12px;line-height:1.6;color:#52675c">{e(note)}</p>' for note in notes))
@@ -65,7 +68,7 @@ def render_activity_email(*, kind, title, greeting, introduction, details,
     caution = ''
     if kind == 'cancellation':
         caution = '<p style="padding:14px;background:#fff1f2;border-left:3px solid #b91c1c;color:#991b1b;font-size:14px;line-height:1.6">This activity will not proceed at the time shown. Contact LGU staff to arrange another activity.</p>'
-    footer_note = 'Keep your group’s planter codes private.' if credentials else 'Schedule times use Philippine time (Asia/Manila).'
+    footer_note = 'Share planting access only with your organization’s participants.' if credentials else 'Schedule times use Philippine time (Asia/Manila).'
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{e(title)}</title></head>
 <body style="margin:0;padding:0;background:#eef4f0;font-family:Arial,Helvetica,sans-serif">

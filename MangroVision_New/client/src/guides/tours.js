@@ -86,7 +86,7 @@ export const STAFF_TOURS = [
       step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant confirmed activity when one is available. If it has no area yet, assigning points links it to the selected project site. Its date remains editable until an assigned point is recorded as planted.'),
       step('/planters', '#organization-point-count', 'Set the allocation size', 'Enter how many available points to assign. Review the count, species and participant allocation before using Assign. Participants receive staggered zigzag strips, with later batches balancing existing allocations.'),
       step('/planters', assignCard('Field Share Link'), 'Share the field workspace', 'Open Field Share Link and copy the field link for participants. On a local setup, use the provided link-generation controls if needed. Keep the current link while participants work.'),
-      step('/planters', assignCard('Planter codes'), 'Manage individual planter codes', 'Give each participant only their own code. It opens their same participant number and assigned points on any browser. Replace or revoke a code here when needed; their planting records stay saved.'),
+      step('/planters', assignCard('Organization code'), 'Share the organization code', 'Select a planting activity and share its one code with the contact person. Each planter chooses a personal username. Access opens and closes with the schedule; replacing or revoking the code ends this activity’s logins while keeping planting records.'),
       step('/planters', '.assignment-activity-report', 'Review organization progress', 'View Activity Report opens the recorded planting activity report. Use the Overview tab for mapped planting totals. Refresh your data after field users record planting progress.'),
     ],
   },
@@ -175,11 +175,11 @@ export const STAFF_LOGIN_TOURS = [{
 
 export const FIELD_LOGIN_TOURS = [{
   id: 'field-login', title: 'Planter sign in',
-  description: 'Sign in with your group’s shared login or recover a device.',
+    description: 'Use the shared organization code and your personal username.',
   steps: [
-    step(null, '.field-auth-brand', 'Organization field access', 'Use your individual code from your group leader or LGU staff. The code keeps the same participant number across activities.'),
-    step(null, '.field-form', 'Sign in with your personal code', 'Enter your planter code and choose Sign in. The same code restores your assigned points on any browser or device. Each participant uses their own code.'),
-    step(null, '.field-form', 'Get help with a lost or invalid code', 'Ask your group leader or LGU staff for your participant code. Staff can replace a lost or revoked code while keeping your participant number and planting progress.'),
+      step(null, '.field-auth-brand', 'Organization field access', 'Get the shared activity code from your group leader. Everyone in the organization uses that code during the scheduled planting activity.'),
+      step(null, '.field-form', 'Choose first time or returning', 'First time creates a unique username for your participant. Returning planter uses the same username to restore your points and progress on any browser or phone. No password or PIN is needed.'),
+      step(null, '.field-form', 'Switch browsers when needed', 'If your participant is signed in elsewhere, choose Switch here. The other login ends and your progress stays the same. A normal logout keeps this browser’s remembered identity.'),
   ],
 }];
 
