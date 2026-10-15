@@ -159,6 +159,8 @@ def main():
     parser.add_argument('--device', choices=['auto', 'cpu', 'cuda'], default='auto')
     parser.add_argument('--limit', type=int)
     parser.add_argument('--only', nargs='+', help='Exact photo filenames or stems for a focused AI rerun')
+    parser.add_argument('--model', type=Path, default=ROOT / 'MangroVision_New/try_model/model_final.pth',
+                        help='Read an existing canopy checkpoint, including a shared asset outside this worktree')
     parser.add_argument('--resume', action='store_true')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
@@ -172,12 +174,13 @@ def main():
         raise RuntimeError('Seedling inference must remain disabled in a canopy-only review')
     detector._detect_seedling_supplement_mask = forbidden
     detector._detect_hybrid_seedling_supplement_mask = forbidden
-    detector.setup_model(str(ROOT / 'MangroVision_New/try_model/model_final.pth'))
+    detector.setup_model(str(args.model.resolve()))
     if detector.predictor is None:
         raise RuntimeError('The real AI canopy checkpoint is required; no color fallback is allowed')
     model_file = Path(detector.model_path)
-    sources = {str(path.relative_to(ROOT)): sha256(path) for path in [
+    sources = {(str(path.relative_to(ROOT)) if path.is_relative_to(ROOT) else f'external_model/{path.name}'): sha256(path) for path in [
         ROOT / 'canopy_detection/detectree2_proper.py', ROOT / 'canopy_detection/seedling_leaf_evidence.py',
+        ROOT / 'canopy_detection/crown_coverage.py',
         ROOT / 'canopy_detection/exif_extractor.py', ROOT / 'canopy_detection/gsd_calculator.py',
         model_file, model_file.with_name('model_metadata.json'), Path(__file__).resolve(),
     ]}

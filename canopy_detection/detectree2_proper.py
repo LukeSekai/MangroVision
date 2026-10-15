@@ -10,13 +10,15 @@ import os
 from pathlib import Path
 from typing import Tuple, List, Dict, Optional, Callable, Any
 import torch
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, MultiPolygon
 import geopandas as gpd
 
 try:
+    from .crown_coverage import recover_canopy_crown_coverage
     from .seedling_detector import SeedlingDetector, SeedlingDetectorConfig
     from .seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
 except ImportError:  # The legacy applications import this file as a top-level module.
+    from crown_coverage import recover_canopy_crown_coverage
     from seedling_detector import SeedlingDetector, SeedlingDetectorConfig
     from seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
 
@@ -799,6 +801,12 @@ class ProperDetectree2Detector:
                     poly = poly.buffer(0)
                 if isinstance(poly, Polygon) and poly.is_valid and not poly.is_empty:
                     polygons.append(poly)
+                elif isinstance(poly, MultiPolygon):
+                    # Pixel-diagonal leaf contacts can repair into several
+                    # valid pieces. Keep them instead of dropping the crown.
+                    polygons.extend(piece for piece in poly.geoms
+                                    if piece.is_valid and not piece.is_empty
+                                    and piece.area >= min_area_px)
             except Exception:
                 continue
         return polygons
@@ -2407,13 +2415,33 @@ class ProperDetectree2Detector:
             )]
         base_instance_mask = validated_instance_mask
         instance_mask = base_instance_mask
+        # Finish mature coverage before detecting seedlings. Otherwise leaves
+        # recovered at a crown edge/interior can be counted again as seedlings.
+        coverage_polygons, combined_mask, merge_metadata = self._merge_fragmented_canopy_mask(
+            instance_mask=instance_mask,
+            strict_green_mask=strict_green_mask,
+            gsd=gsd_used,
+            min_area_px=min_area_px,
+        )
+        combined_mask, component_filter_metadata = self._filter_low_saturation_components(
+            canopy_mask=combined_mask,
+            image=image,
+            strict_green_mask=strict_green_mask,
+        )
+        combined_mask, crown_recovery_metadata = recover_canopy_crown_coverage(
+            image, combined_mask, gsd_used,
+        )
+        if (component_filter_metadata.get("rejected_low_saturation_components", 0)
+                or crown_recovery_metadata["canopy_crown_recovered_pixels"]):
+            coverage_polygons = self._mask_to_polygons(combined_mask, float(min_area_px))
+
         seedling_mask = np.zeros_like(base_instance_mask)
         seedling_metadata: Dict[str, Any]
         seedling_mode = str(self.runtime_tuning.get("seedling_detection_mode", "hybrid")).lower()
         if seedling_mode == "legacy":
             legacy_seedling_mask, seedling_metadata = self._detect_seedling_supplement_mask(
                 image=image,
-                base_mask=base_instance_mask,
+                base_mask=combined_mask,
                 gsd=gsd_used,
             )
             # Keep legacy supplement pixels separate from the mature-canopy
@@ -2432,7 +2460,7 @@ class ProperDetectree2Detector:
         else:
             seedling_mask, seedling_metadata = self._detect_hybrid_seedling_supplement_mask(
                 image=image,
-                base_mask=base_instance_mask,
+                base_mask=combined_mask,
                 gsd=gsd_used,
             )
             if seedling_metadata.get("seedling_detection_mode") == "fallback_legacy":
@@ -2440,7 +2468,7 @@ class ProperDetectree2Detector:
                 # seedling behavior.  It also must not change the mature mask.
                 legacy_seedling_mask, legacy_metadata = self._detect_seedling_supplement_mask(
                     image=image,
-                    base_mask=base_instance_mask,
+                    base_mask=combined_mask,
                     gsd=gsd_used,
                 )
                 # The fallback supplement is also kept separate so the
@@ -2457,22 +2485,6 @@ class ProperDetectree2Detector:
         # The separate seedling mask is used by planting safety geometry and
         # visualization, but is not merged into mature-canopy area.
         self.last_seedling_mask = seedling_mask.copy()
-
-        coverage_polygons, combined_mask, merge_metadata = self._merge_fragmented_canopy_mask(
-            instance_mask=instance_mask,
-            strict_green_mask=strict_green_mask,
-            gsd=gsd_used,
-            min_area_px=min_area_px,
-        )
-        combined_mask, component_filter_metadata = self._filter_low_saturation_components(
-            canopy_mask=combined_mask,
-            image=image,
-            strict_green_mask=strict_green_mask,
-        )
-        if component_filter_metadata.get("rejected_low_saturation_components", 0):
-            # Re-extract only at the mature-canopy floor. Seedling markers are
-            # kept in seedling_mask and do not belong in canopy polygons.
-            coverage_polygons = self._mask_to_polygons(combined_mask, float(min_area_px))
 
         print(f"   ✅ {len(final_polygons)} AI instances after cleanup")
         if merge_metadata.get("merge_canopy_fragments"):
@@ -2557,6 +2569,7 @@ class ProperDetectree2Detector:
         metadata.update(merge_metadata)
         metadata.update(canopy_ground_metadata)
         metadata.update(component_filter_metadata)
+        metadata.update(crown_recovery_metadata)
         metadata.update(seedling_metadata)
          
         # The fourth return value is optional for backward compatibility.  It
