@@ -1,7 +1,7 @@
 import test, { before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { act, createElement, useState } from 'react';
-import { MemoryRouter, Route, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, useLocation, useNavigate } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import { manilaDateKey } from '../utils/monitoringSchedule.js';
@@ -99,7 +99,9 @@ afterEach(async () => { await act(async () => root.unmount()); });
 
 function Navigation() {
   const navigate = useNavigate();
+  const location = useLocation();
   return createElement('nav', null,
+    createElement('span', { 'data-current-path': true }, location.pathname),
     createElement('button', { 'data-nav': 'away', onClick: () => navigate('/away') }, 'Away'),
     createElement('button', { 'data-nav': 'back', onClick: () => navigate('/page') }, 'Back'),
     createElement('button', { 'data-nav': 'browser-back', onClick: () => navigate(-1) }, 'Browser Back'));
@@ -1219,7 +1221,7 @@ for (const action of ['X', 'Back to history', 'Browser Back', 'Escape']) {
 }
 
 for (const source of ['review link', 'history button after visiting the map']) {
-test(`View area in map opens the exact saved footprint from the ${source} without needing planting points`, async () => {
+test(`View area in map stays in Analyze Image with the saved footprint from the ${source}`, async () => {
   mockSavedReview();
   const existingPoints = [{ id: 900, analysis_id: 10, latitude: 10.8, longitude: 122.6, planting_status: 'planted' }];
   useMapStore.setState({ points: existingPoints });
@@ -1237,8 +1239,7 @@ test(`View area in map opens the exact saved footprint from the ${source} withou
   assert.equal(viewMap.textContent.trim(), 'View area in map');
   assert.equal(viewMap.disabled, false);
   await click(viewMap);
-  assert.ok(document.querySelector('#planting-map-route'));
-  assert.equal(document.querySelector('#planting-map-route').style.display, '');
+  assert.equal(document.querySelector('[data-current-path]').textContent, '/page');
   assert.equal(document.querySelector('.rs-backdrop'), null);
   assert.equal(Boolean(document.querySelector('.analysis-history-modal')), false, 'View area in map must close history rather than reopen it over the map');
   const context = useMapStore.getState().currentAnalysis;
@@ -1258,6 +1259,13 @@ test(`View area in map opens the exact saved footprint from the ${source} withou
   assert.equal(document.getElementById('analysis-history-sort').value, 'canopy-desc');
 });
 }
+
+test('completed analysis removes shortcut cards while keeping the result review button', async () => {
+  useProcessingStore.setState({ result: { analysis_id: 69, saved: true, uploaded_file_name: 'Analysis 35', metrics: {}, map: {}, exports: {} } });
+  await render(pages.get('ImageProcessing'));
+  assert.equal(document.querySelector('.next-actions'), null);
+  assert.ok([...document.querySelectorAll('.process-action button')].some(button => button.textContent.includes('Review analysis')));
+});
 
 test('a saved analysis without map coordinates explains why View area in map is unavailable', async () => {
   mockSavedReview();

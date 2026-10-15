@@ -84,6 +84,25 @@ class JobTests(unittest.TestCase):
         manager._retention = 0
         self.assertIsNone(manager.find_request(7, request_id))
 
+    def test_refresh_can_recover_active_and_finished_uploads_without_leaking_other_users(self):
+        manager = ProcessingJobs()
+        finish = Event()
+        request_id = str(uuid4())
+        job_id = manager.submit(7, lambda progress: finish.wait(3) or {}, request_id, file_name='photo.jpg')
+        try:
+            self.assertEqual(manager.recover(7)['job_id'], job_id)
+            self.assertIsNone(manager.recover(8))
+            self.assertIsNone(manager.recover(8, request_id))
+            self.assertIsNone(manager.recover(7, str(uuid4())))
+        finally:
+            finish.set()
+        completed(manager, job_id, 7)
+        self.assertIsNone(manager.recover(7))
+        recovered = manager.recover(7, request_id)
+        self.assertEqual(recovered, {'job_id': job_id, 'status': 'succeeded', 'file_name': 'photo.jpg'})
+        manager._retention = 0
+        self.assertIsNone(manager.recover(7, request_id))
+
 
 class JobEndpointTests(unittest.TestCase):
     @classmethod
@@ -124,6 +143,10 @@ class JobEndpointTests(unittest.TestCase):
                 status = self.client.get(f'/api/analyses/jobs/{job_id}')
                 self.assertEqual(status.headers['cache-control'], 'no-store')
                 self.assertEqual(status.json()['pct'], 25)
+                recovered = self.client.get('/api/analyses/jobs/current')
+                self.assertEqual(recovered.headers['cache-control'], 'no-store')
+                self.assertEqual(recovered.json()['job']['job_id'], job_id)
+                self.assertNotIn('payload', recovered.json()['job'])
                 self.assertEqual(paths[0].parent, p._TEMP_UPLOADS_DIR)
                 # The first acknowledgement could be lost at a gateway. A
                 # repeat upload must recover that job, including while running.
@@ -135,6 +158,8 @@ class JobEndpointTests(unittest.TestCase):
                 self.assertEqual(busy.status_code, 409)
                 with patch.object(p, '_require_lgu_user', return_value={'id': 8}):
                     self.assertEqual(self.client.get(f'/api/analyses/jobs/{job_id}').status_code, 404)
+                    self.assertIsNone(self.client.get('/api/analyses/jobs/current').json()['job'])
+                    self.assertIsNone(self.client.get('/api/analyses/jobs/current', params={'request_id': request_id}).json()['job'])
             finally:
                 finish.set()
             completed(manager, job_id, 7)
@@ -143,6 +168,7 @@ class JobEndpointTests(unittest.TestCase):
             self.assertEqual(result.json()['payload']['analysis_key'], 'test-only')
             self.assertFalse(paths[0].exists())
             activity.assert_called_once()
+            self.assertEqual(self.client.get('/api/analyses/jobs/current', params={'request_id': request_id}).json()['job']['job_id'], job_id)
 
     def test_waiting_for_database_auth_does_not_block_other_http_requests(self):
         from httpx import ASGITransport, AsyncClient
@@ -171,6 +197,7 @@ class JobEndpointTests(unittest.TestCase):
     def test_no_session_cannot_start_or_read_job(self):
         with patch.object(self.processing, 'get_user_by_session_token', return_value=None):
             self.assertEqual(self.client.get('/api/analyses/jobs/unknown').status_code, 401)
+            self.assertEqual(self.client.get('/api/analyses/jobs/current').status_code, 401)
             response = self.client.post('/api/analyses/jobs', files={'image': ('test.jpg', b'test', 'image/jpeg')})
             self.assertEqual(response.status_code, 401)
 

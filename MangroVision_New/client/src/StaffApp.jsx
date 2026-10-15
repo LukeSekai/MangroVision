@@ -14,6 +14,7 @@ import MonitoringMapWorkspace from './pages/MonitoringMapWorkspace';
 import LoginScreen from './components/LoginScreen';
 import AccountSettings from './pages/AccountSettings';
 import { useAuthStore } from './stores/authStore';
+import { useProcessingStore } from './stores/processingStore';
 
 const WORKSPACE_PAGES = ['/map', '/dashboard', '/scheduling', '/activity', '/account',
   '/monitoring', '/monitoring/map', '/planters', '/processing', '/zones'];
@@ -27,6 +28,12 @@ export default function StaffApp() {
   useEffect(() => {
     hydrateSession();
   }, [hydrateSession]);
+
+  useEffect(() => {
+    if (hydrated && isAuthenticated && userId) {
+      void useProcessingStore.getState().resumeProcessing(userId);
+    }
+  }, [hydrated, isAuthenticated, userId]);
 
   if (!hydrated) return <div className="login-screen" role="status">Checking your session…</div>;
 

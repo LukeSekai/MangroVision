@@ -1,9 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readAnalysisResponse, startProcessingJob, waitForProcessingJob } from './processingJobs.js';
+import { readAnalysisResponse, recoverProcessingJob, startProcessingJob, waitForProcessingJob } from './processingJobs.js';
 
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json' },
+});
+
+test('recovery waits for an accepted upload to register and retries only GET requests', async () => {
+  let calls = 0;
+  const job = await recoverProcessingJob({ requestId: 'original-request', interval: 0,
+    fetcher: async (url, options) => {
+      calls += 1;
+      assert.equal(url, '/api/analyses/jobs/current?request_id=original-request');
+      assert.equal(options.method, undefined);
+      assert.equal(options.cache, 'no-store');
+      if (calls === 1) return reply(200, { job: null });
+      if (calls === 2) return reply(502, {});
+      return reply(200, { job: { job_id: 'accepted-job' } });
+    } });
+  assert.equal(calls, 3);
+  assert.equal(job.job_id, 'accepted-job');
+});
+
+test('a fresh session with no active job returns quietly and cannot retry an expired session', async () => {
+  assert.equal(await recoverProcessingJob({ fetcher: async () => reply(200, { job: null }) }), null);
+  let calls = 0;
+  await assert.rejects(recoverProcessingJob({ interval: 0, fetcher: async () => {
+    calls += 1;
+    return reply(401, { detail: 'Session expired' });
+  } }), /Session expired/);
+  assert.equal(calls, 1);
 });
 
 test('a long running job reports progress and returns its result using GET only', async () => {

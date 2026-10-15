@@ -48,7 +48,17 @@ class ProcessingJobs:
         return next((key for key, job in self._jobs.items()
                      if job['owner_id'] == int(owner_id) and job.get('request_id') == request_id), None)
 
-    def submit(self, owner_id, work, request_id=None):
+    def recover(self, owner_id, request_id=None):
+        """Find this user's acknowledged upload, or their currently running job."""
+        with self._lock:
+            self._prune()
+            job_id = self._find_request(owner_id, request_id) if request_id else self._active
+            job = self._jobs.get(job_id)
+            if not job or job['owner_id'] != int(owner_id):
+                return None
+            return {key: job['public'][key] for key in ('job_id', 'status', 'file_name')}
+
+    def submit(self, owner_id, work, request_id=None, file_name=''):
         """Reserve capacity before starting work; retain request context in thread."""
         context = copy_context()
         job_id = uuid4().hex
@@ -62,7 +72,7 @@ class ProcessingJobs:
             self._active = job_id
             self._jobs[job_id] = {
                 'owner_id': int(owner_id), 'request_id': request_id, 'finished': None,
-                'public': {'job_id': job_id, 'status': 'running', 'stage': 'Starting analysis...', 'pct': 1},
+                'public': {'job_id': job_id, 'file_name': file_name, 'status': 'running', 'stage': 'Starting analysis...', 'pct': 1},
             }
         thread = Thread(target=lambda: context.run(self._run, job_id, work), daemon=True)
         try:

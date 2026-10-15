@@ -258,9 +258,10 @@ def analysis_detail(analysis_id: int):
 
     return {
         "analysis_id": analysis_id,
+        "display_number": row.get("display_number"),
         "analysis_key": None,
         "uploaded_file_name": image_name,
-        "source_image_name": saved_detail.get("source_image_name") or image_name,
+        "source_image_name": saved_detail.get("source_image_name") or row.get("source_image_name") or image_name,
         "repeat_image": saved_detail.get("repeat_image"),
         "detection_mode": detection_mode,
         "parameters": saved_parameters,

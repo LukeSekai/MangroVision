@@ -81,6 +81,7 @@ htmlcov/
 !MangroVision_New/client/src/utils/analysisHistory.test.js
 !MangroVision_New/client/src/like/booking.test.js
 !MangroVision_New/client/src/stores/planterAuthStore.test.js
+!MangroVision_New/client/src/stores/processingStore.test.js
 !MangroVision_New/client/src/components/ParticipantDevices.test.js
 !MangroVision_New/client/src/components/SeedlingLocations.test.js
 !MangroVision_New/client/src/utils/fieldNavigation.test.js

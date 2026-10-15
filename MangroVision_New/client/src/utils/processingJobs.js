@@ -5,6 +5,26 @@ class AnalysisRequestError extends Error {
   }
 }
 
+export async function recoverProcessingJob({ api = '', requestId, signal, fetcher = fetch, interval = 1000 }) {
+  const query = requestId ? `?request_id=${encodeURIComponent(requestId)}` : '';
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const payload = await fetchAnalysisJson(fetcher, `${api}/api/analyses/jobs/current${query}`, {
+        signal, cache: 'no-store',
+      }, 45000);
+      // An upload accepted just before refresh may still be starting its worker.
+      if (!payload.job && requestId && attempt < 2) {
+        await pause(interval, signal);
+        continue;
+      }
+      return payload.job;
+    } catch (error) {
+      if (signal?.aborted || !error.retryable || attempt >= 2) throw error;
+      await pause(interval, signal);
+    }
+  }
+}
+
 // Gateways can return an HTML error page even though the API returns JSON.
 // Do not show their markup or a JSON parser exception to the user.
 export async function readAnalysisResponse(response) {
@@ -84,14 +104,14 @@ export async function waitForProcessingJob({ api = '', jobId, signal, onProgress
     } catch (error) {
       if (signal?.aborted || !error.retryable) throw error;
       failures += 1;
-      if (failures >= 30) throw new Error('Lost connection to the laptop server. Check that it and the tunnel are still running.');
+      if (failures >= 30) throw new AnalysisRequestError('Lost connection to the laptop server. Check its connection, then refresh to reconnect to your analysis.', true);
       onProgress?.({ stage: 'Reconnecting to analysis...', pct: undefined });
       await pause(Math.min(interval * failures, 10000), signal);
       continue;
     }
     failures = 0;
     if (job.status === 'succeeded') return job.payload;
-    if (job.status === 'failed') throw new Error(job.detail || 'Processing failed.');
+    if (job.status === 'failed') throw new AnalysisRequestError(job.detail || 'Processing failed.');
     if (job.status !== 'running') throw new Error('The server returned an invalid analysis status. Reload the website and try again.');
     onProgress?.(job);
     await pause(interval, signal);

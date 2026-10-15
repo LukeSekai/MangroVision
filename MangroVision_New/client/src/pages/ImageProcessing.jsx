@@ -12,7 +12,6 @@ import { readAnalysisResponse } from '../utils/processingJobs';
 import { canViewSavedAnalysisOnMap } from '../utils/analysisMapContext';
 import { formatAnalysisDate } from '../utils/analysisHistory';
 import ResultsOverlay from './ResultsOverlay';
-import NextActions from '../components/NextActions';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary } from '../components/FormFeedback';
 import './ResultsOverlay.css';
@@ -67,6 +66,12 @@ export default function ImageProcessing() {
   const saveCurrentAnalysis = useProcessingStore((s) => s.saveCurrentAnalysis);
   const resetProcessing = useProcessingStore((s) => s.reset);
   const setOverlayOpen = useProcessingStore((s) => s.setOverlayOpen);
+
+  useEffect(() => {
+    if (!result?.map?.available) return;
+    if (result.saved) setSavedAnalysisBoundary(result, { preserveView: true });
+    else setCurrentAnalysis(result);
+  }, [result, setCurrentAnalysis, setSavedAnalysisBoundary]);
 
   const fileRef = useRef(null);
   const pendingUploadRef = useRef(null);
@@ -299,6 +304,7 @@ export default function ImageProcessing() {
     // not await this, so navigating away does NOT cancel the request.
     startProcess({
       file,
+      ownerId: user?.id,
       altitude: DEFAULT_ALTITUDE,
       drone_model: DEFAULT_DRONE_MODEL,
       canopy_buffer: canopyBuffer,
@@ -420,7 +426,9 @@ export default function ImageProcessing() {
     setHistoryOpen(false);
     setOverlayOpen(false);
     // Replace the review entry so browser Back returns to the history list.
-    navigate('/map', { replace: true });
+    navigate(`${location.pathname}${location.search}${location.hash}`, {
+      replace: true, state: { ...location.state, analysisReviewId: undefined },
+    });
   };
 
   const handleDeleteAnalysis = async (analysisId) => {
@@ -435,6 +443,7 @@ export default function ImageProcessing() {
       }
       setPendingDeleteId(null);
       await Promise.all([fetchStats(), fetchPoints()]);
+      if (result?.analysis_id === analysisId) resetProcessing();
       clearCurrentAnalysis();
       setHistoryOpen(true);
     } catch (deleteAnalysisError) {
@@ -493,14 +502,10 @@ export default function ImageProcessing() {
     <Panel
       plantingTool
       title="Analyze Image"
-      subtitle={result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
+      subtitle={analyses.find(item => item.id === result?.analysis_id)?.image_name || result?.uploaded_file_name || displayedFileName || 'Analyze drone imagery'}
       openKey={openPanel}
       onOpenKeyChange={setOpenPanel}
     >
-      {result && <NextActions compact actions={[
-        { label: 'Review analysis', onClick: () => setOverlayOpen(true), description: result.saved ? 'Open the saved analysis summary.' : 'Check the overlay and save the analysis.' },
-        ...(result.saved ? [{ label: 'Assign available points', to: '/planters?section=assign', description: 'Choose an organization and project site.' }] : []),
-      ]} />}
       <PanelCard
         title="Upload Image"
         panelKey="upload"

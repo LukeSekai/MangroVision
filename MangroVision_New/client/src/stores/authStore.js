@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useMapStore } from './mapStore';
+import { useProcessingStore } from './processingStore';
 import { staffAuthRequest } from '../utils/staffAuth';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -26,6 +27,7 @@ export const useAuthStore = create((set) => ({
   user: initialUser,
 
   login: async (username, password) => {
+    useProcessingStore.getState().reset();
     useMapStore.getState().resetWorkspaceData();
     return staffAuthRequest('login', { username, password });
   },
@@ -47,6 +49,7 @@ export const useAuthStore = create((set) => ({
   },
 
   clearSession: (notice = '') => {
+    useProcessingStore.getState().reset();
     useMapStore.getState().resetWorkspaceData();
     localStorage.removeItem('mv_user');
     if (notice) sessionStorage.setItem('mv_auth_notice', notice);
@@ -54,6 +57,7 @@ export const useAuthStore = create((set) => ({
   },
 
   logout: () => {
+    useProcessingStore.getState().reset();
     useMapStore.getState().resetWorkspaceData();
     fetch(`${API}/api/auth/logout`, { method: 'POST' }).catch(() => {});
     localStorage.removeItem('mv_user');
@@ -64,6 +68,7 @@ export const useAuthStore = create((set) => ({
     try {
       const res = await fetch(`${API}/api/auth/session`);
       if (!res.ok) {
+        useProcessingStore.getState().reset();
         useMapStore.getState().resetWorkspaceData();
         localStorage.removeItem('mv_user');
         set({ isAuthenticated: false, token: null, user: null, hydrated: true });

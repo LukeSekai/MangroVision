@@ -65,8 +65,6 @@ from canopy_detection.orthophoto_coverage import (
 from canopy_detection.perspective_matching import match_perspective_patch
 from planting_database import (
     OutsideVisibleMapError,
-    count_nearby_points,
-    find_overlapping_analyses,
     find_repeat_image_analyses,
     get_analysis_area_context,
     get_analysis_by_id,
@@ -3729,13 +3727,6 @@ def _execute_canopy_workflow(
                 f"GPS footprint is inside map bounds: {image_center_lat:.6f}, {image_center_lon:.6f}."
             )
 
-        overlaps = find_overlapping_analyses(image_center_lat, image_center_lon)
-        nearby_points = count_nearby_points(image_center_lat, image_center_lon)
-        if overlaps and nearby_points:
-            warning_messages.append(
-                f"This area already has planting data nearby: {len(overlaps)} saved analyses and {nearby_points} saved planting points."
-            )
-
         detected_altitude = None
         detected_altitude_label = None
         if "relative_altitude" in gps and gps["relative_altitude"] is not None:
@@ -5140,6 +5131,17 @@ def _execute_canopy_workflow(
         if clipped_footprint.geom_type in {"Polygon", "MultiPolygon"} and not clipped_footprint.is_empty:
             visible_footprint = mapping(clipped_footprint)
 
+    # Use the same mapped boundary as the preview, never a radius around GPS.
+    if visible_footprint:
+        area_context = get_analysis_area_context(visible_footprint)
+        overlaps = area_context["analyses"]
+        nearby_points = area_context["saved_point_count"]
+        if overlaps or nearby_points:
+            warning_messages.append(
+                f"This image's mapped area overlaps {len(overlaps)} saved analyses "
+                f"and contains {nearby_points} saved planting points."
+            )
+
     json_results = {
         "canopy_count": results["canopy_count"],
         "danger_area_m2": results["danger_area_m2"],
@@ -5577,7 +5579,7 @@ async def start_processing_job(
             _cleanup_temp(temp_path)
 
     try:
-        job_id = _PROCESSING_JOBS.submit(int(user["id"]), work, request_id=request_id)
+        job_id = _PROCESSING_JOBS.submit(int(user["id"]), work, request_id=request_id, file_name=uploaded_name)
     except ProcessingAlreadyStarted as error:
         _cleanup_temp(temp_path)
         job_id = error.job_id
@@ -5589,6 +5591,13 @@ async def start_processing_job(
         raise
     response.headers["Cache-Control"] = "no-store"
     return {"job_id": job_id, "status": "running"}
+
+
+@router.get("/jobs/current")
+def recover_processing_job(response: Response, request_id: Optional[UUID] = None):
+    user = _require_lgu_user()
+    response.headers["Cache-Control"] = "no-store"
+    return {"job": _PROCESSING_JOBS.recover(int(user["id"]), str(request_id) if request_id else None)}
 
 
 @router.get("/jobs/{job_id}")
@@ -5820,7 +5829,9 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
 
     cached_payload["response_payload"]["saved"] = True
     cached_payload["response_payload"]["analysis_id"] = analysis_id
-    analysis_name = get_analysis_by_id(analysis_id)["image_name"]
+    saved_analysis = get_analysis_by_id(analysis_id)
+    analysis_name = saved_analysis["image_name"]
+    cached_payload["response_payload"]["display_number"] = saved_analysis.get("display_number")
     cached_payload["response_payload"]["source_image_name"] = cached_payload["image_name"]
     cached_payload["response_payload"]["uploaded_file_name"] = analysis_name
     cached_payload["response_payload"]["save_summary"] = {
@@ -5834,6 +5845,7 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
         "status": "saved",
         "analysis_id": analysis_id,
         "analysis_name": analysis_name,
+        "display_number": saved_analysis.get("display_number"),
         "new_points": new_points,
         "skipped_duplicates": skipped,
     }

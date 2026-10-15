@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { readAnalysisResponse, startProcessingJob, waitForProcessingJob } from '../utils/processingJobs';
+import { readAnalysisResponse, recoverProcessingJob, startProcessingJob, waitForProcessingJob } from '../utils/processingJobs';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
@@ -7,7 +7,26 @@ const API = import.meta.env.VITE_API_BASE || '';
 // serializable and should never trigger a re-render.
 let activeController = null;
 
+// Keep only a per-tab job reference. Results, image bytes and credentials stay
+// out of browser storage; the API checks the signed-in owner on every read.
+const recoveryKey = (ownerId) => `mv_analysis_job_${ownerId}`;
+function readRecovery(ownerId) {
+  try {
+    const entry = JSON.parse(sessionStorage.getItem(recoveryKey(ownerId)) || 'null');
+    return entry?.requestId || entry?.jobId ? entry : null;
+  } catch { return null; }
+}
+function writeRecovery(ownerId, entry) {
+  if (!ownerId) return;
+  try { sessionStorage.setItem(recoveryKey(ownerId), JSON.stringify(entry)); } catch { /* storage unavailable */ }
+}
+function clearRecovery(ownerId) {
+  try { sessionStorage.removeItem(recoveryKey(ownerId)); } catch { /* storage unavailable */ }
+}
+
 const initialState = {
+  ownerId: null,
+  recoveryChecked: false,
   // True from the moment the user clicks Process until a result or error.
   // Survives page navigation because it lives here, not in the page component.
   processing: false,
@@ -41,6 +60,35 @@ const initialState = {
   overlayOpen: false,
 };
 
+async function watchJob(set, get, jobId, controller, previewUrl = '') {
+  try {
+    const payload = await waitForProcessingJob({
+      api: API, jobId, signal: controller.signal,
+      onProgress: (job) => {
+        if (activeController !== controller) return;
+        const next = {};
+        if (typeof job.stage === 'string') next.stage = job.stage;
+        if (typeof job.pct === 'number') next.progress = job.pct;
+        set(next);
+      },
+    });
+    if (activeController !== controller) return;
+    if (payload.saved) clearRecovery(get().ownerId);
+    set({ processing: false, stage: 'Complete!', progress: 100,
+      result: payload, fileName: '', previewUrl: '',
+      resultPreviewUrl: previewUrl || payload.images?.original_preview_url || payload.images?.original_image_url || '',
+      overlayOpen: true });
+  } catch (error) {
+    if (activeController !== controller) return;
+    if (error.name !== 'AbortError') {
+      if (error.retryable === false) clearRecovery(get().ownerId);
+      set({ processing: false, stage: null, progress: 0, error: error.message || 'Processing failed' });
+    }
+  } finally {
+    if (activeController === controller) activeController = null;
+  }
+}
+
 export const useProcessingStore = create((set, get) => ({
   ...initialState,
 
@@ -48,6 +96,7 @@ export const useProcessingStore = create((set, get) => ({
 
   // Reset back to a clean slate when clearing or selecting a new image.
   reset: () => {
+    clearRecovery(get().ownerId);
     if (activeController) {
       try {
         activeController.abort();
@@ -75,12 +124,44 @@ export const useProcessingStore = create((set, get) => ({
   setResult: (result) => set({ result, overlayOpen: Boolean(result) }),
 
   // Mark a save success — used by the save flow after the API call returns.
-  applySaveSuccess: (savedResult) =>
+  applySaveSuccess: (savedResult) => {
+    clearRecovery(get().ownerId);
     set({
       result: savedResult,
       saving: false,
       saveError: '',
-    }),
+    });
+  },
+
+  resumeProcessing: async (ownerId) => {
+    if (!ownerId || (get().ownerId === ownerId && (activeController || get().recoveryChecked))) return;
+    activeController?.abort();
+    const controller = new AbortController();
+    activeController = controller;
+    const entry = readRecovery(ownerId);
+    set({ ...initialState, ownerId, recoveryChecked: true, processing: true,
+      stage: 'Reconnecting to analysis...', fileName: entry?.fileName || '' });
+    try {
+      const job = entry?.jobId ? { job_id: entry.jobId }
+        : await recoverProcessingJob({ api: API, requestId: entry?.requestId, signal: controller.signal });
+      if (activeController !== controller) return;
+      if (!job) {
+        clearRecovery(ownerId);
+        set({ processing: false, stage: null,
+          error: entry ? 'The upload did not finish or the analysis expired. Select the image and run it again.' : '' });
+        activeController = null;
+        return;
+      }
+      writeRecovery(ownerId, { ...entry, jobId: job.job_id, fileName: entry?.fileName || job.file_name || '' });
+      set({ fileName: entry?.fileName || job.file_name || '' });
+      await watchJob(set, get, job.job_id, controller);
+    } catch (error) {
+      if (activeController !== controller) return;
+      activeController = null;
+      if (error.retryable === false) clearRecovery(ownerId);
+      set({ processing: false, stage: null, error: error.name === 'AbortError' ? '' : error.message });
+    }
+  },
 
   // Start processing. `params` carries the configuration (file, altitude,
   // drone_model, canopy_buffer, hexagon_size, ai_confidence). The promise
@@ -112,6 +193,8 @@ export const useProcessingStore = create((set, get) => ({
     if (activeController !== controller) return;
 
     set({
+      ownerId: params.ownerId,
+      recoveryChecked: true,
       processing: true,
       stage: 'Uploading image...',
       progress: 1,
@@ -125,6 +208,8 @@ export const useProcessingStore = create((set, get) => ({
     });
 
     try {
+      const recovery = { requestId: crypto.randomUUID(), fileName: file.name || 'drone_image.jpg' };
+      writeRecovery(params.ownerId, recovery);
       const formData = new FormData();
       formData.append('image', file);
       formData.append('altitude', String(params.altitude));
@@ -146,40 +231,21 @@ export const useProcessingStore = create((set, get) => ({
         api: API,
         formData,
         signal: controller.signal,
+        requestId: recovery.requestId,
         onRetry: () => {
           if (activeController === controller) set({ stage: 'Connection interrupted. Retrying upload...' });
         },
       });
-      const finalPayload = await waitForProcessingJob({
-        api: API,
-        jobId: started.job_id,
-        signal: controller.signal,
-        onProgress: (job) => {
-          if (activeController !== controller) return;
-          const next = {};
-          if (typeof job.stage === 'string') next.stage = job.stage;
-          if (typeof job.pct === 'number') next.progress = job.pct;
-          set(next);
-        },
-      });
       if (activeController !== controller) return;
-
-      set({
-        processing: false,
-        stage: 'Complete!',
-        progress: 100,
-        result: finalPayload,
-        fileName: '',
-        previewUrl: '',
-        resultPreviewUrl: previewUrl,
-        overlayOpen: true,
-      });
+      writeRecovery(params.ownerId, { ...recovery, jobId: started.job_id });
+      await watchJob(set, get, started.job_id, controller, previewUrl);
     } catch (processError) {
       if (activeController !== controller) return;
       if (processError.name === 'AbortError') {
         // User-initiated abort: just clear the running flags, no error message.
         set({ processing: false, stage: null, progress: 0 });
       } else {
+        if (processError.retryable === false) clearRecovery(get().ownerId);
         set({
           processing: false,
           stage: null,
@@ -196,6 +262,7 @@ export const useProcessingStore = create((set, get) => ({
   // way as processing.
   saveCurrentAnalysis: async (userId) => {
     const result = get().result;
+    const ownerId = get().ownerId;
     if (!result?.analysis_key || get().saving || result.saved) return;
 
     set({ saving: true, saveError: '' });
@@ -211,10 +278,12 @@ export const useProcessingStore = create((set, get) => ({
       });
 
       const payload = await readAnalysisResponse(response);
+      if (get().ownerId !== ownerId || get().result !== result) return null;
       const savedResult = {
         ...result,
         saved: true,
         analysis_id: payload.analysis_id,
+        display_number: payload.display_number,
         source_image_name: result.source_image_name || result.uploaded_file_name,
         uploaded_file_name: payload.analysis_name || 'Saved analysis',
         save_summary: {
@@ -224,8 +293,10 @@ export const useProcessingStore = create((set, get) => ({
         },
       };
       set({ result: savedResult, saving: false, saveError: '' });
+      clearRecovery(get().ownerId);
       return { savedResult, savePayload: payload };
     } catch (err) {
+      if (get().ownerId !== ownerId || get().result !== result) return null;
       set({ saving: false, saveError: err.message || 'Save failed' });
       return null;
     }

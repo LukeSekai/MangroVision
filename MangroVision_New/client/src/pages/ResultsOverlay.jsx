@@ -458,7 +458,7 @@ export default function ResultsOverlay({
                   {overlaps.map((ov, index) => (
                     <div key={`ov-overlap-${index}`} className="analysis-subrow">
                       <span>{ov.image_name || `Analysis ${ov.analysis_id}`}</span>
-                      <span>{ov.overlap_count} pt{ov.overlap_count === 1 ? '' : 's'}</span>
+                      <span>Overlapping image boundary</span>
                     </div>
                   ))}
                 </div>

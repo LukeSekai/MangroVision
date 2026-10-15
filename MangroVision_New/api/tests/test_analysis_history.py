@@ -103,6 +103,39 @@ class AnalysisHistoryTests(unittest.TestCase):
         self.assertEqual(rows[50]['previous_analyses'], [])
         self.assertTrue(rows[52]['area_history_available'])
 
+    def test_display_numbers_follow_retained_records_without_changing_ids_or_source_names(self):
+        with patch.object(database, '_get_connection', self.connect):
+            rows = database.list_analysis_summaries()
+            detail = database.get_analysis_by_id(52)
+        self.assertEqual([(row['id'], row['image_name']) for row in rows],
+                         [(52, 'Analysis 3'), (51, 'Analysis 2'), (50, 'Analysis 1')])
+        self.assertEqual(detail['image_name'], 'Analysis 3')
+        self.assertEqual(detail['source_image_name'], 'QJBJ.JPG')
+        with self.connect() as conn:
+            conn.execute('DELETE FROM analyses WHERE id=51')
+        with patch.object(database, '_get_connection', self.connect):
+            self.assertEqual(database.get_analysis_by_id(52)['image_name'], 'Analysis 2')
+            self.assertIsNone(database.get_analysis_by_id(51))
+            self.assertEqual(database.get_analysis_by_id(50)['source_image_name'], 'Legacy')
+        with self.connect() as conn:
+            self.assertEqual(conn.execute('SELECT image_name FROM analyses WHERE id=52').fetchone()[0], 'Analysis 52')
+
+    def test_area_check_excludes_nearby_disjoint_and_edge_touching_images(self):
+        requested = mapping(box(122, 10, 122.001, 10.001))
+        footprints = {52: requested,
+                      51: mapping(box(122.00101, 10, 122.002, 10.001)),
+                      50: mapping(box(122.001, 10, 122.002, 10.001))}
+        with self.connect() as conn:
+            for analysis_id, footprint in footprints.items():
+                conn.execute('UPDATE analyses SET footprint=? WHERE id=?', (json.dumps(footprint), analysis_id))
+            conn.execute('INSERT INTO planting_points VALUES (1,?,NULL)',
+                         (json.dumps(mapping(Point(122.00101, 10.0005))),))
+        with patch.object(database, '_get_connection', self.spatial_connect):
+            result = database.get_analysis_area_context(requested)
+        self.assertEqual([row['id'] for row in result['analyses']], [52])
+        self.assertEqual(result['analyses'][0]['image_name'], 'Analysis 3')
+        self.assertEqual(result['saved_point_count'], 0)
+
     def test_equal_dates_use_id_order_and_missing_boundaries_are_reported(self):
         footprint = json.dumps(mapping(box(122, 10, 122.001, 10.001)))
         with self.connect() as conn:

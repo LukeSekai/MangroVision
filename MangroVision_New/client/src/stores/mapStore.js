@@ -323,6 +323,7 @@ export const useMapStore = create((set, get) => ({
 
     const newAnalysisEntry = {
       id: analysisId,
+      display_number: savePayload.display_number,
       image_name: imageName,
       analyzed_at: nowIso,
       // History stores every retained geotagged point. The safe count is a

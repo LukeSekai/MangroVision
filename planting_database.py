@@ -2707,13 +2707,29 @@ def _save_analysis_with_connection(
 #  Overlap / Nearby Detection
 # ====================================================================
 
+_NUMBERED_ANALYSES = """
+    WITH numbered_analyses AS (
+        SELECT *, ROW_NUMBER() OVER (ORDER BY analyzed_at, id) AS display_number
+        FROM analyses
+    )
+"""
+
+
+def _analysis_display_row(row) -> dict:
+    """Number retained results at read time; never rewrite their IDs or history."""
+    result = dict(row)
+    result.setdefault("source_image_name", result.get("image_name"))
+    result["image_name"] = f"Analysis {int(result['display_number'])}"
+    return result
+
+
 def _find_repeat_image_analyses(conn, image_name, center_lat, center_lon,
                               source_image_sha256=None, source_original_sha256=None) -> List[dict]:
     """Use content identity, with filename/location fallback for asset-less legacy rows."""
-    rows = conn.execute("""
-        SELECT a.id, a.image_name, a.analyzed_at,
+    rows = conn.execute(_NUMBERED_ANALYSES + """
+        SELECT a.id, a.image_name, a.display_number, a.analyzed_at,
                COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name
-        FROM analyses a
+        FROM numbered_analyses a
         WHERE (CAST(? AS TEXT) IS NOT NULL AND a.analysis_detail_json ->> 'source_image_sha256' = ?)
            OR (CAST(? AS TEXT) IS NOT NULL AND (
                a.analysis_detail_json ->> 'source_original_sha256' = ?
@@ -2737,7 +2753,7 @@ def _find_repeat_image_analyses(conn, image_name, center_lat, center_lon,
         center_lon - _ANALYSIS_MATCH_DEG if center_lon is not None else None,
         center_lon + _ANALYSIS_MATCH_DEG if center_lon is not None else None,
     )).fetchall()
-    return [dict(row) for row in rows]
+    return [_analysis_display_row(row) for row in rows]
 
 
 def find_repeat_image_analyses(image_name, center_lat, center_lon,
@@ -2849,20 +2865,20 @@ def get_analysis_area_context(footprint: dict) -> dict:
     conn = _get_connection()
     try:
         requested = """
-            WITH requested AS (
+            requested AS (
                 SELECT extensions.ST_SetSRID(extensions.ST_GeomFromGeoJSON(?), 4326) AS geometry
             )
         """
         parameters = (json.dumps(geometry),)
-        analyses = conn.execute(requested + """
-            SELECT a.id, a.image_name, a.analyzed_at, a.footprint_quality,
+        analyses = conn.execute(_NUMBERED_ANALYSES + ',' + requested + """
+            SELECT a.id, a.image_name, a.display_number, a.analyzed_at, a.footprint_quality,
                    COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name
-            FROM analyses a CROSS JOIN requested
+            FROM numbered_analyses a CROSS JOIN requested
             WHERE extensions.ST_Intersects(a.footprint, requested.geometry)
               AND NOT extensions.ST_Touches(a.footprint, requested.geometry)
             ORDER BY a.analyzed_at DESC, a.id DESC
         """, parameters).fetchall()
-        points = conn.execute(requested + """
+        points = conn.execute('WITH ' + requested + """
             SELECT COUNT(*) AS saved_point_count
             FROM planting_points pp CROSS JOIN requested
             WHERE pp.deleted_at IS NULL
@@ -2871,7 +2887,7 @@ def get_analysis_area_context(footprint: dict) -> dict:
     finally:
         conn.close()
     return {
-        "analyses": [dict(row) for row in analyses],
+        "analyses": [_analysis_display_row(row) for row in analyses],
         "saved_point_count": int(points["saved_point_count"] if points else 0),
     }
 
@@ -3306,7 +3322,8 @@ def get_all_stats() -> dict:
 
     # Per-analysis breakdown (with planner name)
     analyses = conn.execute("""
-        SELECT a.id, a.image_name, a.analyzed_at, a.center_lat, a.center_lon,
+        SELECT a.id, a.image_name, ROW_NUMBER() OVER (ORDER BY a.analyzed_at, a.id) AS display_number,
+               a.analyzed_at, a.center_lat, a.center_lon,
                a.canopy_count, a.canopy_area_m2, a.canopy_coverage_pct,
                COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name,
                a.polygon_count, a.hexagon_count,
@@ -3321,7 +3338,7 @@ def get_all_stats() -> dict:
         LEFT JOIN users u ON u.id = a.user_id
         ORDER BY a.analyzed_at DESC
     """).fetchall()
-    stats['analyses'] = [dict(a) for a in analyses]
+    stats['analyses'] = [_analysis_display_row(a) for a in analyses]
 
     conn.close()
     return stats
@@ -3969,10 +3986,12 @@ def get_analysis_by_id(analysis_id: int) -> Optional[dict]:
     """Return one saved analysis row by id, or None if not found."""
     conn = _get_connection()
     row = conn.execute(
-        "SELECT * FROM analyses WHERE id = ?", (analysis_id,),
+        _NUMBERED_ANALYSES + """SELECT *,
+            COALESCE(analysis_detail_json ->> 'source_image_name', image_name) AS source_image_name
+            FROM numbered_analyses WHERE id = ?""", (analysis_id,),
     ).fetchone()
     conn.close()
-    return dict(row) if row else None
+    return _analysis_display_row(row) if row else None
 
 
 def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
@@ -3993,18 +4012,19 @@ def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
                    ) AS area_history_incomplete
         """ if include_previews else ""
         rows = conn.execute(f"""
-            SELECT id, image_name, analyzed_at, hexagon_count, center_lat, center_lon,
+            SELECT id, image_name, ROW_NUMBER() OVER (ORDER BY analyzed_at, id) AS display_number,
+                   analyzed_at, hexagon_count, center_lat, center_lon,
                    plantable_area_m2, canopy_area_m2, canopy_coverage_pct, total_area_m2,
                    COALESCE(analysis_detail_json ->> 'source_image_name', image_name) AS source_image_name
                    {area_columns}
             FROM analyses
             ORDER BY analyzed_at DESC, id DESC
         """).fetchall()
-        prior_matches = conn.execute("""
+        prior_matches = conn.execute(_NUMBERED_ANALYSES + """
             SELECT current.id AS current_id, earlier.id, earlier.image_name,
-                   earlier.analyzed_at, earlier.footprint_quality,
+                   earlier.display_number, earlier.analyzed_at, earlier.footprint_quality,
                    COALESCE(earlier.analysis_detail_json ->> 'source_image_name', earlier.image_name) AS source_image_name
-            FROM analyses current JOIN analyses earlier
+            FROM numbered_analyses current JOIN numbered_analyses earlier
               ON (earlier.analyzed_at, earlier.id) < (current.analyzed_at, current.id)
              AND extensions.ST_Intersects(current.footprint, earlier.footprint)
              AND NOT extensions.ST_Touches(current.footprint, earlier.footprint)
@@ -4024,11 +4044,11 @@ def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
     preview_keys = {}
     for asset in assets:
         preview_keys.setdefault(asset['analysis_id'], asset['object_key'])
-    summaries = [dict(row) for row in rows]
+    summaries = [_analysis_display_row(row) for row in rows]
     if include_previews:
         prior_by_id = {}
         for match in prior_matches:
-            previous = dict(match)
+            previous = _analysis_display_row(match)
             current_id = previous.pop('current_id')
             prior_by_id.setdefault(current_id, []).append(previous)
         for summary in summaries:
