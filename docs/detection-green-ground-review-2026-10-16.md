@@ -193,3 +193,57 @@ page and original run outputs are retained.
 The change is local on Latest-Main. No saved analysis, planting point or field
 record was modified. Restart the backend and reanalyze the original to use it;
 no backend restart, push or deployment was performed during this fix.
+
+## Follow-up: WAJG6300 C193 and C194
+
+The user confirmed that the two isolated mud-side markers in the WAJG6300
+review are false detections. Both borrowed area from adjacent yellow fragments
+even though only one smaller core passed the existing green-color check.
+The two threshold fragments were being treated as evidence of several leaves.
+
+For a small ambiguous core outside the accepted canopy's 0.75 m branch context,
+with the full local image patch visible, the filter now checks whether those
+yellow fragments form separate patches. A 1 cm GSD-scaled neighborhood is used
+only to count patches; its grown pixels never contribute leaf area. Fragments
+of one object must pass the existing supported pale-leaf recovery instead of
+qualifying as several independent leaves. Rejections use the telemetry reason
+`fragmented_yellow_support`.
+
+The existing measurements used by later wood/ground checks are retained when
+pale recovery validates this additional case. Strong green cores, separate
+yellow leaves, close mature foliage and truncated image-edge context preserve
+their approved paths. An initial broader check also removed five branch-foliage
+markers in the history cache; the final version preserves all five using the
+existing mature-canopy context.
+
+Verification against `7e6cac6`:
+
+- **Fresh original WAJG6300 GPU inference: 232 → 230** supplemental candidates.
+  Exactly C193 (464.46, 79.38) and C194 (3034.42, 523.24) are removed; every
+  other position is identical. The original EXIF scale is 0.7717149 cm/px.
+  All 66 processed tiles completed with the existing checkpoint, confidence
+  0.80 and fallback seedling mode. The mature mask remains identical at every
+  pixel, covering 186.1495 m².
+- **61 tests passed**, including the two checksum-verified original negatives,
+  adjacent yellow fragments at multiple resolutions/orientations, separated
+  yellow leaves, close canopy context and incomplete image-edge context.
+- **All 44 reviewed leaf locations retained** on the original photos and
+  cached history inputs at their saved scales.
+- The final-filter audit of **35 cached histories** changes only WAJG6300 by
+  those two positions: **4,587 → 4,585** candidates overall. The other 34 retain
+  every prior candidate. DJI_0809 remains at zero accepted candidates.
+- Full pipeline replays preserve **DJI_0698: 21; DJI_0700: 3; DJI_0712: 79;
+  DJI_0720: 121** candidate positions and all four mature canopy masks.
+
+The before/after gallery is
+[`tmp/seedling_wajg6300_fix_20261016/index.html`](../tmp/seedling_wajg6300_fix_20261016/index.html).
+It includes enlarged rejected objects, retained-candidate crops, fresh run
+metadata, history verification and test results. Comparison labels retain
+the before-run candidate IDs. The previously opened WAJG6300 review also
+shows the fix; its original page and raw run outputs are retained.
+
+This remains a conservative appearance check, not a fully annotated accuracy
+evaluation. The remaining 230 markers include mature-tree foliage and are not
+a verified count of distinct seedlings. The code change is local on Latest-Main;
+no saved overlay, planting point or field record was changed. Restart the backend
+and analyze the original again to use it. No push or deployment was performed.

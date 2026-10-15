@@ -38,10 +38,8 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
         # crown's close branch context. Earlier checks still run everywhere;
         # this does not expand or alter the mature canopy mask.
         edge_distance = min(cx, cy, width-1-cx, height-1-cy) * gsd
-        isolated_ground = (
-            edge_distance > .75
-            and (canopy_distance is None or canopy_distance[y, x] > .75)
-        )
+        outside_canopy = canopy_distance is None or canopy_distance[y, x] > .75
+        isolated_ground = edge_distance > .75 and outside_canopy
         x0, x1 = max(0, x-radius), min(width, x+radius+1)
         y0, y1 = max(0, y-radius), min(height, y+radius+1)
         yy, xx = np.ogrid[y0:y1, x0:x1]
@@ -60,10 +58,22 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
         leaf_pixels, _ = _compact_leaf_pixels(green_core, gsd)
         leaf_area = int(np.count_nonzero(leaf_pixels))
         strong_leaf = _has_compact_leaf(leaf_pixels & (patch_chroma >= .08), gsd)
-        _, broad_areas = _compact_leaf_pixels(broad_leaf, gsd)
+        broad_pixels, broad_areas = _compact_leaf_pixels(broad_leaf, gsd)
         # Several yellow leaves can belong to one seedling; a single pale
         # highlight must not borrow unrelated color elsewhere in the image.
+        fragmented_yellow_support = False
         if len(broad_areas) >= 2 and leaf_area >= min_core_pixels:
+            if (not strong_leaf and leaf_area < np.ceil(.002 / gsd**2)
+                    and outside_canopy and edge_distance > radius*gsd):
+                # Threshold gaps within one yellow object do not establish
+                # several leaves. Join only for counting nearby patches; the
+                # grown pixels never contribute leaf area or color evidence.
+                # Preserve close crown/branch context and truncated patches.
+                gap_radius = max(1, int(np.ceil(.01 / gsd)))
+                nearby = cv2.dilate(broad_pixels.astype(np.uint8), cv2.getStructuringElement(
+                    cv2.MORPH_ELLIPSE, (2*gap_radius+1, 2*gap_radius+1),
+                ))
+                fragmented_yellow_support = cv2.connectedComponents(nearby, 8)[0] == 2
             leaf_area = max(leaf_area, sum(broad_areas))
 
         # Olive mud and pale twigs can be locally brighter than wet ground.
@@ -78,8 +88,9 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
             (broad_leaf & (patch_exg >= 55)) | pale_core, gsd,
         )
         reason = None if distinct_core else "weak_leaf_color"
-        if reason is None and not strong_leaf and leaf_area < np.ceil(.002 / gsd**2):
-            reason = "insufficient_leaf_support"
+        if (reason is None and not strong_leaf
+                and (leaf_area < np.ceil(.002 / gsd**2) or fragmented_yellow_support)):
+            reason = "fragmented_yellow_support" if fragmented_yellow_support else "insufficient_leaf_support"
             # Sunlit leaves can have almost-white centers. Grow a compact
             # pale region only when it has substantial, independently green
             # pixels. Neutral cream wood and a few colored edge pixels cannot
@@ -101,8 +112,9 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
                     supported_pale |= component
             pale_area = int(np.count_nonzero(supported_pale))
             if pale_area >= np.ceil(.002 / gsd**2):
-                leaf_pixels = supported_pale
-                leaf_area = pale_area
+                if leaf_area < np.ceil(.002 / gsd**2):
+                    leaf_pixels = supported_pale
+                    leaf_area = pale_area
                 reason = None
         if not strong_leaf and reason is None:
             bright = ((patch_val >= ground_val+12) & (patch_sat >= 20)

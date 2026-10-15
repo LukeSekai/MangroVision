@@ -169,6 +169,56 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
         entries = [{'center': (80., 80.)}]
         self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], entries)
 
+    def test_adjacent_yellow_fragments_cannot_inflate_a_small_green_core(self):
+        for scale in (1, 2):
+            for angle in (0, 90):
+                with self.subTest(scale=scale, angle=angle):
+                    image = np.full((160, 160, 3), (105, 110, 108), np.uint8)
+                    cv2.ellipse(image, (80, 80), (2, 1), 0, 0, 360, (45, 160, 159), -1)
+                    cv2.ellipse(image, (87, 80), (3, 2), 0, 0, 360, (40, 166, 180), -1)
+                    if angle:
+                        image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+                    image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                    kept, meta = filter_seedling_ground_artifacts(
+                        image, [{'center': (80*scale, 80*scale)}], .01/scale,
+                    )
+                    self.assertEqual(kept, [])
+                    self.assertEqual(meta['seedling_ground_artifact_rejected_reasons'],
+                                     {'fragmented_yellow_support': 1})
+
+    def test_separate_yellow_leaves_keep_their_existing_cluster_support(self):
+        for scale in (1, 2):
+            image = np.full((160, 160, 3), (105, 110, 108), np.uint8)
+            cv2.ellipse(image, (80, 80), (2, 1), 0, 0, 360, (45, 160, 159), -1)
+            cv2.ellipse(image, (98, 80), (3, 2), 0, 0, 360, (40, 166, 180), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            entries = [{'center': (80*scale, 80*scale)}]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01/scale)[0], entries)
+
+    def test_small_yellow_fragments_keep_close_canopy_and_clipped_context(self):
+        for scale in (1, 2):
+            image = np.full((160, 160, 3), (105, 110, 108), np.uint8)
+            cv2.ellipse(image, (80, 80), (2, 1), 0, 0, 360, (45, 160, 159), -1)
+            cv2.ellipse(image, (87, 80), (3, 2), 0, 0, 360, (40, 166, 180), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            entries = [{'center': (80*scale, 80*scale)}]
+            canopy = np.zeros(image.shape[:2], np.uint8)
+            canopy[:, 30*scale:40*scale] = 255
+            original_mask = canopy.copy()
+            self.assertEqual(filter_seedling_ground_artifacts(
+                image, entries, .01/scale, canopy_mask=canopy,
+            )[0], entries)
+            np.testing.assert_array_equal(canopy, original_mask)
+            far_canopy = np.zeros_like(canopy)
+            far_canopy[:, :2*scale] = 255
+            self.assertEqual(filter_seedling_ground_artifacts(
+                image, entries, .01/scale, canopy_mask=far_canopy,
+            )[0], [])
+            # A clipped neighborhood cannot establish a whole isolated patch.
+            cropped = image[:, 60*scale:].copy()
+            clipped_entries = [{'center': (20*scale, 80*scale)}]
+            self.assertEqual(filter_seedling_ground_artifacts(cropped, clipped_entries, .01/scale)[0], clipped_entries)
+
     def ambiguous_green_scene(self):
         image = np.full((160, 160, 3), (105, 124, 123), np.uint8)
         cv2.ellipse(image, (80, 80), (6, 4), 0, 0, 360, (125, 150, 143), -1)
