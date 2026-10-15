@@ -137,6 +137,28 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
                         if distance < .04:
                             reason = "linear_wood_context"
                             break
+            if (reason is None and ground_val < 80 and len(broad_areas) == 1
+                    and leaf_area < np.ceil(.006 / gsd**2)
+                    and broad_areas[0] >= .5 * leaf_area
+                    and not _has_compact_leaf(pale_core, gsd)):
+                # In deep shade a tinted debris tip can pass the leaf checks
+                # while its neutral body is omitted from the colored shape.
+                # Check that whole connected object here. The lit-ground path
+                # retains its existing rules for pale foliage beside stakes.
+                # Do not join separate highlights or replace the green-core,
+                # multiple-leaf and supported pale-leaf recovery paths.
+                whole_bright = ((distance_m2 <= .25**2)
+                                & (patch_val >= ground_val+25))
+                count, object_labels = cv2.connectedComponents(
+                    whole_bright.astype(np.uint8), 8,
+                )
+                for label in range(1, count):
+                    component = object_labels == label
+                    if (np.count_nonzero(component & leaf_pixels) >= .5 * leaf_area
+                            and np.mean(patch_sat[component] < 55) >= .5
+                            and _principal_aspect(component) > 3):
+                        reason = "elongated_neutral_object"
+                        break
         clear_green = False
         green_areas = []
         pale_areas = []

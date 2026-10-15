@@ -110,6 +110,43 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
             entries = [{'center': (80*scale, 80*scale)}]
             self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01/scale)[0], entries)
 
+    def test_green_tipped_neutral_debris_in_shade_is_not_a_seedling(self):
+        for angle in (0, 45, 90):
+            for scale in (1, 2):
+                with self.subTest(angle=angle, scale=scale):
+                    image = np.full((200, 200, 3), (50, 45, 40), np.uint8)
+                    cv2.ellipse(image, (100, 100), (13, 3), angle, 0, 360, (110, 120, 118), -1)
+                    tip = (100-round(10*np.cos(np.deg2rad(angle))),
+                           100-round(10*np.sin(np.deg2rad(angle))))
+                    cv2.ellipse(image, tip, (4, 3), angle, 0, 360, (35, 110, 100), -1)
+                    image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                    kept, meta = filter_seedling_ground_artifacts(
+                        image, [{'center': tuple(p*scale for p in tip)}], .01/scale,
+                    )
+                    self.assertEqual(kept, [])
+                    self.assertEqual(meta['seedling_ground_artifact_rejected_reasons'],
+                                     {'elongated_neutral_object': 1})
+
+    def test_shaded_leaf_with_real_green_core_or_compact_pale_body_is_preserved(self):
+        for color, axes in (((25, 110, 40), (13, 3)), ((35, 110, 100), (6, 4))):
+            for scale in (1, 2):
+                with self.subTest(color=color, scale=scale):
+                    image = np.full((200, 200, 3), (50, 45, 40), np.uint8)
+                    cv2.ellipse(image, (100, 100), axes, 0, 0, 360, (110, 120, 118), -1)
+                    cv2.ellipse(image, (95, 100), (4, 3), 0, 0, 360, color, -1)
+                    image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                    entries = [{'center': (95*scale, 100*scale)}]
+                    self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01/scale)[0], entries)
+
+    def test_separate_neutral_stick_does_not_change_a_shaded_leaf_shape(self):
+        for scale in (1, 2):
+            image = np.full((200, 200, 3), (50, 45, 40), np.uint8)
+            cv2.ellipse(image, (90, 100), (4, 3), 0, 0, 360, (35, 110, 100), -1)
+            cv2.line(image, (99, 100), (119, 100), (110, 120, 118), 4)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            entries = [{'center': (90*scale, 100*scale)}]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01/scale)[0], entries)
+
     def test_candidate_without_leaf_pixels_is_rejected(self):
         image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
         self.assertEqual(filter_seedling_ground_artifacts(image, [{'center': (80., 80.)}], .01)[0], [])

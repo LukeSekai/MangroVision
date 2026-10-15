@@ -143,3 +143,53 @@ its earlier page is preserved as `index_initial_before_followup.html`.
 The source change remains local on Latest-Main. No backend restart, deployment,
 push, database write, saved overlay replacement or planting-point change was
 performed. Restart the backend and reanalyze the original to use the new filter.
+
+## Follow-up: shaded debris in DJI_0809
+
+Fresh GPU inference on the original `DJI_0809.JPG` accepted one pale debris
+object at approximately (3205, 1376). Its greenish tip formed a compact color
+core, while most of the neutral body was omitted from the existing colored
+shape check. The surrounding deep shade also bypassed the lit-ground checks.
+
+The final evidence filter now checks the whole connected bright object for
+these small, ambiguous shaded candidates. A single weak color core on a long,
+mostly neutral object is rejected as `elongated_neutral_object`. Disconnected
+highlights are not joined. Strong green cores, multiple leaf components and
+supported pale-leaf recovery keep their existing paths. This additional check
+is limited to deep shade; the established lit-ground rules remain unchanged.
+An initially broader version affected pale foliage in DJI_0460, so that version
+was narrowed before integration and the foliage was added as a regression case.
+
+Verification against `ad0c4e3`:
+
+- **Fresh DJI_0809 inference: 1 → 0 accepted supplemental candidates.** The
+  reported debris is removed. The original 4000 × 2250 file, EXIF GSD
+  0.7261136 cm/px, existing checkpoint and confidence 0.80 were used. All
+  42 processed tiles completed, using the existing `fallback_legacy` mode.
+  The optional learned seedling classifier is still unavailable.
+- The mature mask is **identical at every pixel**, with 85.1484 m² of canopy.
+  The canopy model, white/shaded crown recovery, scale, alignment, spacing and
+  buffer code were not changed.
+- **DJI_0698: 21 → 21; DJI_0700: 3 → 3; DJI_0712: 79 → 79;
+  DJI_0720: 121 → 121.** Complete pipeline replays of the same verified cached
+  model predictions retain every prior candidate position and canopy pixel.
+- **44 reviewed leaf locations retained**, including the additional pale
+  foliage guard from DJI_0460; verified on original photos and history inputs.
+- **58 regression tests passed**, including shaded debris at multiple angles
+  and GSDs, shaded green/pale leaves, and disconnected neighboring objects.
+- Offline final-filter checks of all **35 cached history inputs** changed only
+  DJI_0809: **4,588 → 4,587** candidates overall. The other 34 keep every prior
+  candidate. This is not fresh AI inference on all 35 histories or a measure
+  of overall accuracy. Zero accepted candidates does not establish that a
+  photo contains no seedlings.
+
+The local before/after gallery is
+[`tmp/seedling_dji0809_fix_20261016/index.html`](../tmp/seedling_dji0809_fix_20261016/index.html).
+Its `summary.json`, `four_references/summary.json`, `history/verification.json`
+and `tests.xml` record the checks. The previously opened
+`tmp/seedling_dji0809_20261016/index.html` also shows the comparison; its original
+page and original run outputs are retained.
+
+The change is local on Latest-Main. No saved analysis, planting point or field
+record was modified. Restart the backend and reanalyze the original to use it;
+no backend restart, push or deployment was performed during this fix.
