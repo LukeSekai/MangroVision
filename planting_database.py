@@ -2092,14 +2092,25 @@ def _cleanup_cross_species_spacing_conflicts(conn: Any) -> int:
     return len(delete_ids)
 
 
-def _delete_analysis_rows(conn, analysis_id: int):
-    """Remove only an unworked analysis; preserve all field/history evidence."""
-    protected = conn.execute("""
+_ANALYSIS_DELETE_LOCK_REASON = (
+    "This analysis contains assigned points or field records and cannot be deleted. "
+    "Its planting, monitoring, and mortality history must be kept."
+)
+
+
+def _analysis_deletion_locked_sql(analysis_id_expression: str) -> str:
+    """Shared read/write policy. The expression is internal SQL, never user input."""
+    return f"""EXISTS (
         SELECT 1
         FROM planting_points pp
-        WHERE pp.analysis_id = ?
+        WHERE pp.analysis_id = {analysis_id_expression}
           AND (
-              EXISTS(
+              COALESCE(LOWER(TRIM(pp.status)), '') <> 'planned'
+              OR pp.planted_at IS NOT NULL
+              OR pp.planted_date IS NOT NULL
+              OR pp.death_at IS NOT NULL
+              OR NULLIF(TRIM(pp.death_reason), '') IS NOT NULL
+              OR EXISTS(
                   SELECT 1 FROM planter_assignment_points pap
                   WHERE pap.planting_point_id = pp.id
               )
@@ -2112,12 +2123,23 @@ def _delete_analysis_rows(conn, analysis_id: int):
                   WHERE pdr.planting_point_id = pp.id
               )
           )
-        LIMIT 1
-    """, (int(analysis_id),)).fetchone()
-    if protected:
-        raise ValueError(
-            "This analysis has assignment, planting, monitoring, or mortality history and cannot be replaced or deleted."
-        )
+    )"""
+
+
+def _delete_analysis_rows(conn, analysis_id: int):
+    """Lock before checking: field updates and FK inserts cannot race deletion."""
+    # The parent lock also prevents new points appearing during the check.
+    if not conn.execute('SELECT id FROM analyses WHERE id = ? FOR UPDATE', (int(analysis_id),)).fetchone():
+        return
+    conn.execute('''SELECT id FROM planting_points WHERE analysis_id = ?
+                    ORDER BY id FOR UPDATE''', (int(analysis_id),)).fetchall()
+    # A fresh statement sees any field update committed while we waited for
+    # those point locks. Include soft-deleted points and historical links.
+    protected = conn.execute(
+        f'SELECT {_analysis_deletion_locked_sql("?")} AS deletion_locked', (int(analysis_id),),
+    ).fetchone()
+    if protected['deletion_locked']:
+        raise ValueError(_ANALYSIS_DELETE_LOCK_REASON)
     conn.execute("""
         INSERT INTO object_cleanup_jobs (object_key, reason)
         SELECT object_key, 'analysis_deleted'
@@ -2720,6 +2742,10 @@ def _analysis_display_row(row) -> dict:
     result = dict(row)
     result.setdefault("source_image_name", result.get("image_name"))
     result["image_name"] = f"Analysis {int(result['display_number'])}"
+    if 'deletion_locked' in result:
+        result['deletion_locked'] = bool(result['deletion_locked'])
+        result['can_delete'] = not result['deletion_locked']
+        result['delete_lock_reason'] = _ANALYSIS_DELETE_LOCK_REASON if result['deletion_locked'] else None
     return result
 
 
@@ -3321,8 +3347,9 @@ def get_all_stats() -> dict:
     stats['points'] = _annotate_point_advisories(points)
 
     # Per-analysis breakdown (with planner name)
-    analyses = conn.execute("""
+    analyses = conn.execute(f"""
         SELECT a.id, a.image_name, ROW_NUMBER() OVER (ORDER BY a.analyzed_at, a.id) AS display_number,
+               {_analysis_deletion_locked_sql('a.id')} AS deletion_locked,
                a.analyzed_at, a.center_lat, a.center_lon,
                a.canopy_count, a.canopy_area_m2, a.canopy_coverage_pct,
                COALESCE(a.analysis_detail_json ->> 'source_image_name', a.image_name) AS source_image_name,
@@ -3350,6 +3377,9 @@ def delete_analysis(analysis_id: int):
     try:
         _delete_analysis_rows(conn, int(analysis_id))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
     process_object_cleanup_jobs()
@@ -3986,7 +4016,8 @@ def get_analysis_by_id(analysis_id: int) -> Optional[dict]:
     """Return one saved analysis row by id, or None if not found."""
     conn = _get_connection()
     row = conn.execute(
-        _NUMBERED_ANALYSES + """SELECT *,
+        _NUMBERED_ANALYSES + f"""SELECT *,
+            {_analysis_deletion_locked_sql('numbered_analyses.id')} AS deletion_locked,
             COALESCE(analysis_detail_json ->> 'source_image_name', image_name) AS source_image_name
             FROM numbered_analyses WHERE id = ?""", (analysis_id,),
     ).fetchone()
@@ -4013,6 +4044,7 @@ def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
         """ if include_previews else ""
         rows = conn.execute(f"""
             SELECT id, image_name, ROW_NUMBER() OVER (ORDER BY analyzed_at, id) AS display_number,
+                   {_analysis_deletion_locked_sql('analyses.id')} AS deletion_locked,
                    analyzed_at, hexagon_count, center_lat, center_lon,
                    plantable_area_m2, canopy_area_m2, canopy_coverage_pct, total_area_m2,
                    COALESCE(analysis_detail_json ->> 'source_image_name', image_name) AS source_image_name

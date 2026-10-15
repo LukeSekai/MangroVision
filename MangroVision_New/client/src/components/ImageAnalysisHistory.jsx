@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import './ImageAnalysisHistory.css';
@@ -39,6 +39,7 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
   const [refresh, setRefresh] = useState(0);
   const [page, setPage] = useState(1);
   const listRef = useRef(null);
+  const lockDescriptionId = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -133,10 +134,14 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
           const isOpening = openingId === analysis.id;
           const name = analysis.source_image_name || analysis.image_name;
           const coverage = canopyCoverage(analysis);
+          const canDelete = analysis.can_delete === true && !analysis.deletion_locked;
+          const locked = analysis.deletion_locked === true || analysis.can_delete === false;
+          const lockId = `${lockDescriptionId}-${analysis.id}`;
           return (
             <div key={analysis.id} className={`analytics-history-item ${isOpening ? 'analytics-history-loading' : ''}`}>
               <button type="button" className="analysis-history-open" onClick={() => onOpen(analysis.id)}
-                disabled={loading || Boolean(openingId)} aria-label={`Open summary for ${name}`}>
+                disabled={loading || Boolean(openingId)} aria-label={`Open summary for ${name}`}
+                aria-describedby={canDelete ? undefined : lockId}>
                 <ResultThumbnail key={`${analysis.id}-${analysis.result_preview_url || ''}`} analysis={analysis} />
                 <span className="analytics-history-main">
                   <span className="analytics-history-title">{name}</span>
@@ -144,6 +149,15 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
                     {analysis.image_name !== name && <span>{analysis.image_name} · </span>}
                     {formatAnalysisDate(analysis.analyzed_at)}
                   </span>
+                  {!canDelete && <span id={lockId} className="analysis-history-lock"
+                    title={analysis.delete_lock_reason || (locked
+                      ? 'This analysis has assigned points or field records and cannot be deleted.'
+                      : 'Refresh history to check deletion availability.')}>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                      <rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                    </svg>
+                    {locked ? 'Locked—contains field records' : 'Refresh to check deletion availability'}
+                  </span>}
                   <span className="analysis-history-metrics">
                     <span><span>Plantable area</span><strong>{formatAnalysisNumber(analysis.plantable_area_m2)}{analysis.plantable_area_m2 != null && ' m²'}</strong></span>
                     <span><span>Canopy coverage</span><strong>{formatAnalysisNumber(coverage)}{coverage !== null && '%'}</strong></span>
@@ -155,13 +169,13 @@ export default function ImageAnalysisHistory({ open, analyses, onClose, onOpen, 
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="m9 5 7 7-7 7" /></svg>
                 </span>
               </button>
-              <button type="button" className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
+              {canDelete && <button type="button" className="btn btn-ghost btn-sm btn-icon analytics-history-delete"
                 onClick={() => onDelete(analysis)} title={`Delete ${name}`} aria-label={`Delete analysis ${name}`}
                 disabled={loading || Boolean(openingId) || deleteBusy}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
                   <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
                 </svg>
-              </button>
+              </button>}
             </div>
           );
         })}

@@ -259,6 +259,9 @@ def analysis_detail(analysis_id: int):
     return {
         "analysis_id": analysis_id,
         "display_number": row.get("display_number"),
+        "can_delete": row["can_delete"],
+        "deletion_locked": row["deletion_locked"],
+        "delete_lock_reason": row["delete_lock_reason"],
         "analysis_key": None,
         "uploaded_file_name": image_name,
         "source_image_name": saved_detail.get("source_image_name") or row.get("source_image_name") or image_name,

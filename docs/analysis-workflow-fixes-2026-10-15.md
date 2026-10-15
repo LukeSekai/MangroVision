@@ -40,3 +40,44 @@ emails, migrations or storage writes were performed for verification.
 
 Deploy the matching backend and frontend together after integration; the new
 frontend uses `GET /api/analyses/jobs/current` for recovery.
+
+## Protected analysis deletion
+
+History replaces Delete with **Locked—contains field records** whenever an
+analysis has assigned points, planting/death evidence, or historical assignment,
+planting or mortality links. Released assignments, closed planting cycles and
+soft-deleted points with that history remain protected. A point marked Planted,
+Dead or Skipped is protected even if an older import lacks a history link.
+Only unused, unassigned Planned points are eligible; unknown statuses fail closed.
+The protected analysis remains available for viewing and exporting.
+
+History, details, save responses and map statistics use one SQL policy to return
+`can_delete`, `deletion_locked` and `delete_lock_reason`. A missing eligibility
+result requires Refresh instead of offering Delete. If points become used after
+the history loaded, the API returns 409 and the UI returns to refreshed history
+with the lock explanation.
+
+The deletion transaction locks the analysis row, then its points in ascending
+ID order. It rechecks the policy in a fresh statement after obtaining the locks,
+before queuing image cleanup or deleting anything. These locks conflict with
+field updates and foreign-key inserts. A protected request rolls back without
+starting object cleanup. No application migration is required.
+
+Follow-up validation passed 69 backend checks (including seven real PostgreSQL
+race cases) and 73 frontend checks, plus lint and production build. The race
+checks observed actual database lock waits: a committed planting/death update
+or history insertion blocked deletion; when unused deletion won first, competing
+assignment and new-point inserts could not commit against the deleted records.
+
+PostgreSQL race checks are opt-in with
+`MANGROVISION_RUN_ANALYSIS_DELETE_PG_TESTS=1`. They use only freshly created,
+UUID-named fixture schemas and drop them afterwards. Each transaction verifies
+its fixture search path, with no application-schema fallback. They send no mail
+and never run live image cleanup. A separate test database URL can be supplied
+through `MANGROVISION_ANALYSIS_DELETE_TEST_DATABASE_URL`; otherwise the configured
+migration connection is used solely for the isolated fixtures.
+
+A database-enforced read-only audit found 12 protected and 23 eligible analyses
+out of 35 retained records. History, detail and statistics flags agreed. The
+database uses Read Committed isolation, and no fixture schemas remained after
+the tests. Verification did not delete or update application records.

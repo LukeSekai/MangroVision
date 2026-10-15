@@ -439,6 +439,14 @@ export default function ImageProcessing() {
       const response = await fetch(`${API}/api/analyses/${analysisId}`, { method: 'DELETE' });
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
+        if (response.status === 409) {
+          setPendingDeleteId(null);
+          setPendingDeleteAnalysis(null);
+          setAnalysisLoadError(payload.detail || 'This analysis contains field records and cannot be deleted.');
+          setHistoryOpen(true);
+          await fetchStats();
+          return;
+        }
         throw new Error(payload.detail || 'Delete failed');
       }
       setPendingDeleteId(null);
@@ -717,6 +725,7 @@ export default function ImageProcessing() {
       <ImageAnalysisHistory open={historyOpen} analyses={analyses}
         onClose={() => setHistoryOpen(false)} onOpen={handleOpenAnalysis}
         onDelete={(analysis) => {
+          if (analysis.can_delete !== true || analysis.deletion_locked) return;
           setHistoryOpen(false);
           setPendingDeleteId(analysis.id);
           setPendingDeleteAnalysis(analysis);
@@ -852,7 +861,7 @@ export default function ImageProcessing() {
           setHistoryOpen(true);
         }}
       >
-        <p>This permanently removes the analysis and all its saved planting points from the database. This action cannot be undone.</p>
+        <p>This permanently removes this unused analysis, its images, and its unassigned Planned points. This action cannot be undone. Analyses with assignments or field records are locked and cannot be deleted.</p>
         {deleteError && <div className="analytics-error" role="alert">{deleteError}</div>}
       </Modal>
 

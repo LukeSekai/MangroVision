@@ -46,7 +46,12 @@ class AnalysisHistoryTests(unittest.TestCase):
                     footprint TEXT, footprint_quality TEXT);
                 CREATE TABLE analysis_assets (analysis_id INTEGER, kind TEXT,
                     object_key TEXT, lifecycle_state TEXT);
-                CREATE TABLE planting_points (id INTEGER PRIMARY KEY, location TEXT, deleted_at TEXT);
+                CREATE TABLE planting_points (id INTEGER PRIMARY KEY, location TEXT, deleted_at TEXT,
+                    analysis_id INTEGER, status TEXT DEFAULT 'planned', planted_at TEXT, planted_date TEXT,
+                    death_at TEXT, death_reason TEXT);
+                CREATE TABLE planter_assignment_points (id INTEGER PRIMARY KEY, planting_point_id INTEGER);
+                CREATE TABLE planting_events (id INTEGER PRIMARY KEY, planting_point_id INTEGER);
+                CREATE TABLE point_death_records (id INTEGER PRIMARY KEY, planting_point_id INTEGER);
             ''')
             conn.executemany('INSERT INTO analyses VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)', [
                 (52, 'Analysis 52', '2026-10-07', 50, 10.8, 122.6, 175, 90, 30, 300,
@@ -128,7 +133,7 @@ class AnalysisHistoryTests(unittest.TestCase):
         with self.connect() as conn:
             for analysis_id, footprint in footprints.items():
                 conn.execute('UPDATE analyses SET footprint=? WHERE id=?', (json.dumps(footprint), analysis_id))
-            conn.execute('INSERT INTO planting_points VALUES (1,?,NULL)',
+            conn.execute('INSERT INTO planting_points(id,location,deleted_at) VALUES (1,?,NULL)',
                          (json.dumps(mapping(Point(122.00101, 10.0005))),))
         with patch.object(database, '_get_connection', self.spatial_connect):
             result = database.get_analysis_area_context(requested)
@@ -160,7 +165,7 @@ class AnalysisHistoryTests(unittest.TestCase):
         with self.connect() as conn:
             conn.execute('UPDATE analyses SET footprint=? WHERE id=52', (json.dumps(footprint),))
             for point_id, lon, lat, deleted in points:
-                conn.execute('INSERT INTO planting_points VALUES (?,?,?)',
+                conn.execute('INSERT INTO planting_points(id,location,deleted_at) VALUES (?,?,?)',
                              (point_id, json.dumps(mapping(Point(lon, lat))), deleted))
         with patch.object(database, '_get_connection', self.spatial_connect):
             result = database.get_analysis_area_context(footprint)
@@ -173,7 +178,7 @@ class AnalysisHistoryTests(unittest.TestCase):
             mapping(box(123,11,123.001,11.001))['coordinates'],
         ]}
         with self.connect() as conn:
-            conn.execute('INSERT INTO planting_points VALUES (1,?,NULL)', (json.dumps(mapping(Point(123.0005,11.0005))),))
+            conn.execute('INSERT INTO planting_points(id,location,deleted_at) VALUES (1,?,NULL)', (json.dumps(mapping(Point(123.0005,11.0005))),))
         with patch.object(database, '_get_connection', self.spatial_connect):
             self.assertEqual(database.get_analysis_area_context(footprint)['saved_point_count'], 1)
         with patch.object(database, '_get_connection') as connect:
@@ -189,6 +194,21 @@ class AnalysisHistoryTests(unittest.TestCase):
         sign.assert_not_called()
         self.assertEqual(len(results), 3)
         self.assertNotIn('result_preview_url', results[0])
+
+    def test_history_and_detail_report_the_same_deletion_lock(self):
+        with self.connect() as conn:
+            conn.execute("INSERT INTO planting_points(id,analysis_id,status) VALUES (1,52,'planted'), (2,51,'planned')")
+            conn.execute('INSERT INTO planter_assignment_points VALUES (1,2)')
+        with patch.object(database, '_get_connection', self.connect):
+            rows = {row['id']: row for row in database.list_analysis_summaries()}
+            detail = database.get_analysis_by_id(52)
+        for analysis_id in (52,51):
+            self.assertTrue(rows[analysis_id]['deletion_locked'])
+            self.assertFalse(rows[analysis_id]['can_delete'])
+            self.assertIn('cannot be deleted', rows[analysis_id]['delete_lock_reason'])
+        self.assertEqual(detail['delete_lock_reason'], rows[52]['delete_lock_reason'])
+        self.assertTrue(rows[50]['can_delete'])
+        self.assertIsNone(rows[50]['delete_lock_reason'])
 
     def test_preview_endpoint_preserves_staff_authorization(self):
         from fastapi import FastAPI

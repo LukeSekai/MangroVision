@@ -99,7 +99,7 @@ class SavedPointPreviewTests(unittest.TestCase):
 
     def test_stale_preview_is_rejected_before_save(self):
         self.save_point('rhizophora')
-        cached = {'center_lat': 10.8, 'center_lon': 122.6,
+        cached = {'owner_id': 1, 'center_lat': 10.8, 'center_lon': 122.6,
                   'safe_hexagons': [self.point(0)],
                   'results': {'species': 'rhizophora', 'planting_distance_m': 2.}}
         with patch.object(processing, '_require_lgu_user', return_value={'id': 1}), \

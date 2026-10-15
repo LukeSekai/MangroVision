@@ -5832,6 +5832,8 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
     saved_analysis = get_analysis_by_id(analysis_id)
     analysis_name = saved_analysis["image_name"]
     cached_payload["response_payload"]["display_number"] = saved_analysis.get("display_number")
+    deletion_policy = {key: saved_analysis[key] for key in ('can_delete', 'deletion_locked', 'delete_lock_reason')}
+    cached_payload["response_payload"].update(deletion_policy)
     cached_payload["response_payload"]["source_image_name"] = cached_payload["image_name"]
     cached_payload["response_payload"]["uploaded_file_name"] = analysis_name
     cached_payload["response_payload"]["save_summary"] = {
@@ -5846,6 +5848,7 @@ def save_processed_analysis(body: SaveProcessedAnalysisRequest):
         "analysis_id": analysis_id,
         "analysis_name": analysis_name,
         "display_number": saved_analysis.get("display_number"),
+        **deletion_policy,
         "new_points": new_points,
         "skipped_duplicates": skipped,
     }

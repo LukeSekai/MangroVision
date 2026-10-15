@@ -109,6 +109,8 @@
 .analysis-history-modal .analytics-history-main { flex: 1; min-width: 0; }
 .analysis-history-modal .analytics-history-title { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 0.9rem; font-weight: 700; line-height: 1.4; }
 .analysis-history-modal .analytics-history-meta { display: block; color: var(--text-secondary); font-size: 0.73rem; margin-top: 3px; }
+.analysis-history-lock { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; margin-top: 7px; padding: 4px 7px; border-radius: var(--radius-sm); background: var(--surface-muted); color: var(--text-secondary); font-size: 0.68rem; line-height: 1.4; }
+.analysis-history-lock svg { flex-shrink: 0; }
 .analysis-history-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-top: 12px; }
 .analysis-history-metrics > span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .analysis-history-metrics > span > span { color: var(--text-muted); font-size: 0.65rem; line-height: 1.35; }

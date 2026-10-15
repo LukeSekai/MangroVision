@@ -966,8 +966,10 @@ test('review-analysis links open history when there is no current result', async
 
 const savedImages = [
   { id: 52, image_name: 'Analysis 52', source_image_name: 'QJBJ.JPG', analyzed_at: '2026-10-07T08:00:00+08:00',
+    can_delete: true, deletion_locked: false,
     plantable_area_m2: 175, canopy_area_m2: 90, canopy_coverage_pct: 30, hexagon_count: 50, result_preview_url: 'https://preview.example/QJBJ.webp' },
   { id: 51, image_name: 'Analysis 51', source_image_name: 'ITBH.JPG', analyzed_at: '2026-09-30T08:00:00+08:00',
+    can_delete: true, deletion_locked: false,
     plantable_area_m2: 0, canopy_area_m2: 350, canopy_coverage_pct: 75, hexagon_count: 0, result_preview_url: null },
 ];
 
@@ -1292,6 +1294,50 @@ test('filtered history preserves delete confirmation and filters when cancellati
   assert.match(document.querySelector('.analytics-history-list').textContent, /ITBH.JPG/);
   assert.doesNotMatch(document.querySelector('.analytics-history-list').textContent, /QJBJ.JPG/);
   assert.equal(mutations.length, 0);
+});
+
+test('field-record analyses show a lock instead of Delete and remain reviewable', async () => {
+  mockSavedReview();
+  responses.set('/api/analyses/', [
+    { ...savedImages[0], can_delete: false, deletion_locked: true, delete_lock_reason: 'This analysis has field records and cannot be deleted.' },
+    savedImages[1],
+  ]);
+  await render(pages.get('ImageProcessing'), '/page?action=review');
+  const cards = document.querySelectorAll('.analytics-history-item');
+  assert.equal(cards[0].querySelector('.analytics-history-delete'), null);
+  assert.match(cards[0].querySelector('.analysis-history-lock').textContent, /Locked—contains field records/);
+  const open = cards[0].querySelector('.analysis-history-open');
+  assert.equal(document.getElementById(open.getAttribute('aria-describedby')).className, 'analysis-history-lock');
+  assert.ok(cards[1].querySelector('.analytics-history-delete'));
+  await click(open);
+  assert.ok(document.querySelector('.rs-backdrop'));
+  assert.equal(mutations.length, 0);
+});
+
+test('history without a verified deletion policy requires refresh instead of offering Delete', async () => {
+  responses.set('/api/analyses/', [{ ...savedImages[0], can_delete: undefined, deletion_locked: undefined }]);
+  await render(pages.get('ImageProcessing'), '/page?action=review');
+  assert.equal(document.querySelector('.analytics-history-delete'), null);
+  assert.match(document.querySelector('.analysis-history-lock').textContent, /Refresh to check deletion availability/);
+  assert.equal(mutations.length, 0);
+});
+
+test('an analysis used after history loaded rejects stale deletion and returns as locked', async () => {
+  mockSavedReview();
+  responses.set('/api/analyses/52', options => {
+    assert.equal(options.method, 'DELETE');
+    responses.set('/api/analyses/', [{ ...savedImages[0], can_delete: false, deletion_locked: true }]);
+    return Response.json({ detail: 'This analysis contains assigned points or field records and cannot be deleted.' }, { status: 409 });
+  });
+  await render(pages.get('ImageProcessing'), '/page?action=review');
+  await click(document.querySelector('.analytics-history-delete'));
+  await click([...document.querySelectorAll('.modal-card-danger button')].find(button => button.textContent === 'Delete analysis'));
+  assert.equal(document.querySelector('.modal-card-danger'), null);
+  assert.ok(document.querySelector('.analysis-history-modal'));
+  assert.equal(document.querySelector('.analytics-history-delete'), null);
+  assert.match(document.querySelector('.analysis-history-modal').textContent, /cannot be deleted/);
+  assert.equal(mutations.length, 0); // DELETE is tracked separately by this harness.
+  assert.equal(requests.filter(path => path === '/api/analyses/52').length, 1);
 });
 
 test('history shows an empty filtered state, resets filters and handles a broken thumbnail', async () => {

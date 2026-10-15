@@ -284,6 +284,9 @@ export const useProcessingStore = create((set, get) => ({
         saved: true,
         analysis_id: payload.analysis_id,
         display_number: payload.display_number,
+        can_delete: payload.can_delete,
+        deletion_locked: payload.deletion_locked,
+        delete_lock_reason: payload.delete_lock_reason,
         source_image_name: result.source_image_name || result.uploaded_file_name,
         uploaded_file_name: payload.analysis_name || 'Saved analysis',
         save_summary: {
