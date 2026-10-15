@@ -132,6 +132,52 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
         entries = [{'center': (80., 80.)}]
         self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], entries)
 
+    def ambiguous_green_scene(self):
+        image = np.full((160, 160, 3), (105, 124, 123), np.uint8)
+        cv2.ellipse(image, (80, 80), (6, 4), 0, 0, 360, (125, 150, 143), -1)
+        cv2.ellipse(image, (80, 80), (3, 2), 0, 0, 360, (55, 155, 135), -1)
+        return image
+
+    def test_green_mud_highlight_cannot_use_pale_leaf_recovery(self):
+        for scale in (1, 2):
+            with self.subTest(scale=scale):
+                # A small saturated core surrounded by a weak green film.
+                # It is brighter than wet mud, but lacks a sunlit pale leaf.
+                image = self.ambiguous_green_scene()
+                image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                kept, metadata = filter_seedling_ground_artifacts(
+                    image, [{'center': (80*scale, 80*scale)}], .007/scale,
+                )
+                self.assertEqual(kept, [])
+                self.assertEqual(metadata['seedling_ground_artifact_rejected_reasons'],
+                                 {'flat_green_ground': 1})
+
+    def test_faint_leaf_with_connected_thin_stem_contrast_is_preserved(self):
+        for scale in (1, 2):
+            image = self.ambiguous_green_scene()
+            cv2.line(image, (80, 86), (80, 119), (55, 65, 61), 2)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            entries = [{'center': (80*scale, 80*scale)}]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .007/scale)[0], entries)
+
+    def test_separate_dark_ground_cannot_validate_green_highlight(self):
+        for scale in (1, 2):
+            image = self.ambiguous_green_scene()
+            cv2.circle(image, (112, 80), 7, (55, 65, 61), -1)
+            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+            entries = [{'center': (80*scale, 80*scale)}]
+            kept, metadata = filter_seedling_ground_artifacts(image, entries, .007/scale)
+            self.assertEqual(kept, [])
+            self.assertEqual(metadata['seedling_ground_artifact_rejected_reasons'], {'flat_green_ground': 1})
+
+    def test_scattered_dark_noise_cannot_validate_green_highlight(self):
+        image = self.ambiguous_green_scene()
+        for y in range(67, 94, 3):
+            for x in range(67, 94, 3):
+                if (x-80)**2 + (y-80)**2 >= 8**2:
+                    image[y, x] = (55, 65, 61)
+        self.assertEqual(filter_seedling_ground_artifacts(image, [{'center': (80, 80)}], .007)[0], [])
+
 
 @unittest.skipUnless(os.environ.get('MANGROVISION_TEST_IMAGE_DIR'), 'Original regression photos are supplied separately')
 class SeedlingPhotoRegressionTests(unittest.TestCase):

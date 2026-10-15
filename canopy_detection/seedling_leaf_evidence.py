@@ -122,6 +122,31 @@ def filter_seedling_ground_artifacts(image, entries, gsd):
                         if distance < .04:
                             reason = "linear_wood_context"
                             break
+        # A tiny, weakly green highlight on otherwise lit ground can be a
+        # flat algae/mud patch even when its blue channel gives a high ExG.
+        # Color and relative brightness describe the same highlight, so they
+        # are not independent evidence of a plant. Require nearby dark object
+        # contrast (stem/leaf/shadow), or a genuinely pale bright leaf core.
+        # Larger clusters, distinct green leaves and deeply shaded scenes keep
+        # their existing paths. Do not count scattered dark noise as support.
+        if (reason is None and not strong_leaf and ground_val >= 80
+                and len(broad_areas) < 2 and sum(broad_areas) < np.ceil(.0032 / gsd**2)):
+            dark_object = ((distance_m2 <= .30**2)
+                           & (patch_val <= min(ground_val-25, ground_val*.75)))
+            _, dark_labels, dark_stats, _ = cv2.connectedComponentsWithStats(
+                dark_object.astype(np.uint8), 8,
+            )
+            nearby_labels = np.unique(dark_labels[distance_m2 <= .12**2])
+            nearby_labels = nearby_labels[nearby_labels > 0]
+            dark_areas = dark_stats[nearby_labels, cv2.CC_STAT_AREA]
+            # Stems/shadows may be long and thin, unlike a compact leaf core.
+            # Their connected area must start near the candidate; a separate
+            # dark ground patch farther away cannot validate its green tint.
+            dark_area = int(dark_areas[dark_areas >= min_core_pixels].sum())
+            pale_bright_leaf = _has_compact_leaf(pale_core & (patch_sat < 80), gsd)
+            if (dark_area < np.ceil(.002 / gsd**2)
+                    and not pale_bright_leaf):
+                reason = "flat_green_ground"
         if reason:
             rejected_centers.append([float(cx), float(cy)])
             rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
