@@ -3,7 +3,7 @@ import cv2
 import numpy as np
 
 
-def filter_seedling_ground_artifacts(image, entries, gsd):
+def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
     """Require local leaf evidence for every supplemental candidate.
 
     Color alone admits bright wood tips as well as weak shadow fringes. Verify
@@ -20,13 +20,28 @@ def filter_seedling_ground_artifacts(image, entries, gsd):
     chroma = (g - np.maximum(r, b)) / np.maximum(g + r + b, 1)
     radius = max(3, int(np.ceil(.40 / gsd)))
     retained = []
+    assessments = []
     rejected_centers = []
     rejected_reasons = {}
     min_core_pixels = max(3, int(np.ceil(.0005 / gsd**2)))
     height, width = image.shape[:2]
+    canopy_distance = None
+    if (canopy_mask is not None and canopy_mask.shape == (height, width)
+            and np.any(canopy_mask)):
+        canopy_distance = cv2.distanceTransform(
+            (canopy_mask == 0).astype(np.uint8), cv2.DIST_L2, 5,
+        ) * gsd
     for entry in entries:
         cx, cy = entry["center"]
         x, y = int(round(cx)), int(round(cy))
+        # The additional checks target isolated ground beyond the established
+        # crown's close branch context. Earlier checks still run everywhere;
+        # this does not expand or alter the mature canopy mask.
+        edge_distance = min(cx, cy, width-1-cx, height-1-cy) * gsd
+        isolated_ground = (
+            edge_distance > .75
+            and (canopy_distance is None or canopy_distance[y, x] > .75)
+        )
         x0, x1 = max(0, x-radius), min(width, x+radius+1)
         y0, y1 = max(0, y-radius), min(height, y+radius+1)
         yy, xx = np.ogrid[y0:y1, x0:x1]
@@ -122,6 +137,33 @@ def filter_seedling_ground_artifacts(image, entries, gsd):
                         if distance < .04:
                             reason = "linear_wood_context"
                             break
+        clear_green = False
+        green_areas = []
+        pale_areas = []
+        isolated_reason = None
+        if reason is None and not strong_leaf and ground_val >= 80:
+            # ExG can be high simply because blue is low in olive ground.
+            # Several pieces of that same dull patch are not independent
+            # leaves. Look for a substantial green core, bright leaf contrast,
+            # or genuinely pale foliage before granting cluster support.
+            independent_green = ((distance_m2 <= .25**2)
+                                 & (patch_hue >= 35) & (patch_hue <= 72)
+                                 & (patch_sat >= 35) & (patch_exg >= 25)
+                                 & (g[y0:y1, x0:x1] >= r[y0:y1, x0:x1]+5)
+                                 & (patch_val >= ground_val+8))
+            _, green_areas = _compact_leaf_pixels(independent_green, gsd)
+            min_evidence = max(3, int(np.ceil(.001 / gsd**2)))
+            clear_green = max(green_areas, default=0) >= min_evidence
+            _, pale_areas = _compact_leaf_pixels(pale_core, gsd)
+            _, contrast_areas = _compact_leaf_pixels(
+                leaf_pixels & (patch_val >= ground_val+35), gsd,
+            )
+            dominant_area = max(broad_areas, default=0)
+            one_olive_patch = (dominant_area >= np.ceil(.0032 / gsd**2)
+                               and dominant_area >= .80 * sum(broad_areas))
+            if (one_olive_patch and not clear_green and not pale_areas
+                    and sum(contrast_areas) < min_evidence):
+                isolated_reason = "weak_leaf_contrast"
         # A tiny, weakly green highlight on otherwise lit ground can be a
         # flat algae/mud patch even when its blue channel gives a high ExG.
         # Color and relative brightness describe the same highlight, so they
@@ -143,10 +185,32 @@ def filter_seedling_ground_artifacts(image, entries, gsd):
             # Their connected area must start near the candidate; a separate
             # dark ground patch farther away cannot validate its green tint.
             dark_area = int(dark_areas[dark_areas >= min_core_pixels].sum())
+            # A single pale wood tip must not exempt itself from the object
+            # check. Pale foliage needs separate green support or more than
+            # one compact pale leaf core; nearby stems/shadows also suffice.
             pale_bright_leaf = _has_compact_leaf(pale_core & (patch_sat < 80), gsd)
-            if (dark_area < np.ceil(.002 / gsd**2)
-                    and not pale_bright_leaf):
-                reason = "flat_green_ground"
+            if dark_area < np.ceil(.002 / gsd**2):
+                if not pale_bright_leaf:
+                    reason = "flat_green_ground"
+                elif (not green_areas and len(pale_areas) < 2
+                      and sum(broad_areas) < .20 * leaf_area):
+                    isolated_reason = "flat_green_ground"
+        assessments.append((entry, reason, isolated_reason, isolated_ground))
+
+    # Keep the established recovery for faint leaves within a supported plant
+    # group. Only independently supported candidates can anchor this context;
+    # two ambiguous fragments of the same mud patch cannot validate each other.
+    # The 1.25 m neighborhood matches the existing seedling context distance.
+    anchors = np.asarray([
+        entry['center'] for entry, reason, isolated_reason, _ in assessments
+        if reason is None and isolated_reason is None
+    ], dtype=float).reshape(-1, 2)
+    for entry, reason, isolated_reason, isolated_ground in assessments:
+        cx, cy = entry['center']
+        if reason is None and isolated_reason is not None and isolated_ground:
+            distance2 = np.sum((anchors - [cx, cy])**2, axis=1) * gsd**2
+            if not np.any((distance2 > .25**2) & (distance2 <= 1.25**2)):
+                reason = isolated_reason
         if reason:
             rejected_centers.append([float(cx), float(cy)])
             rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1

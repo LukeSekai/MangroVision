@@ -3,6 +3,10 @@
 Continued on the user's requested **Latest-Main** branch, starting at `770638b`.
 This follows the [October 15 detector review](detection-reference-review-2026-10-15.md).
 
+The initial results below describe commit `ae06600`. The follow-up at the end
+of this document covers the additional isolated DJI_0720 detections reported
+after that commit.
+
 ## Problem and change
 
 The supplemental detector still accepted a small flat green highlight in
@@ -84,3 +88,58 @@ review, and this work does not silently substitute or train one.
 Restart the backend and analyze the original again to see the updated result.
 Saved analyses continue displaying their existing saved overlay; this fix does
 not automatically overwrite them or rebuild their planting points.
+
+## Follow-up: isolated DJI_0720 ground markers
+
+The user clarified that only the isolated yellow circles on the mud were wrong;
+the branch and foliage circles around mature trees should remain. The previous
+fix had left two paths open: fragments of one dull olive patch could count as
+a leaf cluster, and a single pale object could exempt itself from ground checks.
+
+The additional checks now require corroboration for an isolated dominant olive
+patch or single pale tip. A large olive component cannot qualify merely by
+fragmenting into several colored pieces. Pale foliage can still qualify with
+independent green support, several pale leaf cores, substantial ordinary leaf
+support, or the existing stem/shadow evidence.
+
+These additional rules preserve close mature branch context within 0.75 m of
+the existing accepted canopy. The caller supplies the finished canopy mask;
+the evidence filter reads it without changing it. Near image edges, where local
+context is incomplete, the earlier checks remain in charge. Faint candidates in
+a supported planting group retain the established recovery: an independently
+supported candidate 0.25–1.25 m away can supply context. Ambiguous candidates
+cannot anchor one another, and the earlier ground/wood rejections cannot be
+overridden by this group support.
+
+Final verification against `ae06600`:
+
+- **DJI_0720: 124 → 121** supplemental markers. Exactly the three reported
+  isolated markers are removed; all remaining 121 positions are identical,
+  including the branch/foliage markers. Two markers referred to one ground
+  patch; the third referred to the separate pale object lower down.
+- **DJI_0698: 21 → 21; DJI_0700: 3 → 3; DJI_0712: 79 → 79.** Full pipeline
+  replay uses identical checksum-verified original images, cached real model
+  predictions, confidence 0.80 and original EXIF scales. All four mature canopy
+  masks remain identical at every pixel.
+- **43/43 reviewed leaf locations retained**, including three additional faint
+  or pale leaf positions identified while checking for regressions. Checked on
+  the original files and saved history inputs at their stored scales.
+- **55 regression tests passed**, covering isolated olive fragments, a single
+  pale tip, mature branch context, independently supported plant groups,
+  ambiguous fragments that must not validate each other, incomplete edge
+  context, and the earlier canopy/wood/leaf cases.
+- All **35 cached histories** were checked with their original inputs, saved
+  scales and cached mature masks: **4,594 → 4,588** supplemental candidates.
+  The six additional removals are unlabelled candidate changes, not six proven
+  false positives. The review retains crops for inspection; it is not a fully
+  annotated accuracy evaluation or a fresh full inference on all 35 images.
+
+The follow-up artifacts are in `tmp/seedling_water_wood_review_20261016/`:
+`index.html`, `final_full/summary.json`, `history/verification.json`,
+`history/removed_0.jpg`, and `tests.xml`. The originally opened
+`tmp/seedling_algae_review_20261016/index.html` also displays this follow-up;
+its earlier page is preserved as `index_initial_before_followup.html`.
+
+The source change remains local on Latest-Main. No backend restart, deployment,
+push, database write, saved overlay replacement or planting-point change was
+performed. Restart the backend and reanalyze the original to use the new filter.

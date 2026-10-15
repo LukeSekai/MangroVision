@@ -1897,7 +1897,7 @@ class ProperDetectree2Detector:
         # Run after all recovery paths; shadow fragments must not re-enter via
         # cluster rescue or borrow leaf evidence from the rest of the image.
         accepted_entries, ground_metadata = filter_seedling_ground_artifacts(
-            image, accepted_entries, gsd,
+            image, accepted_entries, gsd, canopy_mask=base_mask,
         )
         cluster_rescue_count = sum(bool(entry.get("cluster_rescue")) for entry in accepted_entries)
         yellow_metadata["seedling_yellow_recovery_count"] = sum(

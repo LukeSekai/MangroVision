@@ -178,6 +178,84 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
                     image[y, x] = (55, 65, 61)
         self.assertEqual(filter_seedling_ground_artifacts(image, [{'center': (80, 80)}], .007)[0], [])
 
+    def isolated_ground_scenes(self):
+        olive = np.full((160, 160, 3), (100, 105, 103), np.uint8)
+        # Multiple fragments from one dull olive patch cannot validate each
+        # other as a cluster of real leaves.
+        for x, axes in ((76, (6, 4)), (89, (2, 2))):
+            cv2.ellipse(olive, (x, 80), axes, 0, 0, 360, (30, 122, 120), -1)
+        pale = np.full_like(olive, (100, 105, 103))
+        cv2.ellipse(pale, (80, 80), (5, 7), 0, 0, 360, (170, 200, 196), -1)
+        cv2.ellipse(pale, (80, 85), (2, 2), 0, 0, 360, (95, 145, 140), -1)
+        return [(olive, 'weak_leaf_contrast'), (pale, 'flat_green_ground')]
+
+    def test_isolated_olive_fragments_and_single_pale_tip_are_rejected(self):
+        for image, reason in self.isolated_ground_scenes():
+            for scale in (1, 2):
+                with self.subTest(reason=reason, scale=scale):
+                    photo = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+                    kept, meta = filter_seedling_ground_artifacts(
+                        photo, [{'center': (80*scale, 80*scale)}], .01/scale,
+                    )
+                    self.assertEqual(kept, [])
+                    self.assertEqual(meta['seedling_ground_artifact_rejected_reasons'], {reason: 1})
+
+    def test_additional_ground_checks_preserve_close_mature_branch_context(self):
+        entries = [{'center': (80, 80)}]
+        for image, _ in self.isolated_ground_scenes():
+            canopy = np.zeros(image.shape[:2], np.uint8)
+            cv2.rectangle(canopy, (15, 20), (40, 145), 255, -1)
+            original_mask = canopy.copy()
+            kept, _ = filter_seedling_ground_artifacts(image, entries, .01, canopy_mask=canopy)
+            self.assertEqual(kept, entries)
+            np.testing.assert_array_equal(canopy, original_mask)
+            for context in (np.zeros_like(canopy), np.pad(np.ones((160, 3), np.uint8), ((0, 0), (0, 157)))):
+                self.assertEqual(filter_seedling_ground_artifacts(
+                    image, entries, .01, canopy_mask=context,
+                )[0], [])
+
+    def test_mature_context_does_not_bypass_existing_ground_rejection(self):
+        image, entries = self.scene()
+        canopy = np.zeros(image.shape[:2], np.uint8)
+        cv2.rectangle(canopy, (15, 20), (40, 145), 255, -1)
+        self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01, canopy_mask=canopy)[0], [])
+
+    def test_independently_supported_plant_group_retains_faint_leaf(self):
+        for image, _ in self.isolated_ground_scenes():
+            cv2.ellipse(image, (20, 80), (4, 3), 0, 0, 360, (30, 170, 80), -1)
+            entries = [{'center': (80, 80)}, {'center': (20, 80)}]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], entries)
+
+    def test_ambiguous_patches_and_duplicate_fragments_cannot_validate_each_other(self):
+        for image, _ in self.isolated_ground_scenes():
+            image[60:100, :40] = image[60:100, 60:100].copy()
+            image = cv2.copyMakeBorder(image, 60, 60, 60, 60, cv2.BORDER_CONSTANT, value=(100, 105, 103))
+            entries = [{'center': (140, 140)}, {'center': (144, 140)}, {'center': (80, 140)}]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], [])
+
+    def test_uncertain_edge_context_cannot_anchor_ambiguous_interior_ground(self):
+        for image, _ in self.isolated_ground_scenes():
+            image[60:100, :40] = image[60:100, 60:100].copy()
+            edge_entry = {'center': (20, 80)}
+            entries = [{'center': (80, 80)}, {'center': (76, 80)}, edge_entry]
+            self.assertEqual(filter_seedling_ground_artifacts(image, entries, .01)[0], [edge_entry])
+
+    def test_supported_group_does_not_revive_previously_rejected_ground(self):
+        image, entries = self.scene()
+        cv2.ellipse(image, (20, 80), (4, 3), 0, 0, 360, (30, 170, 80), -1)
+        anchor = {'center': (20, 80)}
+        self.assertEqual(filter_seedling_ground_artifacts(image, entries+[anchor], .01)[0], [anchor])
+
+    def test_incomplete_context_at_image_edge_preserves_existing_leaf_checks(self):
+        for image, _ in self.isolated_ground_scenes():
+            cropped = image[:, 60:].copy()
+            entries = [{'center': (20, 80)}]
+            self.assertEqual(filter_seedling_ground_artifacts(cropped, entries, .01)[0], entries)
+        image, _ = self.scene()
+        self.assertEqual(filter_seedling_ground_artifacts(
+            image[:, 60:].copy(), [{'center': (20, 80)}], .01,
+        )[0], [])
+
 
 @unittest.skipUnless(os.environ.get('MANGROVISION_TEST_IMAGE_DIR'), 'Original regression photos are supplied separately')
 class SeedlingPhotoRegressionTests(unittest.TestCase):
