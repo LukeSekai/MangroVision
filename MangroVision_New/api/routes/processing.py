@@ -3511,7 +3511,7 @@ def _make_detector_progress_bridge(
         if event == "tile_setup":
             _emit(
                 progress_cb,
-                f"Preparing {total} tiles for AI inference",
+                f"Preparing {total} image tiles",
                 tile_band_start,
                 total_tiles=total,
                 current_tile=0,
@@ -3555,7 +3555,7 @@ def _make_detector_progress_bridge(
         if event == "tile_complete":
             _emit(
                 progress_cb,
-                "AI inference complete, cleaning up detections",
+                "Reviewing detected vegetation",
                 tile_band_end,
                 total_tiles=total,
                 current_tile=total,
@@ -3655,7 +3655,7 @@ def _execute_canopy_workflow(
             f"Spacing locked to {SPECIES_SPACING_M[canonical_species]:.1f} m for {canonical_species}."
         )
 
-    _emit(progress_cb, "Checking image location against the map", 2)
+    _emit(progress_cb, "Checking your image's location on the map", 2)
     # MIGRATED FROM app.py: analyze_image lines 5038-5121
     metadata = ExifExtractor.extract_all_metadata(str(temp_path))
     location_preflight = _build_image_location_preflight(metadata, altitude, drone_model)
@@ -3675,7 +3675,7 @@ def _execute_canopy_workflow(
         temp_path, uploaded_name, location_preflight, allow_repeat=allow_repeat_image_analysis,
     )
 
-    _emit(progress_cb, "Checking AI availability", 8)
+    _emit(progress_cb, "Getting ready to analyze your image", 8)
     try:
         from detectree2_proper import ProperDetectree2Detector  # noqa: F401
 
@@ -3775,7 +3775,7 @@ def _execute_canopy_workflow(
                 image_width_px=early_width,
                 image_height_px=early_height,
             )
-            _emit(progress_cb, "Calibrating image footprint to orthophoto", 10)
+            _emit(progress_cb, "Checking image scale and map position", 10)
             precomputed_match_result = _get_image_alignment(
                 temp_path, early_match_image, image_center_lat, image_center_lon,
                 float(nominal_gsd), camera_heading,
@@ -3818,7 +3818,7 @@ def _execute_canopy_workflow(
         f"{tuning_fingerprint}"
     )
 
-    _emit(progress_cb, f"Initializing {detection_mode.upper()} detector", 12)
+    _emit(progress_cb, "Preparing vegetation detection", 12)
     # MIGRATED FROM app.py: analyze_image lines 5158-5276
     detector = HexagonDetector(
         altitude_m=altitude_to_use,
@@ -3847,7 +3847,7 @@ def _execute_canopy_workflow(
                 f"Runtime tuning values could not be fully applied: {tuning_error}"
             )
 
-    _emit(progress_cb, "Detecting canopy and generating planting zones", 25)
+    _emit(progress_cb, "Checking vegetation and planting space", 25)
     # FIXED: the detector already streams per-tile progress; we now subscribe so
     # the UI and terminal move during the long inference phase instead of
     # freezing at 25% for the full 10-15 minutes of tiling + prediction.
@@ -3859,7 +3859,7 @@ def _execute_canopy_workflow(
         progress_callback=detector_progress_bridge,
     )
 
-    _emit(progress_cb, "Loading GIS zone layers", 55)
+    _emit(progress_cb, "Loading mapped planting restrictions", 55)
     forbidden_filter, eroded_filter = _load_zone_filters()
     gis_coverage_geometry = _load_gis_coverage_geometry()
     if eroded_filter.zone_count > 0:
@@ -3883,7 +3883,7 @@ def _execute_canopy_workflow(
 
     # MIGRATED FROM app.py: analyze_image lines 5294-5382
     if image_gps is not None:
-        _emit(progress_cb, "Matching drone image to orthophoto", 62)
+        _emit(progress_cb, "Aligning your image with the map", 62)
         _gsd = results["gsd_m_per_pixel"]
         _w, _h = results["image_size"]
 
@@ -3968,7 +3968,7 @@ def _execute_canopy_workflow(
                 max_total_area_fraction=0.95,
             )
         if forbidden_filter.zone_count > 0 and _FORBIDDEN_CANOPY_EXCLUSION_ENABLED:
-            _emit(progress_cb, "Removing canopy inside forbidden zones", 68)
+            _emit(progress_cb, "Applying restricted-area boundaries", 68)
             _forbidden_mask = _build_zone_mask_in_drone_pixels(
                 results["image"].shape[:2],
                 forbidden_filter.forbidden_polygons,
@@ -3984,7 +3984,7 @@ def _execute_canopy_workflow(
                 "Forbidden-zone canopy cleanup is disabled; forbidden zones still filter planting points."
             )
 
-        _emit(progress_cb, "Filtering planting points against zones", 74)
+        _emit(progress_cb, "Checking planting points against mapped restrictions", 74)
 
         # Snap each hexagon's GPS coords to a shared global hex lattice so
         # adjacent image analyses produce continuous, evenly-spaced points
@@ -4529,7 +4529,7 @@ def _execute_canopy_workflow(
                 ):
                     _emit(
                         progress_cb,
-                        f"Refilling safe lattice {_column_index}/{_total_columns}",
+                        "Checking remaining planting space",
                         88 + int(round(_column_index / _total_columns)),
                         current_column=_column_index,
                         total_columns=_total_columns,
@@ -4637,7 +4637,7 @@ def _execute_canopy_workflow(
         results["_preclip_outside_hexagons"] = _outside_hexes
 
     # MIGRATED FROM app.py: analyze_image lines 5600-5937
-    _emit(progress_cb, "Projecting planting points to GPS", 85)
+    _emit(progress_cb, "Locating planting points on the map", 85)
     map_image_gps = image_gps
     map_center_lat = image_center_lat
     map_center_lon = image_center_lon
@@ -4715,7 +4715,7 @@ def _execute_canopy_workflow(
 
         _emit(
             progress_cb,
-            f"Projecting {len(safe_hexagons)} planting points to GPS",
+            f"Locating {len(safe_hexagons)} planting points on the map",
             85,
             total_points=len(safe_hexagons),
         )
@@ -4751,7 +4751,7 @@ def _execute_canopy_workflow(
         if orthophoto_recheck_enabled:
             _emit(
                 progress_cb,
-                f"Checking orthophoto coverage for {len(safe_hexagons)} planting points",
+                f"Checking map coverage for {len(safe_hexagons)} planting points",
                 86,
                 total_points=len(safe_hexagons),
                 )
@@ -4764,7 +4764,7 @@ def _execute_canopy_workflow(
                 if index == 1 or index == len(safe_hexagons) or index % coverage_interval == 0:
                     _emit(
                         progress_cb,
-                        f"Checking orthophoto coverage {index}/{len(safe_hexagons)}",
+                        f"Checking mapped planting locations: {index} of {len(safe_hexagons)}",
                         86 + int(round(index / max(1, len(safe_hexagons)))),
                         current_point=index,
                         total_points=len(safe_hexagons),
@@ -4777,7 +4777,7 @@ def _execute_canopy_workflow(
             # load after the UI has already reached 85%.
             _emit(
                 progress_cb,
-                "Using heading fallback; skipping unreliable orthophoto bounds and canopy checks",
+                "Preparing an approximate map placement for your image",
                 86,
                 total_points=len(safe_hexagons),
             )
@@ -4823,7 +4823,7 @@ def _execute_canopy_workflow(
                     recheck_pct = 86 + int(round(2 * index / max(1, len(safe_hexagons))))
                     _emit(
                         progress_cb,
-                        f"Rechecking orthophoto canopy {index}/{len(safe_hexagons)}",
+                        f"Checking vegetation near planting points: {index} of {len(safe_hexagons)}",
                         min(88, recheck_pct),
                         current_point=index,
                         total_points=len(safe_hexagons),
@@ -4966,7 +4966,7 @@ def _execute_canopy_workflow(
     # only homography previously moved valid points onto structures or outside
     # the image. The same coordinate masks are used for this final core-only
     # invariant check, so map, exports, and preview retain identical membership.
-    _emit(progress_cb, "Rendering visualization overlay", 90)
+    _emit(progress_cb, "Creating your analysis preview", 90)
     safe_hexagons = _exclude_repeat_image_points(safe_hexagons, repeat_analyses)
     (
         safe_hexagons,
@@ -5038,7 +5038,7 @@ def _execute_canopy_workflow(
     if analysis_overlay is None and map_image_gps is not None and overlay_h is not None:
         analysis_overlay = _build_georeferenced_overlay(visualization_image, overlay_h)
 
-    _emit(progress_cb, "Building coordinate table and exports", 92)
+    _emit(progress_cb, "Preparing planting coordinates and downloads", 92)
     results["_eroded_unavailable"] = eroded_unavailable_count
     available_safe_hexagon_count = len(safe_hexagons)
 
@@ -5162,7 +5162,7 @@ def _execute_canopy_workflow(
     results["canopy_coverage_pct"] = canopy_coverage_pct
     results["ai_confidence"] = float(ai_confidence)
 
-    _emit(progress_cb, "Encoding preview images", 97)
+    _emit(progress_cb, "Getting your results ready to view", 97)
     # The cache key intentionally contains the source filename and serialized
     # settings, but those characters are not valid in every S3-compatible
     # object-key implementation. A digest gives Storage a short, URL-safe path

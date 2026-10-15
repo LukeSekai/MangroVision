@@ -363,7 +363,6 @@ export default function MapView() {
     };
     legendControl.addTo(map);
     const processingLayer = L.layerGroup().addTo(map);
-    const processingOverlayLayer = L.layerGroup().addTo(map);
     const processingFootprintLayer = L.layerGroup().addTo(map);
     const processingCenterLayer = L.layerGroup().addTo(map);
     const processingFilteredLayer = L.layerGroup().addTo(map);
@@ -380,7 +379,6 @@ export default function MapView() {
       siteZoneLayer,
       projectSiteLayer,
       processingLayer,
-      processingOverlayLayer,
       processingFootprintLayer,
       processingCenterLayer,
       processingFilteredLayer,
@@ -959,12 +957,11 @@ export default function MapView() {
     orderZoneLayers(layersRef.current);
   }, [projectSites, sitePointCounts, pointsLoaded, isMonitoringMapMode, monitoringOrganizationId]);
 
-  // Sync the preview, or retain just the projected photo boundary after save.
+  // Show mapped points and the photo boundary on the unobstructed basemap.
   useEffect(() => {
     const map = mapRef.current;
     const {
       processingLayer,
-      processingOverlayLayer,
       processingFootprintLayer,
       processingCenterLayer,
       processingFilteredLayer,
@@ -972,21 +969,18 @@ export default function MapView() {
     if (
       !map ||
       !processingLayer ||
-      !processingOverlayLayer ||
       !processingFootprintLayer ||
       !processingCenterLayer ||
       !processingFilteredLayer
     ) return;
 
     processingLayer.clearLayers();
-    processingOverlayLayer.clearLayers();
     processingFootprintLayer.clearLayers();
     processingCenterLayer.clearLayers();
     processingFilteredLayer.clearLayers();
 
     if (!currentAnalysis?.map?.available) return;
 
-    const analysisOverlay = currentAnalysis.map.analysis_overlay;
     const analysisFootprint = currentAnalysis.map.analysis_footprint;
     const locationStatus = currentAnalysis.map.location_status || 'inside';
     const safeFeatures = currentAnalysis.map.safe_points_geojson?.features || [];
@@ -1033,16 +1027,6 @@ export default function MapView() {
           },
         },
       ).addTo(processingFootprintLayer);
-    }
-
-    if (Array.isArray(analysisOverlay?.bounds)) {
-      if (analysisOverlay.image_data_url) {
-        L.imageOverlay(analysisOverlay.image_data_url, analysisOverlay.bounds, {
-          opacity: analysisOverlay.opacity ?? 0.72,
-          interactive: false,
-          zIndex: 320,
-        }).addTo(processingOverlayLayer);
-      }
     }
 
     safeFeatures.forEach((feature) => {
