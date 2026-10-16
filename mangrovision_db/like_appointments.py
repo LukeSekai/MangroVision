@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta, timezone
 
 import planting_database as planting
 from email_validator import EmailNotValidError, validate_email
@@ -22,7 +22,7 @@ class AppointmentRateLimit(ValueError):
     pass
 
 
-def requested_appointment_window(start: datetime) -> tuple[datetime, datetime]:
+def requested_appointment_window(start: datetime, *, appointment_type=None) -> tuple[datetime, datetime]:
     """Public booking slots last two hours on one Philippine date."""
     if start.tzinfo is None or start.utcoffset() is None:
         raise ValueError('Appointment times must include a timezone.')
@@ -30,6 +30,8 @@ def requested_appointment_window(start: datetime) -> tuple[datetime, datetime]:
     end = start + timedelta(hours=2)
     if end.date() != start.date():
         raise ValueError('Choose a start time before 10 PM so the two-hour visit ends on the same Philippine date.')
+    if appointment_type == 'tree_planting' and (start.time() < time(6) or end.time() > time(17)):
+        raise ValueError('Tree planting is available from 6 AM to 5 PM. Choose a start between 6 AM and 3 PM so your two-hour visit finishes by 5 PM.')
     return start, end
 
 
@@ -84,7 +86,7 @@ def submit_appointment(values: dict, peer: str) -> dict:
     if values.get('appointment_type') not in APPOINTMENT_TYPES:
         raise ValueError('Choose a field visit, clean-up drive, or tree planting appointment.')
     values['title'] = APPOINTMENT_TYPES[values['appointment_type']]
-    values['start_at'], values['end_at'] = requested_appointment_window(values['start_at'])
+    values['start_at'], values['end_at'] = requested_appointment_window(values['start_at'], appointment_type=values['appointment_type'])
     submission_key = str(values.pop('submission_key'))
     values.pop('website', None)
     fingerprint = hashlib.sha256(json.dumps(values, sort_keys=True, default=str).encode()).hexdigest()

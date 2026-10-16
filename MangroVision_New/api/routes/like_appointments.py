@@ -9,6 +9,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from api.routes.planting_schedules import _require_lgu_user
+from api.routes.tides import tides_forecast
+from api.tide_assessment import assess_graph_window
 from mangrovision_db.like_appointments import (
     AppointmentConflict, AppointmentRateLimit, appointment_summary, list_appointments, requested_appointment_window,
     review_appointment, submit_appointment,
@@ -56,7 +58,7 @@ class AppointmentCreate(BaseModel):
     def appointment_window(self):
         if self.end_at <= self.start_at or self.end_at.date() != self.start_at.date():
             raise ValueError('Choose a start and end time on the same Philippine date, with end after start.')
-        self.start_at, self.end_at = requested_appointment_window(self.start_at)
+        self.start_at, self.end_at = requested_appointment_window(self.start_at, appointment_type=self.appointment_type)
         self.title = APPOINTMENT_TYPES[self.appointment_type]
         return self
 
@@ -90,6 +92,13 @@ class AppointmentReview(BaseModel):
 def create_appointment(body: AppointmentCreate, request: Request):
     if body.website:
         raise HTTPException(400, 'Could not accept this request. Please contact LGU staff.')
+    if body.appointment_type == 'tree_planting':
+        # Use the same cached coastal forecast and seven-day series as both UIs.
+        # Fetch before the storage transaction; unknown dates remain pending LGU review.
+        assessment = assess_graph_window(tides_forecast(lat=10.7800, lon=122.6253, days=7), body.start_at, body.end_at)
+        if assessment['status'] == 'unsafe':
+            raise HTTPException(422, detail=[{'loc': ['body', 'start_at'], 'type': 'value_error',
+                'msg': 'Water is predicted to rise above the planting limit during your two-hour visit. Choose a lower-water time within 6 AM–5 PM.'}])
     try:
         return submit_appointment(body.model_dump(), request.client.host if request.client else 'unknown')
     except AppointmentRateLimit as error:

@@ -107,3 +107,24 @@
   .project-site-info-analytics { flex-direction: column; }
   .project-site-info-stats { display: grid; grid-template-columns: 1fr 1fr; width: 100%; gap: 6px 12px; }
 }
+.project-site-wave-warning {
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid #fca5a5;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #991b1b;
+  line-height: 1.45;
+}
+.project-site-wave-warning strong { display: block; }
+.project-site-wave-warning p { margin: 6px 0 0; font-size: 12px; }
+.project-site-danger-label.leaflet-tooltip {
+  border: 1px solid #b91c1c;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #991b1b;
+  box-shadow: 0 2px 8px #0f172a22;
+  font-weight: 700;
+  padding: 5px 8px;
+  white-space: nowrap;
+}

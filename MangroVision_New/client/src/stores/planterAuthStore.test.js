@@ -15,6 +15,7 @@ before(async () => {
       const path = new URL(input, 'https://field.example.test').pathname;
       const body = init.body ? JSON.parse(init.body) : null;
       requests.push({ path, body });
+      if (path.endsWith('/join')) return loginFailure ? loginFailure() : Response.json({ activity: { title: 'Tree planting', organization_name: 'Test group' } });
       if (path.endsWith('/login') && loginFailure) return loginFailure();
       if (path.endsWith('/logout')) return Response.json({ status: 'ok' });
       if (!path.endsWith('/login') && unauthorized) return Response.json({ detail: 'Login ended.' }, { status: 401 });
@@ -42,6 +43,26 @@ beforeEach(() => {
   usePlanterAuthStore.setState({ token: null, planter: null, isAuthenticated: false, status: 'idle', error: '' });
 });
 const login = (options) => usePlanterAuthStore.getState().login(code, 'Ana', options);
+
+test('code entry opens username setup without authenticating or storing the code', async () => {
+  const activity = await usePlanterAuthStore.getState().checkOrganizationCode(code);
+  assert.equal(activity.organization_name, 'Test group');
+  assert.deepEqual(requests[0], { path: '/api/planter-auth/join', body: { access_code: 'K7MP4R9X' } });
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+  assert.equal(usePlanterAuthStore.getState().planter, null);
+  assert.equal(localStorage.length, 0);
+  assert.equal(sessionStorage.length, 0);
+  await login({ mode: 'first' });
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+});
+
+test('invalid code and unavailable service do not open username setup', async () => {
+  loginFailure = () => Response.json({ detail: [{ loc: ['body', 'access_code'], type: 'credential_error', msg: 'Incorrect organization code.' }] }, { status: 401 });
+  await assert.rejects(usePlanterAuthStore.getState().checkOrganizationCode(code), /Incorrect organization code/);
+  offline = true;
+  await assert.rejects(usePlanterAuthStore.getState().checkOrganizationCode(code), /Check your connection/);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+});
 
 test('shared code and username are sent with a persistent browser ID and no PIN', async () => {
   await login({ mode: 'first' });

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Panel, PanelCard } from '../components/Panel';
 import ReplantingApproval from '../components/ReplantingApproval';
 import { useMapStore } from '../stores/mapStore';
-import { filterMonitoringPoints, monitoringOrganizations } from '../utils/monitoringOrganizationFilter';
+import { filterMonitoringFeatures, filterMonitoringPoints, monitoringOrganizations } from '../utils/monitoringOrganizationFilter';
 import './MonitoringMapWorkspace.css';
 
 const SELECTION_MODES = [
@@ -51,6 +51,8 @@ export default function MonitoringMapWorkspace() {
 
   const visiblePoints = filterMonitoringPoints(points, monitoringOrganizationId);
   const organizations = monitoringOrganizations(projectSites);
+  const waveWarnings = filterMonitoringFeatures(projectSites, monitoringOrganizationId)?.features
+    ?.filter((site) => site.properties?.big_wave_risk?.active === true) || [];
   const deadPoints = visiblePoints.filter((point) => Boolean(point.death_at));
   const selected = deadPoints.filter((point) => selectedIds.includes(point.id));
   const plantedCount = visiblePoints.filter((point) => !point.death_at && (
@@ -85,6 +87,12 @@ export default function MonitoringMapWorkspace() {
           {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
         </select>
       </div>
+      {waveWarnings.length > 0 && <PanelCard panelKey="monitoring-wave-warnings" title="Big-wave danger zones" badge={waveWarnings.length} defaultOpen>
+        {waveWarnings.map((site) => <p className="monitoring-map-help" key={site.id ?? site.properties.id}>
+          <strong>{site.properties.name}: Danger, this area is prone to big waves.</strong><br />
+          {site.properties.big_wave_risk.wave_death_points} of {site.properties.big_wave_risk.planted_points} planted locations ({site.properties.big_wave_risk.percentage}%) have recorded big-wave deaths.
+        </p>)}
+      </PanelCard>}
       <PanelCard panelKey="monitoring-map-review" title="Dead plants & replanting" badge={deadPoints.length} className="monitoring-map-review-card" defaultOpen>
         <label className="monitoring-map-check">
           <input type="checkbox" checked={showDeadPointsOnly} onChange={(event) => {
@@ -130,6 +138,7 @@ export default function MonitoringMapWorkspace() {
       <PanelCard panelKey="monitoring-map-legend" title="Legend" defaultOpen={false}>
         <div className="monitoring-map-legend">
           <div><i style={{ background: '#7f1d1d' }} />Dead</div>
+          <div><i style={{ background: '#dc2626', border: '1px dashed #b91c1c' }} />Big-wave danger site (at least 30% of planted locations)</div>
           <div><i style={{ background: '#7c3aed' }} />Selected for replanting review</div>
           <div><i style={{ background: '#eab308' }} />Planted</div>
           <div><i style={{ background: '#2563eb' }} />Assigned</div>

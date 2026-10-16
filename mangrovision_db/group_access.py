@@ -182,6 +182,30 @@ def _switch_challenge(activity, key, browser_digest, active_hash):
     return _cipher().encrypt(json.dumps(payload).encode()).decode()
 
 
+def check_group_code(access_code, *, address='unknown'):
+    """Open the welcome step without claiming a username, slot, or session.
+
+    Final signup rechecks the code and activity window in authenticate_group.
+    No database transaction stays open while the planter chooses a username.
+    """
+    digest = _digest(normalize_code(access_code))
+    conn = get_connection()
+    try:
+        require_shared_access_schema(conn)
+        try:
+            _limit(conn, 'group-peer:' + address, 2400)
+        finally:
+            conn.commit()
+        activity = _open_activity(conn, digest)
+        account = _account(conn, activity['planter_id'])
+        if account['organization_id'] != activity['organization_id']:
+            raise GroupAccessError('This activity’s organization access needs to be corrected.', 409)
+        return {'title': activity['title'], 'organization_name': account['full_name']}
+    finally:
+        conn.rollback()
+        conn.close()
+
+
 def authenticate_group(access_code, name, browser_key, *, mode='return', switch_token=None, previous_code=None, address='unknown'):
     import planting_database as planting
     display, key = username(name)

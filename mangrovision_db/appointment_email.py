@@ -107,7 +107,7 @@ def _message(request, schedule, *, login=None, access_lines=None, kind='confirma
         if access and access.get('code'):
             access_lines.append(f"Organization code: {access['code']}")
             access_lines.extend(['Share this one code with all participants in your organization.',
-                'First time: choose a personal username. Returning: enter the same code and username to restore your points and progress.',
+                'First time: enter the organization code, then choose a personal username on the welcome screen. Returning: enter the same code and username to restore your points and progress.',
                 'If your username is signed in elsewhere, choose Switch here to move access to this browser.',
                 'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.'])
         else:

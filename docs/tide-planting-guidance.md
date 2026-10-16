@@ -18,6 +18,24 @@ forecast approximation, not a guarantee about unobserved between-sample peaks.
 Workflow, confirmation and later organization-owned site assignment are unchanged.
 No crews, attendance, ecological scoring, override workflow or weather limits were added.
 
+## LIKE public planting appointments
+
+The staff graph shows the full day's water levels. LIKE shows only lower-water
+periods that overlap its planting hours, **6 AM–5 PM Philippine time**. A public
+planting visit lasts two hours, so starts must be between **6 AM and 3 PM**, and
+the entire visit must remain at or below the same estimated planting limit used
+by the staff graph. A high-water interval within opening hours splits availability;
+neither a green start nor green start/end points alone are enough.
+
+The form and public API reject forecast high-water visits and visits outside
+opening hours. The API independently checks the cached coastal forecast before
+starting the storage transaction. Server and browser calculations have regression
+checks for the same reference and interpolated windows. Missing, stale, incomplete,
+or out-of-horizon forecasts remain **unknown**: an organization may submit a
+pending request for LGU review, still within planting hours. Field visits and
+clean-up drives keep their existing booking rules. The staff graph continues to
+show all hours and its scheduling cautions keep their existing behavior.
+
 ## Scheduling display
 
 The graph uses the default coastal forecast without a project-site dropdown.

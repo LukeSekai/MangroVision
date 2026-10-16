@@ -622,6 +622,45 @@
   margin-block: auto;
 }
 
+.field-onboarding-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  padding: 24px 16px;
+}
+
+.field-onboarding-card {
+  margin: auto;
+  box-sizing: border-box;
+  box-shadow: 0 12px 36px rgba(15, 58, 50, 0.12);
+}
+
+.field-onboarding-eyebrow {
+  color: #0f766e;
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 8px;
+}
+
+.field-onboarding-activity {
+  display: grid;
+  gap: 4px;
+  margin: 16px 0;
+  overflow-wrap: anywhere;
+}
+
+.field-onboarding-activity span { color: #64748b; font-size: 14px; }
+.field-onboarding-reminder {
+  padding: 12px;
+  margin: 0 0 20px;
+  border-radius: 10px;
+  background: #edf7f1;
+  color: #24553a;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
 .field-auth-title {
   font-size: 22px;
   margin: 0;

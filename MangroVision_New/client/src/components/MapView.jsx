@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import L from 'leaflet';
+import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import { useMapStore } from '../stores/mapStore';
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
@@ -9,7 +10,7 @@ import { getPlanterColor, getPlanterTint } from '../utils/planterColors';
 import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
 import { getMapPointStatus } from '../utils/mapPointStats';
-import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSitePointCounts } from '../utils/projectSiteInfo';
+import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSitePointCounts, projectSiteStyle } from '../utils/projectSiteInfo';
 import { POINT_STATUS_COLORS as STATUS_COLORS, PLANNED_SPECIES_COLORS as SPECIES_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from '../utils/replantingBrush';
@@ -246,7 +247,7 @@ export default function MapView() {
       maxZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM,
     });
 
-    const osm = L.tileLayer(
+    const osm = cachedTileLayer(
       'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
       {
         maxNativeZoom: 19,
@@ -256,7 +257,7 @@ export default function MapView() {
     );
 
     // High-resolution drone orthomosaic
-    const orthophoto = L.tileLayer(
+    const orthophoto = cachedTileLayer(
       ORTHOPHOTO_TILE_URL,
       {
         pane: 'orthophotoPane',
@@ -306,7 +307,7 @@ export default function MapView() {
       // Share the points' canvas so Leaflet can hit-test both. A canvas in a
       // separate lower pane cannot receive events through the point canvas.
       pane: 'overlayPane',
-      style: PROJECT_SITE_STYLE,
+      style: (feature) => projectSiteStyle(feature, PROJECT_SITE_STYLE),
     });
 
     const baseLayerControl = L.control.layers(
@@ -354,6 +355,10 @@ export default function MapView() {
         <div class="map-zone-legend-row">
           <span class="map-zone-legend-swatch map-zone-legend-swatch-warning" aria-hidden="true"></span>
           <span class="map-zone-legend-label">Warning zone</span>
+        </div>
+        <div class="map-zone-legend-row">
+          <span class="map-zone-legend-swatch" style="border-color:#b91c1c;background:#fee2e2" aria-hidden="true"></span>
+          <span class="map-zone-legend-label">Big-wave danger site (≥30%)</span>
         </div>
       `;
       // Stop map drag/zoom from firing when the user interacts with the legend

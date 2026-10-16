@@ -22,6 +22,7 @@ export const config = {
       src: '^/tiles(?:/(.*))?$',
       dest: '$MANGROVISION_BACKEND_URL/tiles/$1',
       env: ['MANGROVISION_BACKEND_URL'],
+      respectOriginCacheControl: true,
     },
     {
       src: '^/monitoring_uploads(?:/(.*))?$',

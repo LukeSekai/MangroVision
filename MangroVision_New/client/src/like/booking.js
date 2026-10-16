@@ -2,6 +2,15 @@ import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTyp
 import { formRequest } from '../utils/formValidation.js';
 
 export const APPOINTMENT_DURATION_MINUTES = 120;
+export const PLANTING_OPEN_TIME = '06:00';
+export const PLANTING_CLOSE_TIME = '17:00';
+export const PLANTING_LATEST_START = '15:00';
+export const PLANTING_HOURS_ERROR = 'Tree planting is available from 6 AM to 5 PM. Choose a start between 6 AM and 3 PM so your two-hour visit finishes by 5 PM.';
+
+export function plantingHoursError(startTime) {
+  const end = appointmentEndTime(startTime);
+  return !end || startTime < PLANTING_OPEN_TIME || end > PLANTING_CLOSE_TIME ? PLANTING_HOURS_ERROR : '';
+}
 
 export function appointmentEndTime(start) {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(start || '')) return '';
@@ -42,6 +51,7 @@ export function bookingErrors(form, step, now = new Date()) {
     else if (!validBookingDate(form.date)) errors.date = 'Choose a valid date.';
     if (!form.start_time) errors.start_time = 'Choose a start time.';
     else if (!endTime) errors.start_time = 'Choose a valid start time before 10 PM so the two-hour visit ends on the same day.';
+    else if (form.appointment_type === 'tree_planting' && plantingHoursError(form.start_time)) errors.start_time = PLANTING_HOURS_ERROR;
     if (form.date && form.date < manilaToday(now)) errors.date = 'Choose a date on or after today.';
     if (form.date && form.date >= manilaToday(now) && form.start_time && new Date(`${form.date}T${form.start_time}:00+08:00`) <= now) {
       errors.start_time = 'Choose a date and time in the future.';

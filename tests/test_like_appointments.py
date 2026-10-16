@@ -29,6 +29,7 @@ def api(monkeypatch):
     app.include_router(staff.router, prefix='/api/planting-schedules')
     monkeypatch.setattr(staff, 'get_user_by_session_token', lambda _: None)
     monkeypatch.setattr(routes, 'run_delivery_cycle', lambda **kwargs: {'configured': False, 'sent': 0, 'failed': 0})
+    monkeypatch.setattr(routes, 'tides_forecast', lambda **kwargs: {'available': False})
     with TestClient(app) as client:
         yield client, routes, staff
 
@@ -118,6 +119,42 @@ def test_public_receipt_and_timezone(api, monkeypatch):
     assert response.status_code == 201
     assert response.json() == {'reference': 'LIKE-TEST', 'status': 'pending', 'timezone': 'Asia/Manila'}
     assert captured['start_at'].utcoffset() == timedelta(hours=8)
+
+
+@pytest.mark.parametrize('hour,minute', [(4, 30), (5, 59), (15, 1), (16, 0), (17, 0)])
+def test_planting_outside_like_hours_never_reaches_storage(api, monkeypatch, hour, minute):
+    client, routes, _ = api
+    monkeypatch.setattr(routes, 'submit_appointment', lambda *args: pytest.fail('Closed-hours request reached storage'))
+    body = payload()
+    start = datetime.fromisoformat(body['start_at']).replace(hour=hour, minute=minute)
+    body.update(start_at=start.isoformat(), end_at=(start + timedelta(hours=2)).isoformat())
+    response = client.post('/api/public/like/appointments', json=body)
+    assert response.status_code == 422
+    assert '6 AM to 5 PM' in response.text
+
+
+def test_predicted_high_water_blocks_public_planting_before_storage(api, monkeypatch):
+    client, routes, _ = api
+    monkeypatch.setattr(routes, 'assess_graph_window', lambda *args: {'status': 'unsafe'})
+    monkeypatch.setattr(routes, 'submit_appointment', lambda *args: pytest.fail('High-water request reached storage'))
+    response = client.post('/api/public/like/appointments', json=payload())
+    assert response.status_code == 422
+    assert response.json()['detail'][0]['loc'] == ['body', 'start_at']
+    assert 'two-hour visit' in response.text
+
+
+@pytest.mark.parametrize('status', ['safe', 'unknown'])
+@pytest.mark.parametrize('hour', [6, 15])
+def test_valid_hours_and_unknown_forecast_can_request_lgu_review(api, monkeypatch, status, hour):
+    client, routes, _ = api
+    monkeypatch.setattr(routes, 'assess_graph_window', lambda *args: {'status': status})
+    monkeypatch.setattr(routes, 'submit_appointment', lambda *args: {'reference': 'LIKE-TEST', 'status': 'pending'})
+    body = payload()
+    start = datetime.fromisoformat(body['start_at']).replace(hour=hour)
+    body.update(start_at=start.isoformat(), end_at=(start + timedelta(hours=2)).isoformat())
+    response = client.post('/api/public/like/appointments', json=body)
+    assert response.status_code == 201
+    assert response.json()['status'] == 'pending'
 
 
 def test_missing_shared_access_setup_is_actionable_and_does_not_send_mail(api, monkeypatch):

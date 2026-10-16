@@ -29,6 +29,29 @@ def current(token):
     return planting.get_planter_by_session_token(token)
 
 
+def test_code_entry_does_not_claim_a_participant_or_create_a_session(workspace):
+    _, _, code = activity(workspace)
+    before = workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall()
+    for _ in range(3):
+        assert group.check_group_code(code) == {'title': 'Tree planting', 'organization_name': 'Test group'}
+    assert workspace.execute(text('SELECT * FROM organization_participants ORDER BY slot')).fetchall() == before
+    assert workspace.execute(text('SELECT count(*) FROM auth_sessions')).scalar_one() == 0
+    assert workspace.execute(text('SELECT count(*) FROM participant_browser_bindings')).scalar_one() == 0
+    participant, token = join(code, mode='first')
+    assert participant['participant_username'] == 'Ana'
+    assert current(token)['participant_slot'] == 1
+
+
+def test_username_setup_rechecks_code_after_welcome(workspace):
+    _, sid, code = activity(workspace)
+    group.check_group_code(code)
+    group.manage_activity_code(sid, action='replace')
+    with pytest.raises(group.CodeError, match='incorrect or no longer valid'):
+        join(code, mode='first')
+    assert workspace.execute(text('SELECT count(*) FROM auth_sessions')).scalar_one() == 0
+    assert workspace.execute(text('SELECT count(*) FROM organization_participants WHERE username_key IS NOT NULL')).scalar_one() == 0
+
+
 def test_one_code_for_100_planters_and_no_shared_code_throttling(workspace):
     owner, sid, code = activity(workspace, participants=100)
     for number in range(1, 101):

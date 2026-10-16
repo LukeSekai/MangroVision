@@ -1,4 +1,5 @@
 import L from 'leaflet';
+import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import { createGoogleSatelliteLayer } from '../config/googleBasemap';
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
@@ -21,7 +22,7 @@ export function createPublicMap(container, { onLoading, onError }) {
     map.getPane('orthophotoPane').style.zIndex = 250;
 
     const background = createGoogleSatelliteLayer({ maxZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM });
-    const orthophoto = L.tileLayer(ORTHOPHOTO_TILE_URL, {
+    const orthophoto = cachedTileLayer(ORTHOPHOTO_TILE_URL, {
       pane: 'orthophotoPane',
       bounds: ORTHOPHOTO_BOUNDS,
       maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM,

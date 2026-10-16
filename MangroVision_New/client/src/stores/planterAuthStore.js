@@ -40,6 +40,30 @@ function welcome(kind) {
   } catch { /* A welcome message is optional when storage is disabled. */ }
 }
 
+async function accessResponse(res) {
+  if (!res.ok) {
+    const payload = await res.json().catch(() => ({}));
+    const credentialIssue = Array.isArray(payload.detail) && payload.detail.find((issue) => issue.type === 'credential_error');
+    const error = submissionError(payload.detail, 'Planter sign-in is temporarily unavailable. Refresh the page and try again, or contact LGU staff.', res.status);
+    if (payload.detail?.kind) {
+      error.kind = payload.detail.kind;
+      error.message = payload.detail.message;
+      error.switchToken = payload.detail.switch_token;
+      error.participantUsername = payload.detail.participant_username;
+    }
+    if (credentialIssue && res.status < 500 && res.status !== 429) error.message = credentialIssue.msg;
+    if (res.status === 429) {
+      const seconds = Number(res.headers.get('Retry-After'));
+      error.message = seconds > 0 && Number.isFinite(seconds)
+        ? `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} ${seconds <= 60 ? 'minute' : 'minutes'}.`
+        : 'Too many sign-in attempts. Wait a few minutes and try again.';
+    } else if (res.status >= 500) error.message = 'The sign-in service is temporarily unavailable. Try again shortly, or contact LGU staff.';
+    throw error;
+  }
+  const data = await res.json().catch(() => null);
+  return data;
+}
+
 const initialPlanter = readStoredPlanter();
 
 export const usePlanterAuthStore = create((set, get) => ({
@@ -48,6 +72,27 @@ export const usePlanterAuthStore = create((set, get) => ({
   isAuthenticated: Boolean(initialPlanter),
   status: 'idle', // idle | loading | error
   error: '',
+
+  checkOrganizationCode: async (accessCode) => {
+    set({ status: 'loading', error: '' });
+    try {
+      const res = await fetch(`${API}/api/planter-auth/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ access_code: normalizePlanterCode(accessCode) }),
+      });
+      const data = await accessResponse(res);
+      if (!data?.activity?.organization_name || !data.activity.title) {
+        throw new Error('Could not verify the organization code. Please try again.');
+      }
+      set({ status: 'idle', error: '' });
+      return data.activity;
+    } catch (failure) {
+      const error = failure instanceof TypeError ? new Error('Could not reach the server. Check your connection and try again.') : failure;
+      set({ status: 'error', error: error.message });
+      throw error;
+    }
+  },
 
   login: async (accessCode, username, options = {}) => {
     set({ status: 'loading', error: '' });
@@ -61,26 +106,7 @@ export const usePlanterAuthStore = create((set, get) => ({
           ...(options.previousCode ? { previous_code: normalizePlanterCode(options.previousCode) } : {}),
         }),
       });
-      if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
-        const credentialIssue = Array.isArray(payload.detail) && payload.detail.find((issue) => issue.type === 'credential_error');
-        const error = submissionError(payload.detail, 'Planter sign-in is temporarily unavailable. Refresh the page and try again, or contact LGU staff.', res.status);
-        if (payload.detail?.kind) {
-          error.kind = payload.detail.kind;
-          error.message = payload.detail.message;
-          error.switchToken = payload.detail.switch_token;
-          error.participantUsername = payload.detail.participant_username;
-        }
-        if (credentialIssue && res.status < 500 && res.status !== 429) error.message = credentialIssue.msg;
-        if (res.status === 429) {
-          const seconds = Number(res.headers.get('Retry-After'));
-          error.message = seconds > 0 && Number.isFinite(seconds)
-            ? `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} ${seconds <= 60 ? 'minute' : 'minutes'}.`
-            : 'Too many sign-in attempts. Wait a few minutes and try again.';
-        } else if (res.status >= 500) error.message = 'The sign-in service is temporarily unavailable. Try again shortly, or contact LGU staff.';
-        throw error;
-      }
-      const data = await res.json().catch(() => null);
+      const data = await accessResponse(res);
       if (!data?.planter?.id || !data?.planter?.participant_slot || !data?.planter?.participant_username || !data?.planter?.planting_schedule_id) {
         throw new Error('Could not verify your sign-in. Please try again, or contact LGU staff.');
       }

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
+import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { bindProjectSiteInfo } from '../utils/projectSiteInfo';
@@ -22,11 +23,11 @@ export default function MonitoringMap() {
   useEffect(() => {
     const map = L.map(container.current, { maxZoom: 23, scrollWheelZoom: true }).fitBounds(ORTHOPHOTO_BOUNDS);
     mapRef.current = map;
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    cachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
       maxNativeZoom: 19, maxZoom: 23,
     }).addTo(map);
-    const orthophoto = L.tileLayer(ORTHOPHOTO_TILE_URL, {
+    const orthophoto = cachedTileLayer(ORTHOPHOTO_TILE_URL, {
       bounds: ORTHOPHOTO_BOUNDS, maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM,
       maxZoom: 23, minZoom: 10, noWrap: true,
     }).addTo(map);

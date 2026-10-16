@@ -10,7 +10,7 @@ const TIMEZONE = 'Asia/Manila';
 
 const DEATH_REASONS = [
   { key: 'barnacles', label: 'Barnacles' },
-  { key: 'waves', label: 'Waves' },
+  { key: 'waves', label: 'Big waves' },
   { key: 'disease', label: 'Disease' },
   { key: 'animal_damage', label: 'Animal damage' },
   { key: 'storm', label: 'Storm' },

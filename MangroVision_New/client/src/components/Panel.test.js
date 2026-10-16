@@ -1711,3 +1711,24 @@ test('quickly reopening a section cancels its pending collapse animation', async
   const body = document.getElementById(overview.getAttribute('aria-controls'));
   assert.equal(body.style.height, '120px');
 });
+test('big-wave site warnings appear in monitoring cards and update after a death correction', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Site owner', total_planted: 100, alive_seedlings: 70, monitoring_available: true },
+  ] });
+  const site = { id: 1, properties: { id: 1, name: 'Wave-exposed site', organization_id: 1,
+    organization_name: 'Site owner', point_count: 100,
+    big_wave_risk: { active: true, planted_points: 100, wave_death_points: 30, percentage: 30 } },
+    geometry: { type: 'Polygon', coordinates: [[[122.625,10.78],[122.626,10.78],[122.626,10.781],[122.625,10.781],[122.625,10.78]]] } };
+  responses.set('/api/project-sites', { features: [site] });
+  await render(pages.get('OrganizationMonitoring'));
+  const row = document.querySelector('.monitoring-site-row');
+  assert.match(row.textContent, /Danger: This area is prone to big waves/);
+  assert.match(row.textContent, /30 of 100 planted locations \(30%\)/);
+  assert.equal(row.querySelector('.monitoring-site-map-outline path[fill-rule="evenodd"]').getAttribute('stroke'), '#b91c1c');
+  await click(row.querySelector('.monitoring-site-open'));
+  assert.match(document.querySelector('.monitoring-site-details').textContent, /site history, including past plantings/);
+  site.properties.big_wave_risk = { active: false, planted_points: 100, wave_death_points: 29, percentage: 29 };
+  await act(async () => window.dispatchEvent(new window.Event('mv:data-changed')));
+  await settle();
+  assert.equal(document.querySelector('.monitoring-site-wave-warning'), null);
+});

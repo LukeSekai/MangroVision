@@ -22,6 +22,7 @@ _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
 _CSRF_EXEMPT_PATHS = {
     "/api/auth/login",
     "/api/planter-auth/login",
+    "/api/planter-auth/join",
     "/api/planter-auth/register",
 }
 

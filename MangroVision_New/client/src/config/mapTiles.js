@@ -21,7 +21,9 @@ export const TILESET_PATH = rawTilesetPath
 const rawTileExtension = import.meta.env.VITE_TILE_EXTENSION || DEFAULT_TILE_EXTENSION;
 export const TILE_EXTENSION = rawTileExtension.replace(/^\./, '').toLowerCase();
 
-export const ORTHOPHOTO_TILE_URL = `${TILE_SERVER}/${TILESET_PATH}/{z}/{x}/{y}.${TILE_EXTENSION}`;
+// Change this revision when replacing imagery under the same tileset path.
+export const TILESET_REVISION = import.meta.env.VITE_TILESET_REVISION || '';
+export const ORTHOPHOTO_TILE_URL = `${TILE_SERVER}/${TILESET_PATH}/{z}/{x}/{y}.${TILE_EXTENSION}${TILESET_REVISION ? `?v=${encodeURIComponent(TILESET_REVISION)}` : ''}`;
 
 export const ORTHOPHOTO_MAX_NATIVE_ZOOM = Number.parseInt(
   import.meta.env.VITE_ORTHOPHOTO_MAX_NATIVE_ZOOM || DEFAULT_MAX_NATIVE_ZOOM,

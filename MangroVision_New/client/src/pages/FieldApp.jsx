@@ -3,23 +3,25 @@ import { zigzagPoints } from '../utils/organizationAssignment';
 import { googleMapsDirectionsUrl, navigationSegments, pointGuidance } from '../utils/fieldNavigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
+import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
 import GuideButton from '../components/GuideButton';
-import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
-import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts } from '../utils/projectSiteInfo';
+import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSitePointCounts, projectSiteStyle } from '../utils/projectSiteInfo';
 import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLOR } from '../utils/pointStatus';
 import useFormFeedback from '../utils/useFormFeedback';
-import { isPlanterCode } from '../utils/planterCode';
-import { FieldError, FormErrorSummary } from '../components/FormFeedback';
+import { FieldError } from '../components/FormFeedback';
 import FieldActivities from '../components/FieldActivities';
-import { rememberedUsername, usePlanterAuthStore } from '../stores/planterAuthStore';
-import { ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
+import { usePlanterAuthStore } from '../stores/planterAuthStore';
+import AuthScreen from '../components/PlanterAuthScreen';
+import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
 import { createGoogleSatelliteLayer } from '../config/googleBasemap';
 import './FieldApp.css';
 import '../components/ProjectSiteInfo.css';
+
+export { AuthScreen };
 
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 
@@ -116,97 +118,6 @@ async function fetchRoute(origin, dest, travelMode = 'walking', accuracy = null)
   return response.json();
 }
 
-export function AuthScreen() {
-  const login = usePlanterAuthStore((state) => state.login);
-  const storeStatus = usePlanterAuthStore((state) => state.status);
-  const storeError = usePlanterAuthStore((state) => state.error);
-  const [localError, setLocalError] = useState('');
-  const [mode, setMode] = useState('return');
-  const [switchPrompt, setSwitchPrompt] = useState(null);
-  const [legacyClaim, setLegacyClaim] = useState(false);
-  const feedback = useFormFeedback({
-    access_code: { label: 'Organization code', validate: (value) => isPlanterCode(value) ? '' : 'Enter the eight-character organization code from your group leader.' },
-    username: { label: 'Username', validate: (value) => /^[a-z0-9][a-z0-9._-]{2,31}$/i.test(value.trim()) ? '' : 'Use 3–32 letters or numbers. Dots, underscores and hyphens are allowed.' },
-    previous_code: { label: 'Previous individual code', validate: (value) => !value || isPlanterCode(value) ? '' : 'Check your previous eight-character code.' },
-  });
-  const [form, setForm] = useState({ access_code: '', username: rememberedUsername(), previous_code: '' });
-  const update = (field) => (event) => {
-    setLocalError('');
-    setSwitchPrompt(null);
-    usePlanterAuthStore.setState({ error: '' });
-    setForm((current) => ({ ...current, [field]: event.target.value }));
-  };
-  const submitting = storeStatus === 'loading';
-  const submit = async (switchToken) => {
-    if (submitting) return;
-    setLocalError('');
-    usePlanterAuthStore.setState({ error: '' });
-    if (!feedback.validate()) return;
-    try {
-      await login(form.access_code, form.username, { mode, switchToken,
-        previousCode: mode === 'first' && legacyClaim ? form.previous_code : undefined });
-    } catch (error) {
-      if (error.kind === 'session_in_use') { setSwitchPrompt(error.switchToken); return; }
-      if (error.kind === 'already_joined') {
-        setMode('return');
-        setForm((current) => ({ ...current, username: error.participantUsername }));
-        setLocalError('This browser has already joined. Sign in below to return to the same participant.');
-        return;
-      }
-      if (error.kind === 'existing_participant') setLegacyClaim(true);
-      if (feedback.fromServer(error)) usePlanterAuthStore.setState({ error: '' });
-      else setLocalError(error.message || 'Could not sign in. Check your connection and try again.');
-    }
-  };
-  const handleSubmit = (event) => { event.preventDefault(); void submit(); };
-  const chooseMode = (next) => {
-    setMode(next); setSwitchPrompt(null); setLocalError(''); feedback.clear();
-    usePlanterAuthStore.setState({ error: '' });
-  };
-  return <div className="field-auth-screen"><div className="field-auth-card">
-    {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="field-login" /></div>}
-    <div className="field-auth-brand"><Logo variant="lockup" size={44} alt="MangroVision" /><span className="field-auth-brand-suffix">Field</span></div>
-    <h1 className="field-auth-subtitle">Planter sign in</h1>
-    <p className="field-label-help">Everyone in your group uses the same organization code. Your username keeps your own points and progress.</p>
-    <div className="field-auth-mode" role="group" aria-label="Joining or returning">
-      <button type="button" aria-pressed={mode === 'first'} onClick={() => chooseMode('first')} disabled={submitting}>First time</button>
-      <button type="button" aria-pressed={mode === 'return'} onClick={() => chooseMode('return')} disabled={submitting}>Returning planter</button>
-    </div>
-    <form className="field-form" noValidate onChangeCapture={feedback.onChange} onSubmit={handleSubmit}>
-      <fieldset className="field-auth-fields" disabled={submitting}>
-        <label className="field-label">Organization code
-          <input {...feedback.props('access_code')} className="field-input field-access-code" type="text" value={form.access_code}
-            onChange={update('access_code')} autoComplete="off" autoCapitalize="characters" spellCheck={false}
-            placeholder="K7MP-4R9X" maxLength={32} required />
-          <FieldError feedback={feedback} field="access_code" />
-        </label>
-        <label className="field-label">{mode === 'first' ? 'Choose your username' : 'Your username'}
-          <input {...feedback.props('username')} className="field-input" value={form.username} onChange={update('username')}
-            autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={32} required placeholder="Example: ana.cruz" />
-          <FieldError feedback={feedback} field="username" />
-        </label>
-        <p className="field-label-help">{mode === 'first' ? 'Choose a username that nobody else in your organization uses. Remember it for your next visit.'
-          : 'Use the same username on any browser or phone to restore your saved progress.'} No password or PIN is needed.</p>
-        {mode === 'first' && <details open={legacyClaim} onToggle={(event) => setLegacyClaim(event.currentTarget.open)}>
-          <summary>Already have a previous individual planter code?</summary>
-          <p className="field-label-help">Use it once to name your existing participant and keep your original points.</p>
-          <label className="field-label">Previous individual code
-            <input {...feedback.props('previous_code')} className="field-input" value={form.previous_code} onChange={update('previous_code')}
-              autoComplete="off" maxLength={32} />
-            <FieldError feedback={feedback} field="previous_code" />
-          </label>
-        </details>}
-      </fieldset>
-      {(localError || storeError) && <div className="field-error" role="alert">{localError || storeError}</div>}
-      {switchPrompt ? <div className="field-switch-prompt" role="alert">
-        <p>This participant is already signed in. Switch access to this browser? The other login will end. Your points and progress stay the same.</p>
-        <button className="field-submit" type="button" disabled={submitting} onClick={() => void submit(switchPrompt)}>{submitting ? 'Switching...' : 'Switch here'}</button>
-        <button className="field-btn field-btn-outline" type="button" disabled={submitting} onClick={() => setSwitchPrompt(null)}>Cancel</button>
-      </div> : <button className="field-submit" type="submit" disabled={submitting}>{submitting ? 'Signing in...' : mode === 'first' ? 'Join planting activity' : 'Sign in'}</button>}
-    </form>
-  </div></div>;
-}
-
 function PointsMap({
   points,
   projectSites,
@@ -247,8 +158,10 @@ function PointsMap({
     map.getPane('orthophotoPane').style.zIndex = 250;
 
     createGoogleSatelliteLayer({ maxZoom: 24 }).addTo(map);
-    L.tileLayer(ORTHOPHOTO_TILE_URL, {
+    cachedTileLayer(ORTHOPHOTO_TILE_URL, {
       pane: 'orthophotoPane',
+      bounds: ORTHOPHOTO_BOUNDS,
+      noWrap: true,
       minZoom: 14,
       maxZoom: 24,
       maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM,
@@ -303,13 +216,13 @@ function PointsMap({
       const geometry = parseProjectSiteGeometry(feature?.geometry);
       if (siteId == null || !geometry) return;
       const boundary = L.geoJSON({ type: 'Feature', properties: {}, geometry }, {
-        style: {
+        style: projectSiteStyle(feature, {
           color: '#22c55e',
           weight: 2.5,
           fillColor: '#16a34a',
           fillOpacity: 0.12,
           dashArray: '7 5',
-        },
+        }),
       }).addTo(zoneLayer);
       bindProjectSiteInfo(boundary, { ...feature, geometry }, {
         counts: sitePointCounts.get(String(siteId)) || emptyProjectSiteCounts(),

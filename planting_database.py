@@ -3434,7 +3434,7 @@ def delete_analysis(analysis_id: int):
 DEATH_REASON_CATEGORIES = {
     "unknown": "Not determined",
     "barnacles": "Barnacles",
-    "waves": "Waves",
+    "waves": "Big waves",
     "disease": "Disease",
     "animal_damage": "Animal damage",
     "storm": "Storm",
@@ -6738,7 +6738,7 @@ def create_organization_monitoring_record(
         conn.close()
 
 
-def _project_site_feature(row: Any, counts: Optional[dict] = None) -> dict:
+def _project_site_feature(row: Any, counts: Optional[dict] = None, wave_risk: Optional[dict] = None) -> dict:
     try:
         geometry = json.loads(row["polygon_geojson"])
     except (TypeError, json.JSONDecodeError):
@@ -6767,6 +6767,8 @@ def _project_site_feature(row: Any, counts: Optional[dict] = None) -> dict:
         "area_released_at": row.get("area_released_at"),
     }
     props.update(counts or {})
+    if wave_risk is not None:
+        props['big_wave_risk'] = wave_risk
     return {
         "type": "Feature",
         "id": int(row["id"]),
@@ -6829,7 +6831,9 @@ def list_project_sites() -> List[dict]:
             ORDER BY sz.name COLLATE NOCASE, sz.id
         """).fetchall()
         counts = _project_site_counts(conn)
-        return [_project_site_feature(row, counts.get(int(row["id"]))) for row in rows]
+        from mangrovision_db.site_wave_risk import project_site_wave_risks, wave_risk
+        risks = project_site_wave_risks(conn) if rows else {}
+        return [_project_site_feature(row, counts.get(int(row["id"])), risks.get(int(row['id']), wave_risk())) for row in rows]
     finally:
         conn.close()
 
@@ -6848,7 +6852,9 @@ def get_project_site(site_id: int) -> Optional[dict]:
         """, (int(site_id),)).fetchone()
         if not row:
             return None
-        return _project_site_feature(row, _project_site_counts(conn).get(int(site_id)))
+        from mangrovision_db.site_wave_risk import project_site_wave_risks, wave_risk
+        return _project_site_feature(row, _project_site_counts(conn).get(int(site_id)),
+                                     project_site_wave_risks(conn).get(int(site_id), wave_risk()))
     finally:
         conn.close()
 

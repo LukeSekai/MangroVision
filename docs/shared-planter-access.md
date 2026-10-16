@@ -7,8 +7,11 @@ uses the saved schedule; there is no timer starting at email delivery or each
 participant's first visit. Cancelling/completing the activity or revoking its code
 also stops existing sessions and planting updates. Records remain saved.
 
-First time asks for the group code and a personal username (3–32 letters,
-numbers, dots, underscores or hyphens). The username is unique within the
+First time asks only for the organization code. Once it is verified, a welcome
+screen inside Field asks the planter to choose a personal username (3–32 letters,
+numbers, dots, underscores or hyphens). Code verification does not reserve a slot
+or create a participant session. Saving the username rechecks the code and activity
+window, then opens the field workspace. The username is unique within the
 organization, ignoring letter case. Returning planter uses the group code and
 that username. There is no password or PIN. This is group access with a claimed
 participant identity, not two-factor authentication: a group member who knows
@@ -47,10 +50,12 @@ Migration `20261015_0019` only adds tables, columns, constraints and indexes. It
 does not reset accounts, rename participants, move points, or issue live codes.
 Existing anonymous slots with devices, sessions or planted progress cannot be
 claimed as unused slots. An existing valid session or remembered legacy browser
-identity proves its original slot. Otherwise a participant can enter their old
-individual code once under **First time → Already have a previous individual
-planter code?**, alongside the new activity code and chosen username. This names
-their original slot and preserves their progress. Old codes do not directly
+identity proves its original slot. The old individual-code input is no longer
+shown in the normal sign-in flow. Participants without a remembered legacy browser
+identity or valid session should ask LGU staff for help restoring their existing
+participant. The compatibility API still accepts a previous individual code with
+the activity code and chosen username to name the original slot and keep its
+progress. Old codes do not directly
 authorize the new field workspace.
 
 ## Coordinated activation
@@ -79,7 +84,7 @@ or email. This check reports the problem; it does not apply migrations at runtim
    before sharing it. Backup checksum/readability verification remains an
    operator step; the script checks the artifact exists, not its restoreability.
 5. Restart the matching backend and publish the matching frontend together.
-   `deploy_testing.py` rejects a backend missing username/browser/switch support.
+   `deploy_testing.py` rejects a backend missing code-only entry or username/browser/switch support.
 6. Share the current activity's code with its contact person. Previously delivered
    individual-code emails are not automatically replaced. Verify the planned
    start/end, joining, logout/return, switched-session rejection and preserved points.

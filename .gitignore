@@ -48,6 +48,10 @@ htmlcov/
 !/tests/test_quick_assign_postgres.py
 !/tests/test_project_site_counts.py
 !/tests/test_field_routing.py
+!/tests/test_field_join_api.py
+!/tests/test_booking_tides.py
+!/tests/test_site_wave_risk.py
+!/tests/test_map_tile_cache.py
 !/tests/test_organization_reset_postgres.py
 !/tests/test_like_appointments.py
 !/tests/test_like_appointments_postgres.py
@@ -71,6 +75,8 @@ htmlcov/
 !MangroVision_New/client/src/utils/mapPointStats.test.js
 !MangroVision_New/client/src/utils/mapPointFilters.test.js
 !MangroVision_New/client/src/utils/mapLayerVisibility.test.js
+!MangroVision_New/client/src/utils/cachedTileLayer.test.js
+!MangroVision_New/client/dev/localOrthophotoTiles.test.js
 !MangroVision_New/client/src/utils/projectSiteInfo.test.js
 !MangroVision_New/client/src/utils/siteMapPreview.test.js
 !MangroVision_New/client/src/pages/Dashboard.test.js

@@ -83,7 +83,7 @@ def activity_message(current, updated, kind, *, access=None):
                 raise ValueError('Configure MANGROVISION_PUBLIC_URL before sending planting access.')
             access_lines = ['Planter access', f'Open: {action_url}', f"Organization code: {access['code']}",
                 'Share this one code with all participants in your organization.',
-                'First time: choose a personal username. Returning: use the same code and username to restore your progress.',
+                'First time: enter the organization code, then choose a personal username on the welcome screen. Returning: use the same code and username to restore your progress.',
                 'Choose Switch here if you need to move an existing login to this browser.',
                 'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.']
             lines.extend(['', *access_lines])

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { createProjectSiteInfo, emptyProjectSiteCounts, projectSiteAreaM2, projectSitePointCounts } from './projectSiteInfo.js';
+import { bindProjectSiteInfo, createProjectSiteInfo, emptyProjectSiteCounts, projectSiteAreaM2, projectSitePointCounts, projectSiteStyle } from './projectSiteInfo.js';
 
 test('site counts reconcile each current location once using resolved site ownership', () => {
   const counts = projectSitePointCounts([
@@ -93,4 +93,32 @@ test('user-entered names, organizations and notes remain plain text in map overl
   assert.equal(text.split(payload).length - 1, 3);
   assert.doesNotMatch(html, /<img|<script/);
   assert.match(html, /&lt;img/);
+});
+
+test('big-wave site warnings show their historical site denominator even on participant maps', () => {
+  const feature = { properties: { name: 'North site', big_wave_risk: {
+    active: true, planted_points: 100, wave_death_points: 30, percentage: 30,
+  } } };
+  const { text } = card(feature, { counts: emptyProjectSiteCounts(), scope: 'participant' });
+  assert.match(text, /Danger: This area is prone to big waves/);
+  assert.match(text, /30 of 100 planted locations \(30%\)/);
+  assert.match(text, /whole project site’s recorded history/);
+  assert.match(text, /Other causes of death do not count/);
+  assert.equal(projectSiteStyle(feature, { weight: 2 }).color, '#b91c1c');
+  for (const risk of [undefined, { active: false, wave_death_points: 10, planted_points: 100, percentage: 10 }]) {
+    const normal = { properties: { big_wave_risk: risk } };
+    assert.doesNotMatch(card(normal).text, /Danger|prone to big waves/);
+    assert.deepEqual(projectSiteStyle(normal, { color: '#15803d' }), { color: '#15803d' });
+  }
+});
+
+test('flagged site boundaries carry a permanent danger label and a detailed popup', () => {
+  const calls = {};
+  const layer = { setStyle: (style) => { calls.style = style; }, bindTooltip: (content, options) => { calls.tooltip = options; },
+    bindPopup: (content) => { calls.popup = content; }, on() {} };
+  bindProjectSiteInfo(layer, { properties: { big_wave_risk: { active: true } } });
+  assert.equal(calls.tooltip.permanent, true);
+  assert.equal(calls.tooltip.className, 'project-site-danger-label');
+  assert.equal(calls.style.color, '#b91c1c');
+  assert.equal(typeof calls.popup, 'function');
 });

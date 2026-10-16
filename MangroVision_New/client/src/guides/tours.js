@@ -178,7 +178,7 @@ export const FIELD_LOGIN_TOURS = [{
     description: 'Use the shared organization code and your personal username.',
   steps: [
       step(null, '.field-auth-brand', 'Organization field access', 'Get the shared activity code from your group leader. Everyone in the organization uses that code during the scheduled planting activity.'),
-      step(null, '.field-form', 'Choose first time or returning', 'First time creates a unique username for your participant. Returning planter uses the same username to restore your points and progress on any browser or phone. No password or PIN is needed.'),
+      step(null, '.field-form', 'Choose first time or returning', 'First time asks for your organization code, then opens a welcome screen where you choose a unique username for your participant. Returning planter uses the same username to restore your points and progress on any browser or phone. No password or PIN is needed.'),
       step(null, '.field-form', 'Switch browsers when needed', 'If your participant is signed in elsewhere, choose Switch here. The other login ends and your progress stays the same. A normal logout keeps this browser’s remembered identity.'),
   ],
 }];

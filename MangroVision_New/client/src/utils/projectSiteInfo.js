@@ -5,6 +5,12 @@ export function projectSiteId(feature) {
   return feature?.id ?? feature?.properties?.id;
 }
 
+export function projectSiteStyle(feature, base = {}) {
+  return feature?.properties?.big_wave_risk?.active === true
+    ? { ...base, color: '#b91c1c', fillColor: '#dc2626', fillOpacity: 0.14, weight: 3, dashArray: '8 5' }
+    : base;
+}
+
 // Staff points use their resolved site ownership. Field points use the site
 // of the participant's assignment. Never infer ownership from an organization.
 export function projectSitePointCounts(points, { scope = 'site' } = {}) {
@@ -130,6 +136,15 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     addText(card, 'div', 'project-site-info-owner', owner);
   }
 
+  const risk = props.big_wave_risk;
+  if (risk?.active === true) {
+    const warning = addText(card, 'div', 'project-site-wave-warning', '');
+    warning.setAttribute('role', 'note');
+    addText(warning, 'strong', '', 'Danger: This area is prone to big waves.');
+    addText(warning, 'p', '', `${number(risk.wave_death_points)} of ${number(risk.planted_points)} planted locations (${number(risk.percentage)}%) have recorded deaths from big waves.`);
+    addText(warning, 'p', '', 'This warning uses the whole project site’s recorded history, including past plantings. Other causes of death do not count toward the 30% threshold.');
+  }
+
   const details = addText(card, 'dl', 'project-site-info-details', '');
   const detail = (label, value, kind = '') => {
     const row = addText(details, 'div', `project-site-info-detail${kind ? ` is-${kind}` : ''}`, '');
@@ -168,15 +183,21 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
 
 export function bindProjectSiteInfo(layer, feature, options) {
   const content = () => createProjectSiteInfo(feature, options);
-  layer.bindTooltip(content, {
-    className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1,
-  });
+  const danger = feature?.properties?.big_wave_risk?.active === true;
+  if (danger) layer.setStyle?.(projectSiteStyle(feature));
+  layer.bindTooltip(danger ? () => {
+    const label = document.createElement('span');
+    label.textContent = '⚠ Danger: Big waves';
+    return label;
+  } : content, danger
+    ? { className: 'project-site-danger-label', permanent: true, direction: 'center', opacity: 1 }
+    : { className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1 });
   layer.bindPopup(content, {
     className: 'project-site-popup', maxWidth: 320, minWidth: 180,
     maxHeight: 360, autoPanPadding: [12, 12],
     autoPanPaddingTopLeft: [12, 60],
     ...options?.popupOptions,
   });
-  layer.on('popupopen', () => layer.closeTooltip());
-  layer.on('tooltipopen', () => { if (layer.isPopupOpen()) layer.closeTooltip(); });
+  layer.on('popupopen', () => { if (!danger) layer.closeTooltip(); });
+  layer.on('tooltipopen', () => { if (!danger && layer.isPopupOpen()) layer.closeTooltip(); });
 }

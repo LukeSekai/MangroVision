@@ -4,6 +4,7 @@ import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } fr
 import { buildSiteMapPreview } from '../utils/siteMapPreview';
 
 export default function SiteMapPreview({ site, name, points = [], large = false, frameGeometry }) {
+  const waveDanger = site.properties?.big_wave_risk?.active === true;
   const [failedTiles, setFailedTiles] = useState(new Set());
   const preview = useMemo(() => buildSiteMapPreview(site.geometry, {
     satellite: { url: GOOGLE_SATELLITE_URL, maxNativeZoom: GOOGLE_SATELLITE_MAX_NATIVE_ZOOM },
@@ -13,7 +14,7 @@ export default function SiteMapPreview({ site, name, points = [], large = false,
   }), [site.geometry, points, large, frameGeometry]);
   const radius = preview ? Math.max(1.2, Math.min(2.6, (preview.zoom - 15) * 0.4 + 1.1)) : 0;
   return <div className={`monitoring-site-thumbnail monitoring-site-map-preview${large ? ' monitoring-site-map-large' : ''}`} role="img"
-    aria-label={preview ? `Map of ${name} with its site boundary outlined and ${preview.markers.length} planting points` : `Map preview unavailable for ${name}`}>
+    aria-label={preview ? `Map of ${name} with its site boundary outlined and ${preview.markers.length} planting points${waveDanger ? '. Danger: This area is prone to big waves.' : ''}` : `Map preview unavailable for ${name}`}>
     {preview ? <>
       {preview.tiles.filter((tile) => !failedTiles.has(tile.key)).map((tile) => (
         <img key={tile.key} src={tile.url} alt="" aria-hidden="true" className="monitoring-site-map-tile"
@@ -24,7 +25,7 @@ export default function SiteMapPreview({ site, name, points = [], large = false,
       ))}
       <svg viewBox={`0 0 ${preview.width} ${preview.height}`} aria-hidden="true" className="monitoring-site-map-outline">
         <path d={preview.path} fill="none" stroke="white" strokeWidth="5" strokeLinejoin="round" />
-        <path d={preview.path} fill="#22c55e" fillOpacity="0.12" fillRule="evenodd" stroke="#15803d" strokeWidth="2.5" strokeLinejoin="round" />
+        <path d={preview.path} fill={waveDanger ? '#dc2626' : '#22c55e'} fillOpacity="0.12" fillRule="evenodd" stroke={waveDanger ? '#b91c1c' : '#15803d'} strokeWidth="2.5" strokeLinejoin="round" />
         {preview.markers.map((point) => <circle key={point.id} className="monitoring-site-map-point"
           data-point-id={point.id} data-point-status={point.status} cx={point.x} cy={point.y} r={radius}
           fill={point.color} fillOpacity="0.95" stroke="#17251b" strokeWidth="0.65" />)}

@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { appointmentEndTime, bookingErrors, bookingPayload, manilaToday, submitBooking } from './booking';
+import { appointmentEndTime, bookingErrors, bookingPayload, manilaToday, PLANTING_OPEN_TIME, PLANTING_LATEST_START, submitBooking, validBookingDate } from './booking';
+import { assessPlantingBooking } from './bookingTides';
+import { COASTAL_FORECAST_KEY } from '../utils/plantingTides';
+import useTideForecasts from '../utils/useTideForecasts';
 import useFormFeedback from '../utils/useFormFeedback';
 import { serverFieldErrors } from '../utils/formValidation';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
@@ -88,6 +91,16 @@ export function AppointmentForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [receipt, setReceipt] = useState(null);
+  const [tideRetry, setTideRetry] = useState(0);
+  const [tideNow, setTideNow] = useState(Date.now);
+  const isPlanting = form.appointment_type === 'tree_planting';
+  const tideRecords = useTideForecasts(step === 2 && isPlanting && validBookingDate(form.date) ? [COASTAL_FORECAST_KEY] : [], tideRetry);
+  const tideRecord = tideRecords[COASTAL_FORECAST_KEY];
+  const tideLoading = isPlanting && validBookingDate(form.date) && (!tideRecord || tideRecord.loading);
+  useEffect(() => {
+    const timer = window.setInterval(() => setTideNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const feedback = useFormFeedback(bookingFields);
   const attempt = useRef(null);
   const lock = useRef(false);
@@ -122,6 +135,15 @@ export function AppointmentForm() {
     if (lock.current) return;
     setError('');
     if (!feedback.validate(bookingErrors(form, 2))) return;
+    if (isPlanting) {
+      if (tideLoading) { setError('Wait for the tide check to finish before sending your request.'); return; }
+      const assessment = assessPlantingBooking({ payload: tideRecord?.error ? null : tideRecord?.payload,
+        date: form.date, startTime: form.start_time, now: Date.now() });
+      if (['unsafe', 'closed'].includes(assessment.status)) {
+        feedback.reject({ start_time: assessment.reason });
+        return;
+      }
+    }
     try {
       // Retrying an identical request reuses its key, including after a lost response.
       const fingerprint = JSON.stringify(form);
@@ -173,12 +195,13 @@ export function AppointmentForm() {
         <button className="like-button" type="submit">Continue to schedule <Icon name="arrow" size={18} /></button>
       </div> : <div className="like-form-fields" key="schedule">
         <label>Preferred date <span>*</span><input disabled={busy} {...feedback.props('date')} ref={(node) => { firstField.current = node; feedback.props('date').ref(node); }} type="date" value={form.date} onChange={update} required min={manilaToday()} /><FieldError feedback={feedback} field="date" /></label>
-        {form.appointment_type === 'tree_planting' && <PlantingTimeSuggestions date={form.date} startTime={form.start_time} endTime={appointmentEndTime(form.start_time)} onChoose={chooseStart} busy={busy} />}
+        {isPlanting && <PlantingTimeSuggestions date={form.date} startTime={form.start_time} onChoose={chooseStart} busy={busy}
+          record={tideRecord} now={tideNow} onRefresh={() => { setTideNow(Date.now()); setTideRetry((value) => value + 1); }} />}
         <div className="like-form-row">
-          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required max="21:59" /><FieldError feedback={feedback} field="start_time" /></label>
+          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required min={isPlanting ? PLANTING_OPEN_TIME : undefined} max={isPlanting ? PLANTING_LATEST_START : '21:59'} /><FieldError feedback={feedback} field="start_time" /></label>
           <label>End time <small>automatic</small><input disabled={busy} {...feedback.props('end_time')} type="time" value={appointmentEndTime(form.start_time)} readOnly aria-describedby="like-duration-hint" /><FieldError feedback={feedback} field="end_time" /></label>
         </div>
-        <p className="like-field-hint" id="like-duration-hint">Your visit ends two hours after your chosen start time.</p>
+        <p className="like-field-hint" id="like-duration-hint">Your visit ends two hours after your chosen start time.{isPlanting && ' Planting must start at or after 6 AM and finish by 5 PM, with lower water throughout the visit.'}</p>
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
         <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
         <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>

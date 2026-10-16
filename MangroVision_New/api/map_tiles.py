@@ -12,6 +12,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _MAP_DIR = _PROJECT_ROOT / "MAP"
 _TILE_SIZE = 256
 _MAX_ZOOM = 30
+_TILE_CACHE_HEADERS = {'Cache-Control': 'public, max-age=3600'}
 _WEB_MERCATOR_HALF_WORLD = 20037508.342789244
 
 
@@ -172,7 +173,7 @@ def get_map_tile(tileset: str, z: int, x: int, y: int, extension: str):
 
     static_tile = _static_tile_path(tileset, z, x, y, extension)
     if static_tile is not None:
-        return FileResponse(static_tile, media_type=_media_type(extension))
+        return FileResponse(static_tile, media_type=_media_type(extension), headers=_TILE_CACHE_HEADERS)
 
     geotiff_path = _tileset_geotiff_path(tileset)
     if geotiff_path is None or extension != "png":
@@ -184,4 +185,4 @@ def get_map_tile(tileset: str, z: int, x: int, y: int, extension: str):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not render map tile: {exc}") from exc
 
-    return Response(content=tile, media_type="image/png")
+    return Response(content=tile, media_type="image/png", headers=_TILE_CACHE_HEADERS)

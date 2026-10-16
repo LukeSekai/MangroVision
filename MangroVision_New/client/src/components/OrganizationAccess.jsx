@@ -33,7 +33,7 @@ export default function OrganizationAccess({ organization, activity, onCreated }
   };
   const handover = () => `${organization.organization_name} — ${activity.title}\nOpen: ${window.location.origin}/field\n`
     + `Organization code: ${access.code}\nOpens: ${time(access.start_at)}\nCloses: ${time(access.end_at)} (Philippine time)\n\n`
-    + 'Share this one code with all participants.\nFirst time: choose a personal username. Returning: enter the same code and username.\n'
+    + 'Share this one code with all participants.\nFirst time: enter the organization code, then choose a personal username on the welcome screen. Returning: enter the same code and username.\n'
     + 'Choose Switch here to move an existing login to another browser. No password or PIN is needed.\n';
   const download = () => {
     const objectUrl = URL.createObjectURL(new Blob([handover()], { type: 'text/plain;charset=utf-8' }));

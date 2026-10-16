@@ -5,7 +5,7 @@ from typing import List, Optional, Literal
 from fastapi import APIRouter, HTTPException, Response, Request
 from pydantic import BaseModel, Field
 from mangrovision_db.planter_codes import CodeError
-from mangrovision_db.group_access import authenticate_group, GroupAccessError
+from mangrovision_db.group_access import authenticate_group, check_group_code, GroupAccessError
 from mangrovision_db.planter_activities import list_planter_activities
 
 from planting_database import (
@@ -51,8 +51,11 @@ def _assert_point_belongs_to_planter(assignment_point_id: int, planter: dict) ->
         raise HTTPException(status_code=403, detail="That point is not assigned to your participant slot.")
 
 
-class PlanterLoginRequest(BaseModel):
+class PlanterJoinRequest(BaseModel):
     access_code: str = Field(min_length=1, max_length=32)
+
+
+class PlanterLoginRequest(PlanterJoinRequest):
     username: str = Field(min_length=1, max_length=64)
     browser_key: str = Field(min_length=48, max_length=48)
     mode: Literal['first', 'return'] = 'return'
@@ -89,6 +92,19 @@ def _access_error(error):
     else:
         detail = str(error)
     return HTTPException(status_code=error.status, detail=detail, headers=headers)
+
+
+@router.post("/join")
+def planter_join(body: PlanterJoinRequest, response: Response, request: Request):
+    try:
+        activity = check_group_code(body.access_code,
+            address=request.client.host if request.client else 'unknown')
+    except CodeError as error:
+        raise _access_error(error) from error
+    except ValueError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    response.headers['Cache-Control'] = 'no-store'
+    return {"activity": activity}
 
 
 @router.post("/login")

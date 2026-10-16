@@ -112,9 +112,10 @@ function websiteForecast() {
   } };
 }
 
-test('website uses a tide suggestion, fills the two-hour end and warns when the whole visit does not fit', async () => {
+test('website uses a tide suggestion and blocks sending when the whole visit does not fit', async () => {
   const { date, payload } = websiteForecast();
-  globalThis.fetch = async () => Response.json(payload);
+  let sent = 0;
+  globalThis.fetch = async (url) => { if (url.includes('/appointments')) sent++; return Response.json(payload); };
   await openWebsiteSchedule();
   assert.match(document.body.textContent, /Choose a date to see suggested planting times/);
   await change('date', date); await settle();
@@ -127,11 +128,40 @@ test('website uses a tide suggestion, fills the two-hour end and warns when the 
   await change('start_time', '09:00');
   assert.equal(document.querySelector('[name="end_time"]').value, '11:00');
   assert.match(document.body.textContent, /rise above the planting limit during your two-hour visit/);
+  await change('participants', '20');
+  await act(async () => document.querySelector('[name="consent"]').click());
+  await submit();
+  assert.equal(sent, 0);
+  assert.equal(document.querySelector('[name="start_time"]').getAttribute('aria-invalid'), 'true');
   await change('date', '2039-01-01');
   assert.match(document.body.textContent, /does not cover the full daytime period/);
   assert.equal(document.querySelector('.like-tide-windows'), null);
   assert.equal(document.querySelector('.like-tide-match'), null);
   assert.equal(document.querySelector('[name="start_time"]').value, '09:00');
+});
+
+test('LIKE offers 6 AM to 5 PM during all-day low water and rejects an early or late visit', async () => {
+  const { date, payload } = websiteForecast();
+  payload.heights = payload.heights.map((row) => ({ ...row, height_m: 0.2 }));
+  let sent = 0;
+  globalThis.fetch = async (url) => { if (url.includes('/appointments')) sent++; return Response.json(payload); };
+  await openWebsiteSchedule();
+  await change('date', date); await settle();
+  assert.match(document.body.textContent, /6:00 AM – 5:00 PM/);
+  assert.match(document.body.textContent, /Start by 3:00 PM/);
+  assert.equal(document.querySelector('[name="start_time"]').min, '06:00');
+  assert.equal(document.querySelector('[name="start_time"]').max, '15:00');
+  await change('participants', '20');
+  await act(async () => document.querySelector('[name="consent"]').click());
+  for (const start of ['04:30', '15:15']) {
+    await change('start_time', start); await submit();
+    assert.match(document.body.textContent, /6 AM to 5 PM/);
+    assert.equal(sent, 0);
+    assert.equal(document.querySelector('.like-tide-match'), null);
+  }
+  await change('start_time', '15:00');
+  assert.equal(document.querySelector('[name="end_time"]').value, '17:00');
+  assert.ok(document.querySelector('.like-tide-match'));
 });
 
 test('failed refresh hides old tide suggestions and recovery restores them without losing chosen times', async () => {
@@ -191,11 +221,12 @@ test('field access uses a shared code and username, with first-time and returnin
     calls.push({ url, body: JSON.parse(options.body) });
     return Response.json({ planter: { id: 4, participant_username: 'Ana', participant_slot: 1, planting_schedule_id: 3 } });
   };
+  localStorage.setItem('mv_last_planter_username', 'Ana');
   await act(async () => root.render(createElement(AuthScreen)));
   await settle();
   assert.equal(calls.length, 0);
   assert.doesNotMatch(document.body.textContent, /Register|Create Organization Account/);
-  assert.match(document.body.textContent, /any browser or phone/);
+  assert.match(document.body.textContent, /assigned points and saved progress/);
   assert.match(document.body.textContent, /First time/);
   assert.match(document.body.textContent, /Returning planter/);
   assert.doesNotMatch(document.body.textContent, /recovery|reset your device/i);
@@ -221,7 +252,6 @@ test('planter sign-in places code errors beside the input and clears service err
     : Response.json({ detail: [{ loc: ['body', 'access_code'], type: 'credential_error', msg: 'Check this code with your group leader.' }] }, { status: 401 });
   await act(async () => root.render(createElement(AuthScreen)));
   await change('access_code', 'k7mp–4r9x');
-  await change('username', 'Ana');
   await submit();
   assert.match(document.querySelector('[role="alert"]').textContent, /temporarily unavailable/);
   assert.equal(document.querySelector('[name="access_code"]').getAttribute('aria-invalid'), 'false');
@@ -293,6 +323,7 @@ test('switch here requires an explicit click and editing credentials cancels the
       : Response.json({ detail: { kind: 'session_in_use', message: 'Switch access?', switch_token: 'fictional-ticket' } }, { status: 409 });
   };
   await act(async () => root.render(createElement(AuthScreen)));
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Returning planter').click());
   await change('access_code', 'K7MP-4R9X'); await change('username', 'Ana'); await submit();
   assert.equal(calls.length, 1); assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
   assert.match(document.body.textContent, /other login will end/);
@@ -305,11 +336,64 @@ test('switch here requires an explicit click and editing credentials cancels the
 });
 
 test('first-time signup on a remembered browser redirects to its existing username', async () => {
-  globalThis.fetch = async () => Response.json({ detail: { kind: 'already_joined', message: 'Return instead.', participant_username: 'Ana' } }, { status: 409 });
+  globalThis.fetch = async (url) => url.endsWith('/join')
+    ? Response.json({ activity: { title: 'Tree planting', organization_name: 'Test group' } })
+    : Response.json({ detail: { kind: 'already_joined', message: 'Return instead.', participant_username: 'Ana' } }, { status: 409 });
   await act(async () => root.render(createElement(AuthScreen)));
   await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'First time').click());
-  await change('access_code', 'K7MP-4R9X'); await change('username', 'AnotherName'); await submit();
+  await change('access_code', 'K7MP-4R9X'); await submit();
+  await change('username', 'AnotherName'); await submit();
   assert.equal(document.querySelector('[name="username"]').value, 'Ana');
   assert.match(document.body.textContent, /already joined/);
   assert.equal([...document.querySelectorAll('button')].find((button) => button.textContent === 'Returning planter').getAttribute('aria-pressed'), 'true');
+});
+
+test('first visit asks only for code, then requires a unique username inside Field', async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    const body = JSON.parse(options.body); calls.push({ url, body });
+    if (url.endsWith('/join')) return Response.json({ activity: { title: 'Tree planting', organization_name: 'Test group' } });
+    if (body.username === 'Taken') return Response.json({ detail: [{ loc: ['body', 'username'], type: 'credential_error', msg: 'That username is already used in this organization.' }] }, { status: 409 });
+    return Response.json({ planter: { id: 4, participant_username: body.username, participant_slot: 1, planting_schedule_id: 3 } });
+  };
+  await act(async () => root.render(createElement(AuthScreen)));
+  assert.equal(document.querySelector('[name="username"]'), null);
+  assert.equal(document.querySelector('[name="previous_code"]'), null);
+  assert.doesNotMatch(document.body.textContent, /previous individual/i);
+  assert.equal(document.querySelector('[name="access_code"]').value, '');
+  await submit();
+  assert.equal(calls.length, 0);
+  await change('access_code', 'K7MP-4R9X'); await submit();
+  assert.deepEqual(calls[0].body, { access_code: 'K7MP4R9X' });
+  assert.match(calls[0].url, /\/join$/);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+  assert.ok(document.querySelector('.field-shell .field-header'));
+  assert.equal(document.activeElement.id, 'field-username-heading');
+  assert.match(document.body.textContent, /Test group/);
+  assert.equal(document.querySelector('[name="access_code"]'), null);
+  await submit();
+  assert.equal(calls.length, 1);
+  await change('username', 'Taken'); await submit();
+  assert.match(document.querySelector('.form-field-error').textContent, /already used/);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+  await change('username', 'Ana'); await submit();
+  assert.equal(calls.at(-1).body.mode, 'first');
+  assert.equal(calls.at(-1).body.access_code, 'K7MP4R9X');
+  assert.equal(calls.at(-1).body.previous_code, undefined);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+});
+
+test('leaving username setup allows another code without reserving a participant', async () => {
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return Response.json({ activity: { title: 'Tree planting', organization_name: 'Test group' } }); };
+  await act(async () => root.render(createElement(AuthScreen)));
+  await change('access_code', 'K7MP-4R9X'); await submit();
+  await change('username', 'Unfinished');
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Back to sign in').click());
+  assert.equal(document.querySelector('[name="username"]'), null);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
+  assert.equal(calls, 1);
+  await change('access_code', 'G6FR-3VD8'); await submit();
+  assert.equal(document.querySelector('[name="username"]').value, '');
+  assert.equal(calls, 2);
 });

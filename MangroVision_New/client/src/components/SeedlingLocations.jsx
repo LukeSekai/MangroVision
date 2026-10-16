@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import L from 'leaflet';
+import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import { ORTHOPHOTO_TILE_URL, ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM } from '../config/mapTiles';
 import { filterSeedlings, seedlingMarkerStyle, toggleSeedling, visibleSeedlings } from '../utils/monitoringLocations';
@@ -65,8 +66,8 @@ export function SeedlingMap({ points, selected = [], onToggle, onBounds, selecti
   useEffect(() => {
     const map = L.map(container.current).fitBounds(ORTHOPHOTO_BOUNDS);
     mapRef.current = map;
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 23, maxNativeZoom: 19 }).addTo(map);
-    L.tileLayer(ORTHOPHOTO_TILE_URL, { bounds: ORTHOPHOTO_BOUNDS, maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM, maxZoom: 23 }).addTo(map);
+    cachedTileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors', maxZoom: 23, maxNativeZoom: 19 }).addTo(map);
+    cachedTileLayer(ORTHOPHOTO_TILE_URL, { bounds: ORTHOPHOTO_BOUNDS, maxNativeZoom: ORTHOPHOTO_MAX_NATIVE_ZOOM, maxZoom: 23, minZoom: 10, noWrap: true }).addTo(map);
     layer.current = L.featureGroup().addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
     const report = () => { const b = map.getBounds(); callback.current?.({ north: b.getNorth(), south: b.getSouth(), east: b.getEast(), west: b.getWest() }); };
