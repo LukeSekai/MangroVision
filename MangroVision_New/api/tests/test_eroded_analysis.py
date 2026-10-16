@@ -46,7 +46,7 @@ class ErodedAnalysisTests(unittest.TestCase):
             ],
         })
 
-    def run_analysis(self, erosion=None, forbidden=None, vegetation=False):
+    def run_analysis(self, erosion=None, forbidden=None, vegetation=False, projection_scale=1.):
         image = np.full((160, 160, 3), (90, 98, 95), np.uint8)
         if vegetation:
             image[45:115, 45:115] = (20, 170, 40)
@@ -86,8 +86,8 @@ class ErodedAnalysisTests(unittest.TestCase):
                     stack.enter_context(patch.object(p, name, return_value=value))
             stack.enter_context(patch.object(p.ExifExtractor, 'extract_all_metadata', return_value=metadata))
             stack.enter_context(patch.object(p.GSDCalculator, 'calculate_gsd_from_metadata', return_value=(self.gsd, {})))
-            stack.enter_context(patch.object(p, 'drone_pixel_to_gps_via_homography', side_effect=lambda x,y,*_: self.gps(x,y)))
-            stack.enter_context(patch.object(p, '_gps_to_drone_pixel_via_homography', side_effect=lambda lat,lon,*_: self.pixels(lat,lon)))
+            stack.enter_context(patch.object(p, 'drone_pixel_to_gps_via_homography', side_effect=lambda x,y,*_: self.gps(x*projection_scale,y*projection_scale)))
+            stack.enter_context(patch.object(p, '_gps_to_drone_pixel_via_homography', side_effect=lambda lat,lon,*_: tuple(value/projection_scale for value in self.pixels(lat,lon))))
             stack.enter_context(patch.object(p, 'point_visibility_flags', side_effect=lambda _entry,_coverage,points: [True]*len(points)))
             stack.enter_context(patch.object(p.ortho_matcher, '_ensure_active_ortho', return_value={}))
             stack.enter_context(patch.object(p, 'signed_download_url', side_effect=lambda key: f'/test/{key}'))

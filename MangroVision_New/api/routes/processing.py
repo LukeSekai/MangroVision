@@ -27,7 +27,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
-from shapely.geometry import Point, mapping, shape
+from shapely.geometry import Point, Polygon, mapping, shape
 from shapely.ops import unary_union
 
 from api.runtime_state import processing_job
@@ -3167,6 +3167,56 @@ def _reproject_hexagons_for_visualization(
     return display_hexagons
 
 
+def _project_visual_spacing_buffers(
+    hexagons: list[dict[str, Any]],
+    gps_to_pixel: Optional[Any],
+    reference_latitude: Optional[float],
+    hexagon_size_m: float,
+) -> list[dict[str, Any]]:
+    """Draw spacing tiles with the same scale/orientation as the GPS lattice.
+
+    Alignment can change the pixel scale, rotation and perspective relative
+    to the camera GSD. Project the metric buffer vertices, rather than drawing
+    a camera-sized hexagon around an already-projected point. Keep each final
+    center and its evaluated planting core exactly as they passed the safety
+    checks; these display-only buffers never enter filtering, save or export.
+    """
+    displayed = [copy.deepcopy(hexagon) for hexagon in hexagons]
+    if gps_to_pixel is None or reference_latitude is None:
+        return displayed
+    longitude_scale = _M_PER_DEG_LAT * max(
+        0.2, math.cos(math.radians(float(reference_latitude))),
+    )
+    for hexagon in displayed:
+        try:
+            latitude = float(hexagon["_gps_lat"])
+            longitude = float(hexagon["_gps_lon"])
+            radius = float(hexagon.get("buffer_radius_m") or hexagon_size_m)
+            center = np.asarray(hexagon["center"], dtype=np.float64)
+            projected_center = np.asarray(gps_to_pixel(latitude, longitude), dtype=np.float64)
+            if not np.isfinite(radius) or radius <= 0:
+                continue
+            vertices = []
+            for index in range(6):
+                angle = index * math.pi / 3.0
+                vertex = np.asarray(gps_to_pixel(
+                    latitude + radius * math.sin(angle) / _M_PER_DEG_LAT,
+                    longitude + radius * math.cos(angle) / longitude_scale,
+                ), dtype=np.float64)
+                # Anchor at the already-checked center, avoiding even a second
+                # projection's rounding drift or a display-only relocation.
+                vertices.append(center + vertex - projected_center)
+            if not np.all(np.isfinite(vertices)):
+                continue
+            polygon = Polygon(vertices)
+            if polygon.is_valid and polygon.area > 0 and polygon.covers(Point(center)):
+                hexagon["buffer"] = polygon
+        except Exception:
+            # Failed display projection must not drop or move a valid point.
+            continue
+    return displayed
+
+
 def _polygon_intersects_mask(polygon: Any, mask: Optional[np.ndarray]) -> bool:
     """Return whether a pixel-space polygon touches a non-zero zone mask."""
     if not isinstance(mask, np.ndarray) or mask.ndim != 2 or not np.any(mask):
@@ -4975,6 +5025,12 @@ def _execute_canopy_workflow(
     results["_overlay_projection_fallback_count"] = 0
     results["_overlay_visual_conflict_filtered_count"] = visual_conflict_filtered_count
     visualization_results = dict(results)
+    visualization_hexagons = _project_visual_spacing_buffers(
+        visualization_hexagons,
+        _gps_to_px if map_image_gps is not None else None,
+        image_center_lat,
+        float(hexagon_size),
+    )
     visualization_results["hexagons"] = visualization_hexagons
     visualization_results["hexagon_count"] = len(visualization_hexagons)
     visualization_image = detector.visualize_results(visualization_results)
