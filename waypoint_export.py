@@ -177,17 +177,20 @@ def generate_kml(
     desc_parts.append(f"Total points: {len(waypoints)}")
     ET.SubElement(doc, "description").text = " | ".join(desc_parts)
 
-    # Green pin style
+    # Small, centered dots keep dense planting grids readable in Google Earth.
     style = ET.SubElement(doc, "Style", {"id": "plantingPoint"})
     icon_style = ET.SubElement(style, "IconStyle")
     ET.SubElement(icon_style, "color").text = "ff00aa00"  # Green (aaBBGGRR)
-    ET.SubElement(icon_style, "scale").text = "1.0"
+    ET.SubElement(icon_style, "scale").text = "0.35"
     icon = ET.SubElement(icon_style, "Icon")
     ET.SubElement(icon, "href").text = (
-        "http://maps.google.com/mapfiles/kml/pushpin/grn-pushpin.png"
+        "https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
     )
+    ET.SubElement(icon_style, "hotSpot", {
+        "x": "0.5", "y": "0.5", "xunits": "fraction", "yunits": "fraction",
+    })
     label_style = ET.SubElement(style, "LabelStyle")
-    ET.SubElement(label_style, "scale").text = "0.8"
+    ET.SubElement(label_style, "scale").text = "0"
 
     # Folder for planting points
     folder = ET.SubElement(doc, "Folder")
