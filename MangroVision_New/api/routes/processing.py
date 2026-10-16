@@ -151,10 +151,9 @@ class SaveProcessedAnalysisRequest(BaseModel):
 # This safety distance is independent from species spacing. Bungalon can use
 # 1 m planting points, but danger/forbidden buffers stay at 2 m unless the
 # actual danger-buffer input is changed by the user.
-# Eroded polygons remain visible as a GIS layer, but they are also hard
-# exclusions for newly generated planting points. A point inside either a
-# forbidden or eroded polygon must never reach the preview, export, or save
-# payload.
+# Forbidden zones exclude planting locations. Erosion is temporary: keep its
+# planned locations, mark them unavailable, and let active zones control later
+# assignment/planting eligibility without deleting the retained points.
 _FORBIDDEN_SAFETY_BUFFER_M = 2.0
 _ERODED_SAFETY_BUFFER_M = 0.0
 _FORBIDDEN_CANOPY_EXCLUSION_ENABLED = (
@@ -164,11 +163,11 @@ _FORBIDDEN_CANOPY_EXCLUSION_ENABLED = (
 
 
 def _load_zone_filters() -> tuple[ForbiddenZoneFilter, ForbiddenZoneFilter]:
-    """Load structural and erosion exclusions from PostGIS.
+    """Load structural exclusions and temporary erosion availability from PostGIS.
 
     The forbidden safety buffer is intentionally not species-scaled; species
     only controls planting-point spacing. Eroded polygons use their exact
-    boundary (no additional halo) and exclude every covered planting point.
+    boundary (no additional halo) to mark covered planned points unavailable.
     """
     return (
         ForbiddenZoneFilter(
@@ -3256,19 +3255,29 @@ def _gps_exclusion_reason(
     latitude: float,
     longitude: float,
     forbidden_filter: Any,
-    eroded_filter: Any,
     gis_coverage_geometry: Optional[Any] = None,
 ) -> Optional[str]:
     """Return the exclusion or map boundary covering a GPS point, if any."""
     if not forbidden_filter.is_safe_location(float(latitude), float(longitude)):
         return "forbidden"
-    if not eroded_filter.is_safe_location(float(latitude), float(longitude)):
-        return "eroded"
     if gis_coverage_geometry is not None:
         point = Point(float(longitude), float(latitude))
         if not gis_coverage_geometry.covers(point):
             return "outside_map"
     return None
+
+
+def _mark_eroded_availability(hexagons: list[dict[str, Any]], eroded_filter: Any) -> int:
+    """Retain planned locations; availability follows the active erosion zones."""
+    unavailable_count = 0
+    for hexagon in hexagons:
+        unavailable = not eroded_filter.is_safe_location(
+            float(hexagon["_gps_lat"]), float(hexagon["_gps_lon"]),
+        )
+        hexagon["_inside_eroded_zone"] = unavailable
+        hexagon["_eroded_unavailable"] = unavailable
+        unavailable_count += int(unavailable)
+    return unavailable_count
 
 
 def _reconcile_authoritative_hexagons_with_visual_zones(
@@ -3278,17 +3287,15 @@ def _reconcile_authoritative_hexagons_with_visual_zones(
     hexagon_size_m: float,
     gsd_m_per_pixel: float,
     forbidden_mask: Optional[np.ndarray],
-    eroded_mask: Optional[np.ndarray],
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
     list[dict[str, Any]],
-    list[dict[str, Any]],
 ]:
-    """Apply one coherent visual transform, then veto all zone conflicts.
+    """Apply one coherent visual transform, then veto permanent zone conflicts.
 
-    A point whose displayed planting core intersects a projected forbidden or
-    eroded zone is removed from both the authoritative map/export set and the
+    A point whose displayed planting core intersects a projected forbidden
+    zone is removed from both the authoritative map/export set and the
     image overlay. Checking the core matches the authoritative candidate rule;
     checking the outer spacing buffer globally would double-apply zone
     clearance.
@@ -3310,7 +3317,6 @@ def _reconcile_authoritative_hexagons_with_visual_zones(
     kept_safe: list[dict[str, Any]] = []
     kept_visual: list[dict[str, Any]] = []
     forbidden_conflicts: list[dict[str, Any]] = []
-    eroded_conflicts: list[dict[str, Any]] = []
 
     for safe_hexagon, visual_hexagon in zip(safe_hexagons, visual_hexagons):
         edge_forbidden_overlap = bool(
@@ -3327,18 +3333,10 @@ def _reconcile_authoritative_hexagons_with_visual_zones(
             conflict["_visual_zone_conflict"] = "forbidden"
             forbidden_conflicts.append(conflict)
             continue
-        if _hexagon_core_intersects_any_mask(
-            visual_hexagon,
-            (eroded_mask,),
-        ):
-            conflict = copy.deepcopy(safe_hexagon)
-            conflict["_visual_zone_conflict"] = "eroded"
-            eroded_conflicts.append(conflict)
-            continue
         kept_safe.append(safe_hexagon)
         kept_visual.append(visual_hexagon)
 
-    return kept_safe, kept_visual, forbidden_conflicts, eroded_conflicts
+    return kept_safe, kept_visual, forbidden_conflicts
 
 
 # MIGRATED FROM app.py: _apply_forbidden_zone_canopy_exclusion lines 2229-2282.
@@ -3864,7 +3862,7 @@ def _execute_canopy_workflow(
     gis_coverage_geometry = _load_gis_coverage_geometry()
     if eroded_filter.zone_count > 0:
         info_messages.append(
-            f"{eroded_filter.zone_count} eroded zone(s) loaded as planting-point exclusions."
+            f"{eroded_filter.zone_count} eroded zone(s) temporarily limit assignment and planting; planned points are retained."
         )
     match_result = precomputed_match_result
     results["_forbidden_filtered"] = 0
@@ -3875,7 +3873,6 @@ def _execute_canopy_workflow(
     results["_forbidden_canopy_exclusion_enabled"] = bool(_FORBIDDEN_CANOPY_EXCLUSION_ENABLED)
     final_lattice_refill_fn = None
     _forbidden_point_mask: Optional[np.ndarray] = None
-    _eroded_point_mask: Optional[np.ndarray] = None
     _reachable_map_component_mask: Optional[np.ndarray] = None
     coordinate_homography: Optional[np.ndarray] = None
     coordinate_homography_available = False
@@ -3958,14 +3955,6 @@ def _execute_canopy_workflow(
             _reachable_map_component_mask = _build_reachable_map_component_mask(
                 _forbidden_point_mask,
                 (float(_w) * 0.5, float(_h) * 0.5),
-            )
-        if eroded_filter.zone_count > 0:
-            _eroded_point_mask = _build_zone_mask_in_drone_pixels(
-                results["image"].shape[:2],
-                eroded_filter.buffered_polygons,
-                _gps_to_px,
-                max_polygon_area_fraction=0.90,
-                max_total_area_fraction=0.95,
             )
         if forbidden_filter.zone_count > 0 and _FORBIDDEN_CANOPY_EXCLUSION_ENABLED:
             _emit(progress_cb, "Applying restricted-area boundaries", 68)
@@ -4052,7 +4041,6 @@ def _execute_canopy_workflow(
 
         _safe = []
         _forbidden_hexes = []
-        _eroded_hexes = []
         _post_snap_danger_hexes = []
         _outside_hexes = []
         _image_edge_hexes = []
@@ -4092,7 +4080,6 @@ def _execute_canopy_workflow(
                 return None
 
         _forbidden_point_distance_map = _distance_from_mask(_forbidden_point_mask)
-        _eroded_point_distance_map = _distance_from_mask(_eroded_point_mask)
 
         def _candidate_display_center(lat: float, lon: float) -> Optional[tuple[float, float]]:
             try:
@@ -4189,7 +4176,6 @@ def _execute_canopy_workflow(
                 lat,
                 lon,
                 forbidden_filter,
-                eroded_filter,
                 gis_coverage_geometry,
             )
             if gps_exclusion is not None:
@@ -4207,18 +4193,6 @@ def _execute_canopy_workflow(
                 for center in centers_to_check
             ):
                 return "forbidden"
-            if any(_center_hits_zone_mask(_eroded_point_mask, center) for center in centers_to_check):
-                return "eroded"
-            if any(
-                not _center_is_clear_of_zone_mask(
-                    _eroded_point_mask,
-                    _eroded_point_distance_map,
-                    center,
-                    _core_radius_px + 0.5,
-                )
-                for center in centers_to_check
-            ):
-                return "eroded"
             if any(
                 not _center_is_inside_map_component(
                     _reachable_map_component_mask,
@@ -4583,9 +4557,7 @@ def _execute_canopy_workflow(
                 continue
 
             _reason = _first_rejection or "forbidden"
-            if _reason == "eroded":
-                _eroded_hexes.append(_hex)
-            elif _reason == "image_edge":
+            if _reason == "image_edge":
                 _image_edge_hexes.append(_hex)
             elif _reason in {"outside", "outside_image", "outside_map"}:
                 _outside_hexes.append(_hex)
@@ -4623,14 +4595,12 @@ def _execute_canopy_workflow(
         results["hexagons"] = _safe
         results["hexagon_count"] = len(_safe)
         results["_forbidden_filtered"] = len(_forbidden_hexes)
-        results["_eroded_filtered"] = len(_eroded_hexes)
         results["_post_snap_danger_filtered"] = len(_post_snap_danger_hexes)
         results["_duplicate_filtered"] = len(_duplicate_hexes)
         results["_preclip_outside_filtered"] = len(_outside_hexes)
         results["_image_edge_filtered"] = len(_image_edge_hexes)
         results["_lattice_refill_added"] = _lattice_refill_added
         results["_forbidden_hexagons"] = _forbidden_hexes
-        results["_eroded_hexagons"] = _eroded_hexes
         results["_post_snap_danger_hexagons"] = _post_snap_danger_hexes
         results["_image_edge_hexagons"] = _image_edge_hexes
         results["_duplicate_hexagons"] = _duplicate_hexes
@@ -4644,7 +4614,6 @@ def _execute_canopy_workflow(
     width, height = results["image_size"]
     safe_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("hexagons", [])]
     forbidden_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("_forbidden_hexagons", [])]
-    eroded_hexagons = [copy.deepcopy(hexagon) for hexagon in results.get("_eroded_hexagons", [])]
     post_snap_danger_hexagons = [
         copy.deepcopy(hexagon) for hexagon in results.get("_post_snap_danger_hexagons", [])
     ]
@@ -4654,7 +4623,6 @@ def _execute_canopy_workflow(
     orthophoto_canopy_hexagons: list[dict[str, Any]] = []
     spacing_filtered_hexagons: list[dict[str, Any]] = []
     forbidden_filtered_count = int(results.get("_forbidden_filtered", 0) or 0)
-    eroded_filtered_count = int(results.get("_eroded_filtered", 0) or 0)
     post_snap_danger_filtered_count = int(results.get("_post_snap_danger_filtered", 0) or 0)
     image_edge_filtered_count = int(results.get("_image_edge_filtered", 0) or 0)
     orthophoto_canopy_filtered_count = 0
@@ -4727,13 +4695,6 @@ def _execute_canopy_workflow(
                 hexagon["_gps_lon"] = lon
 
         for hexagon in forbidden_hexagons:
-            if "_gps_lat" not in hexagon:
-                px, py = hexagon["center"]
-                lat, lon = pixel_to_latlon(px, py)
-                hexagon["_gps_lat"] = lat
-                hexagon["_gps_lon"] = lon
-
-        for hexagon in eroded_hexagons:
             if "_gps_lat" not in hexagon:
                 px, py = hexagon["center"]
                 lat, lon = pixel_to_latlon(px, py)
@@ -4900,7 +4861,6 @@ def _execute_canopy_workflow(
     # earlier candidate gate.
     final_zone_safe: list[dict[str, Any]] = []
     final_forbidden_conflicts: list[dict[str, Any]] = []
-    final_eroded_conflicts: list[dict[str, Any]] = []
     final_outside_map_conflicts: list[dict[str, Any]] = []
     for hexagon in safe_hexagons:
         latitude = hexagon.get("_gps_lat")
@@ -4911,13 +4871,10 @@ def _execute_canopy_workflow(
             float(latitude),
             float(longitude),
             forbidden_filter,
-            eroded_filter,
             gis_coverage_geometry,
         )
         if exclusion_reason == "forbidden":
             final_forbidden_conflicts.append(hexagon)
-        elif exclusion_reason == "eroded":
-            final_eroded_conflicts.append(hexagon)
         elif exclusion_reason == "outside_map" or not _center_is_inside_map_component(
             _reachable_map_component_mask,
             hexagon.get("center"),
@@ -4929,9 +4886,6 @@ def _execute_canopy_workflow(
     if final_forbidden_conflicts:
         forbidden_hexagons.extend(final_forbidden_conflicts)
         forbidden_filtered_count += len(final_forbidden_conflicts)
-    if final_eroded_conflicts:
-        eroded_hexagons.extend(final_eroded_conflicts)
-        eroded_filtered_count += len(final_eroded_conflicts)
     if final_outside_map_conflicts:
         clipped_outside_orthophoto += len(final_outside_map_conflicts)
         info_messages.append(
@@ -4968,11 +4922,11 @@ def _execute_canopy_workflow(
     # invariant check, so map, exports, and preview retain identical membership.
     _emit(progress_cb, "Creating your analysis preview", 90)
     safe_hexagons = _exclude_repeat_image_points(safe_hexagons, repeat_analyses)
+    _mark_eroded_availability(safe_hexagons, eroded_filter)
     (
         safe_hexagons,
         visualization_hexagons,
         visual_forbidden_conflicts,
-        visual_eroded_conflicts,
     ) = _reconcile_authoritative_hexagons_with_visual_zones(
         detector,
         safe_hexagons,
@@ -4980,28 +4934,19 @@ def _execute_canopy_workflow(
         float(hexagon_size),
         float(results["gsd_m_per_pixel"]),
         _forbidden_point_mask,
-        _eroded_point_mask,
     )
 
     if visual_forbidden_conflicts:
         forbidden_hexagons.extend(visual_forbidden_conflicts)
         forbidden_filtered_count += len(visual_forbidden_conflicts)
-    if visual_eroded_conflicts:
-        eroded_hexagons.extend(visual_eroded_conflicts)
-        eroded_filtered_count += len(visual_eroded_conflicts)
+    eroded_unavailable_count = sum(bool(item.get("_eroded_unavailable")) for item in safe_hexagons)
 
-    # Eroded conflicts are exclusions, so none may remain to be marked as
-    # visible-but-unavailable in the final authoritative set.
-    eroded_unavailable_count = 0
-
-    visual_conflict_filtered_count = (
-        len(visual_forbidden_conflicts) + len(visual_eroded_conflicts)
-    )
+    visual_conflict_filtered_count = len(visual_forbidden_conflicts)
     if visual_conflict_filtered_count:
         info_messages.append(
             f"{visual_conflict_filtered_count} planting point(s) were removed from "
             "both map and image outputs because the authoritative hexagon "
-            "core intersected a forbidden or eroded zone."
+            "core intersected a forbidden zone."
         )
 
     results["_lattice_refill_added"] = (
@@ -5011,7 +4956,7 @@ def _execute_canopy_workflow(
     results["hexagons"] = safe_hexagons
     results["hexagon_count"] = len(safe_hexagons)
     results["_forbidden_filtered"] = forbidden_filtered_count
-    results["_eroded_filtered"] = eroded_filtered_count
+    results["_eroded_filtered"] = 0
     results["_spacing_filtered"] = spacing_filtered_count
     results["_spacing_filtered_hexagons"] = spacing_filtered_hexagons
     # Surface the chosen species and the resulting field spacing so
@@ -5040,7 +4985,7 @@ def _execute_canopy_workflow(
 
     _emit(progress_cb, "Preparing planting coordinates and downloads", 92)
     results["_eroded_unavailable"] = eroded_unavailable_count
-    available_safe_hexagon_count = len(safe_hexagons)
+    available_safe_hexagon_count = len(safe_hexagons) - eroded_unavailable_count
 
     coordinate_rows = []
     for index, hexagon in enumerate(safe_hexagons, 1):
@@ -5053,9 +4998,9 @@ def _execute_canopy_workflow(
                 "pixel_y": int(hexagon["center"][1]),
                 "buffer_m": _safe_float(hexagon.get("buffer_radius_m")),
                 "area_m2": round(float(hexagon.get("area_m2", hexagon.get("area_sqm", 0))), 2),
-                "eroded_unavailable": False,
-                "availability_status": "available",
-                "status_label": "Planned",
+                "eroded_unavailable": bool(hexagon.get("_eroded_unavailable")),
+                "availability_status": "eroded_unavailable" if hexagon.get("_eroded_unavailable") else "available",
+                "status_label": "Not Available for Planting" if hexagon.get("_eroded_unavailable") else "Planned",
             }
         )
 
@@ -5073,7 +5018,7 @@ def _execute_canopy_workflow(
         "Filtered Forbidden Points",
     )
     eroded_filtered_geojson = _filtered_hexagons_to_geojson(
-        eroded_hexagons,
+        [],
         "Inside eroded zone",
         "Filtered Eroded Points",
     )
@@ -5229,11 +5174,11 @@ def _execute_canopy_workflow(
             "plantable_area_m2": results["plantable_area_m2"],
             "plantable_percentage": results["plantable_percentage"],
             "hexagon_count": results["hexagon_count"],
-            # Every accepted point is available for planting at analysis time;
-            # danger, forbidden, and eroded conflicts were removed earlier.
+            # Planned locations include erosion-blocked points; only currently
+            # available locations contribute to the safe planting-point count.
             "safe_hexagon_count": available_safe_hexagon_count,
             "forbidden_filtered_count": forbidden_filtered_count,
-            "eroded_filtered_count": eroded_filtered_count,
+            "eroded_filtered_count": 0,
             "eroded_unavailable_count": eroded_unavailable_count,
             "post_snap_danger_filtered_count": post_snap_danger_filtered_count,
             "image_edge_filtered_count": image_edge_filtered_count,
