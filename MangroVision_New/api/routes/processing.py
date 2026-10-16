@@ -5115,7 +5115,9 @@ def _execute_canopy_workflow(
     preview_assets = upload_analysis_data_urls(
         _encode_image_data_url(results["image"], ".jpg"),
         _encode_image_data_url(visualization_image, ".jpg"),
-        prefix=_analysis_storage_prefix(analysis_key),
+        # Never let another run overwrite assets referenced by saved history
+        # or delete them if its own save later fails.
+        prefix=f"{_analysis_storage_prefix(analysis_key)}/{uuid4().hex}",
     )
     preview_asset_map = {asset.kind: asset for asset in preview_assets}
 

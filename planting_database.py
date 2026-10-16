@@ -1884,6 +1884,31 @@ def _local_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> flo
     return math.sqrt((d_lat_m * d_lat_m) + (d_lon_m * d_lon_m))
 
 
+class _CleanupNeighborGrid:
+    """Broad-phase lookup; callers retain their exact historical distance test.
+
+    Longitude cells use the smallest scale allowed by _local_distance_m, so
+    every pair within radius_m is in adjacent cells even across latitude bands.
+    """
+    def __init__(self, radius_m: float):
+        self.lat_step = radius_m / _M_PER_DEG_LAT
+        self.lon_step = radius_m / (_M_PER_DEG_LAT * 0.2)
+        self.cells = {}
+
+    def key(self, row):
+        return (math.floor(float(row['latitude']) / self.lat_step),
+                math.floor(float(row['longitude']) / self.lon_step))
+
+    def add(self, row):
+        self.cells.setdefault(self.key(row), []).append(row)
+
+    def neighbors(self, row):
+        y, x = self.key(row)
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                yield from self.cells.get((y + dy, x + dx), ())
+
+
 def _cleanup_same_species_spacing_conflicts(conn: Any) -> int:
     """Soft-delete unassigned planned points that are too close to same-species points."""
     rows = conn.execute("""
@@ -1917,7 +1942,12 @@ def _cleanup_same_species_spacing_conflicts(conn: Any) -> int:
         protected = bool(row["has_active_assignment"]) or row["status"] != "planned"
         return (0 if protected else 1, str(row["analyzed_at"] or ""), int(row["id"]))
 
-    kept_rows = []
+    max_radius = max(
+        max(_DEDUP_RADIUS_M, (_species_spacing_m(row['species'], row['planting_distance_m']) or 0)
+            * _SAME_SPECIES_DEDUP_SPACING_RATIO)
+        for row in rows
+    )
+    kept_grid = _CleanupNeighborGrid(max_radius)
     delete_ids: set[int] = set()
     affected_analysis_ids: set[int] = set()
 
@@ -1925,7 +1955,7 @@ def _cleanup_same_species_spacing_conflicts(conn: Any) -> int:
         species = _normalize_species_key(row["species"])
         spacing_m = _species_spacing_m(species, row["planting_distance_m"])
         if spacing_m is None or spacing_m <= 0:
-            kept_rows.append(row)
+            kept_grid.add(row)
             continue
 
         threshold_m = max(_DEDUP_RADIUS_M, spacing_m * _SAME_SPECIES_DEDUP_SPACING_RATIO)
@@ -1934,7 +1964,7 @@ def _cleanup_same_species_spacing_conflicts(conn: Any) -> int:
         ref_lon = float(row["longitude"])
         conflict = False
 
-        for kept in kept_rows:
+        for kept in kept_grid.neighbors(row):
             if _normalize_species_key(kept["species"]) != species:
                 continue
             kept_spacing_m = _species_spacing_m(species, kept["planting_distance_m"])
@@ -1956,7 +1986,7 @@ def _cleanup_same_species_spacing_conflicts(conn: Any) -> int:
             affected_analysis_ids.add(int(row["analysis_id"]))
             continue
 
-        kept_rows.append(row)
+        kept_grid.add(row)
 
     if not delete_ids:
         return 0
@@ -2036,10 +2066,14 @@ def _cleanup_cross_species_spacing_conflicts(conn: Any) -> int:
     if not bungalon_rows or not rhizophora_rows:
         return 0
 
+    bungalon_grid = _CleanupNeighborGrid(_CROSS_SPECIES_MIN_SPACING_M)
+    for row in bungalon_rows:
+        bungalon_grid.add(row)
+
     delete_ids: set[int] = set()
     affected_analysis_ids: set[int] = set()
     for yellow in rhizophora_rows:
-        for green in bungalon_rows:
+        for green in bungalon_grid.neighbors(yellow):
             if _local_distance_m(
                 yellow["latitude"],
                 yellow["longitude"],
@@ -2193,7 +2227,10 @@ def get_analysis_asset_urls(analysis_id: int) -> dict:
     assets = {}
     for row in rows:
         assets[row["kind"]] = {
-            "url": signed_download_url(row["object_key"]),
+            # Historical paths were overwritten between processing runs.
+            # A signed response override gives them a distinct, revalidated
+            # URL instead of reusing a browser's old max-age=3600 response.
+            "url": signed_download_url(row["object_key"], cache_control="private, no-cache"),
             "content_type": row["content_type"],
             "byte_size": int(row["byte_size"]),
             "sha256": row["sha256"],
@@ -2652,6 +2689,7 @@ def _save_analysis_with_connection(
     if not repeat_image:
         _existing, _existing_species_spacing = _planting_spacing_indexes(conn, hexagons, results)
 
+    pending_points = []
     new_count = 0
     skipped = 0
     for i, h in enumerate(hexagons, 1):
@@ -2675,12 +2713,7 @@ def _save_analysis_with_connection(
             skipped += 1
             continue
 
-        cur.execute("""
-            INSERT INTO planting_points
-                (analysis_id, point_num, latitude, longitude,
-                 pixel_x, pixel_y, buffer_m, area_m2, status)
-            VALUES (?,?,?,?,?,?,?,?,?)
-        """, (
+        pending_points.append((
             analysis_id,
             i,
             _lat,
@@ -2700,6 +2733,19 @@ def _save_analysis_with_connection(
                 _analysis_species,
                 _analysis_spacing_m,
             )
+
+    # Preserve all per-point spacing decisions in memory, then send bounded
+    # multi-row inserts. Remote PostgreSQL no longer needs a round trip for
+    # each point (693 points take three inserts instead of 693).
+    for start in range(0, len(pending_points), 250):
+        batch = pending_points[start:start + 250]
+        cur.execute("""
+            INSERT INTO planting_points
+                (analysis_id, point_num, latitude, longitude,
+                 pixel_x, pixel_y, buffer_m, area_m2, status)
+            VALUES """ + ",".join(["(?,?,?,?,?,?,?,?,?)"] * len(batch)),
+            tuple(value for point in batch for value in point),
+        )
 
     if not repeat_image:
         _cleanup_same_species_spacing_conflicts(conn)
@@ -4085,7 +4131,7 @@ def list_analysis_summaries(include_previews: bool = False) -> List[dict]:
             prior_by_id.setdefault(current_id, []).append(previous)
         for summary in summaries:
             key = preview_keys.get(summary['id'])
-            summary['result_preview_url'] = signed_download_url(key) if key else None
+            summary['result_preview_url'] = signed_download_url(key, cache_control="private, no-cache") if key else None
             summary['previous_analyses'] = prior_by_id.get(summary['id'], [])
     return summaries
 

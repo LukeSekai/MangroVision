@@ -111,6 +111,54 @@ class RepeatImageTests(unittest.TestCase):
         self.assertEqual(count,1)
         self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM planting_points').fetchone()[0],2)
 
+    def test_large_save_batches_points_without_losing_deduplication_or_field_history(self):
+        candidates = [{'_gps_lat':10.81+i*3/111320, '_gps_lon':122.61,
+                       'center':(i, 20), '_eroded_unavailable':i % 2 == 0} for i in range(693)]
+        candidates.insert(1, dict(candidates[0]))
+        statements = []
+        self.conn.set_trace_callback(statements.append)
+        self.addCleanup(self.conn.set_trace_callback, None)
+        # Use the real in-memory spacing indexes against an empty saved area.
+        nearby = database._NearbyPointIndex(.5, 10.81)
+        species = database._SpeciesSpacingIndex(2, 10.81)
+        with patch.object(database, '_matching_project_site_id', return_value=None), \
+             patch.object(database, '_planting_spacing_indexes', return_value=(nearby, species)), \
+             patch.object(database, '_cleanup_same_species_spacing_conflicts'), \
+             patch.object(database, '_cleanup_cross_species_spacing_conflicts'):
+            analysis_id, count, skipped = database._save_analysis_with_connection(self.conn, 'NEW.JPG', 10.81, 122.61,
+                {'species':'rhizophora', 'planting_distance_m':2}, candidates, user_id=1)
+        inserts = [sql for sql in statements if 'INSERT INTO planting_points' in sql]
+        self.assertEqual(len(inserts), 3)
+        self.assertEqual((count, skipped), (693, 1))
+        points = self.conn.execute('SELECT * FROM planting_points WHERE analysis_id=? ORDER BY point_num', (analysis_id,)).fetchall()
+        self.assertEqual(len(points), 693)
+        self.assertEqual([p['point_num'] for p in points], [1] + list(range(3, 695)))
+        self.assertTrue(all(p['status'] == 'planned' for p in points))
+        self.assertEqual(self.conn.execute('SELECT status FROM planting_points WHERE id=100').fetchone()[0], 'planted')
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM monitoring').fetchone()[0], 1)
+
+    def test_multirow_save_works_through_the_production_sql_adapter(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.pool import StaticPool
+        from mangrovision_db.compat import CompatConnection
+        # The adapter maps the legacy service name onto the production column.
+        self.conn.execute('ALTER TABLE analyses RENAME COLUMN site_zone_id TO project_site_id')
+        self.conn.commit()
+        engine = create_engine('sqlite://', creator=lambda: self.conn, poolclass=StaticPool)
+        wrapped = CompatConnection(engine.connect())
+        self.addCleanup(engine.dispose)
+        self.addCleanup(wrapped.close)
+        candidates = [{'_gps_lat':10.81+i*3/111320, '_gps_lon':122.61, 'center':(i,20)} for i in range(3)]
+        with patch.object(database, '_matching_project_site_id', return_value=None), \
+             patch.object(database, '_planting_spacing_indexes', return_value=(
+                 database._NearbyPointIndex(.5, 10.81), database._SpeciesSpacingIndex(2, 10.81))), \
+             patch.object(database, '_cleanup_same_species_spacing_conflicts'), \
+             patch.object(database, '_cleanup_cross_species_spacing_conflicts'):
+            analysis_id, count, skipped = database._save_analysis_with_connection(wrapped, 'ADAPTER.JPG', 10.81, 122.61,
+                {'species':'rhizophora', 'planting_distance_m':2}, candidates, user_id=1)
+        self.assertEqual((count, skipped), (3, 0))
+        self.assertEqual(wrapped.execute('SELECT COUNT(*) AS cnt FROM planting_points WHERE analysis_id=?', (analysis_id,)).fetchone()['cnt'], 3)
+
     def test_identity_matches_the_original_storage_encoding(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'QJBJ.jpg'

@@ -79,7 +79,7 @@ class AnalysisHistoryTests(unittest.TestCase):
 
     def test_history_prefers_ready_result_preview_and_falls_back_to_full_result(self):
         with patch.object(database, '_get_connection', self.spatial_connect), \
-             patch.object(database, 'signed_download_url', side_effect=lambda key: f'https://preview.example/{key}') as sign:
+             patch.object(database, 'signed_download_url', side_effect=lambda key, **kw: f'https://preview.example/{key}') as sign:
             results = database.list_analysis_summaries(include_previews=True)
         self.assertEqual([row['id'] for row in results], [52, 51, 50])
         self.assertEqual(results[0]['source_image_name'], 'QJBJ.JPG')

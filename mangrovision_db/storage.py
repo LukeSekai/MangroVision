@@ -48,7 +48,7 @@ _RETRYABLE_UPLOAD_ERRORS = (
     EndpointConnectionError,
     ReadTimeoutError,
 )
-_SIGNED_URL_CACHE: dict[tuple[str, str, int], tuple[str, float]] = {}
+_SIGNED_URL_CACHE: dict[tuple[str, str, int, str | None], tuple[str, float]] = {}
 _SIGNED_URL_CACHE_LOCK = threading.Lock()
 
 
@@ -167,8 +167,11 @@ def _put_payload(
 def _upload_bytes(prefix: str, kind: str, payload: bytes, content_type: str) -> StoredAsset:
     clean_prefix = prefix.strip("/") or str(uuid.uuid4())
     extension = _EXTENSIONS[content_type]
-    object_key = f"analyses/{clean_prefix}/{kind}.{extension}"
     digest = hashlib.sha256(payload).hexdigest()
+    # A processing key can be reused after code changes or a concurrent run.
+    # Immutable image paths prevent cached green previews from accompanying
+    # newer availability counts, and keep earlier analyses' assets intact.
+    object_key = f"analyses/{clean_prefix}/{kind}-{digest}.{extension}"
     for attempt in range(3):
         try:
             _put_payload(object_key, payload, content_type, digest, kind)
@@ -273,19 +276,22 @@ def upload_analysis_data_urls(
         raise
 
 
-def signed_download_url(object_key: str) -> str:
+def signed_download_url(object_key: str, *, cache_control: str | None = None) -> str:
     settings = get_settings()
     ttl = settings.s3_presigned_url_ttl_seconds
-    cache_key = (settings.s3_bucket, object_key, ttl)
+    cache_key = (settings.s3_bucket, object_key, ttl, cache_control)
     now = time.monotonic()
     with _SIGNED_URL_CACHE_LOCK:
         cached = _SIGNED_URL_CACHE.get(cache_key)
         if cached and cached[1] > now:
             return cached[0]
 
+    params = {"Bucket": settings.s3_bucket, "Key": object_key}
+    if cache_control:
+        params["ResponseCacheControl"] = cache_control
     url = s3_client().generate_presigned_url(
         "get_object",
-        Params={"Bucket": settings.s3_bucket, "Key": object_key},
+        Params=params,
         ExpiresIn=ttl,
     )
     # Reusing the exact signed URL lets the browser reuse its private cache.
