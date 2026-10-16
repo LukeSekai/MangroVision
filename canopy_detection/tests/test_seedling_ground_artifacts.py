@@ -151,6 +151,47 @@ class SeedlingGroundArtifactsTests(unittest.TestCase):
         image = np.full((160, 160, 3), (100, 105, 103), dtype=np.uint8)
         self.assertEqual(filter_seedling_ground_artifacts(image, [{'center': (80., 80.)}], .01)[0], [])
 
+    def isolated_shadow_tint(self, scale=1, ground=(100,105,103), leaf=(8,55,20)):
+        image = np.full((320,320,3), ground, np.uint8)
+        cv2.ellipse(image,(130,130),(4,3),0,0,360,leaf,-1)
+        return cv2.resize(image,None,fx=scale,fy=scale,interpolation=cv2.INTER_NEAREST)
+
+    def test_near_black_green_fringe_cannot_validate_isolated_ground(self):
+        for scale in (1,2):
+            image = self.isolated_shadow_tint(scale)
+            kept,info = filter_seedling_ground_artifacts(image,[{'center':(130*scale,130*scale)}],.01/scale)
+            self.assertEqual(kept,[])
+            self.assertEqual(info['seedling_ground_artifact_rejected_reasons'],{'shadow_green_fringe':1})
+
+    def test_visible_green_and_deeply_shaded_leaves_keep_their_existing_evidence(self):
+        for scale in (1,2):
+            for ground,leaf in (((100,105,103),(8,95,20)), ((45,50,48),(8,55,20))):
+                image = self.isolated_shadow_tint(scale,ground,leaf)
+                entries = [{'center':(130*scale,130*scale)}]
+                self.assertEqual(filter_seedling_ground_artifacts(image,entries,.01/scale)[0],entries)
+
+    def test_shadow_fringe_with_real_pale_leaf_support_or_supported_group_is_preserved(self):
+        for scale in (1,2):
+            for grouped in (False,True):
+                image = self.isolated_shadow_tint()
+                entries = [{'center':(130*scale,130*scale)}]
+                if grouped:
+                    cv2.ellipse(image,(210,130),(5,3),0,0,360,(30,170,80),-1)
+                    entries.append({'center':(210*scale,130*scale)})
+                else:
+                    cv2.ellipse(image,(134,130),(5,3),0,0,360,(175,210,195),-1)
+                image = cv2.resize(image,None,fx=scale,fy=scale,interpolation=cv2.INTER_NEAREST)
+                self.assertEqual(filter_seedling_ground_artifacts(image,entries,.01/scale)[0],entries)
+
+    def test_additional_shadow_fringe_check_preserves_close_crown_context(self):
+        image = self.isolated_shadow_tint()
+        canopy = np.zeros(image.shape[:2],np.uint8)
+        cv2.rectangle(canopy,(80,100),(100,160),255,-1)
+        original = canopy.copy()
+        entries = [{'center':(130,130)}]
+        self.assertEqual(filter_seedling_ground_artifacts(image,entries,.01,canopy_mask=canopy)[0],entries)
+        np.testing.assert_array_equal(canopy,original)
+
     def test_compact_brightened_olive_mud_needs_distinct_leaf_color(self):
         for scale in (1, 2):
             image = np.full((160, 160, 3), (82, 100, 97), np.uint8)

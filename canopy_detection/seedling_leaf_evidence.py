@@ -229,6 +229,28 @@ def filter_seedling_ground_artifacts(image, entries, gsd, *, canopy_mask=None):
                 elif (not green_areas and len(pale_areas) < 2
                       and sum(broad_areas) < .20 * leaf_area):
                     isolated_reason = "flat_green_ground"
+        if reason is None and isolated_ground and ground_val >= 80:
+            _, pale_support = _compact_leaf_pixels(pale_core, gsd)
+            # Recovery can grow a low-saturation ground smear into enough
+            # apparent leaf area without any compact ordinary leaf or bright
+            # pale core. It needs independently supported plant-group context.
+            if (not strong_leaf and not broad_areas
+                    and leaf_area >= np.ceil(.0032 / gsd**2) and not pale_support):
+                isolated_reason = "diffuse_pale_ground"
+            # Normalized green chroma becomes large in near-black mud fringes.
+            # For a small single patch, that shadow tint cannot independently
+            # validate the brighter olive highlight attached to it. Use the
+            # existing dark-object threshold, while preserving visible green
+            # cores, substantial/multiple pale leaves, shade and crown context.
+            if (strong_leaf and len(broad_areas) == 1
+                    and leaf_area < np.ceil(.006 / gsd**2)
+                    and max(pale_support, default=0) < np.ceil(.002 / gsd**2)
+                    and len(pale_support) < 2
+                    and not _has_compact_leaf(
+                        leaf_pixels & (patch_chroma >= .08)
+                        & (patch_val > min(ground_val-25, ground_val*.75)), gsd,
+                    )):
+                isolated_reason = "shadow_green_fringe"
         assessments.append((entry, reason, isolated_reason, isolated_ground))
 
     # Keep the established recovery for faint leaves within a supported plant
