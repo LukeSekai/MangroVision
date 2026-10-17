@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { PLANTING_TOOLS } from './plantingWorkspaceContext';
 import Logo from './Logo';
+import LogoutConfirmation from './LogoutConfirmation';
 import './Sidebar.css';
 
 const NAV_ITEMS = [
@@ -114,6 +115,7 @@ function SidebarClock() {
 }
 
 export default function Sidebar() {
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const { pathname } = useLocation();
@@ -158,7 +160,7 @@ export default function Sidebar() {
           </div>
           <span className="sidebar-user-name">{user?.full_name}</span>
         </NavLink>
-        <button className="sidebar-nav-item" onClick={logout} title="Sign out">
+        <button type="button" className="sidebar-nav-item" onClick={() => setLogoutOpen(true)} title="Sign out">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
@@ -167,6 +169,10 @@ export default function Sidebar() {
           <span className="sidebar-nav-label">Sign out</span>
         </button>
       </div>
+      <LogoutConfirmation open={logoutOpen} onCancel={() => setLogoutOpen(false)} onConfirm={() => {
+        logout();
+        setLogoutOpen(false);
+      }} />
     </aside>
   );
 }

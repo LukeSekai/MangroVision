@@ -6,6 +6,7 @@ import L from 'leaflet';
 import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
+import LogoutConfirmation from '../components/LogoutConfirmation';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
 import GuideButton from '../components/GuideButton';
@@ -652,6 +653,7 @@ export default function FieldApp() {
   const [completedMarkAllResult, setCompletedMarkAllResult] = useState(null);
 
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
+  const [logoutOpen, setLogoutOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const avatarMenuRef = useRef(null);
   const reloadSequence = useRef(0);
@@ -1056,10 +1058,7 @@ export default function FieldApp() {
                 className="field-avatar-menu-item field-avatar-menu-item-danger"
                 onClick={() => {
                   setAvatarMenuOpen(false);
-                  handleClearRoute();
-                  setUserLocation(null);
-                  setLocationAccuracy(null);
-                  logout();
+                  setLogoutOpen(true);
                 }}
               >
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1073,6 +1072,17 @@ export default function FieldApp() {
           )}
         </div>
       </header>
+
+      <LogoutConfirmation open={logoutOpen} onCancel={() => {
+        setLogoutOpen(false);
+        avatarMenuRef.current?.querySelector('.field-avatar-button')?.focus();
+      }} onConfirm={async () => {
+        handleClearRoute();
+        setUserLocation(null);
+        setLocationAccuracy(null);
+        await logout();
+        setLogoutOpen(false);
+      }} />
 
       <FieldActivities key={planter?.organization_id ?? planter?.id} organizationId={planter?.organization_id} />
 

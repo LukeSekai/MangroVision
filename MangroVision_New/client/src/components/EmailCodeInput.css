@@ -1,0 +1,27 @@
+.email-code-fields {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: clamp(6px, 2vw, 10px);
+  width: 100%;
+}
+
+.email-code-fields .form-input.email-code-digit {
+  min-width: 0;
+  width: 100%;
+  height: 56px;
+  padding: 0;
+  border-radius: 10px;
+  text-align: center;
+  font-size: clamp(1.25rem, 4vw, 1.5rem);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  caret-color: var(--green-700, #166534);
+}
+
+.email-code-fields .email-code-digit.is-filled {
+  background: var(--green-50, #f0fdf4);
+}
+
+.email-code-fields .email-code-digit:disabled {
+  opacity: 0.65;
+}

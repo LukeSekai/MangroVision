@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 
-let dom, root, createRoot, FieldApp, store, leaflet, site, rows, requests, marks, watches, gps, locate;
+let dom, root, createRoot, FieldApp, store, leaflet, site, rows, requests, marks, watches, gps, locate, logoutCount;
 const maps = [], savedGlobals = new Map();
 const bundlePath = resolve(`node_modules/.field-navigation-${process.pid}.mjs`);
 const fixtures = [100, 99, 98, 97].map((point_num, index) => ({
@@ -77,12 +77,13 @@ after(async () => {
   }
 });
 beforeEach(() => {
-  maps.length = 0; rows = structuredClone(fixtures); requests = []; marks = []; watches = new Map();
+  maps.length = 0; rows = structuredClone(fixtures); requests = []; marks = []; watches = new Map(); logoutCount = 0;
   gps = { coords: { latitude: site.bridge_start[0], longitude: site.bridge_start[1], accuracy: 5 } };
   locate = success => success(gps);
   localStorage.clear(); sessionStorage.clear();
   store.setState({ isAuthenticated: true, token: 'fixture', planter: { id: 1, organization_id: 1, participant_slot: 1, full_name: 'Fixture planter' },
     hydrateSession: async () => {},
+    logout: async () => { logoutCount++; store.setState({ isAuthenticated: false, token: null, planter: null }); },
     fetchFieldPoints: async () => ({ points: structuredClone(rows), projectSites: [],
       siteAccess: [{ name: site.name, label: 'LIKE entrance', entrance: site.access_path.at(-1), site_area: site.site_area }] }),
     markPointStatus: async (id, status) => {
@@ -237,4 +238,23 @@ test('a failed GPS fix on Next leaves the active route available for retry', asy
   assert.match(nextButton().textContent, /#99/);
   assert.equal(nextButton().disabled, false);
   assert.equal(watches.size, 1);
+});
+
+test('planter logout preserves active navigation until the user confirms', async () => {
+  await render(); await click(nextButton());
+  await click(document.querySelector('.field-avatar-button'));
+  await click(document.querySelector('.field-avatar-menu-item-danger'));
+  assert.equal(logoutCount, 0);
+  assert.equal(activeLabel(), 'Point #100');
+  assert.equal(watches.size, 1);
+  await click(button('Stay signed in'));
+  assert.equal(logoutCount, 0);
+  assert.equal(activeLabel(), 'Point #100');
+  assert.equal(document.activeElement, document.querySelector('.field-avatar-button'));
+  await click(document.querySelector('.field-avatar-button'));
+  await click(document.querySelector('.field-avatar-menu-item-danger'));
+  await click(document.querySelector('[role="dialog"] .btn-primary'));
+  assert.equal(logoutCount, 1);
+  assert.equal(store.getState().isAuthenticated, false);
+  assert.equal(watches.size, 0);
 });

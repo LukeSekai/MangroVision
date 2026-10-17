@@ -263,7 +263,6 @@
 
 .auth-text-button { background: none; border: 0; color: var(--green-700); font: inherit; font-size: .85rem; cursor: pointer; padding: 8px 0; }
 .auth-text-button:disabled { color: var(--text-muted); cursor: default; }
-.email-code-input { letter-spacing: .3em; font-size: 1.4rem !important; font-variant-numeric: tabular-nums; }
 .email-code-help { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: .8rem; align-items: flex-start; }
 .credential-hint { color: var(--text-secondary); font-size: .85rem; line-height: 1.5; }
 .auth-notice { background: #ecfdf5; border: 1px solid #a7f3d0; color: #065f46; padding: 12px; border-radius: 8px; font-size: .85rem; line-height: 1.5; }
