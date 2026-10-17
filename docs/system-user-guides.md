@@ -114,8 +114,12 @@ End the guide before using the highlighted controls to perform the task.
 website** in Scheduling. Visitors first provide group/contact details, then their
 preferred date, start time, participants and optional notes. **Back** is at the
 top left of the schedule card. The end time is automatically two hours later.
-Tree planting starts between 6 AM and 3 PM and finishes by 5 PM. Tide suggestions
-check the full two-hour visit; dates without a forecast need LGU review. Dates
+Planting requests currently allow flexible hours for testing, while requiring
+the full visit to finish on the same Philippine date. The shared
+`src/like/bookingPolicy.json` setting controls this in the public form, backend
+and in-app guide. When operating hours are enforced, tree planting starts
+between 6 AM and 3 PM and finishes by 5 PM. Tide suggestions check the full
+two-hour visit; dates without a forecast need LGU review. Dates
 and scheduling times use Philippine time. Sending the form creates a request
 subject to LGU agreement and approval.
 

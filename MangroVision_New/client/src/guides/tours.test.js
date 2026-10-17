@@ -3,6 +3,22 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { STAFF_TOURS, FIELD_TOURS, fullWorkflow, toursForMode } from './tours.js';
+import bookingPolicy from '../like/bookingPolicy.json' with { type: 'json' };
+
+test('public booking instructions follow the shared operating-hours policy', () => {
+  const guide = STAFF_TOURS.find((tour) => tour.id === 'scheduling').steps
+    .find((step) => step.target === '.website-preview-link').content;
+  assert.match(guide, /two hours after the start/);
+  assert.match(guide, /Sending a request does not approve it/);
+  if (bookingPolicy.enforcePlantingHours) {
+    assert.match(guide, /starts between 6 AM and 3 PM and finishes by 5 PM/);
+    assert.doesNotMatch(guide, /flexible hours for testing/);
+  } else {
+    assert.match(guide, /flexible hours for testing/);
+    assert.match(guide, /same Philippine date/);
+    assert.doesNotMatch(guide, /starts between 6 AM and 3 PM/);
+  }
+});
 
 test('every staff feature route is reachable through its task guide and the full workflow', () => {
   const app = readFileSync(new URL('../StaffApp.jsx', import.meta.url), 'utf8');

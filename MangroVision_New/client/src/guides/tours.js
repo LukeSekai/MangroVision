@@ -1,5 +1,11 @@
 // These tours describe real workflows. They only navigate and reveal UI;
 // users perform uploads, submissions, downloads and other actions themselves.
+import bookingPolicy from '../like/bookingPolicy.json' with { type: 'json' };
+
+const plantingHoursGuide = bookingPolicy.enforcePlantingHours
+  ? 'Tree planting starts between 6 AM and 3 PM and finishes by 5 PM.'
+  : 'Planting requests currently allow flexible hours for testing; the full visit must finish on the same Philippine date.';
+
 const step = (path, target, title, content) => ({
   path, target, title, content,
   // Full maps fill the workspace and leave no outside edge for a tooltip.
@@ -81,7 +87,7 @@ export const STAFF_TOURS = [
     description: 'Review tide guidance, approve or decline requests, create schedules and choose sites.',
     steps: [
       step('/scheduling', '.schedule-header', 'Coordinate organization activities', 'Scheduling brings together staff-entered activities and requests from the LIKE website. Review upcoming visits, clean-up drives and tree-planting activities here.'),
-      step('/scheduling', '.website-preview-link', 'Understand the public booking form', 'Open LIKE website opens the public site in another tab. Visitors enter group and contact details, then their preferred schedule and participants. The end time is two hours after the start. Tree planting starts between 6 AM and 3 PM and finishes by 5 PM, with tide guidance for the full visit. Back is at the top left of the schedule card. Sending a request does not approve it. Scheduling times use Philippine time.'),
+      step('/scheduling', '.website-preview-link', 'Understand the public booking form', `Open LIKE website opens the public site in another tab. Visitors enter group and contact details, then their preferred schedule and participants. The end time is two hours after the start. ${plantingHoursGuide} Check tide guidance for the full visit. Back is at the top left of the schedule card. Sending a request does not approve it. Scheduling times use Philippine time.`),
       step('/scheduling', '.website-requests .schedule-toolbar', 'Approve or decline requests', 'Website requests use Pending, Approved and Declined decisions. Contact the requester, then choose Approve requested schedule, Reschedule and approve, or Decline request. Approval requires agreement on the schedule; declining requires a reason. An approved activity remains Pending until completed. Request approval is separate from activity progress.'),
       step('/scheduling', '.schedule-tide-panel', 'Check the weekly tide forecast', 'The graph shows water levels and estimated planting conditions across the forecast. Daily High tide and Low tide times appear in the calendar below. Click a tide time to open its details and that day’s hourly graph. Check actual water and weather at the site.'),
       step('/scheduling', '.schedule-panel[aria-labelledby="organization-schedules-title"] .schedule-toolbar', 'Add an organization schedule', 'Choose Add schedule. Select or enter the organization, activity type, date, start and end times and participant information, then review the form before saving.'),
