@@ -57,6 +57,7 @@ export default function Modal({
   onCancel,
   className = '',
   keepMounted = false,
+  initialFocus = 'confirm',
   // Optional override for the modal header icon. When provided, replaces the
   // variant icon (question mark / warning triangle / etc) with arbitrary
   // node — used by the welcome modal to show the MangroVision logo.
@@ -81,7 +82,8 @@ export default function Modal({
     if (!open) return undefined;
 
     previouslyFocusedRef.current = document.activeElement;
-    (confirmButtonRef.current || cancelButtonRef.current || cardRef.current)?.focus();
+    const preferredButton = initialFocus === 'cancel' ? cancelButtonRef.current : confirmButtonRef.current;
+    (preferredButton || confirmButtonRef.current || cancelButtonRef.current || cardRef.current)?.focus();
 
     const handleKeyDown = (event) => {
       if (busyRef.current) return;
@@ -129,7 +131,7 @@ export default function Modal({
         previous.focus();
       }
     };
-  }, [open]);
+  }, [open, initialFocus]);
 
   if (!open && !keepMounted) return null;
 

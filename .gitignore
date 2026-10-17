@@ -87,6 +87,7 @@ htmlcov/
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
 !MangroVision_New/client/src/components/Panel.test.js
 !MangroVision_New/client/src/components/FormFeedback.test.js
+!MangroVision_New/client/src/components/AuthInteraction.test.js
 !MangroVision_New/client/src/utils/formValidation.test.js
 !MangroVision_New/client/src/utils/analysisHistory.test.js
 !MangroVision_New/client/src/like/booking.test.js
