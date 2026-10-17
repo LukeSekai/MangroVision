@@ -48,5 +48,6 @@ export function canViewSavedAnalysisOnMap(analysis) {
 export function hasEstimatedAlignment(match) {
   if (!match?.success) return true;
   const source = match.projection_rotation_source || '';
-  return source.startsWith('exif_') || source === 'heading_fallback';
+  return Boolean(match.projection_rebuilt || match.photometric_refined
+    || source.startsWith('exif_') || source === 'heading_fallback');
 }

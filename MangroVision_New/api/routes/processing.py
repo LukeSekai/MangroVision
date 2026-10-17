@@ -63,6 +63,7 @@ from canopy_detection.orthophoto_coverage import (
     overlay_visibility_mask, point_visibility_flags, visible_gis_coverage,
 )
 from canopy_detection.perspective_matching import match_perspective_patch
+from canopy_detection.photometric_registration import refine_photometric_alignment
 from planting_database import (
     OutsideVisibleMapError,
     find_repeat_image_analyses,
@@ -132,6 +133,7 @@ _PROCESSING_JOBS = ProcessingJobs()
 _WORKFLOW_LOCK = threading.Lock()
 _PREFLIGHT_ALIGNMENT_CACHE: "OrderedDict[str, dict[str, Any]]" = OrderedDict()
 _PREFLIGHT_ALIGNMENT_CACHE_LIMIT = 24
+_ALIGNMENT_REVISION = 'photometric-affine-v1'
 
 
 class SaveProcessedAnalysisRequest(BaseModel):
@@ -263,7 +265,7 @@ def _get_image_alignment(temp_path, image, latitude, longitude, gsd, heading):
         maps.append((str(path), stat.st_size if stat else None, stat.st_mtime_ns if stat else None))
     context = (_file_sha256(temp_path), float(latitude), float(longitude),
                float(gsd), float(heading) % 360., sorted(maps),
-               ortho_matcher._active_tileset_name(), _USE_SIFT_MATCHING)
+               ortho_matcher._active_tileset_name(), _USE_SIFT_MATCHING, _ALIGNMENT_REVISION)
     key = hashlib.sha256(json.dumps(context).encode()).hexdigest()
     cached = _get_preflight_alignment_cache(key)
     if cached is not None:
@@ -588,6 +590,12 @@ def _thin_hexagons_by_gps_spacing(
 def _match_quality_warning(match_result: Optional[dict[str, Any]]) -> Optional[str]:
     if not match_result or not match_result.get("success"):
         return None
+
+    if match_result.get('photometric_refined'):
+        return (
+            'The image position was refined automatically against the map. '
+            'This alignment is approximate; compare the photo with the map before saving.'
+        )
 
     confidence = match_result.get("confidence")
     drift_m = match_result.get("center_drift_m")
@@ -934,6 +942,11 @@ def _sanitize_match_result(match_result: Optional[dict[str, Any]]) -> Optional[d
         "registration_validation_inliers": _json_int(match_result.get("registration_validation_inliers")),
         "registration_median_error_m": _json_float(match_result.get("registration_median_error_m")),
         "registration_stability_m": _json_float(match_result.get("registration_stability_m")),
+        "photometric_refined": bool(match_result.get("photometric_refined", False)),
+        "photometric_score": _json_float(match_result.get("photometric_score")),
+        "photometric_baseline_score": _json_float(match_result.get("photometric_baseline_score")),
+        "photometric_stability_m": _json_float(match_result.get("photometric_stability_m")),
+        "photometric_improved_cells": _json_int(match_result.get("photometric_improved_cells")),
         "projection_metric_scale_normalized": bool(match_result.get("projection_metric_scale_normalized", False)),
         "projection_edge_refined": bool(match_result.get("projection_edge_refined", False)),
         "edge_refine_base_score": _json_float(match_result.get("edge_refine_base_score")),
@@ -2650,6 +2663,41 @@ def _retry_perspective_registration(drone_image, center_lat, center_lon, drone_g
     return _post_process_match(result, drone_image, center_lat, center_lon, camera_heading, drone_gsd)
 
 
+def _refine_failed_match_photometrically(failed_match, drone_image, center_lat,
+                                       center_lon, drone_gsd, camera_heading):
+    """Refine the shared approximate transform without bypassing SIFT gates."""
+    if camera_heading is None or not math.isfinite(float(camera_heading)):
+        return failed_match
+    entry = ortho_matcher.select_orthophoto(center_lat, center_lon)
+    reference = ortho_matcher.load_orthophoto()
+    nominal = _build_metric_centered_homography(
+        drone_image, center_lat, center_lon, drone_gsd, camera_heading,
+    )
+    if entry is None or reference is None or nominal is None:
+        return failed_match
+    matrix, diagnostics = refine_photometric_alignment(
+        drone_image, reference, nominal, _active_ortho_metric_gsd_xy(),
+    )
+    if matrix is None:
+        return failed_match
+    refined = dict(failed_match)
+    refined.update({
+        **diagnostics, 'success': True, 'error': None, 'H': matrix,
+        'heading': _homography_heading_deg(matrix),
+        'confidence': None, 'match_score': diagnostics['photometric_score'],
+        'ortho_name': entry['name'], 'ortho_path': str(entry['path']),
+        # Approximate image refinement must not enable the wider edge checks
+        # reserved for independently validated landmark registrations.
+        'gps_anchored': False, 'registration_validated': False,
+        'projection_rebuilt': True, 'projection_constrained': True,
+        'projection_rotation_source': 'photometric_affine',
+        'projection_rebuild_reason': 'Automatic bounded image-to-map refinement',
+    })
+    refined.update(_homography_center_diagnostics(matrix, drone_image, center_lat, center_lon))
+    refined.update(_homography_scale_diagnostics(matrix, drone_image, drone_gsd))
+    return refined
+
+
 def _match_drone_to_ortho_robust(
     drone_image: np.ndarray,
     center_lat: float,
@@ -2721,6 +2769,11 @@ def _match_drone_to_ortho_robust(
     )
     if vegetation_refined.get("success"):
         return vegetation_refined
+    photometric_refined = _refine_failed_match_photometrically(
+        retry, drone_image, center_lat, center_lon, drone_gsd, camera_heading,
+    )
+    if photometric_refined.get('success'):
+        return photometric_refined
     return _refine_failed_match_with_edge_translation(
         retry,
         drone_image,
@@ -3861,7 +3914,7 @@ def _execute_canopy_workflow(
     analysis_key = (
         f"{uploaded_name}_{altitude_to_use}_{drone_to_use}_{canopy_buffer}_"
         f"{hexagon_size}_{ai_confidence}_{detection_mode}_"
-        f"{canopy_code_mtime}_{proper_code_mtime}_{ortho_code_mtime}_"
+        f"{canopy_code_mtime}_{proper_code_mtime}_{ortho_code_mtime}_{_ALIGNMENT_REVISION}_"
         f"{active_zones_revision}_"
         f"{tuning_fingerprint}"
     )
