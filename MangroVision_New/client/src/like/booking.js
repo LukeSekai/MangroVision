@@ -1,5 +1,8 @@
 import { APPOINTMENT_TYPES, appointmentTypeLabel } from '../utils/appointmentTypes.js';
 import { formRequest } from '../utils/formValidation.js';
+import bookingPolicy from './bookingPolicy.json' with { type: 'json' };
+
+export { bookingPolicy };
 
 export const APPOINTMENT_DURATION_MINUTES = 120;
 export const PLANTING_OPEN_TIME = '06:00';
@@ -8,6 +11,7 @@ export const PLANTING_LATEST_START = '15:00';
 export const PLANTING_HOURS_ERROR = 'Tree planting is available from 6 AM to 5 PM. Choose a start between 6 AM and 3 PM so your two-hour visit finishes by 5 PM.';
 
 export function plantingHoursError(startTime) {
+  if (!bookingPolicy.enforcePlantingHours) return '';
   const end = appointmentEndTime(startTime);
   return !end || startTime < PLANTING_OPEN_TIME || end > PLANTING_CLOSE_TIME ? PLANTING_HOURS_ERROR : '';
 }

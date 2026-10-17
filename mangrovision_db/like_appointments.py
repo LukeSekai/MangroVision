@@ -6,12 +6,18 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, time, timedelta, timezone
+from pathlib import Path
 
 import planting_database as planting
 from email_validator import EmailNotValidError, validate_email
 
 from .appointment_email import APPOINTMENT_TYPES, queue_confirmation
 from .readable_credentials import available_username, organization_password
+
+
+# Shared with the public form; restore this flag after planter testing.
+BOOKING_POLICY = json.loads((Path(__file__).resolve().parents[1]
+    / 'MangroVision_New/client/src/like/bookingPolicy.json').read_text(encoding='utf-8'))
 
 
 class AppointmentConflict(ValueError):
@@ -30,7 +36,8 @@ def requested_appointment_window(start: datetime, *, appointment_type=None) -> t
     end = start + timedelta(hours=2)
     if end.date() != start.date():
         raise ValueError('Choose a start time before 10 PM so the two-hour visit ends on the same Philippine date.')
-    if appointment_type == 'tree_planting' and (start.time() < time(6) or end.time() > time(17)):
+    if (BOOKING_POLICY['enforcePlantingHours'] and appointment_type == 'tree_planting'
+            and (start.time() < time(6) or end.time() > time(17))):
         raise ValueError('Tree planting is available from 6 AM to 5 PM. Choose a start between 6 AM and 3 PM so your two-hour visit finishes by 5 PM.')
     return start, end
 

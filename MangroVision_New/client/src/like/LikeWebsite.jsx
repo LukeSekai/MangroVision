@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { appointmentEndTime, bookingErrors, bookingPayload, manilaToday, PLANTING_OPEN_TIME, PLANTING_LATEST_START, submitBooking, validBookingDate } from './booking';
+import { appointmentEndTime, bookingErrors, bookingPayload, bookingPolicy, manilaToday, PLANTING_OPEN_TIME, PLANTING_LATEST_START, submitBooking, validBookingDate } from './booking';
 import { assessPlantingBooking } from './bookingTides';
 import { COASTAL_FORECAST_KEY } from '../utils/plantingTides';
 import useTideForecasts from '../utils/useTideForecasts';
@@ -199,10 +199,10 @@ export function AppointmentForm() {
         {isPlanting && <PlantingTimeSuggestions date={form.date} startTime={form.start_time} onChoose={chooseStart} busy={busy}
           record={tideRecord} now={tideNow} onRefresh={() => { setTideNow(Date.now()); setTideRetry((value) => value + 1); }} />}
         <div className="like-form-row">
-          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required min={isPlanting ? PLANTING_OPEN_TIME : undefined} max={isPlanting ? PLANTING_LATEST_START : '21:59'} /><FieldError feedback={feedback} field="start_time" /></label>
+          <label>Start time <span>*</span><input disabled={busy} {...feedback.props('start_time')} type="time" value={form.start_time} onChange={update} required min={isPlanting && bookingPolicy.enforcePlantingHours ? PLANTING_OPEN_TIME : undefined} max={isPlanting && bookingPolicy.enforcePlantingHours ? PLANTING_LATEST_START : '21:59'} /><FieldError feedback={feedback} field="start_time" /></label>
           <label>End time <small>automatic</small><input disabled={busy} {...feedback.props('end_time')} type="time" value={appointmentEndTime(form.start_time)} readOnly aria-describedby="like-duration-hint" /><FieldError feedback={feedback} field="end_time" /></label>
         </div>
-        <p className="like-field-hint" id="like-duration-hint">Your visit ends two hours after your chosen start time.{isPlanting && ' Planting must start at or after 6 AM and finish by 5 PM, with lower water throughout the visit.'}</p>
+        <p className="like-field-hint" id="like-duration-hint">Your visit ends two hours after your chosen start time.{isPlanting && (bookingPolicy.enforcePlantingHours ? ' Planting must start at or after 6 AM and finish by 5 PM, with lower water throughout the visit.' : ' Choose a time with lower water throughout the visit.')}</p>
         <p className="like-field-hint">All dates and times are in Philippine time (Asia/Manila).</p>
         <label>Participants <span>*</span><input disabled={busy} {...feedback.props('participants')} type="number" min="1" max="10000" step="1" value={form.participants} onChange={update} required placeholder="How many are joining?" /><FieldError feedback={feedback} field="participants" /></label>
         <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>

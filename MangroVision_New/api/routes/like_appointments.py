@@ -98,7 +98,7 @@ def create_appointment(body: AppointmentCreate, request: Request):
         assessment = assess_graph_window(tides_forecast(lat=10.7800, lon=122.6253, days=7), body.start_at, body.end_at)
         if assessment['status'] == 'unsafe':
             raise HTTPException(422, detail=[{'loc': ['body', 'start_at'], 'type': 'value_error',
-                'msg': 'Water is predicted to rise above the planting limit during your two-hour visit. Choose a lower-water time within 6 AM–5 PM.'}])
+                'msg': 'Water is predicted to rise above the planting limit during your two-hour visit. Choose a lower-water time.'}])
     try:
         return submit_appointment(body.model_dump(), request.client.host if request.client else 'unknown')
     except AppointmentRateLimit as error:

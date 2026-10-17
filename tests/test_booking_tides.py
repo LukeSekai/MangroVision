@@ -50,12 +50,14 @@ def test_stale_missing_and_out_of_coverage_data_stays_unknown():
 
 
 @pytest.mark.parametrize('hour,minute', [(4, 30), (5, 59), (15, 1), (16, 0), (17, 0)])
-def test_service_rejects_planting_outside_hours_even_without_the_public_api(hour, minute):
+def test_service_rejects_planting_outside_hours_when_restored(monkeypatch, hour, minute):
+    from mangrovision_db.like_appointments import BOOKING_POLICY
+    monkeypatch.setitem(BOOKING_POLICY, 'enforcePlantingHours', True)
     with pytest.raises(ValueError, match='6 AM to 5 PM'):
         requested_appointment_window(BASE.replace(hour=hour, minute=minute), appointment_type='tree_planting')
 
 
-@pytest.mark.parametrize('hour', [6, 15])
+@pytest.mark.parametrize('hour', [0, 4, 6, 15, 17, 19, 21])
 def test_service_hours_are_in_philippine_time(hour):
     start = BASE.replace(hour=hour).astimezone(timezone.utc)
     local_start, end = requested_appointment_window(start, appointment_type='tree_planting')

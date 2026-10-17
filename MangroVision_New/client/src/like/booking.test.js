@@ -1,8 +1,11 @@
-import test from 'node:test';
+import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { appointmentEndTime, bookingErrors, bookingPayload, manilaToday } from './booking.js';
+import { appointmentEndTime, bookingErrors, bookingPayload, bookingPolicy, manilaToday } from './booking.js';
 import { assessPlantingBooking, plantingBookingWindows } from './bookingTides.js';
 import { assessGraphWindow } from '../utils/plantingTides.js';
+
+const defaultHoursPolicy = bookingPolicy.enforcePlantingHours;
+afterEach(() => { bookingPolicy.enforcePlantingHours = defaultHoursPolicy; });
 
 const valid = { organization: ' School ', contact_name: ' Coordinator ', phone: '09123456789', email: 'coordinator@example.org', appointment_type: 'tree_planting',
   date: manilaToday(new Date(Date.now() + 7 * 86400000)), start_time: '08:00', end_time: '10:00', participants: '20', notes: '', consent: true, website: '' };
@@ -94,6 +97,7 @@ test('missing, stale, invalid, gapped and out-of-horizon forecasts cannot sugges
 });
 
 test('suggestions exclude past times, nighttime, and windows too short for two hours', () => {
+  bookingPolicy.enforcePlantingHours = true;
   const now = tideBase + 8 * 3600000 + 5 * 60000;
   const fresh = { ...tidePayload, fetched_at: now / 1000 };
   for (const window of windows({ now, payload: fresh }).windows) {
@@ -106,6 +110,7 @@ test('suggestions exclude past times, nighttime, and windows too short for two h
 });
 
 test('all-day lower water is clipped to LIKE hours and a latest start of 3 PM', () => {
+  bookingPolicy.enforcePlantingHours = true;
   const payload = { ...tidePayload, heights: tidePayload.heights.map((row) => ({ ...row, height_m: 0.2 })) };
   const result = windows({ payload });
   assert.equal(result.windows.length, 1);
@@ -132,9 +137,24 @@ test('high water within opening hours splits availability and blocks a visit spa
   assert.equal(assessPlantingBooking({ payload, date: tideDay, startTime: '12:00', now: tideBase }).status, 'safe');
 });
 
-test('unknown forecasts remain available for LGU review while opening hours still apply', () => {
+test('testing permits early and evening visits while preserving duration and tide checks', () => {
+  const payload = { ...tidePayload, fetched_at: tideBase / 1000 - 3600,
+    heights: tidePayload.heights.map((row) => ({ ...row, height_m: 0.2 })) };
+  const result = windows({ payload, now: tideBase - 3600000 });
+  assert.equal(result.windows[0].startTime, '00:00');
+  assert.equal(result.windows[0].end, tideBase + (23 * 60 + 45) * 60000);
+  for (const startTime of ['00:00', '04:30', '05:59', '15:01', '16:45', '19:00', '21:59']) {
+    assert.equal(assessPlantingBooking({ payload, date: tideDay, startTime, now: tideBase - 3600000 }).status, 'safe');
+    assert.equal(bookingErrors({ ...valid, start_time: startTime }, 2).start_time, undefined);
+    const body = bookingPayload({ ...valid, start_time: startTime }, 'test-key');
+    assert.equal(body.end_at, `${valid.date}T${appointmentEndTime(startTime)}:00+08:00`);
+  }
+  assert.equal(assessPlantingBooking({ payload, date: tideDay, startTime: '22:00', now: tideBase }).status, 'closed');
+});
+
+test('unknown forecasts remain available for LGU review outside the usual hours during testing', () => {
   assert.equal(assessPlantingBooking({ payload: null, date: tideDay, startTime: '06:00', now: tideBase }).status, 'unknown');
-  assert.equal(assessPlantingBooking({ payload: null, date: tideDay, startTime: '04:30', now: tideBase }).status, 'closed');
+  assert.equal(assessPlantingBooking({ payload: null, date: tideDay, startTime: '04:30', now: tideBase }).status, 'unknown');
   assert.equal(bookingErrors({ ...valid, appointment_type: 'field_visit', start_time: '04:30' }, 2).start_time, undefined);
 });
 
