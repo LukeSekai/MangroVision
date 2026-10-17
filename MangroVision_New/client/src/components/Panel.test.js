@@ -5,6 +5,7 @@ import { MemoryRouter, Route, useLocation, useNavigate } from 'react-router-dom'
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import { manilaDateKey } from '../utils/monitoringSchedule.js';
+import { STAFF_TOURS } from '../guides/tours.js';
 
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore, originalStartProcess;
 let PlantingMapWorkspace, Sidebar, MapView;
@@ -822,6 +823,30 @@ async function click(button) {
 
 const headers = () => [...document.querySelectorAll('.panel-card-header')];
 const expanded = () => headers().filter((header) => header.getAttribute('aria-expanded') === 'true');
+
+for (const [id, page] of [
+  ['map', 'MapAnalytics'], ['zones', 'ErodedZoneEditor'],
+  ['processing', 'ImageProcessing'], ['planters', 'PlanterManagement'],
+  ['monitoring-map', 'MonitoringMapWorkspace'], ['monitoring', 'OrganizationMonitoring'],
+]) {
+  test(`${id} guide targets match the real screen without submitting records`, async () => {
+    const tour = STAFF_TOURS.find((item) => item.id === id);
+    responses.set('/api/monitoring/organizations', { organizations: [] });
+    if (['map', 'zones', 'processing', 'planters'].includes(id)) await renderPlantingWorkspace(tour.path);
+    else await render(pages.get(page));
+    for (const step of tour.steps.filter((item) => item.path === tour.path)) {
+      // This panel is intentionally absent until an organization is selected.
+      if (id === 'planters' && step.target.endsWith('[data-guide-card="Organization code"]')) continue;
+      const control = document.querySelector(step.target);
+      assert.ok(control, `Missing guide target for ${id}: ${step.target}`);
+      const header = control.closest('.panel-card')?.querySelector(':scope > .panel-card-header');
+      if (header?.getAttribute('aria-expanded') === 'false') await click(header);
+      assert.equal(control.closest('[inert], [aria-hidden="true"]'), null, step.target);
+    }
+    assert.equal(mutations.length, 0);
+    assert.ok(!requests.some((path) => /\/access$/.test(path)), 'Guides must not reveal a code');
+  });
+}
 
 test('Assign Points opens the form without a duplicate overview and keeps activity reports accessible', async () => {
   await render(pages.get('PlanterManagement'));

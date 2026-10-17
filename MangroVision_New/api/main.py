@@ -41,6 +41,7 @@ from api.routes import (
     export,
     monitoring,
     notifications,
+    organizations,
     planting_schedules,
     like_appointments,
     planter_auth,
@@ -112,6 +113,7 @@ app.include_router(planter_auth.router, prefix="/api/planter-auth", tags=["Plant
 app.include_router(analyses.router, prefix="/api/analyses", tags=["Analyses"])
 app.include_router(activity.router, prefix="/api/activity", tags=["Activity"])
 app.include_router(planters.router, prefix="/api/planters", tags=["Planters"])
+app.include_router(organizations.router, prefix="/api/organizations", tags=["Organizations"])
 app.include_router(seedlings.router, prefix="/api/seedlings", tags=["Seedlings"])
 app.include_router(assignments.router, prefix="/api/assignments", tags=["Assignments"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])

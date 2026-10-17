@@ -50,7 +50,7 @@ function GuideMenu({ mode = 'staff', pathname = '/', navigate }) {
       </button>
       {mode === 'staff' && <>
         <button type="button" className="guide-workflow-button" onClick={() => start(fullWorkflow(tours))}>
-          <span><strong>Full system workflow</strong><small>From site preparation to planting, monitoring and reports</small></span>
+          <span><strong>Full system workflow</strong><small>From activities and organizations to planting, monitoring and reports</small></span>
           <span aria-hidden="true">→</span>
         </button>
         <h3 className="guide-menu-label">Guides by task</h3>
