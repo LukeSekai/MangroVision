@@ -848,15 +848,15 @@ for (const [id, page] of [
   });
 }
 
-test('Assign Points opens the form without a duplicate overview and keeps activity reports accessible', async () => {
+test('Assign Points opens the form without the old sharing, report or project-site controls', async () => {
   await render(pages.get('PlanterManagement'));
   assert.equal(headers().some((header) => header.textContent.includes('Overview')), false);
   assert.match(expanded()[0].textContent, /Assign available points/);
   assert.equal(requests.includes('/api/planters/dashboard'), false);
-  await click(document.querySelector('.assignment-activity-report'));
-  assert.equal(document.querySelector('[role="dialog"]').getAttribute('aria-labelledby'), 'par-title');
-  assert.equal(document.querySelector('#par-title').textContent, 'Organization Activity');
-  await click(document.querySelector('[aria-label="Close report"]'));
+  assert.equal(document.querySelector('.assignment-activity-report'), null);
+  assert.equal(document.querySelector('#assign-site'), null);
+  assert.doesNotMatch(document.body.textContent, /Field Share Link|Cloudflare|View Activity Report/);
+  assert.equal(requests.some(path => path.startsWith('/api/share/')), false);
   assert.equal(document.querySelector('.par-backdrop'), null);
   assert.equal(mutations.length, 0);
 });
@@ -883,7 +883,7 @@ test('Quick Assign shows available points and explains invalid counts only when 
     organization.dispatchEvent(new window.Event('change', { bubbles: true }));
   });
   await settle();
-  assert.match(document.body.textContent, /100 available points in this project site/);
+  assert.match(document.body.textContent, /100 available points for this organization/);
   assert.doesNotMatch(document.body.textContent, /No points are available to assign in/);
   const count = document.getElementById('organization-point-count');
   assert.equal(count.disabled, false);
@@ -949,13 +949,15 @@ test('Quick Assign links points to the selected planting activity and requires a
   responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
   responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
   responses.set('/api/planting-schedules', { schedules: [31, 32].map((id) => ({
-    id, organization_id: 22, project_site_id: 15, appointment_type: 'tree_planting',
+    id, organization_id: 22, project_site_id: id === 31 ? 15 : 16, appointment_type: 'tree_planting',
     status: 'confirmed', title: `Activity ${id}`, date: '2090-01-01',
   })) });
   responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1] });
-  useMapStore.setState({ projectSites: { features: [{ id: 15, properties: { name: 'Demo site', organization_id: 22 } }] },
+  useMapStore.setState({ projectSites: { features: [15, 16].map(id => ({ id, properties: { name: `Demo site ${id}`, organization_id: 22 } })) },
     points: [{ id: 1, point_num: 1, analysis_id: 1, latitude: 10.5, longitude: 122.5,
-      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
+      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' },
+    { id: 2, point_num: 2, analysis_id: 1, latitude: 10.5, longitude: 122.50001,
+      source_project_site_id: 16, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
   await render(pages.get('PlanterManagement'));
   await act(async () => {
     const organization = document.getElementById('assign-organization');
@@ -973,9 +975,13 @@ test('Quick Assign links points to the selected planting activity and requires a
   await click(assign);
   assert.equal(mutations.length, 1);
   assert.equal(mutations[0].body.planting_schedule_id, 32);
+  assert.equal(mutations[0].body.site_zone_id, 16);
+  assert.deepEqual(mutations[0].body.planting_point_ids, [2]);
+  assert.equal(useMapStore.getState().assignmentProjectSiteId, 16);
+  assert.equal(document.getElementById('assign-site'), null);
 });
 
-test('Quick Assign links an activity without an area to the selected project site', async () => {
+test('Quick Assign links an activity without an area to its organization’s mapped area', async () => {
   responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
   responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
   responses.set('/api/planting-schedules', { schedules: [{
@@ -992,7 +998,7 @@ test('Quick Assign links an activity without an area to the selected project sit
     organization.value = '22'; organization.dispatchEvent(new window.Event('change', { bubbles: true }));
   });
   await settle();
-  assert.match(document.body.textContent, /Its planting area will use the selected project site/);
+  assert.match(document.body.textContent, /Its planting area will use this organization's mapped area/);
   const assign = [...document.querySelectorAll('button')].find((button) => /Assign 1 Point/.test(button.textContent));
   await click(assign);
   assert.equal(mutations.length, 1);
@@ -1691,7 +1697,8 @@ for (const name of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'Ero
   test(`${name} opens one section at a time and preserves all-closed state on return`, async () => {
     await render(pages.get(name));
     const panel = document.querySelector('.floating-panel');
-    assert.ok(headers().length >= 2);
+    if (name === 'PlanterManagement') assert.equal(headers().length, 1);
+    else assert.ok(headers().length >= 2);
     assert.equal(expanded().length, 1);
     for (const header of headers()) {
       if (header.getAttribute('aria-expanded') === 'false') await click(header);

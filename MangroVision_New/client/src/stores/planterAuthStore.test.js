@@ -21,7 +21,8 @@ before(async () => {
       if (!path.endsWith('/login') && unauthorized) return Response.json({ detail: 'Login ended.' }, { status: 401 });
       return Response.json({ planter: { id: 7, organization_id: 5, participant_count: 10, participant_slot: 1,
         participant_username: body?.username || 'Ana', planting_schedule_id: 2 },
-        ...(path.endsWith('/field-points') ? { points, project_sites: { features: [] } } : {}) });
+        ...(path.endsWith('/field-points') ? { points, project_sites: { features: [] },
+          site_access: [{ label: 'LIKE entrance', entrance: [10.77999592, 122.625672] }] } : {}) });
     } })) {
     originals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -165,5 +166,7 @@ test('connection errors and throttling remain clear and retryable', async () => 
   loginFailure = () => new Response('Unavailable', { status: 502 });
   await assert.rejects(login(), /sign-in service is temporarily unavailable/);
   loginFailure = null; await login();
-  assert.deepEqual((await usePlanterAuthStore.getState().fetchFieldPoints()).points, points);
+  const workspace = await usePlanterAuthStore.getState().fetchFieldPoints();
+  assert.deepEqual(workspace.points, points);
+  assert.deepEqual(workspace.siteAccess, [{ label: 'LIKE entrance', entrance: [10.77999592, 122.625672] }]);
 });

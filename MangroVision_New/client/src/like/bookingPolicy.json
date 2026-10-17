@@ -1,3 +1,4 @@
 {
-  "enforcePlantingHours": false
+  "enforcePlantingHours": false,
+  "enforceActivityAccessWindow": false
 }

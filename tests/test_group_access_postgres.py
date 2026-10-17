@@ -143,7 +143,8 @@ def test_failed_session_creation_rolls_back_username_browser_and_previous_sessio
 
 
 @pytest.mark.parametrize('change', ['expired', 'future', 'cancelled', 'completed', 'revoked'])
-def test_activity_window_and_status_end_existing_and_new_access(workspace, change):
+def test_activity_window_and_status_end_existing_and_new_access_when_restored(workspace, monkeypatch, change):
+    monkeypatch.setitem(group.BOOKING_POLICY, 'enforceActivityAccessWindow', True)
     _, sid, code = activity(workspace)
     _, token = join(code, mode='first')
     if change == 'expired':
@@ -160,13 +161,43 @@ def test_activity_window_and_status_end_existing_and_new_access(workspace, chang
     assert workspace.execute(text('SELECT participant_username FROM organization_participants WHERE slot=1')).scalar_one() == 'Ana'
 
 
-def test_expiry_uses_schedule_and_extension_restores_existing_session(workspace):
+def test_expiry_uses_schedule_and_extension_restores_existing_session(workspace, monkeypatch):
+    monkeypatch.setitem(group.BOOKING_POLICY, 'enforceActivityAccessWindow', True)
     _, sid, code = activity(workspace)
     _, token = join(code, mode='first')
     workspace.execute(text("UPDATE planting_schedules SET start_at=clock_timestamp()-interval '4 hours', end_at=clock_timestamp()-interval '1 hour' WHERE id=:id"), {'id': sid})
     assert current(token) is None
     workspace.execute(text("UPDATE planting_schedules SET end_at=clock_timestamp()+interval '1 hour' WHERE id=:id"), {'id': sid})
     assert current(token)['participant_slot'] == 1
+
+
+@pytest.mark.parametrize('outside_window', ['expired', 'future'])
+def test_testing_codes_and_sessions_work_outside_activity_time(workspace, outside_window):
+    owner, sid, code = activity(workspace)
+    _, token = join(code, mode='first')
+    workspace.execute(text('INSERT INTO planter_assignments(id, planter_id, planting_schedule_id) VALUES (10,:owner,:sid)'),
+                      {'owner': owner, 'sid': sid})
+    workspace.exec_driver_sql('INSERT INTO planter_assignment_points(id, assignment_id, participant_slot) VALUES (1,10,1)')
+    if outside_window == 'expired':
+        workspace.execute(text("UPDATE planting_schedules SET start_at=clock_timestamp()-interval '4 hours', end_at=clock_timestamp()-interval '1 hour' WHERE id=:id"), {'id': sid})
+    else:
+        workspace.execute(text("UPDATE planting_schedules SET start_at=clock_timestamp()+interval '1 hour', end_at=clock_timestamp()+interval '4 hours' WHERE id=:id"), {'id': sid})
+    assert group.check_group_code(code)['organization_name'] == 'Test group'
+    assert current(token)['participant_slot'] == 1
+    conn = group.get_connection()
+    reset = planter_session_token.set(token)
+    try:
+        group.guard_point_write(conn, owner, 1, [1])
+    finally:
+        conn.close()
+        planter_session_token.reset(reset)
+    participant, returning_token = join(code)
+    assert participant['participant_slot'] == 1
+    assert current(returning_token)['planting_schedule_id'] == sid
+    newcomer, _ = join(code, name='Ben', browser=2, mode='first')
+    assert newcomer['participant_slot'] == 2
+    assert workspace.execute(text('SELECT participant_slot FROM planter_assignment_points WHERE id=1')).scalar_one() == 1
+    assert workspace.execute(text('SELECT participant_username FROM organization_participants WHERE slot=1')).scalar_one() == 'Ana'
 
 
 def test_existing_personal_code_claims_original_slot_without_moving_points(workspace):

@@ -13,6 +13,7 @@ from cryptography.fernet import Fernet
 from .compat import get_connection
 from .notifications import _send_smtp
 from .activity_email_design import render_activity_email
+from .booking_policy import activity_access_timing_message
 
 APPOINTMENT_TYPES = {
     'field_visit': 'Field visit',
@@ -109,7 +110,7 @@ def _message(request, schedule, *, login=None, access_lines=None, kind='confirma
             access_lines.extend(['Share this one code with all participants in your organization.',
                 'First time: enter the organization code, then choose a personal username on the welcome screen. Returning: enter the same code and username to restore your points and progress.',
                 'If your username is signed in elsewhere, choose Switch here to move access to this browser.',
-                'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.'])
+                activity_access_timing_message()])
         else:
             access_lines = []
     if access_lines and kind != 'cancellation':

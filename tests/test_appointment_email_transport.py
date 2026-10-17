@@ -6,6 +6,15 @@ import httpx
 import pytest
 
 from mangrovision_db import appointment_email as delivery
+from mangrovision_db.booking_policy import BOOKING_POLICY, activity_access_timing_message
+
+
+@pytest.mark.parametrize('enforced', [False, True])
+def test_access_instructions_follow_the_temporary_time_limit(monkeypatch, enforced):
+    monkeypatch.setitem(BOOKING_POLICY, 'enforceActivityAccessWindow', enforced)
+    message = activity_access_timing_message()
+    assert ('opens at the scheduled start' in message) is enforced
+    assert ('before and after the scheduled planting time' in message) is not enforced
 
 
 @pytest.fixture(autouse=True)

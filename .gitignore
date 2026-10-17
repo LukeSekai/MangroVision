@@ -95,6 +95,8 @@ htmlcov/
 !MangroVision_New/client/src/components/ParticipantDevices.test.js
 !MangroVision_New/client/src/components/SeedlingLocations.test.js
 !MangroVision_New/client/src/utils/fieldNavigation.test.js
+!MangroVision_New/client/src/components/FieldNavigationNotice.test.js
+!MangroVision_New/client/src/pages/FieldApp.navigation.test.js
 
 # Data and logs
 .env

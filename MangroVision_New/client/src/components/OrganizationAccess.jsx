@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { FormMessage } from './FormFeedback';
 import { formRequest } from '../utils/formValidation';
+import bookingPolicy from '../like/bookingPolicy.json' with { type: 'json' };
 
 const API = import.meta.env.VITE_API_BASE || '';
 const time = (value) => new Date(value).toLocaleString('en-PH', { timeZone: 'Asia/Manila', dateStyle: 'medium', timeStyle: 'short' });
@@ -32,7 +33,10 @@ export default function OrganizationAccess({ organization, activity, onCreated }
     } finally { setBusy(false); }
   };
   const handover = () => `${organization.organization_name} — ${activity.title}\nOpen: ${window.location.origin}/field\n`
-    + `Organization code: ${access.code}\nOpens: ${time(access.start_at)}\nCloses: ${time(access.end_at)} (Philippine time)\n\n`
+    + `Organization code: ${access.code}\n`
+    + (bookingPolicy.enforceActivityAccessWindow
+      ? `Opens: ${time(access.start_at)}\nCloses: ${time(access.end_at)} (Philippine time)\n\n`
+      : 'This code can be used before and after the scheduled planting time.\n\n')
     + 'Share this one code with all participants.\nFirst time: enter the organization code, then choose a personal username on the welcome screen. Returning: enter the same code and username.\n'
     + 'Choose Switch here to move an existing login to another browser. No password or PIN is needed.\n';
   const download = () => {
@@ -44,14 +48,16 @@ export default function OrganizationAccess({ organization, activity, onCreated }
     try { await navigator.clipboard.writeText(handover()); setSuccess('Access details copied. Share them with the organization’s contact person.'); }
     catch { setError('Could not copy the code. Use Download instead.'); }
   };
-  if (!activity) return <p className="text-sm">Select a confirmed planting activity above to view its organization code. Access follows that activity’s start and finish times.</p>;
+  if (!activity) return <p className="text-sm">Select a confirmed planting activity above to view its organization code.{bookingPolicy.enforceActivityAccessWindow && ' Access follows that activity’s start and finish times.'}</p>;
   return <div className="assign-card">
     <p className="text-sm">One code for all {activity.expected_planters || organization.participant_count || 1} participants in this activity. Each planter chooses a unique username to keep their own progress.</p>
     <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => void request()}>{busy ? 'Loading…' : loaded ? 'Refresh code' : 'Show organization code'}</button>
     {loaded && !access && <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void request('issue')}>Create organization code</button>}
     {access && <>
       <p><strong style={{ fontFamily: 'monospace', fontSize: 20 }}>{access.code || 'Revoked'}</strong></p>
-      <p className="text-sm">Opens {time(access.start_at)} · Closes {time(access.end_at)} (Philippine time).</p>
+      <p className="text-sm">{bookingPolicy.enforceActivityAccessWindow
+        ? <>Opens {time(access.start_at)} · Closes {time(access.end_at)} (Philippine time).</>
+        : 'This code can be used before and after the scheduled planting time.'}</p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {access.code && <><button type="button" className="btn btn-secondary btn-sm" onClick={copy}>Copy access details</button>
           <button type="button" className="btn btn-secondary btn-sm" onClick={download}>Download</button></>}

@@ -211,55 +211,81 @@
   height: 100%;
 }
 
-.field-route-banner {
+.field-navigation {
   position: absolute;
-  bottom: 16px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 8px 10px 8px 14px;
-  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.18);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 2px 10px;
   z-index: 700;
-  width: min(460px, calc(100% - 24px));
-  max-width: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(360px, calc(100% - 24px));
+  pointer-events: none;
 }
 
-.field-route-banner-info {
-  display: contents;
-  line-height: 1.2;
-}
-
-.field-route-banner-label {
-  grid-column: 1;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #0f766e;
-}
-
-.field-route-banner-stats {
-  grid-column: 1;
-  font-size: 13px;
-  font-weight: 700;
-  color: #0f172a;
-  margin-top: 0;
-}
-
-.field-route-banner-clear {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  align-self: start;
-  min-height: 44px;
-  padding: 8px 12px;
+.field-navigation-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  border: 1px solid #c9e3d9;
+  border-radius: 12px;
+  background: #f1faf5;
+  color: #145c40;
   font-size: 12px;
-  border: 1px solid #cbd5e1;
-  color: #334155;
+  line-height: 1.4;
+  box-shadow: 0 3px 12px #0f172a20;
+  pointer-events: auto;
+}
+
+.field-navigation-hint button {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #145c40;
+  font-size: 22px;
+  cursor: pointer;
+}
+
+.field-navigation-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 4px 0 12px;
+  border: 1px solid #dbe5e0;
+  border-radius: 12px;
+  background: #fff;
+  color: #0f3a32;
+  font-size: 12px;
+  font-weight: 650;
+  box-shadow: 0 3px 12px #0f172a20;
+  pointer-events: auto;
+}
+
+.field-navigation-control button {
+  min-height: 44px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: #475569;
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.field-navigation-gps-error {
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .field-route-error {
@@ -826,50 +852,6 @@
   line-height: 1.35;
 }
 
-.field-route-banner-warning {
-  grid-column: 1 / -1;
-  margin-top: 0;
-  color: #9a3412;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.35;
-}
-
-.field-route-guidance {
-  grid-column: 1 / -1;
-  margin-top: 0;
-  color: #0f172a;
-  font-size: 14px;
-  font-weight: 700;
-}
-.field-route-gps-note {
-  grid-column: 1 / -1;
-  margin-top: 0;
-  color: #475569;
-  font-size: 11px;
-  line-height: 1.35;
-}
-.field-route-external-link {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  min-height: 44px;
-  padding: 4px 8px;
-  border: 1px solid #b3dac9;
-  border-radius: 8px;
-  background: #effaf4;
-  color: #145c40;
-  text-decoration: none;
-  font-size: 12px;
-}
-.field-route-external-link span {
-  font-size: 11px;
-  line-height: 1.35;
-}
-
-
 /* Phone field workspace: keep the map visible and the work within thumb reach. */
 .field-shell {
   height: 100dvh;
@@ -1318,6 +1300,36 @@
     gap: 5px;
   }
 }
+
+.field-start-point-overlay {
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #b8d5c6;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 4px 18px #143c2926;
+  color: #163f2c;
+  white-space: normal;
+  width: 190px;
+}
+.field-start-point-overlay strong, .field-start-point-overlay span {
+  display: block;
+}
+.field-start-point-overlay strong { font-size: 14px; }
+.field-start-point-overlay span { margin: 3px 0 9px; color: #52645c; font-size: 12px; }
+.field-start-point-overlay button {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 8px;
+  background: #17683b;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+.field-start-point-overlay button:disabled { opacity: .65; cursor: wait; }
+.field-start-point-overlay button:focus-visible { outline: 3px solid #eab308; outline-offset: 3px; }
 
 .field-recovery-options {
   color: var(--text-secondary);

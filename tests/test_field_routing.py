@@ -94,6 +94,68 @@ def test_already_on_white_road_joins_nearest_segment_without_backtracking(routin
     assert_navigation_endpoints(result, midpoint, (10.78012,122.62707))
 
 
+@pytest.mark.parametrize('destination', [
+    (10.78012, 122.62707), (10.7799452030183, 122.626825821686),
+    (10.7798913043478, 122.627158010418),
+])
+def test_fixed_bridge_is_followed_before_any_planting_point(routing, monkeypatch, destination):
+    from api.site_access import access_routes
+    site = access_routes()[0]
+    # The former entrance was beside the first blue roof. The route must
+    # continue along the white boardwalk instead of cutting across the trees.
+    monkeypatch.setattr(routing, '_google_route', lambda *args: pytest.fail('Already on bridge'))
+    result = routing.compute_route(request(routing, site['bridge_start'], destination))
+    bridge_index = site['access_path'].index(site['bridge_start'])
+    assert result['route_source'] == 'site_route'
+    bridge = site['access_path'][bridge_index:]
+    assert result['polyline'][-len(bridge):] == bridge
+    assert result['entrance'] == [10.77999592, 122.625672]
+    assert result['planting_area'] == site['planting_area']
+    assert_navigation_endpoints(result, site['bridge_start'], destination)
+
+
+def test_live_gps_on_bridge_does_not_switch_to_direct_guidance_in_park(routing, monkeypatch):
+    from api.site_access import access_routes
+    path = access_routes()[0]['access_path']
+    monkeypatch.setattr(routing, '_google_route', lambda *args: pytest.fail('Already on bridge'))
+    for origin in [path[20], path[-4]]:
+        body = request(routing, origin)
+        body.origin_accuracy_m = 20
+        result = routing.compute_route(body)
+        assert result['route_source'] == 'site_route'
+        assert result['polyline'][-1] == path[-1]
+        assert result['segments'][0]['kind'] == 'road'
+        assert result['segments'][-1]['polyline'][0] != origin
+
+
+def test_wooded_park_position_cannot_skip_bridge_entrance(routing, monkeypatch):
+    from api.site_access import access_routes, inside_area
+    site = access_routes()[0]
+    origin = [10.7806, 122.6257]
+    assert inside_area(origin, site['site_area'])
+    assert not inside_area(origin, site['planting_area'])
+    calls = []
+    def provider(start, end, mode):
+        calls.append(end)
+        return 100, 90, [start, end]
+    monkeypatch.setattr(routing, '_google_route', provider)
+    result = routing.compute_route(request(routing, origin))
+    assert calls == [site['access_path'][0]]
+    assert result['route_source'] == 'site_route'
+    assert result['segments'][1]['polyline'] == site['access_path']
+
+
+def test_local_direction_through_trees_is_omitted_but_target_is_preserved(routing, monkeypatch):
+    from api.site_access import access_routes
+    site = access_routes()[0]
+    destination = [10.7805, 122.626]
+    monkeypatch.setattr(routing, '_google_route', lambda *args: (100, 90, [args[0], args[1]]))
+    result = routing.compute_route(request(routing, destination=destination))
+    assert result['target'] == destination
+    assert result['entrance'] == site['access_path'][-1]
+    assert result['segments'][-1] == {'kind': 'road', 'polyline': site['access_path']}
+
+
 def test_pond_position_does_not_snap_to_access_road(routing):
     from api.site_access import access_routes, remaining_access_path
     assert remaining_access_path([10.7822,122.6240], access_routes()[0]['access_path']) is None

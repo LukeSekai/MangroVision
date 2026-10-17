@@ -47,6 +47,19 @@ def inside_or_near_area(point, polygon, tolerance_m=3):
                for a, b in zip(polygon, [*polygon[1:], polygon[0]]))
 
 
+def guidance_within_area(start, destination, polygon, tolerance_m=3):
+    """Do not draw a local direction line through the wooded approach.
+
+    This only checks the overlay against the traced foreshore; it does not
+    establish a surveyed walking lane. Check at intervals of at most 3 m.
+    """
+    steps = max(1, math.ceil(distance_m(start, destination) / 3))
+    return all(inside_or_near_area(
+        [start[axis] + (destination[axis] - start[axis]) * step / steps for axis in range(2)],
+        polygon, tolerance_m,
+    ) for step in range(steps + 1))
+
+
 @lru_cache(maxsize=1)
 def access_routes():
     return json.loads((Path(__file__).parent / 'data/site_access_routes.json').read_text(encoding='utf-8'))

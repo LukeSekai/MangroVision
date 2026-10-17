@@ -6,6 +6,14 @@ const plantingHoursGuide = bookingPolicy.enforcePlantingHours
   ? 'Tree planting starts between 6 AM and 3 PM and finishes by 5 PM.'
   : 'Planting requests currently allow flexible hours for testing; the full visit must finish on the same Philippine date.';
 
+const activityAccessGuide = bookingPolicy.enforceActivityAccessWindow
+  ? 'If the code is unavailable or outside its scheduled window, ask the LGU to check the activity.'
+  : 'Codes can currently be used before and after the scheduled planting time. If a code is unavailable, ask the LGU to check the activity.';
+
+const activityAccessTimingGuide = bookingPolicy.enforceActivityAccessWindow
+  ? 'Access follows the approved activity’s time window.'
+  : 'Codes can currently be used before and after the scheduled planting time.';
+
 const step = (path, target, title, content) => ({
   path, target, title, content,
   // Full maps fill the workspace and leave no outside edge for a tooltip.
@@ -102,13 +110,10 @@ export const STAFF_TOURS = [
     description: 'Choose an organization, allocate points and share activity codes for field access.',
     steps: [
       step('/planters', '[data-guide-panel="Planting Assignments"] .floating-panel-header', 'Allocate planting work', 'Planting Assignments connects saved available points with an organization and project site. Prepare the organization through Scheduling and create its site in Zone Editor first.'),
-      step('/planters', '#assign-organization', 'Choose the organization', 'Open Assign available points and select the organization. Points may be reserved before its shared field account is registered.'),
-      step('/planters', '#assign-site', 'Choose its project site', 'Choose a site owned by that organization. The map locates it and the form checks available points. If none are available, review the site, saved analysis and eroded zones.'),
-      step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant approved tree-planting activity. If it has no area yet, assigning points links it to the selected project site. A Pending activity’s date remains editable until one of its linked points is recorded as planted; completed activities are read-only.'),
+      step('/planters', '#assign-organization', 'Choose the organization', 'Open Assign available points and select the organization. Its mapped planting area is located automatically. Points may be reserved before its shared field account is registered. If none are available, review the area, saved analysis and eroded zones in Zone Editor.'),
+      step('/planters', '#assign-activity', 'Link the planting activity', 'Choose the relevant approved tree-planting activity. Its linked planting area is used automatically; an activity without an area uses the organization’s mapped area. A Pending activity’s date remains editable until one of its linked points is recorded as planted; completed activities are read-only.'),
       step('/planters', '#organization-point-count', 'Set the allocation size', 'Enter how many available points to assign. Review the count, species and participant allocation before using Assign. Participants receive staggered zigzag strips, with later batches balancing existing allocations.'),
-      step('/planters', assignCard('Field Share Link'), 'Share the field workspace', 'Open Field Share Link and copy the field link for participants. On a local setup, use the provided link-generation controls if needed. Keep the current link while participants work.'),
-      step('/planters', assignCard('Organization code'), 'Share the activity code', 'Choose the organization and planting activity to prepare its shared code. Give the code privately to the contact person. First-time planters choose a unique username; returning planters use their existing username. Access follows the approved activity’s time window. Replacing or revoking its code ends that activity’s logins and preserves records.'),
-      step('/planters', '.assignment-activity-report', 'Review organization progress', 'View Activity Report opens Organization Activity. Review the organization’s saved work and open its details when needed. Organizations in the sidebar provides contacts, project sites, existing activity codes and the registered member roster.'),
+      step('/planters', assignCard('Organization code'), 'Share the activity code', `Choose the organization and planting activity to prepare its shared code. Give the code privately to the contact person. First-time planters choose a unique username; returning planters use their existing username. ${activityAccessTimingGuide} Replacing or revoking its code ends that activity’s logins and preserves records.`),
     ],
   },
   {
@@ -181,7 +186,7 @@ export const FIELD_TOURS = [{
     step(null, '.field-work-actions', 'Record a planted point', 'After physically planting at an eligible location, open its details and choose Mark as planted. Check the point number before confirming. If planting is not possible, use Skip Point and provide the requested reason.'),
     step(null, '.field-work-actions', 'Record several planted points', 'Choose points to mark lets you select multiple locations that you have already planted. Review the selected point numbers before confirming. Leave unfinished or unavailable locations unselected.'),
     step(null, '.field-list-toggle', 'Review the point list', 'Open the point list to browse assignments and filter by status. Select a point from the list to inspect it. If a point cannot be planted, use the available skip action and provide the requested reason.'),
-    step(null, '.field-avatar-button', 'Review activity and finish', 'The account menu opens Activity Logs and Sign out. Check that planting progress has updated before signing out. Access ends outside the approved activity window or when its code is revoked or replaced; saved work remains. Ask the LGU to review the activity if access closes unexpectedly.'),
+    step(null, '.field-avatar-button', 'Review activity and finish', `The account menu opens Activity Logs and Sign out. Check that planting progress has updated before signing out. ${activityAccessTimingGuide} Access ends when its code is revoked or replaced; saved work remains. Ask the LGU to review the activity if access closes unexpectedly.`),
   ],
 }];
 
@@ -200,9 +205,9 @@ export const FIELD_LOGIN_TOURS = [{
   id: 'field-login', title: 'Planter sign in',
   description: 'Use the shared activity code and your personal username.',
   steps: [
-    step(null, '.field-auth-brand', 'Organization field access', 'Get the shared activity code from your group leader. Everyone in the organization uses that code during the approved activity’s start and finish times.'),
+    step(null, '.field-auth-brand', 'Organization field access', `Get the shared activity code from your group leader. Everyone in the organization uses that code. ${activityAccessTimingGuide}`),
     step(null, '.field-form', 'Choose first time or returning', 'First time asks for the organization code, then opens a welcome screen to choose a unique username with 3–32 letters, numbers, dots, underscores or hyphens. Returning planter uses the current activity code and that same username to restore assigned points and progress. No password or PIN is needed.'),
-    step(null, '.field-form', 'Switch browsers when needed', 'If your participant is signed in elsewhere, choose Switch here. The other login ends and saved progress stays the same. Keep your username for future activities. If the code is unavailable or outside its scheduled window, ask the LGU to check the activity.'),
+    step(null, '.field-form', 'Switch browsers when needed', `If your participant is signed in elsewhere, choose Switch here. The other login ends and saved progress stays the same. Keep your username for future activities. ${activityAccessGuide}`),
   ],
 }];
 

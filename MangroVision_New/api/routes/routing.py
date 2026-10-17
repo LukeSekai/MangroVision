@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from dotenv import dotenv_values
 
-from api.site_access import access_for_destination, distance_m, inside_area, inside_or_near_area, path_distance, remaining_access_path
+from api.site_access import access_for_destination, distance_m, guidance_within_area, inside_area, inside_or_near_area, path_distance, remaining_access_path
 from api.routing_usage import reserve_google_request
 
 router = APIRouter()
@@ -199,7 +199,7 @@ def _google_route(origin, destination, travel_mode):
 
 
 def _navigation_to_point(origin, destination, mode, road_path, source, site=None,
-                         meters=None, seconds=None, note=None, road_sections=None):
+                         meters=None, seconds=None, note=None, road_sections=None, guidance_tolerance_m=3):
     """Follow mapped roads, then show local guidance to the exact point.
 
     Remote GPS-to-road gaps remain separate. The final dashed guide starts at
@@ -211,7 +211,9 @@ def _navigation_to_point(origin, destination, mode, road_path, source, site=None
     guide_start = origin if source == 'within_site' else site['access_path'][-1] if site else None
     if guide_start is None and road_path and distance_m(road_path[-1], destination) <= 20:
         guide_start = road_path[-1]
-    if guide_start is not None and guide_start != destination:
+    planting_area = site.get('planting_area') if site else None
+    if (guide_start is not None and guide_start != destination
+            and (not planting_area or guidance_within_area(guide_start, destination, planting_area, guidance_tolerance_m))):
         segments.append({'kind': 'guidance', 'polyline': [guide_start, destination]})
     navigation_path = [coordinate for segment in segments for coordinate in segment['polyline']]
     return {
@@ -220,13 +222,15 @@ def _navigation_to_point(origin, destination, mode, road_path, source, site=None
         'entrance': site['access_path'][-1] if site else None,
         'access_start': site['access_path'][0] if site else None,
         'site_area': site['site_area'] if site else None,
+        'planting_area': planting_area,
+        'bridge_start': site.get('bridge_start') if site else None,
         # These quantities describe the mapped road leg, not an ETA along
         # unknown internal paths or direct GPS connections.
         'distance_m': meters, 'duration_s': seconds,
         'distance_label': _format_distance(meters), 'duration_label': _format_duration(seconds),
         'travel_mode': mode, 'route_source': source,
         'road_route_available': source not in {'partial_route', 'point_guidance', 'within_site'},
-        'navigation_note': note or 'Follow the blue road route, then the orange dashed guide to your point using marked planting lanes.',
+        'navigation_note': note or 'Follow the mapped path, then marked planting lanes to your point.',
     }
 
 
@@ -237,7 +241,7 @@ def _unavailable_route_guidance(origin, destination, mode, site=None):
     result.update({
         'distance_label': 'Road directions unavailable', 'duration_label': None,
         'navigation_note': 'Road directions from your location are unavailable. Open Google Maps for road directions. '
-            + ('The access road and orange dashed guide to your point are shown; follow marked planting lanes.'
+            + ('Follow the mapped access road and bridge, then marked planting lanes to your point.'
                if site else 'No unmapped shortcut is drawn.'),
     })
     return result
@@ -258,17 +262,22 @@ def compute_route(body: RouteRequest):
         entrance = path[-1]
         # GPS uncertainty may straddle the shoreline/site outline. Cap the
         # tolerance so a poor fix cannot classify a distant position as onsite.
-        near_site = inside_or_near_area(origin, site['site_area'], max(3, min(body.origin_accuracy_m or 0, 20)))
-        if near_site:
+        planting_area = site.get('planting_area', site['site_area'])
+        near_site = inside_or_near_area(origin, planting_area, max(3, min(body.origin_accuracy_m or 0, 20)))
+        local_path = remaining_access_path(origin, path)
+        # The park footprint includes trees and the bridge. Being inside it
+        # must not bypass the boardwalk. Keep following the bridge until its
+        # shoreline exit, even if GPS uncertainty overlaps the foreshore.
+        if near_site and (local_path is None or path_distance(local_path[1:]) <= 12):
             note = (
                 'You are near the site boundary; GPS may drift. '
-                if not inside_area(origin, site['site_area']) else 'You are inside the site. '
-            ) + 'The orange dashed line shows the direction to your point; follow marked planting lanes.'
-            result = _navigation_to_point(origin, destination, mode, [], 'within_site', site, note=note)
+                if not inside_area(origin, planting_area) else 'You are inside the planting area. '
+            ) + 'Follow marked planting lanes to your point.'
+            result = _navigation_to_point(origin, destination, mode, [], 'within_site', site, note=note,
+                guidance_tolerance_m=max(3, min(body.origin_accuracy_m or 0, 20)))
             result['distance_label'] = f'{_format_distance(distance_m(origin, destination))} to point (straight-line)'
             result['duration_label'] = 'Follow planting order'
             return result
-        local_path = remaining_access_path(origin, path)
         if local_path is not None:
             # remaining_access_path includes the actual GPS fix followed by
             # its projection on the road. Draw only the road from that projection.
@@ -289,7 +298,7 @@ def compute_route(body: RouteRequest):
             polyline = [*polyline, *path]
             meters += access_meters
             seconds = seconds + access_meters/1.2 if seconds is not None else None
-        note = 'Follow the blue road route to the entrance, then the orange dashed guide to your point using marked planting lanes.'
+        note = 'Follow the mapped access road and white bridge, then marked planting lanes to your point.'
     else:
         try:
             meters, seconds, polyline = _google_route(origin, destination, mode)

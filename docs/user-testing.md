@@ -17,8 +17,8 @@ address redirects to this address while preserving the page path. Existing
 planter codes and planting records are retained. Users signing in at the new
 hostname need a new browser session; cookies from the old hostname do not move.
 
-In testing mode, **Field Share Link** uses the same Vercel website's `/field`
-route. Copy that link for planters; no second frontend tunnel is needed. The
+Share the same Vercel website's `/field` route with planters; no second frontend
+tunnel is needed. Assign Points no longer has a Cloudflare link-generation panel. The
 launcher supplies `MANGROVISION_PUBLIC_FRONTEND_URL` to its backend process.
 
 For participants returning on later days, share the permanent production
@@ -38,11 +38,6 @@ configured backend tunnel URL. It does not update the FastAPI code or restart
 the API on the laptop. Pull backend changes on the laptop running the public
 API and restart its launcher. A launcher restart creates a new Quick Tunnel,
 so use `--deploy` to update Vercel's routing to that new URL.
-
-Local development continues to offer **Generate Cloudflare Link** for the
-React server on port 5173. It checks `CLOUDFLARED_BIN`, the system PATH and
-installation directories, then the testing setup's
-`MangroVision_New/.dev-server/tools/cloudflared.exe`.
 
 ## Start the next testing session
 

@@ -1,6 +1,6 @@
 import { getPlanterColor } from '../utils/planterColors';
 import { zigzagPoints } from '../utils/organizationAssignment';
-import { googleMapsDirectionsUrl, navigationSegments, pointGuidance } from '../utils/fieldNavigation';
+import { navigableFieldPoint as canNavigateNextPoint, navigationPointQueue, navigationSegments, navigationStartPoint, retargetSiteRoute, upcomingNavigationPoints } from '../utils/fieldNavigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import { cachedTileLayer } from '../utils/cachedTileLayer';
@@ -14,6 +14,7 @@ import { POINT_STATUS_LABELS as STATUS_LABEL, POINT_STATUS_COLORS as STATUS_COLO
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError } from '../components/FormFeedback';
 import FieldActivities from '../components/FieldActivities';
+import FieldNavigationNotice from '../components/FieldNavigationNotice';
 import { usePlanterAuthStore } from '../stores/planterAuthStore';
 import AuthScreen from '../components/PlanterAuthScreen';
 import { ORTHOPHOTO_BOUNDS, ORTHOPHOTO_MAX_NATIVE_ZOOM, ORTHOPHOTO_TILE_URL } from '../config/mapTiles';
@@ -45,11 +46,6 @@ function canMarkPointCompleted(point) {
   return Boolean(point)
     && !point.eroded_unavailable && !point.inside_eroded_zone
     && !COMPLETED_ASSIGNMENT_STATUSES.has(point.assignment_status);
-}
-
-function canNavigateNextPoint(point) {
-  return !FINAL_ASSIGNMENT_STATUSES.has(point.assignment_status)
-    && !point.eroded_unavailable && !point.inside_eroded_zone;
 }
 
 function getFieldPointStatus(point) {
@@ -128,6 +124,9 @@ function PointsMap({
   locationAccuracy,
   focusRequest,
   completionSelectedIds = [],
+  startPoint,
+  onStartNavigation,
+  routeBusy,
 }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
@@ -263,6 +262,24 @@ function PointsMap({
       markersRef.current.set(point.assignment_point_id, marker);
     });
 
+    if (startPoint) {
+      const content = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = `Start at Point #${startPoint.point.point_num}`;
+      const hint = document.createElement('span');
+      hint.textContent = `Nearest to ${startPoint.label}`;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = routeBusy ? 'Finding route…' : 'Navigate to this point';
+      button.disabled = routeBusy;
+      button.addEventListener('click', () => onStartNavigation(startPoint.point));
+      content.append(title, hint, button);
+      L.DomEvent.disableClickPropagation(content);
+      L.DomEvent.disableScrollPropagation(content);
+      L.tooltip({ permanent: true, interactive: true, direction: 'top', offset: [0, -12], className: 'field-start-point-overlay' })
+        .setLatLng([startPoint.point.latitude, startPoint.point.longitude]).setContent(content).addTo(layer);
+    }
+
     if (!hasFitPointsRef.current && validPoints.length > 0) {
       if (validPoints.length === 1) {
         // Field work starts at the actual assigned location, at planting scale.
@@ -270,7 +287,7 @@ function PointsMap({
         map.setView([only.latitude, only.longitude], 23, { animate: false });
       } else {
         const bounds = L.latLngBounds(validPoints.map((p) => [p.latitude, p.longitude]));
-        map.fitBounds(bounds, { padding: [40, 40], maxZoom: 23 });
+        map.fitBounds(bounds, { paddingTopLeft: [100, startPoint ? 140 : 40], paddingBottomRight: [100, 40], maxZoom: 23 });
       }
       hasFitBoundsRef.current = true;
       hasFitPointsRef.current = true;
@@ -281,7 +298,7 @@ function PointsMap({
         hasFitBoundsRef.current = true;
       }
     }
-  }, [points, projectSites, onSelect, completionSelectedIds]);
+  }, [points, projectSites, onSelect, completionSelectedIds, startPoint, onStartNavigation, routeBusy]);
 
   useEffect(() => {
     markersRef.current.forEach((marker, id) => {
@@ -321,16 +338,17 @@ function PointsMap({
         const line = L.polyline(segment.polyline, {
           color: isGuidance ? '#ea580c' : '#4169e1', weight: 4, opacity: 0.95,
           dashArray: isGuidance ? '8 8' : null, lineCap: 'round', lineJoin: 'round',
-        }).bindTooltip(isGuidance ? 'Direction to planting point — follow marked lanes' : 'Mapped road').addTo(routeGroup);
+        }).bindTooltip(isGuidance ? 'Follow your assigned points in order using marked lanes' : 'Follow the mapped access path and bridge').addTo(routeGroup);
         bounds.extend(line.getBounds());
       });
 
       if (route.entrance && segments.some(segment => segment.kind === 'road')) {
         L.circleMarker(route.entrance, { radius: 6, color: '#475569', fillColor: '#fff', fillOpacity: 1 })
-          .bindTooltip('Site entrance').addTo(routeGroup);
+          .bindTooltip('Bridge exit to planting area').addTo(routeGroup);
         bounds.extend(route.entrance);
       }
-      if (route.access_start && segments.some(segment => segment.kind === 'road')) {
+      if (route.access_start && segments.some(segment => segment.kind === 'road'
+        && segment.polyline.some(([lat, lon]) => lat === route.access_start[0] && lon === route.access_start[1]))) {
         L.circleMarker(route.access_start, { radius: 8, color: '#15803d', fillOpacity: 0.8 })
           .bindTooltip('Access road starts here').addTo(routeGroup);
         bounds.extend(route.access_start);
@@ -343,11 +361,12 @@ function PointsMap({
       if (userLocation || route.origin) bounds.extend(userLocation || route.origin);
 
       routeLayerRef.current = routeGroup;
-      if (bounds.isValid() && fittedRouteRef.current !== route) {
-        fittedRouteRef.current = route;
-        const bannerHeight = containerRef.current?.parentElement?.querySelector('.field-route-banner')?.offsetHeight || 0;
+      const fitKey = route.navigationId ?? route;
+      if (bounds.isValid() && fittedRouteRef.current !== fitKey) {
+        fittedRouteRef.current = fitKey;
+        const noticeHeight = containerRef.current?.parentElement?.querySelector('.field-navigation')?.offsetHeight || 0;
         map.fitBounds(bounds, { paddingTopLeft: [60, 30],
-          paddingBottomRight: [30, Math.min(bannerHeight + 30, map.getSize().y * 0.55)], maxZoom: 23 });
+          paddingBottomRight: [30, Math.min(noticeHeight + 30, map.getSize().y * 0.4)], maxZoom: 23 });
       }
     }
   }, [route, userLocation, locationAccuracy]);
@@ -390,6 +409,8 @@ function PointsMap({
     lastFocusRef.current = focusRequest;
     if (focusRequest.kind === 'location' && userLocation) {
       map.setView(userLocation, 20);
+    } else if (focusRequest.kind === 'point') {
+      map.setView(focusRequest.coordinates, Math.max(map.getZoom(), 22));
     } else if (focusRequest.kind === 'points') {
       const locations = points.filter((p) => Number.isFinite(p.latitude) && Number.isFinite(p.longitude));
       if (locations.length) {
@@ -489,7 +510,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
               <button type="button" className="field-btn field-btn-primary" onClick={() => onMark(point, 'completed')} disabled={busy || isFinal || isUnavailable}>
                 {isPlanted ? 'Already Planted' : busy ? 'Saving…' : 'Mark as Planted'}
               </button>
-              <button type="button" className="field-btn field-btn-secondary field-btn-route" onClick={() => onNavigate(point)} disabled={routeBusy || isUnavailable}>
+              <button type="button" className="field-btn field-btn-secondary field-btn-route" onClick={() => onNavigate(point)} disabled={routeBusy || isUnavailable || isFinal}>
                 {routeBusy ? 'Finding route…' : 'Navigate to this point'}
               </button>
               <button type="button" className="field-btn field-btn-outline" onClick={() => setView('details')}>View Details</button>
@@ -592,6 +613,7 @@ export default function FieldApp() {
 
   const [points, setPoints] = useState([]);
   const [projectSites, setProjectSites] = useState([]);
+  const [siteAccess, setSiteAccess] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [selectedId, setSelectedId] = useState(null);
@@ -633,6 +655,13 @@ export default function FieldApp() {
   const [activityOpen, setActivityOpen] = useState(false);
   const avatarMenuRef = useRef(null);
   const reloadSequence = useRef(0);
+  const navigationRequest = useRef(0);
+  const navigationRoute = useMemo(() => route ? {
+    ...route, upcomingPoints: upcomingNavigationPoints(points, route),
+  } : null, [route, points]);
+  const recommendedStart = useMemo(() => navigationStartPoint(points, siteAccess), [points, siteAccess]);
+
+  useEffect(() => () => { navigationRequest.current += 1; }, [isAuthenticated]);
 
   useEffect(() => {
     if (!avatarMenuOpen) return undefined;
@@ -677,7 +706,7 @@ export default function FieldApp() {
     setMarkError('');
   }, []);
 
-  const handleStartNavigation = useCallback(async (point) => {
+  const handleStartNavigation = useCallback(async (point, continueNavigation = false) => {
     setRouteError('');
     if (point?.eroded_unavailable || point?.inside_eroded_zone) {
       setRouteError('This point is Unavailable for planting while it remains inside an eroded zone.');
@@ -685,12 +714,17 @@ export default function FieldApp() {
     }
     const latitude = Number(point?.latitude);
     const longitude = Number(point?.longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    if (!canNavigateNextPoint(point)) {
       setRouteError('This planting point has no valid map location.');
       return;
     }
+    const request = ++navigationRequest.current;
+    const remainingPoints = continueNavigation && route ? upcomingNavigationPoints(points, route) : points;
+    const pointIds = (continueNavigation ? remainingPoints
+      : navigationPointQueue(remainingPoints, point.assignment_point_id, recommendedStart?.entrance))
+      .map(candidate => candidate.assignment_point_id);
     setRouteBusy(true);
-    setRoute(null);
+    if (!continueNavigation) setRoute(null);
     try {
       let location;
       try {
@@ -700,21 +734,28 @@ export default function FieldApp() {
       }
       const origin = location.coordinates;
       const accuracy = location.accuracy;
+      if (request !== navigationRequest.current) return;
       setUserLocation(origin);
       setLocationAccuracy(accuracy);
-      const data = await fetchRoute(origin, [latitude, longitude], 'walking', accuracy);
+      const data = (continueNavigation && retargetSiteRoute(route, point, origin, accuracy))
+        || await fetchRoute(origin, [latitude, longitude], 'walking', accuracy);
+      if (request !== navigationRequest.current) return;
       setNavigationLocationError('');
-      setRoute({ ...data, origin, pointNum: point.point_num });
+      setRoute({ ...data, origin, pointNum: point.point_num, assignmentPointId: point.assignment_point_id,
+        pointIds, navigationId: continueNavigation ? route.navigationId : request });
+      setPointListOpen(false);
       setSelectedId(null);
+      if (continueNavigation) setFocusRequest({ kind: 'point', coordinates: [latitude, longitude] });
     } catch (error) {
+      if (request !== navigationRequest.current) return;
       // Never silently replace denied/unavailable GPS with an organization
       // base or the access road. Navigation starts at this participant's fix.
-      setRoute(null);
+      if (!continueNavigation) setRoute(null);
       setRouteError(error.message || 'Could not display navigation. Please retry.');
     } finally {
-      setRouteBusy(false);
+      if (request === navigationRequest.current) setRouteBusy(false);
     }
-  }, []);
+  }, [points, route, recommendedStart]);
 
   useEffect(() => {
     if (!isAuthenticated || !route || !navigator.geolocation) return undefined;
@@ -723,7 +764,7 @@ export default function FieldApp() {
       setLocationAccuracy(position.coords.accuracy);
       setNavigationLocationError('');
     }, () => {
-      setNavigationLocationError('GPS updates paused. Enable location access to update your distance.');
+      setNavigationLocationError('GPS updates paused. Enable location access to update your position.');
     }, { enableHighAccuracy: true, maximumAge: 1000, timeout: 20000 });
     return () => navigator.geolocation.clearWatch(watch);
   }, [route, isAuthenticated]);
@@ -744,7 +785,9 @@ export default function FieldApp() {
   };
 
   const handleClearRoute = useCallback(() => {
+    navigationRequest.current += 1;
     setRoute(null);
+    setRouteBusy(false);
     setRouteError('');
   }, []);
 
@@ -775,6 +818,7 @@ export default function FieldApp() {
       if (sequence !== reloadSequence.current) return;
       setPoints(zigzagPoints(workspace.points).map((point, index) => ({ ...point, visit_order: index + 1 })));
       setProjectSites(workspace.projectSites);
+      setSiteAccess(workspace.siteAccess || []);
     } catch (error) {
       if (sequence === reloadSequence.current) setLoadError(error.message || 'Could not load points');
     } finally {
@@ -827,7 +871,7 @@ export default function FieldApp() {
   const plantedCount = points.filter((p) => COMPLETED_ASSIGNMENT_STATUSES.has(p.assignment_status)).length;
   const skippedCount = points.filter((p) => p.assignment_status === 'skipped').length;
   const unavailableCount = points.filter((p) => getFieldPointStatus(p) === 'eroded_unavailable').length;
-  const nextPoint = points.find(canNavigateNextPoint);
+  const nextPoint = route ? navigationRoute.upcomingPoints[0] : recommendedStart?.point || points.find(canNavigateNextPoint);
   const progress = assignedCount ? Math.round(plantedCount / assignedCount * 100) : 0;
   const visibleListPoints = points.filter((point) => {
     if (pointFilter === 'all') return true;
@@ -881,7 +925,6 @@ export default function FieldApp() {
         pendingMarkStatus === 'skipped' ? pendingSkipReason.trim() : null,
       );
       await reload();
-      setRoute(null);
       setRouteError('');
       // Close the confirmation modal AND the action sheet, then open the
       // success modal so the planter sees explicit acknowledgement.
@@ -909,7 +952,7 @@ export default function FieldApp() {
       setMarkAllError('There are no available Assigned or Skipped points to mark as Planted.');
       return;
     }
-    setRoute(null);
+    handleClearRoute();
     setMarkAllChooseMode(true);
     setPointListOpen(true);
     setPointFilter('all');
@@ -966,9 +1009,6 @@ export default function FieldApp() {
     setPendingMarkAllOpen(false);
     setMarkAllError('');
   };
-
-  const guidance = route?.target ? pointGuidance(userLocation || route.origin, route.target) : null;
-  const pointMapsUrl = route?.target ? googleMapsDirectionsUrl(route.target, userLocation, route) : null;
 
   if (!isAuthenticated) {
     return <AuthScreen />;
@@ -1053,11 +1093,14 @@ export default function FieldApp() {
           projectSites={projectSites}
           selectedId={selectedId}
           onSelect={handleSelect}
-          route={route}
+          route={navigationRoute}
           userLocation={userLocation}
           locationAccuracy={locationAccuracy}
           focusRequest={focusRequest}
           completionSelectedIds={selectedMarkAllPointIds}
+          startPoint={!route && !markAllChooseMode && !selected ? recommendedStart : null}
+          onStartNavigation={handleStartNavigation}
+          routeBusy={routeBusy}
         />
 
         <div className="field-map-tools" aria-label="Map controls">
@@ -1077,41 +1120,12 @@ export default function FieldApp() {
           <span><i style={{ background: '#9ca3af' }} />Skipped</span>
         </div>}
 
-        {route && (
-          <div className="field-route-banner" role="status">
-            <div className="field-route-banner-info">
-              <span className="field-route-banner-label">
-                Directions to planting point
-              </span>
-              <span className="field-route-banner-stats">
-                Point #{route.pointNum}
-              </span>
-              {route.route_source !== 'within_site' && <span className="field-route-guidance">
-                {route.distance_label}{route.road_route_available && route.duration_label ? ` · ${route.duration_label}` : ''}
-              </span>}
-              {guidance && <span className="field-route-guidance">
-                {guidance.distanceLabel} to point · {guidance.distance < 1 ? 'At point coordinates' : `${guidance.direction} (${Math.round(guidance.bearing) % 360}°)`}
-              </span>}
-              {guidance && <span className="field-route-gps-note">
-                Live GPS{locationAccuracy != null ? ` ±${Math.round(locationAccuracy)} m` : ''}
-                {userLocation && locationAccuracy > guidance.distance ? ' · Use marked point' : ' · Straight-line distance'}
-              </span>}
-              {pointMapsUrl ? <a className="field-route-external-link" href={pointMapsUrl} target="_blank" rel="noopener noreferrer" title={route.navigation_note}>
-                <strong>Open Google Maps road directions ↗</strong>
-                <span>Walk via the access road to the planting site.</span>
-              </a> : null}
-              {route.navigation_note && <span className="field-route-banner-warning">{route.navigation_note}</span>}
-              {navigationLocationError && <span className="field-route-banner-warning">{navigationLocationError}</span>}
-            </div>
-            <button
-              type="button"
-              className="field-btn field-btn-ghost field-route-banner-clear"
-              onClick={handleClearRoute}
-            >
-              Clear
-            </button>
-          </div>
-        )}
+        {route && <FieldNavigationNotice
+          key={`navigation-${route.navigationId}`}
+          route={navigationRoute}
+          onStop={handleClearRoute}
+          gpsError={navigationLocationError}
+        />}
 
         {routeError && !selected && (
           <div className="field-route-error" role="alert">{routeError}</div>
@@ -1153,10 +1167,10 @@ export default function FieldApp() {
             <button type="button" className="field-btn field-btn-primary" onClick={reviewMarkAllSelection} disabled={loading || markAllBusy || !selectedMarkAllCount}>Review {selectedMarkAllCount || ''} {selectedMarkAllCount === 1 ? 'point' : 'points'}</button>
             <button type="button" className="field-btn field-btn-outline" onClick={cancelMarkAllSelection} disabled={markAllBusy}>Cancel selection</button>
           </> : <>
-            <button type="button" className="field-btn field-btn-primary" disabled={!nextPoint || loading || markBusy || markAllBusy} onClick={() => { if (nextPoint) handleSelect(nextPoint.assignment_point_id); }}>
-              {nextPoint ? 'Next point · #' + nextPoint.point_num : assignedCount ? 'No assigned points awaiting planting' : 'Waiting for points'}
+            <button type="button" className="field-btn field-btn-primary" disabled={!nextPoint || loading || markBusy || markAllBusy || routeBusy} onClick={() => { if (nextPoint) void handleStartNavigation(nextPoint, Boolean(route)); }}>
+              {routeBusy ? 'Finding route…' : nextPoint ? 'Next point · #' + nextPoint.point_num : route ? 'Last point in route' : assignedCount ? 'No assigned points awaiting planting' : 'Waiting for points'}
             </button>
-            <button type="button" className="field-btn field-btn-outline" onClick={handleStartMarkAll} disabled={loading || markBusy || markAllBusy || !markAllCandidateCount}>Choose points to mark</button>
+            <button type="button" className="field-btn field-btn-outline" onClick={handleStartMarkAll} disabled={loading || markBusy || markAllBusy || routeBusy || !markAllCandidateCount}>Choose points to mark</button>
           </>}
         </div>
         <button type="button" className="field-list-toggle" onClick={() => setPointListOpen((value) => !value)} aria-expanded={pointListOpen} aria-controls="field-point-list">
@@ -1195,7 +1209,7 @@ export default function FieldApp() {
       </section>
 
       {selected && <PointActionSheet
-        key={selectedId}
+        key={`point-${selectedId}`}
         point={selected}
         open={Boolean(selected)}
         onClose={handleCloseSheet}

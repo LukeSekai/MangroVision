@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from cryptography.fernet import InvalidToken
 
 from .appointment_email import _cipher
+from .booking_policy import BOOKING_POLICY
 from .compat import get_connection
 from .planter_codes import CodeError, _account, _digest, _limit, normalize_code
 from .request_context import planter_session_token
@@ -145,10 +146,13 @@ def _open_activity(conn, digest):
         WHERE ac.code_digest = ? FOR SHARE OF s, ac''', (digest,)).fetchone()
     if not row or row['revoked_at'] is not None:
         raise GroupAccessError('This organization code is incorrect or no longer valid.', 401, field='access_code')
-    if row['status'] not in {'confirmed', 'in_progress'} or row['appointment_type'] != 'tree_planting' or not row['open']:
+    if row['status'] not in {'confirmed', 'in_progress'} or row['appointment_type'] != 'tree_planting':
         raise GroupAccessError('This planting activity has ended or is unavailable. Your saved progress is kept.', 403)
-    if not row['started']:
-        raise GroupAccessError('This code opens at the activity’s scheduled start time.', 403)
+    if BOOKING_POLICY['enforceActivityAccessWindow']:
+        if not row['open']:
+            raise GroupAccessError('This planting activity has ended or is unavailable. Your saved progress is kept.', 403)
+        if not row['started']:
+            raise GroupAccessError('This code opens at the activity’s scheduled start time.', 403)
     return dict(row)
 
 
@@ -325,7 +329,8 @@ def session_details(conn, token_hash):
             AND auth.expires_at > clock_timestamp() AND op.current_session_hash = auth.token_hash
             AND ac.revoked_at IS NULL AND ac.code_digest = auth.activity_code_digest
             AND s.status IN ('confirmed', 'in_progress') AND p.status = 'active'
-            AND s.start_at <= clock_timestamp() AND s.end_at > clock_timestamp()''', (token_hash,)).fetchone()
+            AND (NOT ? OR (s.start_at <= clock_timestamp() AND s.end_at > clock_timestamp()))''',
+        (token_hash, BOOKING_POLICY['enforceActivityAccessWindow'])).fetchone()
     return dict(row) if row else None
 
 

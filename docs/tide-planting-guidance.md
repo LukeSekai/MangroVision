@@ -27,7 +27,8 @@ are allowed; visits still last two hours, must start in the future and finish on
 the same Philippine date, and retain tide checks and LGU review. To restore the
 hours described below, change this single flag to `true`, restart the API, and
 rebuild/redeploy the frontend (or refresh it when using Vite development).
-Existing expired planter codes are not extended; request and confirm a new activity.
+The separate `enforceActivityAccessWindow: false` flag also allows valid planter
+codes outside their scheduled time during testing; see [shared planter access](shared-planter-access.md).
 
 The staff graph shows the full day's water levels. LIKE shows only lower-water
 periods that overlap its planting hours, **6 AM–5 PM Philippine time**. A public

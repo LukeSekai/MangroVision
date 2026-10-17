@@ -35,6 +35,7 @@ after(async () => {
 });
 beforeEach(() => {
   bookingPolicy.enforcePlantingHours = false;
+  bookingPolicy.enforceActivityAccessWindow = false;
   localStorage.clear(); sessionStorage.clear();
   root = createRoot(document.getElementById('root'));
   globalThis.fetch = async () => assert.fail('Unexpected network call');
@@ -318,9 +319,12 @@ test('staff issue one code for a 100-person activity', async () => {
   assert.equal(created, 1);
   assert.match(document.body.textContent, /K7MP-4R9X/);
   assert.match(document.body.textContent, /organization code is ready/);
+  assert.match(document.body.textContent, /before and after the scheduled planting time/);
+  assert.doesNotMatch(document.body.textContent, /Opens .*Closes/);
 });
 
 test('existing codes are read without issuance and replacement requires confirmation', async () => {
+  bookingPolicy.enforceActivityAccessWindow = true;
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
@@ -336,6 +340,7 @@ test('existing codes are read without issuance and replacement requires confirma
   await click('Show organization code'); await settle();
   assert.equal(calls[0].method, 'GET');
   assert.match(document.body.textContent, /K7MP-4R9X/);
+  assert.match(document.body.textContent, /Opens .*Closes/);
   await click('Replace code');
   assert.equal(calls.length, 1);
   await click('Confirm'); await settle();

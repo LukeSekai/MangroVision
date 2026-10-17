@@ -65,3 +65,21 @@ def test_deployment_requires_the_code_only_welcome_endpoint(client, monkeypatch)
     del document['paths']['/api/planter-auth/join']
     with pytest.raises(RuntimeError, match='code-only first-time entry'):
         deploy_testing.verify_planter_login_contract('https://backend.example.test')
+
+
+def test_field_workspace_includes_the_mapped_entrance_without_changing_point_scope(client, monkeypatch):
+    from api.site_access import access_routes
+    planter = {'id': 7, 'organization_id': 5, 'participant_slot': 2, 'planting_schedule_id': 3}
+    monkeypatch.setattr(planter_auth, '_require_planter', lambda: planter)
+    monkeypatch.setattr(planter_auth, '_planter_public_dict', lambda value: value)
+    monkeypatch.setattr(planter_auth, 'list_project_sites', lambda: [])
+    def points(owner, slot, activity):
+        assert (owner, slot, activity) == (7, 2, 3)
+        return [{'assignment_point_id': 100}]
+    monkeypatch.setattr(planter_auth, 'get_planter_field_points', points)
+    response = client.get('/api/planter-auth/me/field-points')
+    assert response.status_code == 200
+    result = response.json()
+    assert result['points'] == [{'assignment_point_id': 100}]
+    assert result['site_access'][0]['entrance'] == access_routes()[0]['access_path'][-1]
+    assert result['site_access'][0]['label'] == 'LIKE entrance'

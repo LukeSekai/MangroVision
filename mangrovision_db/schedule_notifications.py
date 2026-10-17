@@ -16,6 +16,7 @@ from . import appointment_email as delivery
 from .activity_rules import ActivityConflict, changed_fields
 from .compat import get_connection
 from .activity_email_design import render_activity_email, safe_link
+from .booking_policy import activity_access_timing_message
 
 
 def clean_notification_email(value):
@@ -85,7 +86,7 @@ def activity_message(current, updated, kind, *, access=None):
                 'Share this one code with all participants in your organization.',
                 'First time: enter the organization code, then choose a personal username on the welcome screen. Returning: use the same code and username to restore your progress.',
                 'Choose Switch here if you need to move an existing login to this browser.',
-                'Access opens at the scheduled start and ends at the scheduled finish. No password or PIN is needed.']
+                activity_access_timing_message()]
             lines.extend(['', *access_lines])
     return {'subject': f"MangroVision activity {verb}: {updated['title']}", 'body': '\n'.join(lines),
             'html_body': render_activity_email(

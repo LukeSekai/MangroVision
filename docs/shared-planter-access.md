@@ -1,5 +1,21 @@
 # Shared planter access
 
+**Temporary testing:** `enforceActivityAccessWindow` is `false` in
+`MangroVision_New/client/src/like/bookingPolicy.json`. Valid activity codes work
+before the scheduled start and after the scheduled finish, including codes
+previously blocked only by the activity time. This applies to joining, returning
+sign-in, existing sessions and planting updates. Revoked/replaced codes, cancelled
+or completed activities, inactive accounts, participant ownership and normal
+browser-session expiry still apply. A browser whose session expires can sign in
+again with the same code and username.
+
+To restore the scheduled window described below, set `enforceActivityAccessWindow`
+to `true`, restart the backend and rebuild/redeploy the frontend. The separate
+`enforcePlantingHours` flag controls the public 6 AM–5 PM booking restriction.
+No migration, schedule extension or code regeneration is needed. Newly generated
+emails and staff access instructions follow the flag; previously delivered
+emails and downloaded handovers keep their earlier wording.
+
 One organization code is sent to the activity's contact person, whether there
 are 10 or 100 planters. It belongs to one confirmed tree-planting activity and
 opens at its scheduled start, then closes at its scheduled finish. Rescheduling

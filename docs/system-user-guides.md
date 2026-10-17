@@ -59,20 +59,24 @@ End the guide before using the highlighted controls to perform the task.
    selecting a dot shows its name and details in Google Earth.
 6. **Scheduling and Assign Points — allocate approved work.** Approve the
    tree-planting activity and choose its planting area. In Assign Points, select
-   the organization, owned site and approved activity, then review the available
+   the organization and approved activity, then review the available
    points and allocation before assigning. An incomplete activity can be
    rescheduled until a linked assignment point is recorded as planted. Once
    planting starts, its date, times and planting plan are protected; permitted
    contact/notes corrections and progress updates remain available. A separate
    future activity at the same site is independent. **Completed activities are
    read-only**: they cannot be edited, reopened, cancelled or deleted.
-7. **Field access — share the link and activity code privately.** Field Share Link
-   opens the participant workspace. Organization code manages the selected
+   The planting area is linked automatically from the activity or organization;
+   Assign Points has no separate project-site selector.
+7. **Field access — share the link and activity code privately.** Share the
+   deployed website's `/field` URL. Organization code manages the selected
    planting activity's shared code. Each participant uses a personal username.
-   Access follows the approved start and finish times. Replacing or revoking the
+   The scheduled access window is temporarily disabled for testing; see
+   [shared planter access](shared-planter-access.md). Replacing or revoking the
    code ends that activity's logins while retaining assignments and records.
-   View Activity Report opens the organization activity report; the Organizations
-   sidebar page provides contacts, sites, existing codes and member information.
+   The Organizations sidebar page provides contacts, sites, existing codes and
+   member information. Assign Points no longer includes the Cloudflare sharing
+   panel or Activity Report button.
 8. **Monitoring — record visits.** Plant checks follow actual planting dates at
    14-day intervals, with weekend rounds moved to Monday. In **Due today** or
    **Overdue**, select the organization and Record visit. Check the date and enter

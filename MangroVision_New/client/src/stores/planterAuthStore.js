@@ -183,6 +183,7 @@ export const usePlanterAuthStore = create((set, get) => ({
     return {
       points: data.points || [],
       projectSites,
+      siteAccess: Array.isArray(data.site_access) ? data.site_access : [],
     };
   },
 

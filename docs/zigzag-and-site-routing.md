@@ -24,74 +24,109 @@ sequence numbers, sessions and statuses. Any planting history prevents the repai
 
 ## GPS-to-point navigation
 
-`MangroVision_New/api/data/site_access_routes.json` stores the white-road trace
-identified in the user's screenshots. It was matched against the application's
-Google satellite tiles and `MAP/FINAL` georeferenced orthophoto. Coordinates use
-`[latitude, longitude]`. The physical-site footprint includes its planting
-foreshore and is shared by organization plots within the park; it does not
-depend on an organization name or numeric database ID.
+`MangroVision_New/api/data/site_access_routes.json` stores the fixed white-road
+and bridge approach shared by all organization plots within the Leganes park.
+Coordinates use `[latitude, longitude]`; routing depends on the physical site
+footprint, not an organization name or database ID. The road was traced against
+the app satellite tiles on 2026-09-12. The bridge was extended on 2026-10-17 from
+the user's marked screenshot and `MAP/FINAL` georeferenced orthophoto.
 
-For destinations in that footprint, Google Routes is asked for walking
-alternatives to the public-road junction. The shortest returned valid route by
-distance is followed by the traced white access road to the entrance at
-`10.78102952, 122.62457728`. Road distance and time include the access-road leg. A
-person already on the access road joins its nearest segment instead of being
-sent back to the junction. Snap tolerances are 12 m on the access road and 20 m
-at the provider's access destination. A phone at home may be away from a mapped
-street; the actual GPS coordinate is retained as its own marker without drawing
-a shortcut to the provider's street start.
+The old road endpoint at `10.78102952, 122.62457728` is now `bridge_start`.
+`access_path` continues through the blue-roof entrance, along the white bridge,
+and along its shoreline spur to the fixed exit at
+`10.77999592, 122.625672`. Every destination in the physical site uses this same
+approach. Google Routes supplies only the public-road leg to `access_path[0]`;
+the complete traced bridge is appended independently of the target. Distance
+and time cover the mapped approach only.
 
-Navigation retains the actual phone GPS origin and exact selected point as
-separate markers. Mapped road sections are drawn in blue, followed by an orange
-dashed guide from the site entrance to the exact selected point. The dashed
-section shows direction, not a surveyed walking lane; participants follow marked
-planting lanes. Remote GPS-to-road connections and gaps between mapped road
-sections are not drawn across ponds or open water. `segments` keeps road and
-guidance sections separate. `navigation_path` is a compatibility list of their
-coordinates, not a surveyed continuous path. For a destination outside the known
-site footprint, a final guide is limited to the provider's 20 m endpoint tolerance.
+`site_area` identifies destinations within the park. The separate
+`planting_area` traces its visible foreshore and excludes the wooded bridge
+approach. A GPS fix in the park alone cannot trigger a diagonal shortcut through
+the trees. A person on the mapped approach joins its nearest segment within
+12 m and follows its remaining length. This takes precedence over onsite
+classification until the final 12 m at the shoreline exit, even when phone GPS
+accuracy overlaps the foreshore. Provider endpoints must join within 20 m of
+the public-road junction; these snap tolerances have not been enlarged.
+
+The map shows the mapped approach in blue and the exact target as a labelled
+marker. A local orange direction line starts at the shoreline exit, or at the
+latest GPS position once in the planting area. It is omitted when samples at
+intervals of at most 3 m leave the traced foreshore, so it does not suggest a
+shortcut through trees. Participants still follow marked planting lanes; the
+image traces and direction lines are not a ground survey of walkable lanes.
+The actual origin and target coordinates are never moved.
+
+Before navigation, the point nearest the physical site's bridge exit has a
+**Start at Point #…** map overlay with **Navigate to this point**. **Next point**
+uses that same starting point. The field-workspace response includes the traced
+entrance and site footprint, so this recommendation needs no GPS permission or
+Google Routes request. It uses geographic distance from the planting-area
+entrance, independently of point numbers, list order or the phone's location.
+Completed, skipped, eroded/unavailable and invalid-coordinate points are excluded.
+Sites without mapped entrance data keep their existing manual point navigation.
+
+Starting navigation draws an orange dashed continuation through the remaining
+assigned points. The chosen start stays first and the farthest remaining point
+from the entrance is the finish. The entire walk is planned together: up to 14
+points use the shortest open path between those ends; larger assignments use
+nearest-neighbour initialization and bounded 2-opt improvements. Optimizing the
+whole path avoids the greedy short hop that leaves nearby points behind and
+forces a return trip. The screenshot regression follows
+**95 → 100 → 99 → 94 → 88 → 82 → 76 → 70 → 58 → 46** using its relative geometry.
+Distances are rounded to millimetres and assignment IDs make ties deterministic.
+Navigation changes no ownership, coordinates, point status or planting records.
+Connections are drawn only within the known physical site and foreshore, using
+the same checks that prevent shortcuts through the wooded bridge approach.
+
+**Next point** starts navigation directly when no route is active. During
+navigation it advances to the next eligible point without opening the action
+sheet or asking for another Navigate tap. It does not mark a point as planted
+or skipped. The same mapped bridge approach is reused for points in the same
+physical site; a different site or departure from onsite-only guidance requires
+a new route request. A new GPS fix is required when advancing. If that fix
+fails, the current route stays visible for retry. The orange continuation is
+rebuilt from its saved queue when assignments refresh: completed or unavailable
+future points are omitted while the planned order remains stable. The orange
+continuation and Next use this same order. Advancing saves
+the remaining queue in its updated order so unvisited points are retained and
+passed points do not reappear. Recording a single point as planted or skipped keeps navigation
+active. The end of the route disables Next rather than cycling indefinitely.
+
+The foreshore's boundary tolerance is 3 m. Onsite GPS classification and local
+guidance allow `max(3, min(accuracy, 20))` metres to accommodate phone drift,
+including the known NASUGBAN point #198 boundary case. A remote or poor GPS fix
+cannot bypass the bridge. Road sections already passed are trimmed as the
+phone moves; GPS updates do not reset the participant's pan or zoom. Markers
+for the public-road start are shown only while that start remains on the route.
+
+The large **Directions to planting point** panel, trip statistics, compass
+bearing, and external Google Maps action have been removed from the planter UI.
+A small hint says to follow the white bridge and marked planting lanes. Its
+close button dismisses it immediately, or it closes automatically after seven
+seconds. Advancing to another point does not reopen a dismissed hint.
+Dismissing the hint leaves the route and GPS watch active. A compact
+point label and **Stop navigation** button remain. GPS interruption messages
+stay visible independently of the optional hint. Stopping navigation, signing
+out, or leaving the field page clears the location watch.
+
 Navigation requires a fresh phone location and never substitutes an organization
-base or access-road start when GPS is denied.
+base or road start when permission is denied. If Google is unavailable or has
+no route, `partial_route` retains the full known road/bridge approach and target
+without inventing a remote GPS connection. The hint reports that road directions
+to the site are unavailable; no total journey estimate is shown. Unmapped sites
+retain their own provider route or point marker and are never forced through
+Leganes. Invalid requests still fail.
 
-The traced physical footprint accepts planting destinations up to 3 m from its
-boundary, including NASUGBAN point #198, which lies about 0.6 m outside the trace.
-This tolerance does not change project-site ownership or point coordinates.
-For the origin, phone GPS accuracy is sent with the request. A position near the
-same footprint uses onsite guidance within `max(3, min(accuracy, 20))` metres;
-a poor GPS fix cannot skip the entrance route from farther away. The road snap
-tolerances above remain unchanged.
+To support another physical site, add its traced access path and footprint to
+the JSON file, add routing regressions, and restart the API. Restart the API
+after editing this file because its route data is cached per process.
 
-During navigation the phone watches GPS and updates the route's start,
-straight-line distance and compass bearing to the selected point. Mapped road
-sections already passed are trimmed when the GPS fix is within 12 m of the road.
-On arrival inside the physical site, the road overlay is replaced by the orange
-dashed guide from the latest GPS fix to the exact point. This guide updates with
-each fix and disappears when origin and target coordinates coincide.
-The initial view includes both GPS origin and destination; subsequent fixes do
-not reset a participant's pan or zoom. When GPS uncertainty exceeds the point's
-distance, the panel tells participants to use the marked point. Clearing
-navigation, signing out, or leaving the field page stops the location watch.
-Errors appear in the point action sheet so participants can retry there.
-
-When testing from another location, Google can return no walking route to the
-public-road junction or fail to connect closely enough to the mapped road.
-The endpoint returns `partial_route` with the blue mapped access road and the
-local orange dashed guide from the entrance to the point.
-The panel visibly states that road directions from the participant's location
-are unavailable; trip distance and duration remain empty. Provider outages and
-missing configuration use the same behavior. For an unmapped site,
-`point_guidance` retains the point marker without drawing a line. The browser
-rebuilds local guidance from the known entrance and target, filtering remote
-shortcuts from older responses. Invalid requests still fail.
-The **Open Google Maps road directions** action requests walking directions from
-the latest GPS to the exact point via the public-road junction and site entrance.
-Once onsite, it omits those waypoints to avoid backtracking. The link updates
-with each GPS fix and opens only after an explicit tap. Google Maps support for
-waypoints varies by product; the in-app traced entrance road remains available.
-
-To support a different physical site, add its mapped access road and footprint
-to the JSON file, add a routing regression, and restart the API. Do not enlarge
-the local GPS snap tolerance to bypass a missing mapped road.
+The 2026-10-17 regression checks cover different assigned targets using the same
+bridge, live positions on the bridge, wooded park positions, foreshore GPS
+uncertainty, provider outages, omission of direction lines through trees, and
+manual/automatic hint dismissal while navigation stays active. The traced
+bridge overlay was visually checked against the orthophoto in
+`validation_outputs/fixed-bridge-route-check.jpg`.
 
 ## Google Routes configuration for laptop testing
 

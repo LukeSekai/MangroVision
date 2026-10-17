@@ -6,18 +6,13 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, time, timedelta, timezone
-from pathlib import Path
 
 import planting_database as planting
 from email_validator import EmailNotValidError, validate_email
 
 from .appointment_email import APPOINTMENT_TYPES, queue_confirmation
 from .readable_credentials import available_username, organization_password
-
-
-# Shared with the public form; restore this flag after planter testing.
-BOOKING_POLICY = json.loads((Path(__file__).resolve().parents[1]
-    / 'MangroVision_New/client/src/like/bookingPolicy.json').read_text(encoding='utf-8'))
+from .booking_policy import BOOKING_POLICY
 
 
 class AppointmentConflict(ValueError):

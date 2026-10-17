@@ -144,6 +144,8 @@ def my_activities(response: Response):
 
 @router.get("/me/field-points")
 def my_field_points():
+    from api.site_access import access_routes
+
     planter = _require_planter()
     organization_id = planter.get("organization_id")
     project_sites = []
@@ -162,6 +164,10 @@ def my_field_points():
             "name": "organization_project_sites",
             "features": project_sites,
         },
+        "site_access": [{
+            "name": site['name'], "label": site.get('entrance_label', site['name']),
+            "entrance": site['access_path'][-1], "site_area": site['site_area'],
+        } for site in access_routes()],
     }
 
 
