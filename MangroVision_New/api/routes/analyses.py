@@ -53,7 +53,6 @@ def get_stats():
     return get_all_stats()
 
 
-# MIGRATED FROM app.py analysis history drawer
 @router.get("/")
 def list_analyses(include_previews: bool = False):
     _require_lgu_user()
@@ -98,7 +97,6 @@ def analysis_area_context(request: AnalysisAreaRequest):
         raise HTTPException(status_code=503, detail="Could not check existing planting data. Please try Run Analysis again.") from error
 
 
-# MIGRATED FROM app.py analysis detail view (points)
 @router.get("/{analysis_id}/points")
 def analysis_points(analysis_id: int, only_unassigned: bool = False):
     _require_lgu_user()

@@ -2,7 +2,7 @@
 
 For a request to set up or run MangroVision on a groupmate's laptop, follow
 [`docs/groupmate-setup.md`](docs/groupmate-setup.md) in order. The current app is
-FastAPI plus React; the older Streamlit launcher is historical.
+FastAPI plus React; use the managed launcher described in that guide.
 
 Check the two separately shared runtime assets, install the listed dependencies,
 configure the private `.env` from `.env.example`, run the setup checker, and

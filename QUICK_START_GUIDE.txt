@@ -2,8 +2,7 @@ MANGROVISION QUICK START (CURRENT FASTAPI + REACT APP)
 
 For a fresh clone on another laptop, follow docs/groupmate-setup.md first.
 The orthophoto GeoTIFF, canopy checkpoint, and private .env settings do not
-come from Git. The old START_MANGROVISION.bat starts the historical Streamlit
-application and is not the current workspace.
+come from Git.
 
 After completing setup, run from the repository root in PowerShell:
 

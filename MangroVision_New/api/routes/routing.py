@@ -2,7 +2,6 @@
 
 import json
 import os
-import tomllib
 from pathlib import Path
 from typing import Optional
 from urllib.error import HTTPError, URLError
@@ -17,7 +16,6 @@ from api.routing_usage import reserve_google_request
 
 router = APIRouter()
 
-_SECRETS_PATH = Path(__file__).resolve().parents[3] / ".streamlit" / "secrets.toml"
 _ENV_PATH = Path(__file__).resolve().parents[3] / '.env'
 
 
@@ -26,14 +24,7 @@ def _load_google_routes_api_key() -> str:
     if env_value:
         return env_value
     # A newly entered laptop key can be picked up without restarting the API.
-    local_value = (dotenv_values(_ENV_PATH).get('GOOGLE_ROUTES_API_KEY') or '').strip()
-    if local_value:
-        return local_value
-    try:
-        with _SECRETS_PATH.open("rb") as fh:
-            return str(tomllib.load(fh).get("google_routes_api_key") or "").strip()
-    except (FileNotFoundError, OSError, tomllib.TOMLDecodeError):
-        return ""
+    return (dotenv_values(_ENV_PATH).get('GOOGLE_ROUTES_API_KEY') or '').strip()
 
 
 class RouteRequest(BaseModel):

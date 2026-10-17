@@ -985,9 +985,8 @@ class HexagonDetector:
         
         # Step 3: Identify plantable zones (avoid canopy buffers)
         # Note: Man-made structures (towers, bridges, houses) are filtered
-        # via the forbidden-zone GeoJSON in the Streamlit app.
-        # Note: Points outside orthophoto coverage are filtered in the
-        # map section of app.py via is_inside_any_orthophoto().
+        # by the API's forbidden-zone masks and spatial filtering.
+        # The API also filters points outside active orthophoto coverage.
         plantable_zone = self.identify_plantable_zones(danger_zone)
         
         # Step 6: Generate maximized hexagonal planting zones
@@ -1050,7 +1049,7 @@ class HexagonDetector:
         - Light/dark orange: planting markers unavailable due to erosion
         
         Note: Man-made structures (towers, bridges, houses) are filtered
-        via the forbidden-zone GeoJSON in the Streamlit app instead.
+        by the API's forbidden-zone masks and spatial filtering instead.
         
         Args:
             results: Results dictionary from process_image()

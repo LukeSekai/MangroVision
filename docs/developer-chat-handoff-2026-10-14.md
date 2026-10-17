@@ -39,7 +39,7 @@ Useful preserved branches are `fix/planter-code-review` and `integration/planter
 
 ## 2. Architecture and where to develop
 
-The current application is **FastAPI + React**, backed by **PostgreSQL/PostGIS** and private object storage. The older Streamlit application and `START_MANGROVISION.bat` are historical. Extend the current app unless explicitly asked to work on the historical version.
+The current application is **FastAPI + React**, backed by **PostgreSQL/PostGIS** and private object storage. Extend the API and client projects for application changes.
 
 ```text
 MangroVision/
@@ -540,7 +540,7 @@ Immediately before this handover, the user requested the final activity in `CIT2
 We are continuing MangroVision development. Read AGENTS.md and
 docs/developer-chat-handoff-2026-10-14.md first, then inspect current Git status.
 
-The current app is FastAPI + React, not the old Streamlit launcher. Our main
+The current app is FastAPI + React. Our main
 integration branch is Latest-Main. At the handover snapshot it was 7679e15,
 with the planter/groupmate integration and Analysis History pagination included.
 

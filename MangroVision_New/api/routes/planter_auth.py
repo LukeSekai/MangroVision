@@ -134,7 +134,6 @@ def planter_logout(response: Response):
     return {"status": "ok"}
 
 
-# MIGRATED FROM app.py show_planter_field_view (/field workspace)
 @router.get('/me/activities')
 def my_activities(response: Response):
     planter = _require_planter()
@@ -187,7 +186,6 @@ def my_points_mark_all_completed(body: MarkPointsCompletedBody):
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
-# MIGRATED FROM app.py update_assignment_point_status (field mark-planted action)
 @router.patch("/me/points/{assignment_point_id}/status")
 def my_point_status(assignment_point_id: int, body: UpdatePointStatusBody):
     planter = _require_planter()

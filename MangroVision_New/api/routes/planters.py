@@ -178,7 +178,6 @@ def assign_point(body: AssignPointRequest):
     raise HTTPException(status_code=410, detail="Individual assignment has been removed. Assign a batch to the organization.")
 
 
-# MIGRATED FROM app.py planter management tab (create form)
 @router.post("/")
 def create_planter_endpoint(body: CreatePlanterRequest, response: Response, user: dict = Depends(_require_lgu_user)):
     try:
@@ -197,7 +196,6 @@ def get_planter_endpoint(planter_id: int):
     return planter
 
 
-# MIGRATED FROM app.py planter edit flow
 @router.patch("/{planter_id}")
 def update_planter_endpoint(planter_id: int, body: UpdatePlanterRequest):
     planter = get_planter(planter_id)
@@ -241,7 +239,6 @@ def update_planter_endpoint(planter_id: int, body: UpdatePlanterRequest):
     return get_planter(planter_id)
 
 
-# MIGRATED FROM app.py soft-delete planter flow
 @router.delete("/{planter_id}")
 def deactivate_planter_endpoint(planter_id: int, hard: bool = False):
     planter = get_planter(planter_id)
@@ -258,7 +255,6 @@ def deactivate_planter_endpoint(planter_id: int, hard: bool = False):
     return {"status": "deleted" if hard else "deactivated", "id": planter_id}
 
 
-# MIGRATED FROM app.py batch assignment flow (create_planter_assignment)
 @router.post("/{planter_id}/assignments")
 def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest,
                                user: dict = Depends(_require_lgu_user)):
@@ -285,7 +281,6 @@ def create_assignment_endpoint(planter_id: int, body: CreateAssignmentRequest,
     return {"assignment_id": assignment_id}
 
 
-# MIGRATED FROM app.py show_planter_field_view
 @router.get("/{planter_id}/field-points")
 def field_points(planter_id: int):
     planter = get_planter(planter_id)

@@ -1,8 +1,7 @@
 # Run MangroVision on another laptop
 
 This guide is for the current FastAPI and React app. Run commands in PowerShell
-from the repository root. The old `START_MANGROVISION.bat` starts the historical
-Streamlit app.
+from the repository root.
 
 If a groupmate is using Codex, ask it to follow these numbered steps in order
 and report any missing files or settings. Automated tests are not needed to run

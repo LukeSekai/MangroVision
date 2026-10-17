@@ -20,9 +20,6 @@ Only these applications are supported as production writers:
 - `MangroVision_New/api`: FastAPI backend and the only database/storage client.
 - `MangroVision_New/client`: React frontend using credentialed HTTP-only cookie sessions.
 
-The older Streamlit and standalone field applications remain historical tools;
-they are not permitted to write to the production database.
-
 Production persistence uses PostgreSQL/PostGIS and private S3-compatible object
 storage. SQLite and mutable zone GeoJSON files are migration inputs only. See
 [Production database operations](docs/production-database.md) for local setup,

@@ -465,3 +465,16 @@ def test_laptop_key_is_read_from_private_env_and_hosted_key_takes_priority(monke
     assert routing._load_google_routes_api_key() == 'updated-test-key'
     monkeypatch.setenv('GOOGLE_ROUTES_API_KEY', 'hosted-test-key')
     assert routing._load_google_routes_api_key() == 'hosted-test-key'
+
+
+def test_missing_routes_key_reports_configuration_error_without_contacting_google(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
+    routing = importlib.import_module('api.routes.routing')
+    monkeypatch.delenv('GOOGLE_ROUTES_API_KEY', raising=False)
+    monkeypatch.setattr(routing, '_ENV_PATH', tmp_path / 'missing.env')
+    monkeypatch.setattr(routing, 'urlopen', lambda *args, **kwargs: pytest.fail('Unconfigured routing contacted Google'))
+    assert routing._load_google_routes_api_key() == ''
+    with pytest.raises(HTTPException) as unavailable:
+        routing._google_route([10.7, 122.55], [10.78, 122.62], 'walking')
+    assert unavailable.value.status_code == 503
+    assert 'GOOGLE_ROUTES_API_KEY' in unavailable.value.detail
