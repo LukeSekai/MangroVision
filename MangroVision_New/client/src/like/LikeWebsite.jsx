@@ -175,6 +175,7 @@ export function AppointmentForm() {
   </div>;
 
   return <div className="like-booking-card">
+    {step === 2 && <button className="like-back" type="button" disabled={busy} onClick={() => { setStep(1); setError(''); feedback.clear(); }}><Icon name="arrow" size={16} />Back</button>}
     <div className="like-form-heading"><span className="like-eyebrow">LET’S PLAN YOUR VISIT</span><h3>A small step.<br />A lasting difference.</h3><p>Choose an activity and tell us about your group and preferred time.</p></div>
     <ol className="like-form-steps" aria-label="Appointment request steps">
       <li className={step >= 1 ? 'is-current' : ''}><span>{step === 2 ? <Icon name="check" size={14} /> : '1'}</span>Your group</li>
@@ -207,7 +208,7 @@ export function AppointmentForm() {
         <label>Anything we should know? <small>optional</small><textarea disabled={busy} {...feedback.props('notes')} value={form.notes} onChange={update} maxLength={2000} rows={3} placeholder="Tell us about your group or any questions you have." /><FieldError feedback={feedback} field="notes" /></label>
         <label className="like-honeypot" aria-hidden="true">Website<input name="website" value={form.website} onChange={update} tabIndex={-1} autoComplete="off" /></label>
         <label className="like-consent"><input disabled={busy} {...feedback.props('consent')} type="checkbox" checked={form.consent} onChange={update} required /><span>I understand this is a request, subject to LGU confirmation. LIKE staff may use my contact details to coordinate this appointment.</span><FieldError feedback={feedback} field="consent" /></label>
-        <div className="like-form-actions"><button className="like-back" type="button" disabled={busy} onClick={() => { setStep(1); setError(''); feedback.clear(); }}>Back</button><button className="like-button" type="submit" disabled={busy}>{busy ? 'Sending request…' : error ? 'Retry appointment request' : 'Send appointment request'}<Icon name="arrow" size={18} /></button></div>
+        <button className="like-button" type="submit" disabled={busy}>{busy ? 'Sending request…' : error ? 'Retry appointment request' : 'Send appointment request'}<Icon name="arrow" size={18} /></button>
       </div>}
     </form>
     <p className="like-form-footnote"><Icon name="calendar" size={16} /> A request today. A confirmed schedule after LGU review.</p>
