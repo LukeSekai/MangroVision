@@ -11,7 +11,7 @@ class CORSHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """HTTP Handler with CORS headers"""
     
     def end_headers(self):
-        # Add CORS headers to allow requests from Streamlit
+        # Allow tile requests from a separate web frontend.
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', '*')

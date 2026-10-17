@@ -103,7 +103,7 @@ htmlcov/
 .env
 .env.*
 !.env.example
-.streamlit/secrets.toml
+.streamlit/
 backups/
 migration-manifests/
 MangroVision_New/temp_uploads/

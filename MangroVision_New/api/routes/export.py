@@ -46,7 +46,6 @@ class ExportRequest(BaseModel):
 
 @router.post("/csv")
 def export_csv(body: ExportRequest):
-    # MIGRATED FROM app.py: analyze_image coordinate export lines 5836-5877
     output = io.StringIO()
     writer = csv.DictWriter(
         output,

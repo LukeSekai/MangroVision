@@ -1,4 +1,4 @@
-"""Processing endpoints that expose the full app.py canopy-analysis workflow."""
+"""Processing endpoints for canopy analysis and planting-point planning."""
 
 import base64
 import copy
@@ -210,7 +210,7 @@ def _visible_map_point_features(collection: Any, coverage: Any) -> Any:
 
 
 def _set_processing_cache(analysis_key: str, payload: dict[str, Any]) -> None:
-    """Store recent processing results so the manual save flow matches app.py review/save behavior."""
+    """Keep recent processing results available for review and manual saving."""
     _PROCESSING_CACHE[analysis_key] = payload
     _PROCESSING_CACHE.move_to_end(analysis_key)
     while len(_PROCESSING_CACHE) > _PROCESSING_CACHE_LIMIT:
@@ -2957,7 +2957,6 @@ def _compute_canopy_coverage_pct(results: dict[str, Any]) -> float:
     return round((canopy_area / total_area) * 100.0, 2)
 
 
-# MIGRATED FROM app.py: _gps_to_drone_pixel_via_homography lines 2160-2166
 def _gps_to_drone_pixel_via_homography(latitude, longitude, h_inverse):
     """Map GPS coordinates into the drone image using the inverse ortho homography."""
     ortho_x, ortho_y = gps_to_ortho_pixel(latitude, longitude)
@@ -2967,7 +2966,6 @@ def _gps_to_drone_pixel_via_homography(latitude, longitude, h_inverse):
     return float(px), float(py)
 
 
-# MIGRATED FROM app.py: _gps_to_drone_pixel_via_heading lines 2169-2192
 def _gps_to_drone_pixel_via_heading(
     latitude,
     longitude,
@@ -3041,7 +3039,6 @@ def _image_edge_safety_state(
     return False, False
 
 
-# MIGRATED FROM app.py: _build_zone_mask_in_drone_pixels lines 2195-2226
 def _build_zone_mask_in_drone_pixels(
     image_shape,
     zone_polygons,
@@ -3442,7 +3439,6 @@ def _reconcile_authoritative_hexagons_with_visual_zones(
     return kept_safe, kept_visual, forbidden_conflicts
 
 
-# MIGRATED FROM app.py: _apply_forbidden_zone_canopy_exclusion lines 2229-2282.
 # Kept as an optional fallback only. The newer canopy cleanup rules already
 # suppress many mud/structure false positives, so automatically erasing canopy
 # inside forbidden polygons is disabled by default. Re-enable with
@@ -3757,7 +3753,6 @@ def _execute_canopy_workflow(
         )
 
     _emit(progress_cb, "Checking your image's location on the map", 2)
-    # MIGRATED FROM app.py: analyze_image lines 5038-5121
     metadata = ExifExtractor.extract_all_metadata(str(temp_path))
     location_preflight = _build_image_location_preflight(metadata, altitude, drone_model)
     if location_preflight.get("can_process"):
@@ -3895,7 +3890,6 @@ def _execute_canopy_workflow(
                     f"image footprint to {footprint_scale:.2f}x the altitude-based estimate."
                 )
 
-    # MIGRATED FROM app.py: analyze_image lines 5129-5154
     try:
         canopy_code_mtime = int((_ROOT / "canopy_detection" / "canopy_detector_hexagon.py").stat().st_mtime)
     except Exception:
@@ -3920,7 +3914,6 @@ def _execute_canopy_workflow(
     )
 
     _emit(progress_cb, "Preparing vegetation detection", 12)
-    # MIGRATED FROM app.py: analyze_image lines 5158-5276
     detector = HexagonDetector(
         altitude_m=altitude_to_use,
         drone_model=drone_to_use,
@@ -3981,7 +3974,6 @@ def _execute_canopy_workflow(
     coordinate_homography_available = False
     coordinate_homography_trusted = False
 
-    # MIGRATED FROM app.py: analyze_image lines 5294-5382
     if image_gps is not None:
         _emit(progress_cb, "Aligning your image with the map", 62)
         _gsd = results["gsd_m_per_pixel"]
@@ -4709,7 +4701,6 @@ def _execute_canopy_workflow(
         results["_duplicate_hexagons"] = _duplicate_hexes
         results["_preclip_outside_hexagons"] = _outside_hexes
 
-    # MIGRATED FROM app.py: analyze_image lines 5600-5937
     _emit(progress_cb, "Locating planting points on the map", 85)
     map_image_gps = image_gps
     map_center_lat = image_center_lat
