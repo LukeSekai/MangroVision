@@ -1,5 +1,5 @@
 import { assessGraphWindow, forecastIssue, forecastPlantingGuide, levelSeries } from '../utils/plantingTides.js';
-import { APPOINTMENT_DURATION_MINUTES, PLANTING_OPEN_TIME, PLANTING_CLOSE_TIME, appointmentEndTime, plantingHoursError, validBookingDate } from './booking.js';
+import { APPOINTMENT_DURATION_MINUTES, PLANTING_OPEN_TIME, PLANTING_CLOSE_TIME, appointmentEndTime, bookingPolicy, plantingHoursError, validBookingDate } from './booking.js';
 
 const MINUTE = 60_000;
 const SLOT = 15 * MINUTE;
@@ -10,12 +10,13 @@ export const displayBookingTime = (time) => timeFormatter.format(new Date(time))
 
 export function assessPlantingBooking({ payload, date, startTime, now = Date.now() }) {
   if (!startTime || !validBookingDate(date)) return { status: 'unknown', reason: '' };
+  if (!appointmentEndTime(startTime)) return { status: 'closed', reason: 'Choose a valid start time before 10 PM so the two-hour visit ends on the same day.' };
   const hoursError = plantingHoursError(startTime);
   if (hoursError) return { status: 'closed', reason: hoursError };
   const assessment = assessGraphWindow({ payload, startAt: `${date}T${startTime}:00+08:00`,
     endAt: `${date}T${appointmentEndTime(startTime)}:00+08:00`, now });
   return { ...assessment, reason: assessment.status === 'unsafe'
-    ? 'Water is predicted to rise above the planting limit during your two-hour visit. Choose a lower-water time within 6 AM–5 PM.' : assessment.reason };
+    ? 'Water is predicted to rise above the planting limit during your two-hour visit. Choose a lower-water time.' : assessment.reason };
 }
 
 // Public guidance uses exactly the coastal graph's estimated planting reference.
@@ -27,16 +28,16 @@ export function plantingBookingWindows({ payload, date, now = Date.now() }) {
   if (issue) return unavailable(issue);
   const guide = forecastPlantingGuide({ payload, now });
   if (guide.status === 'unknown') return unavailable('Some tide readings are missing. Refresh to check planting times.');
-  // Intersect the graph's lower-water periods with LIKE's operating hours.
-  const dayStart = Date.parse(`${date}T${PLANTING_OPEN_TIME}:00+08:00`);
-  const dayEnd = Date.parse(`${date}T${PLANTING_CLOSE_TIME}:00+08:00`);
+  // Keep visits on one Philippine date while the operating-hours limit is off.
+  const dayStart = Date.parse(`${date}T${bookingPolicy.enforcePlantingHours ? PLANTING_OPEN_TIME : '00:00'}:00+08:00`);
+  const dayEnd = Date.parse(`${date}T${bookingPolicy.enforcePlantingHours ? PLANTING_CLOSE_TIME : '23:59'}:00+08:00`);
   const rows = levelSeries(payload);
   if (rows.length < 2 || rows.some((row, i) => !Number.isFinite(row.occurred_at) || row.height_m === null
       || (i > 0 && (row.occurred_at <= rows[i - 1].occurred_at || row.occurred_at - rows[i - 1].occurred_at > 3600_000)))) {
     return unavailable('Some tide readings are missing. Refresh to check planting times.');
   }
   if (rows[0]?.occurred_at > dayStart || rows.at(-1)?.occurred_at < dayEnd) {
-    return unavailable('The tide forecast does not cover the full daytime period for this date yet. You can still request a time for LGU review.');
+    return unavailable('The tide forecast does not cover the full booking period for this date yet. You can still request a time for LGU review.');
   }
   const periods = [];
   for (let i = 1; i < rows.length; i += 1) {
@@ -60,5 +61,5 @@ export function plantingBookingWindows({ payload, date, now = Date.now() }) {
     return [{ start, end, startTime: inputFormatter.format(start), latestStart: end - DURATION }];
   });
   return { status: windows.length ? 'available' : 'none', windows,
-    reason: windows.length ? '' : 'No two-hour planting slot fits the predicted lower-water periods within LIKE’s 6 AM–5 PM hours on this date. Choose another date.' };
+    reason: windows.length ? '' : `No two-hour planting slot fits the predicted lower-water periods${bookingPolicy.enforcePlantingHours ? ' within LIKE’s 6 AM–5 PM hours' : ''} on this date. Choose another date.` };
 }

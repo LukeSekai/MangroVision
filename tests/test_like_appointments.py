@@ -122,7 +122,9 @@ def test_public_receipt_and_timezone(api, monkeypatch):
 
 
 @pytest.mark.parametrize('hour,minute', [(4, 30), (5, 59), (15, 1), (16, 0), (17, 0)])
-def test_planting_outside_like_hours_never_reaches_storage(api, monkeypatch, hour, minute):
+def test_planting_outside_like_hours_never_reaches_storage_when_restored(api, monkeypatch, hour, minute):
+    from mangrovision_db.like_appointments import BOOKING_POLICY
+    monkeypatch.setitem(BOOKING_POLICY, 'enforcePlantingHours', True)
     client, routes, _ = api
     monkeypatch.setattr(routes, 'submit_appointment', lambda *args: pytest.fail('Closed-hours request reached storage'))
     body = payload()
@@ -144,13 +146,13 @@ def test_predicted_high_water_blocks_public_planting_before_storage(api, monkeyp
 
 
 @pytest.mark.parametrize('status', ['safe', 'unknown'])
-@pytest.mark.parametrize('hour', [6, 15])
-def test_valid_hours_and_unknown_forecast_can_request_lgu_review(api, monkeypatch, status, hour):
+@pytest.mark.parametrize('hour,minute', [(0, 0), (4, 30), (6, 0), (15, 0), (16, 45), (19, 0), (21, 59)])
+def test_testing_hours_and_unknown_forecast_can_request_lgu_review(api, monkeypatch, status, hour, minute):
     client, routes, _ = api
     monkeypatch.setattr(routes, 'assess_graph_window', lambda *args: {'status': status})
     monkeypatch.setattr(routes, 'submit_appointment', lambda *args: {'reference': 'LIKE-TEST', 'status': 'pending'})
     body = payload()
-    start = datetime.fromisoformat(body['start_at']).replace(hour=hour)
+    start = datetime.fromisoformat(body['start_at']).replace(hour=hour, minute=minute)
     body.update(start_at=start.isoformat(), end_at=(start + timedelta(hours=2)).isoformat())
     response = client.post('/api/public/like/appointments', json=body)
     assert response.status_code == 201

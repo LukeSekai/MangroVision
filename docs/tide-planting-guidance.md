@@ -20,6 +20,15 @@ No crews, attendance, ecological scoring, override workflow or weather limits we
 
 ## LIKE public planting appointments
 
+**Temporary planter testing:** the 6 AM–5 PM restriction is disabled in both the
+public form and backend by `enforcePlantingHours: false` in
+`MangroVision_New/client/src/like/bookingPolicy.json`. Early and evening bookings
+are allowed; visits still last two hours, must start in the future and finish on
+the same Philippine date, and retain tide checks and LGU review. To restore the
+hours described below, change this single flag to `true`, restart the API, and
+rebuild/redeploy the frontend (or refresh it when using Vite development).
+Existing expired planter codes are not extended; request and confirm a new activity.
+
 The staff graph shows the full day's water levels. LIKE shows only lower-water
 periods that overlap its planting hours, **6 AM–5 PM Philippine time**. A public
 planting visit lasts two hours, so starts must be between **6 AM and 3 PM**, and

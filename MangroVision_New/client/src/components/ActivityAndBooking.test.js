@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
-let server, dom, root, createRoot, AppointmentForm, FieldActivities, AuthScreen, OrganizationAccess, usePlanterAuthStore;
+let server, dom, root, createRoot, AppointmentForm, FieldActivities, AuthScreen, OrganizationAccess, usePlanterAuthStore, bookingPolicy;
 const globals = new Map();
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { pretendToBeVisual: true, url: 'http://localhost' });
@@ -21,6 +21,7 @@ before(async () => {
   server = await createServer({ configFile: false, appType: 'custom', server: { middlewareMode: true, hmr: false, watch: null, ws: false },
     cacheDir: 'node_modules/.vite-activity-booking-tests', optimizeDeps: { noDiscovery: true, include: [] } });
   ({ AppointmentForm } = await server.ssrLoadModule('/src/like/LikeWebsite.jsx'));
+  ({ bookingPolicy } = await server.ssrLoadModule('/src/like/booking.js'));
   ({ default: FieldActivities } = await server.ssrLoadModule('/src/components/FieldActivities.jsx'));
   ({ AuthScreen } = await server.ssrLoadModule('/src/pages/FieldApp.jsx'));
   ({ default: OrganizationAccess } = await server.ssrLoadModule('/src/components/OrganizationAccess.jsx'));
@@ -33,6 +34,7 @@ after(async () => {
   }
 });
 beforeEach(() => {
+  bookingPolicy.enforcePlantingHours = false;
   localStorage.clear(); sessionStorage.clear();
   root = createRoot(document.getElementById('root'));
   globalThis.fetch = async () => assert.fail('Unexpected network call');
@@ -134,13 +136,14 @@ test('website uses a tide suggestion and blocks sending when the whole visit doe
   assert.equal(sent, 0);
   assert.equal(document.querySelector('[name="start_time"]').getAttribute('aria-invalid'), 'true');
   await change('date', '2039-01-01');
-  assert.match(document.body.textContent, /does not cover the full daytime period/);
+  assert.match(document.body.textContent, /does not cover the full booking period/);
   assert.equal(document.querySelector('.like-tide-windows'), null);
   assert.equal(document.querySelector('.like-tide-match'), null);
   assert.equal(document.querySelector('[name="start_time"]').value, '09:00');
 });
 
 test('LIKE offers 6 AM to 5 PM during all-day low water and rejects an early or late visit', async () => {
+  bookingPolicy.enforcePlantingHours = true;
   const { date, payload } = websiteForecast();
   payload.heights = payload.heights.map((row) => ({ ...row, height_m: 0.2 }));
   let sent = 0;
@@ -162,6 +165,32 @@ test('LIKE offers 6 AM to 5 PM during all-day low water and rejects an early or 
   await change('start_time', '15:00');
   assert.equal(document.querySelector('[name="end_time"]').value, '17:00');
   assert.ok(document.querySelector('.like-tide-match'));
+});
+
+test('testing allows the 4:45 PM booking through the form without closed-hours messages', async () => {
+  const { date, payload } = websiteForecast();
+  payload.heights = payload.heights.map((row) => ({ ...row, height_m: 0.2 }));
+  const requests = [];
+  globalThis.fetch = async (url, options) => {
+    if (!url.includes('/appointments')) return Response.json(payload);
+    requests.push(JSON.parse(options.body));
+    return Response.json({ reference: 'LIKE-EVENING', status: 'pending' });
+  };
+  await openWebsiteSchedule();
+  await change('date', date); await settle();
+  const start = document.querySelector('[name="start_time"]');
+  assert.equal(start.min, '');
+  assert.equal(start.max, '21:59');
+  await change('start_time', '16:45');
+  assert.equal(document.querySelector('[name="end_time"]').value, '18:45');
+  assert.doesNotMatch(document.body.textContent, /6 AM–5 PM|at or after 6 AM|finish by 5 PM|6 AM to 5 PM/);
+  await change('participants', '20');
+  await act(async () => document.querySelector('[name="consent"]').click());
+  await submit();
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].start_at, `${date}T16:45:00+08:00`);
+  assert.equal(requests[0].end_at, `${date}T18:45:00+08:00`);
+  assert.match(document.querySelector('[role="status"]').textContent, /LIKE-EVENING/);
 });
 
 test('failed refresh hides old tide suggestions and recovery restores them without losing chosen times', async () => {
