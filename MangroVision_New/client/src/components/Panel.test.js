@@ -539,7 +539,7 @@ test('choosing a project-site owner frames its area and rejects drawing outside 
   await click(namedButton('Redraw zone'));
   await drawZone('site', { start: false });
   assert.equal(document.querySelector('.save-form select').value, '11', 'redraw retains the chosen owner');
-  assert.match(document.querySelector('.zone-covered-count').textContent, /1organization mapped point/);
+  assert.match(document.querySelector('.zone-covered-count').textContent, /1mapped point/);
   assert.equal(namedButton('Save Project Site').disabled, false);
   await click(namedButton('Save Project Site'));
   assert.equal(mutations.length, 1);
@@ -547,17 +547,35 @@ test('choosing a project-site owner frames its area and rejects drawing outside 
   assert.equal(mutations[0].body.organization_id, 11);
 });
 
-test('an organization without a recorded area cannot start a project-site drawing', async () => {
-  zoneFixtures();
-  useMapStore.setState({ projectSites: { ...useMapStore.getState().projectSites,
-    organizations: [{ id: 99, name: 'No area yet' }] } });
+for (const releasedLand of [false, true]) {
+test(`an organization without a recorded area can draw its first site and count unclaimed points (${releasedLand ? 'with' : 'without'} released land)`, async () => {
+  const zones = zoneFixtures();
+  const point = useMapStore.getState().points[0];
+  useMapStore.setState({
+    points: [{ ...point, source_project_site_id: null },
+      { ...point, id: 102, source_organization_id: 11 }],
+    projectSites: { ...useMapStore.getState().projectSites,
+      released_areas: { features: releasedLand ? [zones.site] : [] },
+      organizations: [{ id: 99, name: 'Nasugban Warriors' }] },
+  });
+  responses.set('/api/project-sites/validate-boundary', { valid: true });
+  responses.set('/api/project-sites', { id: 8 });
   await renderPlantingWorkspace('/zones');
   await openProjectSiteDrawing();
   await selectSiteOwner(99);
-  assert.equal(namedButton('Draw New Project Site').disabled, true);
-  assert.match(document.querySelector('[data-guide-panel="Zone Editor"] [role="alert"]').textContent, /No mapped area is assigned to this organization/);
-  assert.equal(mutations.length, 0);
+  assert.equal(namedButton('Draw New Project Site').disabled, false);
+  assert.equal(document.querySelector('[data-guide-panel="Zone Editor"] [role="alert"]'), null);
+  assert.match(document.querySelector('[data-guide-panel="Zone Editor"]').textContent, /first site on unclaimed land/);
+  await click(namedButton('Draw New Project Site'));
+  await drawZone('site', { start: false });
+  assert.match(document.querySelector('.zone-covered-count').textContent, /1mapped point/);
+  assert.equal(namedButton('Save Project Site').disabled, false);
+  await click(namedButton('Save Project Site'));
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].body.organization_id, 99);
+  assert.equal(mutations[0].body.name, 'Nasugban Warriors');
 });
+}
 
 test('changing the project-site owner cancels the previous boundary approval', async () => {
   const zones = zoneFixtures();

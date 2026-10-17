@@ -1,4 +1,4 @@
-"""Project sites must fit the selected owner's recorded planting area."""
+"""First sites establish ownership; later sites respect recorded boundaries."""
 import sys
 import unittest
 from pathlib import Path
@@ -78,17 +78,35 @@ class ProjectSiteBoundaryTests(unittest.TestCase):
         self.assertIn("overlaps another organization's area", response.json()["detail"])
         self.assert_no_write()
 
-    def test_existing_sites_take_precedence_and_assignment_area_bootstraps_first_site(self):
+    def test_first_site_can_extend_beyond_its_assignment_outline(self):
         self.mocks["list_site_zones"].return_value = [feature(11, box(0, 0, 4, 4))]
         self.assertEqual(self.post(box(3.2, 3.2, 3.8, 3.8)).status_code, 400)
         self.assert_no_write()
         self.mocks["list_project_sites"].return_value = [self.other]
-        self.assertEqual(self.post(box(3.2, 3.2, 3.8, 3.8)).status_code, 201)
+        candidate = box(3.2, 3.2, 4.5, 4.5)
+        self.assertEqual(self.post(candidate, preflight=True).json(), {"valid": True})
+        self.assertEqual(self.post(candidate).status_code, 201)
 
-    def test_no_recorded_area_or_failed_loading_never_allows_creation(self):
-        response = self.post(box(1, 1, 2, 2), owner=99)
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("No mapped area is assigned", response.json()["detail"])
+    def test_first_site_on_unclaimed_land_does_not_require_a_prior_area_or_release(self):
+        for released in [[], [feature(None, box(0, 6, 1, 7))]]:
+            self.mocks["available_released_areas"].return_value = {"features": released}
+            self.assertEqual(self.post(box(3.5, 3.5, 4.5, 4.5), owner=99, preflight=True).json(), {"valid": True})
+            self.assertEqual(self.post(box(3.5, 3.5, 4.5, 4.5), owner=99).status_code, 201)
+
+    def test_first_site_cannot_overlap_another_site_or_legacy_assignment(self):
+        self.mocks["list_site_zones"].return_value = [feature(33, box(3, 0, 4, 3))]
+        for candidate in [box(6, 6, 7, 7), box(2.5, 1, 3.5, 2),
+                          MultiPolygon([box(3.5, 3.5, 4.5, 4.5), box(6, 6, 7, 7)])]:
+            for preflight in [False, True]:
+                response = self.post(candidate, owner=99, preflight=preflight)
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("overlaps another organization's area", response.json()["detail"])
+        self.assert_no_write()
+
+    def test_first_site_can_share_an_edge_with_another_owner(self):
+        self.assertEqual(self.post(box(3, 1, 4, 2), owner=99).status_code, 201)
+
+    def test_failed_loading_never_allows_creation(self):
         self.mocks["list_project_sites"].side_effect = RuntimeError("Unavailable")
         response = self.post(box(1, 1, 2, 2))
         self.assertEqual(response.status_code, 503)
@@ -105,6 +123,13 @@ class ProjectSiteBoundaryTests(unittest.TestCase):
     def test_visible_drone_map_restriction_still_applies_to_owned_areas(self):
         self.map_boundary.return_value = box(0, 0, 1.5, 3)
         response = self.post(box(1, 1, 2, 2))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("outside the mapped area", response.json()["detail"])
+        self.assert_no_write()
+
+    def test_first_site_must_still_fit_entirely_inside_the_drone_map(self):
+        self.map_boundary.return_value = box(0, 0, 4, 4)
+        response = self.post(box(3.5, 3.5, 4.5, 4.5), owner=99)
         self.assertEqual(response.status_code, 400)
         self.assertIn("outside the mapped area", response.json()["detail"])
         self.assert_no_write()

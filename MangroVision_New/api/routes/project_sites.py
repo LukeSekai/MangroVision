@@ -82,12 +82,14 @@ def _require_organization_boundary(organization_id: int, geometry: dict):
                 output.append(candidate)
             return output
 
-        own_features = (owned(sites) or owned(assignments)) + available_released_areas()['features']
-        if not own_features:
-            raise HTTPException(status_code=400, detail="No mapped area is assigned to this organization. Assign its area before drawing a project site.")
-        allowed = unary_union(polygons(own_features))
-        if not allowed.covers(polygon):
-            raise HTTPException(status_code=400, detail="This site extends outside the selected organization's area. Redraw it inside that area.")
+        own_sites = owned(sites)
+        # A first project site establishes the organization's boundary. Assignment
+        # hulls and released land must not become a prerequisite for creating it.
+        # Existing owners remain limited to their sites and available releases.
+        if own_sites:
+            allowed = unary_union(polygons(own_sites + available_released_areas()['features']))
+            if not allowed.covers(polygon):
+                raise HTTPException(status_code=400, detail="This site extends outside the selected organization's area. Redraw it inside that area.")
         # Shared edges are allowed; an area belonging to another owner is not.
         recorded_owners = {str((feature.get('properties') or {}).get('organization_id')) for feature in sites}
         other_areas = sites + [feature for feature in assignments

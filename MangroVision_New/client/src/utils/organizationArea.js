@@ -1,5 +1,5 @@
-// Stable organization sites define their area. Assignment boundaries supply
-// the recorded area only when an organization has no project site yet.
+// Stable organization sites define their area. Assignment boundaries provide
+// a map focus for an organization's first site, not a limit on that new site.
 export function organizationAreaFeatures(projectSites, assignmentZones, organizationId) {
   if (organizationId == null || String(organizationId).trim() === '') return [];
   const owned = (collection) => (collection?.features || []).filter((feature) => (

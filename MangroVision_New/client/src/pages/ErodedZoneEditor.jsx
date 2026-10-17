@@ -139,12 +139,20 @@ export default function ErodedZoneEditor() {
   const selectedProjectOrganization = organizationOptions.find(
     (organization) => String(organization.id) === String(projectSiteOrganizationId),
   );
-  const ownerAreas = useMemo(() => organizationAreaFeatures(projectSites, siteZones, projectSiteOrganizationId),
-    [projectSites, siteZones, projectSiteOrganizationId]);
+  const ownerHasProjectSite = projectSiteFeatures.some((feature) => (
+    String(feature.properties?.organization_id) === String(projectSiteOrganizationId)
+    && ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type)
+  ));
   const coveredPoints = useMemo(() => (drawingKind === 'site'
-    ? filterMonitoringPoints(points, projectSiteOrganizationId) : points)
+    ? ownerHasProjectSite
+      ? filterMonitoringPoints(points, projectSiteOrganizationId)
+      : points.filter((point) => {
+        const ownerId = point.source_organization_id ?? point.assigned_organization_id;
+        return ownerId == null || String(ownerId) === String(projectSiteOrganizationId);
+      })
+    : points)
     .filter((point) => !point.deleted_at && !point.is_deleted && point.inside_visible_map !== false),
-  [points, drawingKind, projectSiteOrganizationId]);
+  [points, drawingKind, projectSiteOrganizationId, ownerHasProjectSite]);
 
   const chooseProjectOrganization = (organizationId) => {
     setProjectSiteOrganizationId(organizationId);
@@ -155,16 +163,14 @@ export default function ErodedZoneEditor() {
     setSaveMsgIsError(false);
     setBoundaryStatus(drawnCoords ? 'checking' : 'idle');
     if (!organizationId) return;
-    const features = organizationAreaFeatures(projectSites, siteZones, organizationId);
+    showLayers(['projectSites', 'siteZones', 'points']);
+    const features = organizationAreaFeatures({ ...projectSites, released_areas: null }, siteZones, organizationId);
     if (!features.length) {
-      setSaveMsgText('No mapped area is assigned to this organization. Assign its area before drawing a project site.');
-      setSaveMsgIsError(true);
+      setSaveMsgText('Draw this organization’s first site on unclaimed land inside the drone map.');
       return;
     }
     try {
-      const organizationFeatures = organizationAreaFeatures({ ...projectSites, released_areas: null }, siteZones, organizationId);
-      const bounds = L.geoJSON({ type: 'FeatureCollection', features: organizationFeatures.length ? organizationFeatures : features }).getBounds();
-      showLayers(['projectSites', 'siteZones', 'points']);
+      const bounds = L.geoJSON({ type: 'FeatureCollection', features }).getBounds();
       if (!focusMapArea(mapInstance, bounds)) throw new Error('Area unavailable');
     } catch {
       setSaveMsgText('Could not show the organization’s area. Refresh the map and try again.');
@@ -229,10 +235,8 @@ export default function ErodedZoneEditor() {
       setSaveMsgIsError(true);
       return;
     }
-    if (drawingKind === 'site' && (!projectSiteOrganizationId || !ownerAreas.length)) {
-      setSaveMsgText(projectSiteOrganizationId
-        ? 'No mapped area is assigned to this organization. Assign its area before drawing a project site.'
-        : 'Select the organization that owns this project site before drawing it.');
+    if (drawingKind === 'site' && !projectSiteOrganizationId) {
+      setSaveMsgText('Select the organization that owns this project site before drawing it.');
       setSaveMsgIsError(true);
       return;
     }
@@ -391,7 +395,7 @@ export default function ErodedZoneEditor() {
       container.style.touchAction = '';
       if (draggingWasEnabled) mapInstance.dragging.enable();
     };
-  }, [mapInstance, zoneLocked, drawingKind, projectSiteOrganizationId, coveredPoints, ownerAreas]);
+  }, [mapInstance, zoneLocked, drawingKind, projectSiteOrganizationId, coveredPoints]);
 
   // Cancel drawing
   const cancelDrawing = useCallback(({ keepOwner = false } = {}) => {
@@ -724,7 +728,7 @@ export default function ErodedZoneEditor() {
               className="btn btn-primary btn-sm"
               style={{ width: '100%' }}
               onClick={startDrawing}
-              disabled={zoneLocked || !mapInstance || (drawingKind === 'site' && (!projectSiteOrganizationId || !ownerAreas.length))}
+              disabled={zoneLocked || !mapInstance || (drawingKind === 'site' && !projectSiteOrganizationId)}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
               {drawingKind === 'warning'
@@ -737,7 +741,9 @@ export default function ErodedZoneEditor() {
               {drawingKind === 'warning'
                 ? 'Draw inside the drone map. Warning zones mark hazards such as deep mud or difficult access. They do not block assignment.'
                 : drawingKind === 'site'
-                  ? 'Choose the owner to show its area. Draw inside its area or released land available to other organizations.'
+                  ? ownerHasProjectSite
+                    ? 'Draw inside this organization’s area or released land available to other organizations.'
+                    : 'Choose the owner, then draw its first site on unclaimed land inside the drone map. Avoid other organizations’ areas.'
                   : 'Start on the left, drag right, then trace a closed area inside the drone map. Covered points become unavailable for planting.'}
             </p>
             <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
@@ -768,7 +774,7 @@ export default function ErodedZoneEditor() {
                   setBoundaryStatus('checking'); setBoundaryRetry((value) => value + 1);
                   setSaveMsgText('Checking the zone boundary...'); setSaveMsgIsError(false);
                 }}>Try again</button>}
-              <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked || (drawingKind === 'site' && !ownerAreas.length)}
+              <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked || (drawingKind === 'site' && !projectSiteOrganizationId)}
                 onClick={() => { cancelDrawing({ keepOwner: drawingKind === 'site' }); startDrawing(); }}>Redraw zone</button>
             </div>}
             {drawingKind === 'site' && <label className="form-group">
@@ -782,7 +788,7 @@ export default function ErodedZoneEditor() {
             </label>}
             <div className={`zone-covered-count${boundaryStatus === 'valid' ? ' is-ready' : ''}`} role="status">
               <strong>{coveredCount}</strong>
-              <span>{drawingKind === 'site' ? 'organization ' : ''}mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
+              <span>mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
             </div>
             <div className="form-group">
               <label className="form-label">

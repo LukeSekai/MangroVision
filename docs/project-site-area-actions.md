@@ -24,6 +24,12 @@ one transaction when the LGU confirms.
 - Released land is available to other registered organizations after excluding
   boundaries that have already claimed it. Existing project sites take priority
   over assignment hulls when checking organization areas.
+- An organization without an active project-site boundary can draw its first
+  site on unclaimed land inside the drone map. It does not need an assignment
+  outline or a prior land release. Other organizations' project sites and
+  legacy assignment areas still block overlaps. Once saved, its boundary and
+  available released land constrain subsequent sites. The drawing count includes
+  unclaimed points for a first site.
 
 Migration `20261014_0018` adds the site lifecycle columns and the private
 `project_site_area_releases` audit table. The latter records before/after
