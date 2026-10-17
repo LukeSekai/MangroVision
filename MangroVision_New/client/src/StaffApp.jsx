@@ -13,11 +13,12 @@ import Monitoring from './pages/OrganizationMonitoring';
 import MonitoringMapWorkspace from './pages/MonitoringMapWorkspace';
 import LoginScreen from './components/LoginScreen';
 import AccountSettings from './pages/AccountSettings';
+import Organizations from './pages/Organizations';
 import { useAuthStore } from './stores/authStore';
 import { useProcessingStore } from './stores/processingStore';
 
 const WORKSPACE_PAGES = ['/map', '/dashboard', '/scheduling', '/activity', '/account',
-  '/monitoring', '/monitoring/map', '/planters', '/processing', '/zones'];
+  '/monitoring', '/monitoring/map', '/planters', '/processing', '/zones', '/organizations'];
 
 export default function StaffApp() {
   const userId = useAuthStore((s) => s.user?.id);
@@ -48,6 +49,7 @@ export default function StaffApp() {
         <Route path="/map" element={<MapAnalytics />} />
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/scheduling" element={<Scheduling />} />
+        <Route path="/organizations" element={<Organizations />} />
         <Route path="/activity" element={<ActivityLog />} />
         <Route path="/account" element={<AccountSettings />} />
         <Route path="/reports" element={<Navigate to="/dashboard" replace />} />

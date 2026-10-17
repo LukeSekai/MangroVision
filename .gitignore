@@ -60,6 +60,7 @@ htmlcov/
 !/tests/test_organization_credentials_postgres.py
 !/tests/test_planter_codes_postgres.py
 !/tests/test_group_access_postgres.py
+!/tests/test_organization_directory.py
 *.test.js
 *.test.mjs
 *.spec.js
@@ -80,6 +81,9 @@ htmlcov/
 !MangroVision_New/client/src/utils/projectSiteInfo.test.js
 !MangroVision_New/client/src/utils/siteMapPreview.test.js
 !MangroVision_New/client/src/pages/Dashboard.test.js
+!MangroVision_New/client/src/pages/Organizations.test.js
+!MangroVision_New/client/src/guides/tours.test.js
+!MangroVision_New/client/src/guides/tourRuntime.test.js
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
 !MangroVision_New/client/src/components/Panel.test.js
 !MangroVision_New/client/src/components/FormFeedback.test.js

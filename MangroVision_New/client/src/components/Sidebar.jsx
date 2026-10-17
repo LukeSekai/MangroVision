@@ -43,6 +43,16 @@ const NAV_ITEMS = [
     ),
   },
   {
+    to: '/organizations',
+    label: 'Organizations',
+    icon: (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <circle cx="9" cy="8" r="3" />
+        <path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.66" />
+      </svg>
+    ),
+  },
+  {
     to: '/monitoring',
     label: 'Monitoring',
     icon: (
