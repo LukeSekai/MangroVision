@@ -1,12 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canViewSavedAnalysisOnMap, savedAnalysisMapContext } from './analysisMapContext.js';
+import { canViewSavedAnalysisOnMap, hasEstimatedAlignment, savedAnalysisMapContext } from './analysisMapContext.js';
 import {
   DEFAULT_HISTORY_FILTERS, analysisDateOptions, canopyCoverage, filterAnalysisHistory, formatAnalysisDate, formatAnalysisNumber,
 } from './analysisHistory.js';
 
 const filter = (rows, changes) => filterAnalysisHistory(rows, { ...DEFAULT_HISTORY_FILTERS, ...changes }, '2026-10-07');
 const ids = rows => rows.map(row => row.id);
+
+test('corrected approximate alignment stays labelled approximate without moving its border', () => {
+  assert.equal(hasEstimatedAlignment({ success: true, photometric_refined: true,
+    projection_rotation_source: 'photometric_affine' }), true);
+  assert.equal(hasEstimatedAlignment({ success: true, projection_rebuilt: true,
+    projection_rotation_source: 'sift_heading_metric_anchor' }), true);
+  assert.equal(hasEstimatedAlignment({ success: true, registration_validated: true,
+    projection_rotation_source: 'sift_validated_projective' }), false);
+  const footprint = { type: 'Polygon', coordinates: [[[122, 10], [122.001, 10.0001],
+    [122.0012, 10.001], [122, 10.0008], [122, 10]]] };
+  const context = savedAnalysisMapContext({ map: { available: true, analysis_footprint: footprint,
+    match: { success: true, photometric_refined: true } } });
+  assert.equal(context.map.analysis_footprint, footprint);
+});
 const rows = [
   { id: 1, image_name: 'Analysis 1', source_image_name: 'QJBJ.JPG', analyzed_at: '2026-10-06T18:30:00Z', plantable_area_m2: 0, canopy_area_m2: 0, canopy_coverage_pct: 0 },
   { id: 2, image_name: 'Analysis 2', source_image_name: 'ITBH.JPG', analyzed_at: '2026-10-01T08:00:00+08:00', plantable_area_m2: 99.9, canopy_coverage_pct: 24.99 },

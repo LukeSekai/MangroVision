@@ -20,6 +20,11 @@ import numpy as np
 import torch
 from torch import nn
 
+try:
+    from .seedling_reflections import filter_seedling_reflections
+except ImportError:
+    from seedling_reflections import filter_seedling_reflections
+
 
 @dataclass
 class SeedlingDetectorConfig:
@@ -634,6 +639,17 @@ class SeedlingDetector:
             candidate.accepted = True
             deduplicated.append(candidate)
 
+        # Apply the same physical glare check to the learned path. Classifier
+        # confidence alone must not accept a clipped water reflection.
+        retained, reflection_metadata = filter_seedling_reflections(
+            image, [{'center': (item.x, item.y), 'candidate': item} for item in deduplicated], gsd,
+        )
+        retained_ids = {id(entry['candidate']) for entry in retained}
+        for candidate in deduplicated:
+            if id(candidate) not in retained_ids:
+                candidate.accepted = False
+                candidate.rejection_reason = 'specular_water_highlight'
+        deduplicated = [entry['candidate'] for entry in retained]
         marker_radius_px = max(2, int(round(self.config.marker_radius_m / gsd)))
         mask = np.zeros_like(empty_mask)
         for candidate in deduplicated:
@@ -643,6 +659,7 @@ class SeedlingDetector:
             "seedling_detection_mode": "hybrid",
             "seedling_classifier_available": True,
             "seedling_classifier_path": self.model_path,
+            **reflection_metadata,
             "seedling_classifier_threshold": float(self.config.classifier_threshold),
             "seedling_isolated_classifier_threshold": float(self.config.isolated_classifier_threshold),
             "seedling_supplement_count": int(len(deduplicated)),

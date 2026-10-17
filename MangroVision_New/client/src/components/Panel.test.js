@@ -1067,6 +1067,38 @@ async function uploadImage(name = 'QJBJ.JPG') {
 const processButton = () => [...document.querySelectorAll('.process-action button')].find(button => /Run Analysis|Review Partial Coverage/.test(button.textContent));
 const areaDialog = () => document.querySelector('.image-area-confirmation');
 
+test('corrected photo footprint reaches the actual green Leaflet border during upload, results and saved review', async () => {
+  mockAreaCheck({ count: 0, earlier: [] });
+  const mapData = { available: true, analysis_footprint: savedFootprint,
+    analysis_footprint_quality: 'metric_projected_image_corners',
+    match: { success: true, photometric_refined: true, projection_rebuilt: true,
+      projection_rotation_source: 'photometric_affine' } };
+  responses.set('/api/analyses/preflight', { status: 'inside', can_process: true,
+    latitude: 10.779, longitude: 122.629, footprint_calibrated: true, map: mapData });
+  await renderPlantingWorkspace('/processing');
+  const map = useMapStore.getState().mapInstance;
+  const boundary = () => {
+    const found = [];
+    map.eachLayer((layer) => {
+      if (String(layer.getTooltip?.()?.getContent()).startsWith('Projected photo boundary')) found.push(layer);
+    });
+    assert.equal(found.length, 1);
+    return found[0];
+  };
+  await uploadImage('DJI_0312.JPG');
+  assert.deepEqual(boundary().toGeoJSON().geometry, savedFootprint);
+  assert.equal(boundary().options.color, '#16a34a');
+  assert.match(boundary().getTooltip().getContent(), /approximate/);
+  // The raw GPS centre is deliberately different from this skewed boundary.
+  const result = { map: mapData, metadata: { image_center_lat: 10.778, image_center_lon: 122.627 },
+    metrics: {}, images: {}, exports: {} };
+  await act(async () => useProcessingStore.setState({ result, overlayOpen: false }));
+  await settle();
+  assert.deepEqual(boundary().toGeoJSON().geometry, savedFootprint);
+  await act(async () => useMapStore.getState().setSavedAnalysisBoundary({ ...result, analysis_id: 77 }));
+  assert.deepEqual(boundary().toGeoJSON().geometry, savedFootprint);
+});
+
 test('occupied-area warning lists existing points and images; Cancel stops and Continue starts once', async () => {
   const starts = mockAreaCheck();
   await render(pages.get('ImageProcessing'));

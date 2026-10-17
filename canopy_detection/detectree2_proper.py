@@ -17,10 +17,12 @@ try:
     from .crown_coverage import recover_canopy_crown_coverage
     from .seedling_detector import SeedlingDetector, SeedlingDetectorConfig
     from .seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
+    from .seedling_reflections import filter_seedling_reflections
 except ImportError:  # The legacy applications import this file as a top-level module.
     from crown_coverage import recover_canopy_crown_coverage
     from seedling_detector import SeedlingDetector, SeedlingDetectorConfig
     from seedling_leaf_evidence import recover_yellow_leaf_clusters, filter_seedling_ground_artifacts, filter_small_canopy_ground_artifacts
+    from seedling_reflections import filter_seedling_reflections
 
 # Official detectree2 imports
 from detectree2.models.train import setup_cfg
@@ -1894,6 +1896,11 @@ class ProperDetectree2Detector:
             )
             accepted_entries.extend(recovered)
 
+        # A clipped reflection must neither re-enter through yellow recovery
+        # nor anchor another ambiguous ground candidate in the final check.
+        accepted_entries, reflection_metadata = filter_seedling_reflections(
+            image, accepted_entries, gsd,
+        )
         # Run after all recovery paths; shadow fragments must not re-enter via
         # cluster rescue or borrow leaf evidence from the rest of the image.
         accepted_entries, ground_metadata = filter_seedling_ground_artifacts(
@@ -1926,6 +1933,7 @@ class ProperDetectree2Detector:
             "seedling_low_leaf_evidence_rejected_count": low_leaf_rejected_count,
             "seedling_shadow_mud_rejected_count": shadow_mud_rejected_count,
             **yellow_metadata,
+            **reflection_metadata,
             **ground_metadata,
             "seedling_rejected_existing": int(rejected_existing),
             "seedling_rejected_shape": int(rejected_shape),
