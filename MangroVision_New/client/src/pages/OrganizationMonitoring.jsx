@@ -393,6 +393,7 @@ export default function OrganizationMonitoring() {
           <p>Track plant health, record visits, and review each organization’s progress.</p>
         </div>
         <div className="org-monitoring-page-actions">
+          <button type="button" onClick={() => navigate('/monitoring/replanting')}>LGU Replanting</button>
           <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
           <button type="button" className="is-primary" onClick={() => navigate(requestedSiteId ? siteMapPath : '/monitoring/map')}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>

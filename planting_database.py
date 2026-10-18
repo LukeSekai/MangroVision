@@ -3198,15 +3198,18 @@ def _matching_warning_zones(latitude, longitude, warning_zones: List[dict]) -> L
 def _resolve_point_species(item: dict) -> tuple[Optional[str], Optional[float]]:
     """Return (species_key, planting_distance_m) for a point.
 
-    Only trusts the analysis's saved species column. We intentionally do NOT
+    Current planting snapshots describe replanted seedlings. Planned locations
+    use the analysis's saved species column. We intentionally do NOT
     guess legacy rows from hexagon_size — the old default (1.5 m) doesn't map
     cleanly onto either of the two new species (Bungalon 1 m / Rhizophora
     2 m), and guessing wrong would mis-color every pre-existing analysis.
     Legacy points just stay species=None and the map falls back to the
     generic 'planned' green.
     """
-    raw_species = (item.get("analysis_species") or "").strip().lower() or None
-    distance = item.get("analysis_planting_distance_m")
+    snapshot = item.get('replanting_species') if item.get('lgu_replanting_pending') else (
+        item.get('planted_species') if item.get('planting_status') == 'planted' or item.get('death_at') else None)
+    raw_species = (snapshot or item.get("analysis_species") or "").strip().lower() or None
+    distance = None if snapshot else item.get("analysis_planting_distance_m")
     SPECIES_DEFAULTS = {"bungalon": 1.0, "rhizophora": 2.0}
     if raw_species in SPECIES_DEFAULTS:
         return raw_species, float(distance) if distance is not None else SPECIES_DEFAULTS[raw_species]
@@ -3502,10 +3505,9 @@ def mark_planting_point_dead(
 
         # Mirror this death into the immutable history so mortality stats
         # survive a later reset-to-planned (which clears the current-state
-        # death_* columns to free the spot for re-planting). Snapshot the
-        # planter/species attribution from the most recent completed
-        # assignment so per-planter / per-species breakdowns stay accurate
-        # even after the assignment is detached.
+        # death_* columns to free the spot for re-planting). The current
+        # planting event supplies the seedling's attribution below; completed
+        # assignment history is a fallback for legacy points without events.
         attribution_row = conn.execute("""
             SELECT pa.id AS assignment_id, pa.planter_id, pl.full_name AS planter_name, pa.species
               FROM planter_assignment_points pap
@@ -3521,13 +3523,21 @@ def mark_planting_point_dead(
         snap_planter_name = attribution_row["planter_name"] if attribution_row else None
         snap_species = attribution_row["species"] if attribution_row else None
         planting_event_row = conn.execute("""
-            SELECT id
-            FROM planting_events
-            WHERE planting_point_id = ?
-            ORDER BY planted_at DESC, id DESC
+            SELECT pe.id, pe.assignment_id, pe.planter_id, pe.species,
+                   COALESCE(pl.full_name, CASE WHEN pe.planted_by_user_id IS NOT NULL THEN 'LGU' END) AS planter_name
+            FROM planting_events pe LEFT JOIN planters pl ON pl.id = pe.planter_id
+            WHERE pe.planting_point_id = ? AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
+            ORDER BY pe.planted_at DESC, pe.id DESC
             LIMIT 1
         """, (numeric_id,)).fetchone()
         planting_event_id = int(planting_event_row["id"]) if planting_event_row else None
+        if planting_event_row:
+            # A reused point may now hold an LGU replacement. Attribute this
+            # death to that seedling, never to its former organization owner.
+            snap_assignment_id = planting_event_row['assignment_id']
+            snap_planter_id = planting_event_row['planter_id']
+            snap_planter_name = planting_event_row['planter_name']
+            snap_species = planting_event_row['species']
 
         conn.execute("""
             INSERT INTO point_death_records (
@@ -4388,6 +4398,9 @@ def _create_planter_assignment(
         )
 
     conn = connection or _get_connection()
+    from mangrovision_db.lgu_replanting import pending_lgu_requests
+    if pending_lgu_requests(conn, point_ids):
+        raise ValueError('These locations are reserved for LGU replanting. Open Monitoring > LGU Replanting.')
     # Serialize batches for this organization before calculating each slot's share.
     row = conn.execute("SELECT * FROM planters WHERE id = ? FOR UPDATE", (planter_id,)).fetchone()
     if not row:
@@ -4460,6 +4473,9 @@ def _create_planter_assignment(
         found = {int(row["id"]) for row in requested_rows}
         missing = [point_id for point_id in point_ids if point_id not in found]
         raise ValueError(f"Unknown planting point id(s): {', '.join(map(str, missing))}.")
+    from mangrovision_db.lgu_replanting import pending_lgu_requests
+    if pending_lgu_requests(conn, point_ids):
+        raise ValueError('These locations are reserved for LGU replanting. Record their replacements in Monitoring > LGU Replanting.')
     missing_analysis_species = [
         row for row in requested_rows
         if not _canonical_assignment_species(row["analysis_species"])
@@ -4583,11 +4599,6 @@ def _create_planter_assignment(
             slots[idx - 1],
         ))
 
-    # Review releases a location; every assignment path keeps that review linked.
-    conn.execute(f"""UPDATE replanting_requests r SET assignment_id = ?, version = version + 1
-        FROM planting_events pe WHERE pe.id = r.planting_event_id
-        AND pe.planting_point_id IN ({placeholders}) AND r.assignment_id IS NULL
-        AND r.replacement_event_id IS NULL""", [assignment_id, *point_ids])
     append_activity(
         conn, action="assignment.created", actor_type="staff" if assigned_by_user_id else "system",
         actor_user_id=assigned_by_user_id, actor_planter_id=planter_id,
@@ -4767,6 +4778,8 @@ def list_planter_assignment_map_points() -> List[dict]:
             apa.project_site_name,
             apa.project_site_name AS site_name,
             current_planting.source AS planting_source,
+            current_planting.species AS planted_species,
+            current_planting.replaces_event_id AS replacement_of_event_id,
             current_planting.planted_by_user_id,
             planting_staff.full_name AS planted_by_name,
             EXISTS (
@@ -4790,19 +4803,23 @@ def list_planter_assignment_map_points() -> List[dict]:
         LEFT JOIN active_point_assignments apa
                ON apa.planting_point_id = pp.id
         LEFT JOIN LATERAL (
-            SELECT pe.source, pe.planted_by_user_id
+            SELECT pe.source, pe.planted_by_user_id, pe.replaces_event_id, pe.species
             FROM planting_events pe
-            WHERE pe.planting_point_id = pp.id AND pe.closed_at IS NULL
+            WHERE pe.planting_point_id = pp.id AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
             ORDER BY pe.planted_at DESC, pe.id DESC LIMIT 1
         ) current_planting ON TRUE
         LEFT JOIN users planting_staff ON planting_staff.id = current_planting.planted_by_user_id
         WHERE pp.deleted_at IS NULL
         ORDER BY a.analyzed_at DESC, pp.point_num ASC
     """).fetchall()
-    conn.close()
     # Ownership and erosion come from the same fresh read as the point data.
     # Keep the internal coverage flag out of the public response contract.
     resolved_rows = [dict(row) for row in rows]
+    from mangrovision_db.lgu_replanting import annotate_lgu_replanting
+    try:
+        annotate_lgu_replanting(conn, resolved_rows)
+    finally:
+        conn.close()
     eroded_ids = {int(row['id']) for row in resolved_rows if row.pop('map_eroded_coverage')}
     return _annotate_point_advisories(resolved_rows, eroded_point_ids=eroded_ids)
 
@@ -4856,7 +4873,7 @@ def assign_planting_point_to_planter(
     if conn.execute("""SELECT 1 FROM replanting_requests r JOIN planting_events pe ON pe.id = r.planting_event_id
         WHERE pe.planting_point_id = ? AND r.replacement_event_id IS NULL""", (planting_point_id,)).fetchone():
         conn.close()
-        raise ValueError('Assign this approved replacement through the organization assignment form in Planters.')
+        raise ValueError('This location is reserved for LGU replanting. Open Monitoring > LGU Replanting.')
     point = dict(point_row)
     if point.get("deleted_at"):
         conn.close()
@@ -9396,7 +9413,7 @@ def _blank_bucket_series(start: datetime, end: datetime, bucket: str) -> list[di
 
 
 def _load_current_dashboard_points(conn: Any) -> List[dict]:
-    return [dict(row) for row in conn.execute("""
+    rows = [dict(row) for row in conn.execute("""
         WITH ranked_assignment AS (
             SELECT DISTINCT ON (pap.planting_point_id)
                 pap.id AS assignment_point_id,
@@ -9435,10 +9452,10 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
             pp.deleted_at,
             a.analyzed_at,
             a.image_name,
-            COALESCE(ra.site_zone_id, a.site_zone_id) AS site_id,
+            COALESCE(ra.site_zone_id, current_planting.project_site_id, a.site_zone_id) AS site_id,
             ra.assignment_id,
             ra.planter_id,
-            COALESCE(NULLIF(TRIM(ra.assignment_species), ''), NULLIF(TRIM(a.species), '')) AS species,
+            COALESCE(NULLIF(TRIM(ra.assignment_species), ''), NULLIF(TRIM(current_planting.species), ''), NULLIF(TRIM(a.species), '')) AS species,
             ra.assignment_point_id,
             ra.assignment_point_status,
             ra.assignment_status,
@@ -9454,7 +9471,12 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
         JOIN analyses a ON a.id = pp.analysis_id
         LEFT JOIN ranked_assignment ra
                ON ra.planting_point_id = pp.id
+        LEFT JOIN LATERAL (SELECT pe.project_site_id, pe.species FROM planting_events pe
+            WHERE pe.planting_point_id = pp.id AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
+            ORDER BY pe.planted_at DESC, pe.id DESC LIMIT 1) current_planting ON TRUE
     """).fetchall()]
+    from mangrovision_db.lgu_replanting import annotate_lgu_replanting
+    return annotate_lgu_replanting(conn, rows)
 
 
 def _warning_counts_by_site(points: List[dict], conn: Any) -> tuple[dict, set[int]]:
@@ -10011,6 +10033,19 @@ def get_dashboard_operations(
             else:
                 aging["over_30"] += 1
 
+        from mangrovision_db.lgu_replanting import lgu_work_history
+        lgu_points = {point['id']: point for point in _load_current_dashboard_points(conn)
+                      if point.get('lgu_replanting_pending') and current_point_status(point) == 'assigned'}
+        lgu_work = []
+        for row in lgu_work_history(conn):
+            if not _matches_dashboard_dimensions(row, site_id, assignment_id, species, planter_id):
+                continue
+            completed_at = _parse_dashboard_datetime(row.get('completed_at'))
+            pending = row['planting_point_id'] in lgu_points and row['replacement_event_id'] is None
+            lgu_work.append({**row, 'status': 'completed' if row['replacement_event_id'] else 'pending',
+                             'current_pending': pending,
+                             'completed_in_period': bool(completed_at and start <= completed_at <= end)})
+
         # Work is planned and reviewed by partner organization/project site.
         # Keep individual planter names in assignment detail, but group this
         # dashboard comparison by the organization responsible for the site.
@@ -10038,6 +10073,12 @@ def get_dashboard_operations(
                 row["organization_name"].casefold(),
             ),
         )
+        lgu_pending = sum(row['current_pending'] for row in lgu_work)
+        lgu_completed = sum(row['completed_in_period'] for row in lgu_work)
+        if lgu_pending or lgu_completed:
+            workload.append({'owner_type': 'lgu', 'organization_id': None, 'organization_name': 'LGU replanting',
+                             'pending': lgu_pending, 'completed': lgu_completed, 'skipped': 0,
+                             'total': lgu_pending + lgu_completed})
 
         throughput_base = [
             {
@@ -10049,7 +10090,7 @@ def get_dashboard_operations(
             for row in _blank_bucket_series(start, end, clean_bucket)
         ]
         throughput_map = {row["period_start"]: row for row in throughput_base}
-        for row in point_rows:
+        for row in point_rows + lgu_work:
             assigned_at = _parse_dashboard_datetime(row.get("assigned_at"))
             if assigned_at and start <= assigned_at <= end:
                 key = _bucket_start(assigned_at, clean_bucket).isoformat()
@@ -10069,14 +10110,14 @@ def get_dashboard_operations(
                         throughput_map[key]["skipped"] += 1
 
         assigned_in_period = sum(
-            1 for row in point_rows
+            1 for row in point_rows + lgu_work
             if (
                 _parse_dashboard_datetime(row.get("assigned_at"))
                 and start <= _parse_dashboard_datetime(row.get("assigned_at")) <= end
             )
         )
-        total_pending = sum(row["pending"] for row in assignments)
-        total_completed = sum(row["completed"] for row in assignments)
+        total_pending = sum(row["pending"] for row in assignments) + lgu_pending
+        total_completed = sum(row["completed"] for row in assignments) + lgu_completed
         total_skipped = sum(row["skipped"] for row in assignments)
         total_overdue = sum(row["overdue"] for row in assignments)
         envelope.update({

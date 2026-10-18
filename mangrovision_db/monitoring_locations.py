@@ -218,21 +218,41 @@ def list_replanting(organization_id=None):
             COALESCE(o.name, CASE WHEN pe.planted_by_user_id IS NOT NULL THEN 'LGU' END) AS organization_name,
             s.name AS project_site_name,
             a.image_name AS analysis_name, pdr.death_at, r.id AS request_id, COALESCE(r.version, 0) AS version,
+            pp.deleted_at AS point_deleted_at, pp.death_at AS point_death_at, pp.status AS point_status,
+            r.approved_at, approver.full_name AS approved_by_name,
+            replacement_event.planted_at AS replacement_planted_at,
+            replacement_staff.full_name AS replacement_staff_name,
+            EXISTS (SELECT 1 FROM map_zones mz WHERE mz.zone_type = 'eroded' AND mz.deleted_at IS NULL
+                AND extensions.ST_Covers(mz.geometry, pp.location)) AS eroded_unavailable,
             r.assignment_id, r.replacement_event_id, pa.status AS assignment_status,
             CASE WHEN r.replacement_event_id IS NOT NULL OR EXISTS (SELECT 1 FROM planting_events n
-                WHERE n.planting_point_id = pe.planting_point_id AND n.id > pe.id
+                WHERE n.planting_point_id = pe.planting_point_id AND (n.planted_at, n.id) > (pe.planted_at, pe.id)
                 AND COALESCE(n.closure_reason, '') <> 'completion_reversed') THEN 'completed'
                 WHEN r.assignment_id IS NOT NULL THEN 'assigned'
-                WHEN r.id IS NOT NULL THEN 'approved' ELSE 'awaiting_review' END AS replanting_status
+                WHEN r.id IS NOT NULL THEN 'ready_lgu' ELSE 'awaiting_review' END AS replanting_status
             FROM point_death_records pdr JOIN planting_events pe ON pe.id = pdr.planting_event_id
             JOIN planting_points pp ON pp.id = pe.planting_point_id JOIN analyses a ON a.id = pp.analysis_id
             LEFT JOIN planters pl ON pl.id = pe.planter_id LEFT JOIN organizations o ON o.id = pl.organization_id
             LEFT JOIN site_zones s ON s.id = pe.site_zone_id
             LEFT JOIN replanting_requests r ON r.planting_event_id = pe.id
             LEFT JOIN planter_assignments pa ON pa.id = r.assignment_id
+            LEFT JOIN users approver ON approver.id = r.approved_by
+            LEFT JOIN planting_events replacement_event ON replacement_event.id = r.replacement_event_id
+            LEFT JOIN users replacement_staff ON replacement_staff.id = replacement_event.planted_by_user_id
             WHERE (CAST(? AS BIGINT) IS NULL OR pl.organization_id = ?) ORDER BY pdr.death_at DESC, pe.id''',
             (organization_id, organization_id)).fetchall()
-        return [dict(row) for row in rows]
+        result = []
+        for row in rows:
+            item = dict(row)
+            blocked = ('Location was removed' if item['point_deleted_at'] else
+                       'Currently unavailable because of erosion' if item['eroded_unavailable'] else '')
+            item['can_approve'] = (not blocked and item['replanting_status'] == 'awaiting_review'
+                                   and bool(item['point_death_at']))
+            item['can_record_replanting'] = (not blocked and item['replanting_status'] == 'ready_lgu'
+                                             and item['point_status'] == 'planned' and not item['point_death_at'])
+            item['unavailable_reason'] = blocked
+            result.append(item)
+        return result
     finally:
         conn.close()
 
@@ -264,7 +284,9 @@ def approve_replanting(event_id, expected_version, user_id, connection=None):
         if not point or not point['death_at'] or not conn.execute(
             'SELECT 1 FROM point_death_records WHERE planting_event_id = ?', (event_id,)).fetchone():
             raise ValueError('Only a confirmed dead seedling can be prepared for replanting.')
-        if conn.execute('SELECT 1 FROM planting_events WHERE planting_point_id = ? AND id > ?', (point_id, event_id)).fetchone():
+        if conn.execute('''SELECT 1 FROM planting_events WHERE planting_point_id = ?
+            AND (planted_at, id) > (?, ?) AND COALESCE(closure_reason, '') <> 'completion_reversed' ''',
+            (point_id, event['planted_at'], event_id)).fetchone():
             raise ValueError('A newer planting cycle already exists at this location.')
         _safe_point(conn, point_id)
         conn.execute('INSERT INTO replanting_requests (planting_event_id, approved_by) VALUES (?, ?)', (event_id, user_id))
@@ -273,7 +295,7 @@ def approve_replanting(event_id, expected_version, user_id, connection=None):
         conn.execute("""UPDATE planting_points SET status = 'planned', planted_at = NULL, planted_date = NULL,
             death_at = NULL, death_reason = NULL, death_reason_category = NULL, death_notes = NULL WHERE id = ?""", (point_id,))
         conn.commit()
-        return {'planting_event_id': event_id, 'status': 'approved', 'version': 1}
+        return {'planting_event_id': event_id, 'status': 'ready_lgu', 'version': 1}
     except BaseException:
         conn.rollback()
         raise

@@ -126,7 +126,7 @@ export const STAFF_TOURS = [
       step('/monitoring', '[data-guide-card="organization-summary"]', 'Record observations for the visit', 'In the visit form, check the date and enter newly dead seedlings since the last visit. Enter 0 when there are none. When deaths are recorded, select their cause and locate known dead seedlings on the map; unknown locations remain recorded as unlocated deaths.'),
       step('/monitoring', '[data-guide-card="organization-summary"]', 'Check health and save the visit', 'Review the calculated alive count, survival rate and automatic growth estimate. Choose overall health and describe the LGU actions taken. Save the visit after checking the figures. Growth estimates should be considered alongside field observations.'),
       step('/monitoring', '[data-guide-card="sites-to-monitor"]', 'Browse sites to monitor', 'Sites to Monitor displays five planting areas per page with boundary and point previews. Select an area for its details and larger map. The clock icon switches between details and monitoring history. Closing returns to the same list position. Counts and visit dates cover the site’s organization. A big-wave danger flag reflects recorded wave deaths; check actual field conditions.'),
-      step('/monitoring/map', '[data-guide-card="monitoring-map-review"]', 'Locate deaths and review replanting', 'Show map opens mapped dead plants and replanting controls. Select eligible dead locations, review them, and approve their release for replanting when appropriate. Release returns locations to Planned while keeping earlier planting, deaths and monitoring in history.'),
+      step('/monitoring/map', '[data-guide-card="monitoring-map-review"]', 'Locate deaths and review replanting', 'Show map opens mapped dead plants and replanting controls. Review eligible dead locations and approve LGU replanting. Approved locations enter the LGU queue and appear blue as Assigned. Original planting, death and monitoring records remain in history.'),
       step('/monitoring', '.org-monitoring-page-actions', 'Download the monitoring report', 'Use Download Monitoring Report to choose the report scope and review the report before downloading. Show map opens the spatial view again.'),
     ],
   },
@@ -136,10 +136,19 @@ export const STAFF_TOURS = [
     steps: [
       step('/monitoring/map', '#monitoring-map-organization', 'Choose the organization scope', 'Show organization filters the mapped points and site information. Choose All organizations for the full view. Changing organizations clears the current selection, so check the scope before selecting dead locations.'),
       step('/monitoring/map', '[data-guide-card="monitoring-map-review"]', 'Select dead locations', 'Show dead plants only hides other point statuses. Move / click selects one dead point; Brush select adds several and Brush erase removes them. Selected points turn purple. Press Escape to return to Move / click. Review up to 500 points in one batch.'),
-      step('/monitoring/map', '[data-guide-card="monitoring-map-review"]', 'Review and release for replanting', 'Review for replanting shows the selected locations and eligibility checks before approval. Approved locations return to Planned for a new assignment; earlier organization planting and death records stay in history. Return to Assign Points to allocate the released locations. New deaths must be recorded in a monitoring visit first.'),
+      step('/monitoring/map', '[data-guide-card="monitoring-map-review"]', 'Review and approve LGU replanting', 'Review for replanting shows the selected locations and eligibility checks. Approval places them in the LGU queue and shows them as blue Assigned points. Open Monitoring → LGU Replanting to record the actual replacements. Earlier organization planting and death records stay in history.'),
       step('/monitoring/map', '[data-guide-card="monitoring-map-overview"]', 'Read the monitoring overview', 'Overview summarizes visible mapped points and their status. Review organization monitoring records for the complete visit totals, including any deaths whose locations are unknown.'),
       step('/monitoring/map', '[data-guide-card="monitoring-map-legend"]', 'Read statuses and wave warnings', 'Legend explains dead, planted and selected points. Big-wave danger marks sites where at least 30% of historically planted locations have recorded big-wave deaths. This warning comes from recorded losses; use field observations and current conditions when planning work.'),
       step('/monitoring/map', '[data-guide-card="monitoring-map-layers"]', 'Control monitoring layers', 'Show or hide layers to compare points with imagery and sites. Shared forbidden, eroded and warning zones are hidden while viewing one organization; choose All organizations to show them. Return to Monitoring to record a visit or review its history.'),
+    ],
+  },
+  {
+    id: 'lgu-replanting', title: 'LGU replanting', path: '/monitoring/replanting',
+    description: 'Review deaths and record replacement seedlings planted by LGU staff.',
+    steps: [
+      step('/monitoring/replanting', '.lgu-replanting-kpis', 'Review replanting progress', 'Awaiting review counts dead seedlings awaiting approval. Ready for LGU replanting counts blue Assigned points in the LGU queue. Replacements planted counts actual planting confirmations. These figures cover all planting dates for the selected site.'),
+      step('/monitoring/replanting', '[data-guide-card="lgu-replanting"]', 'Approve eligible locations', 'Open Awaiting review, select eligible locations, and review them for LGU replanting. Approval reserves them for the LGU. Eroded and removed locations cannot be approved or planted.'),
+      step('/monitoring/replanting', '[data-guide-card="lgu-replanting"]', 'Record replacement planting', 'After LGU staff have planted the seedlings, select their locations in LGU queue and choose Record replacement planting. Confirm the site, actual planting date and species. Height, condition and notes are optional. Yellow marks the recorded replacement; original deaths remain in their batches.'),
     ],
   },
   {
@@ -221,6 +230,6 @@ export function toursForMode(mode) {
 // Establish the organization through Scheduling before preparing its first site.
 // Include every staff screen, including the directory and monitoring map.
 export function fullWorkflow(tours) {
-  const order = ['workspace', 'scheduling', 'organizations', 'zones', 'processing', 'map', 'planters', 'monitoring', 'monitoring-map', 'dashboard', 'activity', 'account'];
+  const order = ['workspace', 'scheduling', 'organizations', 'zones', 'processing', 'map', 'planters', 'monitoring', 'monitoring-map', 'lgu-replanting', 'dashboard', 'activity', 'account'];
   return order.flatMap((id) => tours.find((tour) => tour.id === id)?.steps || []);
 }

@@ -12,7 +12,7 @@ import './SeedlingLocations.css';
 const API = import.meta.env.VITE_API_BASE || '';
 const date = (value) => new Date(value).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' });
 const reference = (p) => p.reference || `${p.analysis_name} · Point ${p.point_num}`;
-const REPLACEMENT_COLORS = { awaiting_review: '#dc2626', approved: '#b45309', assigned: '#2563eb', completed: '#166534' };
+const REPLACEMENT_COLORS = { awaiting_review: '#7f1d1d', approved: '#2563eb', ready_lgu: '#2563eb', assigned: '#2563eb', completed: '#eab308' };
 
 function FieldSheet({ snapshot, onDone }) {
   useEffect(() => {

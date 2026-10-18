@@ -26,12 +26,15 @@ once. These counts cover all planting dates and remain independent of map
 filters, including the monitoring map's dead-only filter. They describe current
 locations rather than historical planting cohorts. **Assigned points** is a
 separate total of locations that still have an assignment, including completed,
-dead, skipped and unavailable assigned locations. **Awaiting planting** counts
+dead, skipped and unavailable assigned locations, plus pending and completed
+LGU replacement allocations. **Awaiting planting** counts
 only locations whose current map status is Assigned. The assignment total is
 not added as another donut segment, so each mapped location still counts once.
 
 Survival rate appears above the chart. It uses current
-Planted divided by Planted plus Recorded dead, matching Dashboard Seedling Health.
+Planted divided by Planted plus Recorded dead. It is labelled **current map**;
+Dashboard's planting-batch survival retains earlier deaths after replacement
+and can differ from this current-location snapshot.
 Available, Awaiting planting, Skipped and Unavailable locations do not enter that rate.
 Before any seedlings have been planted, it shows **Not available yet**.
 Until planting-point data has loaded successfully, the card shows site details

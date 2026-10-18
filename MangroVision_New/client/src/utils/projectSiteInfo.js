@@ -38,7 +38,8 @@ export function projectSitePointCounts(points, { scope = 'site' } = {}) {
     // Assignment ownership persists after completion or death. Keep this
     // overlapping total separate from the donut's exclusive current statuses.
     assignedTotal: rows.filter((point) => !point.deleted_at && !point.is_deleted && (
-      scope === 'participant' || point.assignment_id != null || point.assignment_point_id != null
+      scope === 'participant' || point.lgu_replanting_pending || point.replacement_of_event_id != null
+      || point.assignment_id != null || point.assignment_point_id != null
       || point.assigned_planter_id != null || point.assigned_planter_name
       || point.assignment_status != null || point.map_status === 'assigned'
     )).length,
@@ -173,7 +174,7 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     const seedlings = counts.planted + counts.dead;
     const survival = addText(card, 'div', 'project-site-info-survival', '');
     const metric = addText(survival, 'dl', '', '');
-    addText(metric, 'dt', '', 'Survival rate');
+    addText(metric, 'dt', '', 'Survival rate (current map)');
     addText(metric, 'dd', '', seedlings > 0
       ? `${number(counts.planted / seedlings * 100)}%` : 'Not available yet');
     if (seedlings > 0) {

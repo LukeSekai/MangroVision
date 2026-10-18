@@ -4,7 +4,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from mangrovision_db.monitoring_locations import monitoring_points, reconcile_locations, list_replanting, approve_replanting, approve_replanting_batch, assign_replanting
+from mangrovision_db.monitoring_locations import monitoring_points, reconcile_locations, list_replanting, approve_replanting, approve_replanting_batch
+from mangrovision_db.lgu_replanting import record_lgu_replanting
 
 from planting_database import (
     DEATH_REASON_CATEGORIES,
@@ -209,6 +210,15 @@ class ReplantingBatchReview(BaseModel):
     versions: dict[str, int]
 
 
+class LGUReplantingCreate(ReplantingBatchReview):
+    project_site_id: int = Field(gt=0)
+    planted_date: str
+    species: str
+    initial_height_cm: float | None = Field(default=None, ge=0, le=1000)
+    initial_condition: str | None = None
+    initial_notes: str | None = Field(default=None, max_length=1000)
+
+
 @router.get('/organizations/{organization_id}/planting-locations')
 def organization_planting_locations(organization_id: int, monitored_at: Optional[str] = None, record_id: Optional[int] = None):
     _require_lgu_user()
@@ -254,13 +264,20 @@ def review_replanting_batch(body: ReplantingBatchReview):
 
 @router.post('/replanting/assign')
 def create_replanting_assignment(body: ReplantingAssignment):
+    _require_lgu_user()
+    raise HTTPException(status_code=409,
+        detail='Approved replacements are handled by LGU staff. Open Monitoring > LGU Replanting to record planting.')
+
+
+@router.post('/replanting/lgu-plantings', status_code=201)
+def create_lgu_replacements(body: LGUReplantingCreate):
     user = _require_lgu_user()
-    from api.runtime_state import is_processing_active
-    if is_processing_active():
-        raise HTTPException(status_code=409, detail='Wait for image processing to finish before assigning.')
     try:
-        return assign_replanting(body.planting_event_ids, body.versions, body.organization_id,
-                                body.assignment_date, int(user['id']))
+        return record_lgu_replanting(body.planting_event_ids, body.versions,
+            project_site_id=body.project_site_id, planted_date=body.planted_date,
+            species=body.species, staff_user_id=int(user['id']),
+            initial_height_cm=body.initial_height_cm, initial_condition=body.initial_condition,
+            initial_notes=body.initial_notes)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 

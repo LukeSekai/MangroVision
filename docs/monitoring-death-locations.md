@@ -36,9 +36,10 @@ visits remain supported, with all reported deaths initially unlocated.
    dead points to select them, and choose **Approve selected**. Click a selected
    point again to deselect it. Approval is atomic: stale or ineligible points
    reject the entire batch. Each approved location is released
-   from its current assignment and returns to planned/unassigned status. The
+   from its organization allocation and reserved for the LGU replanting queue.
+   It appears blue as Assigned. The
    original organization's historical planted, dead, alive, and survival totals
-   remain unchanged. Use **Planters** for the next assignment; geographic site,
+   remain unchanged. Open **Monitoring → LGU Replanting** for the replacement; geographic site,
    deleted-point, erosion, and assignment restrictions still apply.
    For quicker selection, choose **Brush select** and sweep the pointer over
    dead points (drag on touch screens). **Brush deselect** removes points from
@@ -46,9 +47,11 @@ visits remain supported, with all reported deaths initially unlocated.
    leave the selected state unchanged, and fast sweeps include points between
    pointer positions. Press **Esc** or choose **Move map / click** to resume
    navigation. Approval remains a separate action after selecting the points.
-5. Use the normal assignment completion controls when replacement planting has
-   actually happened. Only completion creates a new planting event and planting
-   date. The old completion and mortality records remain in history.
+5. After LGU staff have planted replacements, open **LGU Replanting → LGU queue**,
+   select their locations and choose **Record replacement planting**. Confirm
+   the site, planting date and species; height, condition and notes are optional.
+   The location becomes yellow. A new staff-attributed planting event links to
+   the original seedling; old planting and mortality records stay in history.
 
 ## Data and API
 
@@ -72,8 +75,12 @@ Authenticated LGU endpoints:
 - `GET /api/monitoring/replanting`
 - `POST /api/monitoring/replanting/{event_id}/approve` with `expected_version`.
 - `POST /api/monitoring/replanting/approve` with `planting_event_ids` and their `versions`.
-- `POST /api/monitoring/replanting/assign` with event IDs, their `versions`, an
-  explicit `organization_id`, and `assignment_date`.
+- `POST /api/monitoring/replanting/lgu-plantings` with event IDs, their versions,
+  project site, planting date, species and optional initial observations.
+  The staff identity comes from the authenticated session.
+- The old organization `/replanting/assign` route returns a conflict message
+  directing staff to LGU Replanting. Earlier organization assignments remain
+  historical records.
 
 Visit history returns `reported_dead_count`, `located_dead_count`,
 `unlocated_dead_count`, `dead_planting_event_ids`, `location_version`, and

@@ -17,6 +17,7 @@ function availablePoint(point, siteId) {
   return Number(point.source_project_site_id) === Number(siteId)
     && point.planting_status === 'planned'
     && point.assigned_planter_id == null
+    && !point.lgu_replanting_pending
     && !point.deleted_at && !point.death_at
     && !point.eroded_unavailable && !point.inside_eroded_zone;
 }

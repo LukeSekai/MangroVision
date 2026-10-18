@@ -555,7 +555,8 @@ export default function MapView() {
     const currentReplantingSelection = new Set(useMapStore.getState().replantingSelectedPointIds);
     displayPoints.forEach((p) => {
       const status = getPointDisplayStatus(p);
-      const statusLabel = formatStatusLabel(status);
+      const statusLabel = p.lgu_replanting_pending && status === 'assigned'
+        ? 'Assigned — LGU replanting' : formatStatusLabel(status);
       const pointId = Number(p.id);
       const isAssignmentSelected = isPlanterMode && assignmentSelectedIds.has(pointId);
       const isReplantingSelected = isMonitoringMapMode && currentReplantingSelection.has(p.id);
@@ -618,7 +619,7 @@ export default function MapView() {
 
       const pointTitle = escapeHtml(p.point_num);
       const imageName = escapeHtml(p.image_name || '');
-      const planterName = escapeHtml(p.planted_by_user_id
+      const planterName = escapeHtml(p.lgu_replanting_pending ? 'LGU replanting queue' : p.planted_by_user_id
         ? `LGU${p.planted_by_name ? ` (${p.planted_by_name})` : ''}`
         : p.assigned_planter_name || '');
       const safeStatusLabel = escapeHtml(statusLabel);

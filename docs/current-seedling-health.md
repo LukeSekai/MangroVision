@@ -35,25 +35,30 @@ replacement batch begins at 100% until further outcomes are recorded.
 
 Replanting progress covers all planting dates for the selected dimensions:
 
-- **Awaiting replanting:** recorded dead seedlings at retained locations that
-  have no actual replacement planting yet. Pending review, approved, and
-  assigned work remain pending. Eroded locations are identified as unavailable;
-  counting them does not grant planting eligibility.
-- **Replacement plantings completed:** dead seedlings followed by a recorded
+- **Awaiting review:** recorded dead seedlings at retained locations awaiting
+  approval. They remain dark red on the map.
+- **Ready for LGU replanting:** approved, eligible locations reserved for the
+  LGU team. They appear blue and count as Assigned on the map. Eroded locations
+  appear Unavailable and cannot be recorded as replanted while erosion applies.
+- **Replacements planted:** dead seedlings followed by a recorded
   replacement cycle. A replacement that later dies still counts as completed
   work for its predecessor and separately creates pending work for itself.
 
 **Current mapped seedlings** continues to count each current planted or dead
 physical location once across all planting dates, matching Planting Map.
-Approval returns a location to Planned and removes it from current seedling
-totals. Its earlier planting and death remain in planting performance.
+Approval reserves a location for LGU work. Its stored physical value is Planned,
+while its current map classification is Assigned. It leaves current seedling
+totals; its earlier planting and death remain in planting performance.
 Current map counts and historical planting totals can therefore differ.
 
 The API keeps its current-map `summary` and comparisons for compatibility and
 adds `planting_performance` for batch results and replanting progress. These
 are assembled by `mangrovision_db/health_summary.py` and
 `mangrovision_db/planting_performance.py` through `get_dashboard_ecology`.
-The existing approval, assignment, and planting workflow is unchanged.
+Staff handle replacements in **Monitoring → LGU Replanting** using their
+existing login. The queue uses existing approval records, so no new account or
+schema migration is needed. Actual planting creates a staff-attributed event
+linked to the original seedling. See [LGU replanting](lgu-replanting.md).
 
 ## Monthly death history
 

@@ -91,12 +91,16 @@ End the guide before using the highlighted controls to perform the task.
    optionally, Show dead plants only. Select dead locations using Move / click,
    Brush select or Brush erase; selected points turn purple. Escape returns to
    Move / click. Review up to 500 points per batch and check eligibility before
-   approval. Approved releases return locations to Planned for assignment;
+   approval. Approved locations enter the LGU queue and appear blue as Assigned;
    earlier planting and death records remain in history. Changing the organization
    clears the selection. Shared risk-zone layers are hidden in a single-organization
    view. Big-wave danger marks sites where at least 30% of historically planted
    locations have recorded big-wave deaths; it describes recorded losses, so check
    present conditions before planning work.
+   Open **Monitoring → LGU Replanting** to review pending deaths, filter by
+   project site, and record replacements after LGU staff have planted them.
+   Confirm the planting date, site and species. Each confirmed replacement
+   becomes yellow and has a new staff-attributed record linked to its original.
 10. **Dashboard — interpret progress and download reports.** Set From, To and
     Project site, then use Overview, Planting Work, Seedling Health or Project
     Sites. Read the scope on each chart: period-based activity/history and current
@@ -106,7 +110,10 @@ End the guide before using the highlighted controls to perform the task.
     or responsible organization's Monitoring view. Seedling Health selects
     planting batches by planting date and retains original deaths after
     replanting approval or replacement. Review batch survival, current map
-    counts, and pending/completed replanting separately. Its monthly
+    counts, and replanting progress separately. Awaiting review, Ready for LGU
+    replanting, and Replacements planted cover all planting dates for the site.
+    Ready locations also count as Assigned on the map; these totals overlap.
+    Its monthly
     deaths chart shows new deaths recorded in each Philippine calendar month
     within the selected dates, with a matching data table. Select the year in Planting
     goals to review targets. Download Report and Download Monitoring Report open

@@ -7,7 +7,7 @@ export function getMapPointStatus(point) {
   if (point.assignment_status === 'skipped' || plantingStatus === 'skipped') return 'skipped';
   if (point.assignment_status === 'completed' || plantingStatus === 'planted') return 'planted';
   if (point.eroded_unavailable || point.inside_eroded_zone) return 'unavailable';
-  if (point.assignment_status === 'pending' || point.assignment_id != null
+  if (point.lgu_replanting_pending || point.assignment_status === 'pending' || point.assignment_id != null
     || point.assigned_planter_id != null || point.assigned_planter_name) return 'assigned';
   return 'planned';
 }

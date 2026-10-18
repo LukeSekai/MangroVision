@@ -140,12 +140,13 @@ function performanceRow(row = {}) {
 }
 
 const REPLANTING_LABELS = {
-  awaiting_review: 'Awaiting LGU review', approved: 'Replanting approved; awaiting assignment',
+  awaiting_review: 'Awaiting LGU review', approved: 'Ready for LGU replanting', ready_lgu: 'Assigned — LGU replanting',
   assigned: 'Assigned for replanting', completed: 'Replacement seedling planted',
 };
 
 const HEALTH_LABELS = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor', critical: 'Critical' };
 const responsibleGroup = (row) => {
+  if (row.owner_type === 'lgu') return row.organization_name || 'LGU replanting';
   if (row.organization_id !== null) return row.organization_name;
   const site = row.site_name || row.organization_name;
   return site && site !== 'No organization assigned' ? `No organization assigned (${site})` : 'No organization assigned';
@@ -194,8 +195,9 @@ export function buildRestorationReport(type, data, filters) {
       stat('Without recorded death', summary.planted, 'count', 'Includes seedlings awaiting inspection'),
       stat('Recorded deaths', summary.dead, 'count', 'Retained after replanting approval or replacement'),
       stat('Recorded survival', summary.survival_rate_pct, 'percent', 'Recorded outcomes of the selected planting batches'),
-      stat('Awaiting replanting', replanting.awaiting_replanting, 'count', 'Across all planting dates; no replacement planted yet'),
-      stat('Replacement plantings completed', replanting.replacements_completed, 'count', 'Across all planting dates; actual replacements planted'),
+      stat('Awaiting review', replanting.awaiting_review, 'count', 'Across all planting dates; recorded deaths awaiting LGU approval'),
+      stat('Ready for LGU replanting', replanting.ready_lgu, 'count', 'Across all planting dates; also counted as Assigned on the map'),
+      stat('Replacements planted', replanting.replacements_completed, 'count', 'Across all planting dates; actual replacements planted'),
     ];
     report.sections = [{
       title: 'Planting performance', columns: healthColumns, rows: [summary],
@@ -232,8 +234,8 @@ export function buildRestorationReport(type, data, filters) {
       'Planting performance selects seedlings by planting date and uses their recorded outcomes as of the report generation date. Each original or replacement seedling is counted once. Original and replacement batches have separate results.',
       'Recorded survival is seedlings without a recorded death divided by seedlings planted. This includes seedlings awaiting inspection and does not mean every survivor has been verified. N/A means no plantings or missing earlier outcomes.',
       'Replanting approval and assignment do not remove the original death or count as a new planting. A recorded replacement planting starts a new seedling record at the same location. Earlier deaths remain in their original batches.',
-      'Current mapped seedlings cover all planting dates. Each currently planted or dead mapped location counts once. Locations approved for replanting return to Planned and leave current map totals while their deaths remain in planting performance.',
-      'Replanting progress covers all planting dates for the selected site, including pending review, approval and assignment. Removed locations are excluded from pending work. Eroded locations may require site review before planting.',
+      'Current mapped seedlings cover all planting dates. Each currently planted or dead mapped location counts once. Locations ready for LGU replanting appear as Assigned and leave current seedling totals while their deaths remain in planting performance.',
+      'Replanting progress covers all planting dates for the selected site. Ready for LGU replanting is a subset of Assigned map locations; do not add these counts together. Removed locations are excluded from pending work. Eroded locations require site review before planting.',
       'Monthly death history uses death reporting dates within the selected dates. It can differ from deaths in planting performance, which selects batches by planting date. Deaths without identified planting records are excluded from batch survival.',
     ];
     if (growth.length) report.notes.push('Height figures use recorded measurements of alive seedlings, grouped by inspection month. They are measured heights, not growth forecasts; repeated observations may include the same seedling.');

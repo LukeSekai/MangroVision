@@ -137,7 +137,9 @@ function buildOrganizationWorkload(data) {
     });
 
     const organizationRows = [...grouped.values()].filter((row) => row.total > 0);
-    if (organizationRows.length) return organizationRows;
+    if (organizationRows.length) return [...organizationRows,
+      ...arrayOf(data?.workload).filter((row) => row.owner_type === 'lgu')
+        .map((row) => ({ ...row, organization_label: row.organization_name }))];
   }
 
   return arrayOf(data?.workload).map((row) => {
@@ -531,7 +533,7 @@ function OverviewTab({ data }) {
       <div className="dash-grid">
         <ChartCard
           title="Current status of planting locations"
-          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Planting Map. A location released for replanting returns to Planned; its recorded deaths stay in monitoring history."
+          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Planting Map. Locations ready for LGU replanting count as Assigned; their original deaths stay in history."
           data={lifecycle}
           chartLabel="Cards showing the current status of all planting points"
           columns={[
@@ -670,8 +672,8 @@ function OperationsTab({ data }) {
     <div className="dash-tab-panel">
       <div className="dash-grid">
         <ChartCard
-          title="Planting work by organization"
-          subtitle="Assigned planting points grouped by the responsible organization."
+          title="Planting work by organization and LGU"
+          subtitle="Planting work grouped by the responsible organization, with LGU replacement work shown separately."
           className="dash-card-full"
           data={workload}
           chartLabel="Stacked horizontal bars showing planting work by organization"
@@ -843,12 +845,13 @@ function EcologyTab({ data }) {
       {summary.unknown > 0 ? <p className="dash-method-note">{formatCount(summary.unknown)} earlier planting outcomes are missing. Survival is unavailable for affected groups until those records are complete.</p> : null}
 
       <div className="dash-method-note">
-        <strong>Replanting progress.</strong> Covers recorded deaths across all planting dates for the selected site. Approval and assignment stay pending until a replacement planting is recorded.
+        <strong>Replanting progress.</strong> Covers recorded deaths across all planting dates for the selected site. Ready locations are assigned to the LGU and also count as Assigned on the map. <Link to="/monitoring/replanting">Open LGU Replanting →</Link>
         {replanting.unavailable > 0 ? ` ${formatCount(replanting.unavailable)} pending locations are currently unavailable because of erosion.` : ''}
       </div>
       <KpiStrip className="dash-replanting-kpis">
-        <KpiCard label="Awaiting replanting" value={formatCount(replanting.awaiting_replanting)} hint="Recorded dead seedlings with no replacement planted yet" tone="amber" />
-        <KpiCard label="Replacement plantings completed" value={formatCount(replanting.replacements_completed)} hint="Actual replacements planted; earlier deaths remain in history" tone="emerald" />
+        <KpiCard label="Awaiting review" value={formatCount(replanting.awaiting_review)} hint="Recorded deaths awaiting LGU approval" tone="amber" />
+        <KpiCard label="Ready for LGU replanting" value={formatCount(replanting.ready_lgu)} hint="Blue assigned points awaiting actual LGU planting" tone="blue" />
+        <KpiCard label="Replacements planted" value={formatCount(replanting.replacements_completed)} hint="Actual replacements planted; earlier deaths remain in history" tone="emerald" />
       </KpiStrip>
 
       <div className="dash-grid">
@@ -866,7 +869,7 @@ function EcologyTab({ data }) {
 
         <ChartCard
           title="Current mapped seedlings"
-          subtitle="Current planted and dead locations across all planting dates, matching the map. Locations approved for replanting return to Planned; their deaths stay in planting performance above."
+          subtitle="Current planted and dead locations across all planting dates, matching the map. Locations ready for LGU replanting appear as Assigned; their original deaths stay in planting performance above."
           data={healthRows.some((row) => row.value > 0) ? healthRows : []}
           tableData={healthRows}
           chartLabel="Counts of current planted and dead seedlings"

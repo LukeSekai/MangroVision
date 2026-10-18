@@ -66,7 +66,7 @@ export default function MonitoringMapWorkspace() {
   function handleApproval(count) {
     setReviewing(false);
     clearSelection();
-    setNotice(`${count} location${count === 1 ? ' is' : 's are'} available for new planting assignments. The original monitoring history remains unchanged.`);
+    setNotice(`${count} location${count === 1 ? ' is' : 's are'} assigned to the LGU replanting queue. Blue locations await LGU planting. Original deaths remain in history.`);
     void fetchPoints({ force: true });
     void fetchStats({ force: true });
     void fetchZones({ force: true });
@@ -74,6 +74,7 @@ export default function MonitoringMapWorkspace() {
 
   return <div className="monitoring-map-workspace">
     <Link className="monitoring-map-back" to="/monitoring">← Monitoring</Link>
+    <Link className="monitoring-map-back" to="/monitoring/replanting">LGU Replanting →</Link>
     <Panel title="Monitoring map" subtitle={`${deadPoints.length} dead plants · ${visiblePoints.length} mapped points`}>
       <div className="monitoring-map-organization">
         <label htmlFor="monitoring-map-organization">Show organization</label>

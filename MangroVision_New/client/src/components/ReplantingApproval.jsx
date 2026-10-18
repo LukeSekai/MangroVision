@@ -53,7 +53,7 @@ export default function ReplantingApproval({ points, onClose, onApproved }) {
 
   return <Modal open title={`Approve ${points.length} dead plant${points.length === 1 ? '' : 's'} for replanting`} variant="info" busy={busy}
     cancelLabel="Close" onCancel={onClose}>
-    <p>Release the selected locations from their current organizations for new planting assignments.</p>
+    <p>Assign the selected locations to the LGU replanting queue. They will appear blue while awaiting replacement planting by LGU staff.</p>
     <p>Each original organization keeps its recorded deaths, alive count, and survival statistics.</p>
     {loading ? <p role="status">Loading death record…</p> : null}
     {error ? <p className="analytics-error" role="alert">{error}</p> : null}

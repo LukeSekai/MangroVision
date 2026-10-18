@@ -74,6 +74,7 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
 
     current_points = {int(point['id']): point for point in points}
     progress = {'awaiting_replanting': 0, 'replacements_completed': 0,
+                'ready_lgu': 0,
                 'awaiting_review': 0, 'approved': 0, 'assigned': 0,
                 'unavailable': 0, 'scope': 'all_planting_dates'}
     total = _counts()
@@ -94,6 +95,8 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
                 approved_at = _date(event.get('replanting_approved_at'))
                 status = ('assigned' if event.get('replanting_assignment_id') is not None else 'approved') if approved_at and approved_at <= as_of else 'awaiting_review'
                 progress[status] += 1
+                if status == 'approved' and not (point.get('eroded_unavailable') or point.get('inside_eroded_zone')):
+                    progress['ready_lgu'] += 1
                 if point.get('eroded_unavailable') or point.get('inside_eroded_zone'):
                     progress['unavailable'] += 1
 

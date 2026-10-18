@@ -213,7 +213,7 @@ test('Seedling Health separates planting performance and replanting progress fro
     summary: { total: 860, planted: 860, dead: 0, survival_rate_pct: 100 },
     planting_performance: {
       summary: { total: 1145, planted: 860, dead: 285, unknown: 0, survival_rate_pct: 75.11 },
-      replanting: { awaiting_replanting: 20, replacements_completed: 15 },
+      replanting: { awaiting_replanting: 20, awaiting_review: 12, ready_lgu: 8, replacements_completed: 15 },
       batches: [
         { planted_date: '2026-05-16', organization_name: 'Coastal guardians', site_name: 'Coastal site', species: 'Bungalon', planting_type: 'original', total: 100, planted: 80, dead: 20, unknown: 0, survival_rate_pct: 80 },
         { planted_date: '2026-08-01', organization_name: 'Coastal guardians', site_name: 'Coastal site', species: 'Bungalon', planting_type: 'replacement', total: 20, planted: 20, dead: 0, unknown: 0, survival_rate_pct: 100 },
@@ -225,9 +225,10 @@ test('Seedling Health separates planting performance and replanting progress fro
   assert.match(html, /Current mapped seedlings/);
   assert.match(html, /all planting dates/);
   for (const value of ['1,145', '860', '285']) assert.match(html, new RegExp(value));
-  assert.equal((html.match(/class="dash-kpi dash-kpi-/g) || []).length, 6);
+  assert.equal((html.match(/class="dash-kpi dash-kpi-/g) || []).length, 7);
   assert.match(html, /75.1%/);
-  for (const label of ['Seedlings planted', 'Without recorded death', 'Recorded deaths', 'Recorded survival', 'Awaiting replanting', 'Replacement plantings completed']) assert.match(html, new RegExp(label));
+  for (const label of ['Seedlings planted', 'Without recorded death', 'Recorded deaths', 'Recorded survival', 'Awaiting review', 'Ready for LGU replanting', 'Replacements planted']) assert.match(html, new RegExp(label));
+  assert.match(html, /href="\/monitoring\/replanting"/);
   const dom = new JSDOM(html);
   const batchTable = [...dom.window.document.querySelectorAll('table')].find((table) => table.caption?.textContent === 'Survival by planting batch');
   const rows = [...batchTable.querySelectorAll('tbody tr')].map((row) => row.textContent);

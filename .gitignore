@@ -53,6 +53,8 @@ htmlcov/
 !/tests/test_site_wave_risk.py
 !/tests/test_mortality_postgres.py
 !/tests/test_planting_performance.py
+!/tests/test_lgu_replanting_postgres.py
+!/tests/test_lgu_replanting_api.py
 !/tests/test_map_tile_cache.py
 !/tests/test_organization_reset_postgres.py
 !/tests/test_like_appointments.py
@@ -83,6 +85,7 @@ htmlcov/
 !MangroVision_New/client/src/utils/projectSiteInfo.test.js
 !MangroVision_New/client/src/utils/siteMapPreview.test.js
 !MangroVision_New/client/src/pages/Dashboard.test.js
+!MangroVision_New/client/src/pages/LGUReplanting.test.js
 !MangroVision_New/client/src/pages/Organizations.test.js
 !MangroVision_New/client/src/guides/tours.test.js
 !MangroVision_New/client/src/guides/tourRuntime.test.js

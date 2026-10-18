@@ -103,7 +103,7 @@ test('assigned totals retain completed and dead allocations without counting dir
   const { text } = card({ properties: {} }, { counts });
   assert.match(text, /Assigned points3/);
   assert.match(text, /Awaiting planting1/);
-  assert.match(text, /Survival rate66\.67%/);
+  assert.match(text, /Survival rate \(current map\)66\.67%/);
 });
 
 test('unavailable site locations remain separate from assigned seedlings and the survival denominator', () => {
@@ -111,7 +111,7 @@ test('unavailable site locations remain separate from assigned seedlings and the
     skipped: 0, unavailable: 7, assignedTotal: 249 };
   const { text } = card({ properties: { name: 'Jaro Mangrove Protectors' } }, { counts });
   assert.match(text, /Assigned points249/);
-  assert.match(text, /Survival rate50\.6%/);
+  assert.match(text, /Survival rate \(current map\)50\.6%/);
   assert.match(text, /249 seedlings/);
   assert.match(text, /256Mapped points/);
   assert.match(text, /Unavailable7/);
@@ -129,16 +129,16 @@ test('site survival uses current planted and dead seedlings rather than all mapp
   const { text } = card({ properties: {} }, { counts: {
     mapped: 300, planned: 50, assigned: 20, planted: 89, dead: 129, skipped: 2, unavailable: 10,
   } });
-  assert.match(text, /Survival rate40\.83%/);
+  assert.match(text, /Survival rate \(current map\)40\.83%/);
   assert.match(text, /89 planted.*129 recorded dead/);
   assert.doesNotMatch(text, /29\.67%/);
 });
 
 test('survival is unavailable before planting and zero when every planted seedling has died', () => {
-  assert.match(card({ properties: {} }, { counts: emptyProjectSiteCounts() }).text, /Survival rateNot available yet/);
+  assert.match(card({ properties: {} }, { counts: emptyProjectSiteCounts() }).text, /Survival rate \(current map\)Not available yet/);
   const counts = { ...emptyProjectSiteCounts(), mapped: 10, dead: 10 };
-  assert.match(card({ properties: {} }, { counts }).text, /Survival rate0%/);
-  assert.match(card({ properties: {} }, { counts: { ...counts, planted: 8, dead: 2 }, scope: 'participant' }).text, /Survival rate80%/);
+  assert.match(card({ properties: {} }, { counts }).text, /Survival rate \(current map\)0%/);
+  assert.match(card({ properties: {} }, { counts: { ...counts, planted: 8, dead: 2 }, scope: 'participant' }).text, /Survival rate \(current map\)80%/);
 });
 
 test('big-wave site warnings show their historical site denominator even on participant maps', () => {
