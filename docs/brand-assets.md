@@ -13,9 +13,6 @@ The approved artwork comes from the user's `LogoSystem.zip`, supplied on
 - The three `WithBG` variants remain available in the same folder. Social
   previews use `LogoPrimaryWithBGAndName.png` for a solid background.
 
-Browser tabs always use the primary green monogram, including when the browser
-uses a dark theme. Both the workspace and public website use this same icon.
-
 The shared `client/src/components/Logo.jsx` selects primary or secondary artwork
 through `tone`. Icons fit a square without stretching; lockups retain their
 original proportions. The public LIKE header/footer keep the ecopark's name
