@@ -89,7 +89,7 @@ class ReportPdfRequest(ReportModel):
 
 
 ASSETS = Path(__file__).resolve().parent / "assets"
-LOGO = Path(__file__).resolve().parents[1] / "client" / "public" / "logo-icon.png"
+LOGO = Path(__file__).resolve().parents[1] / "client" / "public" / "brand" / "LogoPrimary.png"
 FONT_LOCK = Lock()
 GREEN = colors.HexColor("#14532d")
 INK = colors.HexColor("#172a20")

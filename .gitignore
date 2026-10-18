@@ -170,6 +170,7 @@ TestImages/
 # Keep the UI's shipped brand and login imagery visible to Git.
 !MangroVision_New/client/public/*.jpg
 !MangroVision_New/client/public/*.png
+!MangroVision_New/client/public/brand/*.png
 # Keep the public LIKE website's approved photos with the feature.
 !MangroVision_New/client/public/like/*.jpg
 !README_assets/*.png

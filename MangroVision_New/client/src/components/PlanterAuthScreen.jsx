@@ -104,7 +104,7 @@ export default function PlanterAuthScreen() {
   </form>;
 
   if (activity) return <div className="field-shell field-onboarding-shell">
-    <header className="field-header"><div className="field-header-brand"><Logo variant="lockup" size={36} alt="MangroVision" /><span className="field-header-brand-name">Field</span></div></header>
+    <header className="field-header"><div className="field-header-brand"><Logo variant="lockup" tone="secondary" size={52} alt="MangroVision" /><span className="field-header-brand-name">Field</span></div></header>
     <main className="field-onboarding-main">
       <section className="field-auth-card field-onboarding-card" aria-labelledby="field-username-heading">
         <p className="field-onboarding-eyebrow">Welcome to MangroVision Field</p>
@@ -119,7 +119,7 @@ export default function PlanterAuthScreen() {
 
   return <div className="field-auth-screen"><div className="field-auth-card">
     {SIGN_IN_GUIDES_ENABLED && <div className="login-guide"><GuideButton mode="field-login" /></div>}
-    <div className="field-auth-brand"><Logo variant="lockup" size={44} alt="MangroVision" /><span className="field-auth-brand-suffix">Field</span></div>
+    <div className="field-auth-brand"><Logo variant="lockup" size={68} alt="MangroVision" /><span className="field-auth-brand-suffix">Field</span></div>
     <h1 className="field-auth-subtitle">Planter sign in</h1>
     <div className="field-auth-mode" role="group" aria-label="Joining or returning">
       <button type="button" aria-pressed={mode === 'first'} onClick={() => chooseMode('first')} disabled={submitting}>First time</button>

@@ -1021,7 +1021,7 @@ export default function FieldApp() {
     <div className="field-shell">
       <header className="field-header">
         <div className="field-header-brand">
-          <Logo variant="icon" size={30} alt="MangroVision" />
+          <Logo variant="icon" tone="secondary" size={30} alt="MangroVision" />
           <span className="field-header-brand-name">MangroVision</span>
         </div>
         <div className="field-header-actions" ref={avatarMenuRef}>
