@@ -177,9 +177,6 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     addText(metric, 'dd', '', seedlings > 0
       ? `${number(counts.planted / seedlings * 100)}%` : 'Not available yet');
     if (seedlings > 0) {
-      const mortality = addText(survival, 'dl', 'project-site-info-mortality', '');
-      addText(mortality, 'dt', '', 'Mortality rate');
-      addText(mortality, 'dd', '', `${number(counts.dead / seedlings * 100)}%`);
       addText(survival, 'p', '', `${number(seedlings)} seedlings · ${number(counts.planted)} planted · ${number(counts.dead)} recorded dead`);
     }
     const statuses = scope === 'participant'

@@ -4,7 +4,7 @@ const TIMEZONE = 'Asia/Manila';
 
 export const REPORT_TYPES = [
   { id: 'planting', title: 'Planting accomplishment', description: 'Seedlings planted during the reporting period, including replacement seedlings.' },
-  { id: 'monitoring', title: 'Survival and monitoring', description: 'Current seedling health, monitoring visits and recorded height measurements.' },
+  { id: 'monitoring', title: 'Survival and monitoring', description: 'Planting-batch survival, replanting progress, monitoring visits and recorded measurements.' },
   { id: 'mortality', title: 'Mortality and replanting', description: 'Reported seedling deaths and replanting progress at identified locations.' },
   { id: 'organizations', title: 'Organization activity', description: 'Planted and skipped points, with current assigned work.' },
 ];
@@ -130,6 +130,15 @@ function currentSeedlingRow(row = {}) {
   return { ...row, planted, dead, total, survival_rate_pct };
 }
 
+function performanceRow(row = {}) {
+  const planted = reportNumber(row.planted) ?? 0;
+  const dead = reportNumber(row.dead) ?? 0;
+  const unknown = reportNumber(row.unknown) ?? 0;
+  const total = planted + dead + unknown;
+  const survival_rate_pct = total > 0 && unknown === 0 ? Math.round(planted / total * 10000) / 100 : null;
+  return { ...row, planted, dead, unknown, total, survival_rate_pct };
+}
+
 const REPLANTING_LABELS = {
   awaiting_review: 'Awaiting LGU review', approved: 'Replanting approved; awaiting assignment',
   assigned: 'Assigned for replanting', completed: 'Replacement seedling planted',
@@ -170,29 +179,49 @@ export function buildRestorationReport(type, data, filters) {
   }
 
   if (type === 'monitoring') {
-    const summary = currentSeedlingRow(source.summary);
+    const performance = source.planting_performance;
+    if (!performance?.summary) throw new Error('Planting performance data is incomplete. Refresh and try again.');
+    const summary = performanceRow(performance.summary);
+    const replanting = performance.replanting || {};
     const healthColumns = [
-      column('total', 'Total seedlings', 'count'),
-      column('planted', 'Planted', 'count'), column('dead', 'Dead', 'count'),
-      column('survival_rate_pct', 'Survival rate', 'percent'),
+      column('total', 'Seedlings planted', 'count'),
+      column('planted', 'Without recorded death', 'count'), column('dead', 'Recorded deaths', 'count'),
+      column('unknown', 'Outcome not recorded', 'count'),
+      column('survival_rate_pct', 'Recorded survival', 'percent'),
     ];
     report.stats = [
-      stat('Total seedlings', summary.total, 'count', 'Planted and dead locations combined'),
-      stat('Planted', summary.planted, 'count', 'Current planted locations, matching the Planting Map'),
-      stat('Dead', summary.dead, 'count', 'Current dead locations, matching the Planting Map'),
-      stat('Survival rate', summary.survival_rate_pct, 'percent', 'Planted divided by total seedlings, using current map status'),
+      stat('Seedlings planted', summary.total, 'count', 'Plantings during the selected dates, including replacements'),
+      stat('Without recorded death', summary.planted, 'count', 'Includes seedlings awaiting inspection'),
+      stat('Recorded deaths', summary.dead, 'count', 'Retained after replanting approval or replacement'),
+      stat('Recorded survival', summary.survival_rate_pct, 'percent', 'Recorded outcomes of the selected planting batches'),
+      stat('Awaiting replanting', replanting.awaiting_replanting, 'count', 'Across all planting dates; no replacement planted yet'),
+      stat('Replacement plantings completed', replanting.replacements_completed, 'count', 'Across all planting dates; actual replacements planted'),
     ];
     report.sections = [{
-      title: 'Overall seedling totals', columns: healthColumns, rows: [summary],
+      title: 'Planting performance', columns: healthColumns, rows: [summary],
     }, {
-      title: 'Overall seedling totals by project site',
+      title: 'Planting performance by project site',
       columns: [column('site_name', 'Project site'), ...healthColumns],
-      rows: rowsOf(source.site_outcomes).map(currentSeedlingRow),
+      rows: rowsOf(performance.site_outcomes).map(performanceRow),
     }, {
-      title: 'Overall seedling totals by species',
+      title: 'Planting performance by species',
       columns: [column('species_name', 'Species'), ...healthColumns],
-      rows: rowsOf(source.species_outcomes).map(currentSeedlingRow),
+      rows: rowsOf(performance.species_outcomes).map(performanceRow),
+    }, {
+      title: 'Survival by planting batch',
+      columns: [column('planted_date', 'Planting date', 'date'), column('organization_name', 'Organization'),
+        column('site_name', 'Project site'), column('species', 'Species'), column('planting_label', 'Planting'), ...healthColumns],
+      rows: rowsOf(performance.batches).map((row) => ({ ...performanceRow(row), planting_label: row.planting_type === 'replacement' ? 'Replacement' : 'Original' })),
+    }, {
+      title: 'Current mapped seedlings',
+      columns: [column('total', 'Current seedlings', 'count'), column('planted', 'Planted', 'count'), column('dead', 'Dead', 'count')],
+      rows: [currentSeedlingRow(source.summary)],
     }];
+    if (rowsOf(source.monthly_deaths).length) report.sections.push({
+      title: 'Seedling deaths by month',
+      columns: [column('period_start', 'Month', 'month'), column('deaths', 'Seedlings recorded dead', 'count')],
+      rows: source.monthly_deaths,
+    });
     const growth = rowsOf(source.growth).filter((row) => reportNumber(row.average_height_cm) !== null && reportNumber(row.sample_size) > 0);
     if (growth.length) report.sections.push({
       title: 'Recorded height measurements',
@@ -200,10 +229,12 @@ export function buildRestorationReport(type, data, filters) {
       rows: growth,
     });
     report.notes = [
-      'Overall totals cover all planting dates for the selected project site. Each currently planted or dead mapped location counts once. Date filters apply to visit and measurement history.',
-      'Total seedlings = Planted + Dead. Both groups use the current Planting Map status. Planted includes uninspected locations. Dead includes located deaths from individual records and organization visits, counted once.',
-      'Overall survival rate = Planted divided by Total seedlings, multiplied by 100. It uses current map status across all planting dates. N/A means no current seedlings are recorded.',
-      'Locations released for replanting return to Planned and leave the current seedling totals. Earlier deaths and inspections remain in history and are not added to the replacement seedling.',
+      'Planting performance selects seedlings by planting date and uses their recorded outcomes as of the report generation date. Each original or replacement seedling is counted once. Original and replacement batches have separate results.',
+      'Recorded survival is seedlings without a recorded death divided by seedlings planted. This includes seedlings awaiting inspection and does not mean every survivor has been verified. N/A means no plantings or missing earlier outcomes.',
+      'Replanting approval and assignment do not remove the original death or count as a new planting. A recorded replacement planting starts a new seedling record at the same location. Earlier deaths remain in their original batches.',
+      'Current mapped seedlings cover all planting dates. Each currently planted or dead mapped location counts once. Locations approved for replanting return to Planned and leave current map totals while their deaths remain in planting performance.',
+      'Replanting progress covers all planting dates for the selected site, including pending review, approval and assignment. Removed locations are excluded from pending work. Eroded locations may require site review before planting.',
+      'Monthly death history uses death reporting dates within the selected dates. It can differ from deaths in planting performance, which selects batches by planting date. Deaths without identified planting records are excluded from batch survival.',
     ];
     if (growth.length) report.notes.push('Height figures use recorded measurements of alive seedlings, grouped by inspection month. They are measured heights, not growth forecasts; repeated observations may include the same seedling.');
     if (!filters.siteId && data.organizationVisits) {

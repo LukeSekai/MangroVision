@@ -27,22 +27,28 @@ after(async () => { await server?.close(); });
 const filters = { dateFrom: '2026-07-01', dateTo: '2026-09-30', siteId: '4' };
 const envelope = { period: { from: filters.dateFrom, to: filters.dateTo },
   filter_options: { sites: [{ id: 4, name: 'Nasugban' }] },
+  planting_performance: { summary: { total: 0, planted: 0, dead: 0, unknown: 0 }, replanting: { awaiting_replanting: 0, replacements_completed: 0 } },
 };
 const metadata = { generatedAt: '4 Oct 2026, 10:00 am', preparedBy: 'LGU Staff', remarks: '' };
 const render = (report, meta = metadata) => renderToStaticMarkup(createElement(ReportDocument, { report, metadata: meta }));
 
-test('report document identifies the site, dates, preparer and observation denominator', () => {
+test('report document identifies the site, dates, preparer and planting-batch denominator', () => {
   const report = buildRestorationReport('monitoring', { ecology: { ...envelope,
-    summary: { interval_days: 14 }, survival_cohorts: [{ interval_days: 14, alive: 8, dead: 2, missing: 1, due: 20, inspected: 11 }],
+    summary: { total: 8, planted: 8, dead: 0 },
+    planting_performance: { summary: { total: 10, planted: 8, dead: 2, unknown: 0 },
+      replanting: { awaiting_replanting: 2, replacements_completed: 0 },
+      batches: [{ planted_date: '2026-07-01', organization_name: 'Coastal guardians', site_name: 'Nasugban', species: 'Bungalon', planting_type: 'original', total: 10, planted: 8, dead: 2, unknown: 0 }] },
   } }, filters);
   const html = render(report);
   assert.match(html, /Nasugban/);
   assert.match(html, /(?:1 Jul 2026|Jul 1, 2026)/);
   assert.match(html, /(?:30 Sept? 2026|Sept? 30, 2026)/);
   assert.match(html, /LGU Staff/);
-  assert.match(html, /10 alive or dead seedlings/);
+  assert.match(html, /Seedlings planted/);
   assert.match(html, /80%/);
-  assert.match(html, /55%/);
+  assert.match(html, /Survival by planting batch/);
+  assert.match(html, /Current mapped seedlings/);
+  assert.match(html, /Original/);
   assert.match(html, /<thead>/);
   assert.match(html, /scope="col"/);
   assert.doesNotMatch(html, /Certified|Financial|Hectares restored/);

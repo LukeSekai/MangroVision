@@ -198,6 +198,15 @@ function formatShortDate(value) {
   }).format(date);
 }
 
+function formatMonth(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short', year: 'numeric', timeZone: TIMEZONE,
+  }).format(date);
+}
+
 function dateInManila(date = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
@@ -391,8 +400,8 @@ function KpiCard({ label, value, hint, tone = 'green', progress = null, onClick,
   );
 }
 
-function KpiStrip({ children }) {
-  return <div className="dash-kpis">{children}</div>;
+function KpiStrip({ children, className = '' }) {
+  return <div className={`dash-kpis ${className}`.trim()}>{children}</div>;
 }
 
 function LifecycleChart({ rows }) {
@@ -651,9 +660,7 @@ function PercentageBarLabel({ x, y, width, height, value }) {
 function OperationsTab({ data }) {
   const workload = buildOrganizationWorkload(data)
     .sort((a, b) => (firstNumber(b.total, b.pending + b.completed + b.skipped, 0) ?? 0) - (firstNumber(a.total, a.pending + a.completed + a.skipped, 0) ?? 0));
-  const aging = arrayOf(data?.backlog_aging);
   const throughput = arrayOf(data?.throughput).map((row) => ({ ...row, label: formatShortDate(row.period_start) }));
-  const agingHasActivity = aging.some((row) => firstNumber(row.count, 0) > 0);
   const throughputHasActivity = throughput.some((row) => (
     firstNumber(row.assigned, 0) + firstNumber(row.completed, 0) + firstNumber(row.skipped, 0)
   ) > 0);
@@ -665,6 +672,7 @@ function OperationsTab({ data }) {
         <ChartCard
           title="Planting work by organization"
           subtitle="Assigned planting points grouped by the responsible organization."
+          className="dash-card-full"
           data={workload}
           chartLabel="Stacked horizontal bars showing planting work by organization"
           xLabel="Number of planting points"
@@ -689,31 +697,6 @@ function OperationsTab({ data }) {
               <Bar dataKey="pending" name="Not yet planted" stackId="work" fill={COLORS.pending} />
               <Bar dataKey="completed" name="Planted" stackId="work" fill={COLORS.completed} />
               <Bar dataKey="skipped" name="Could not be planted" stackId="work" fill={COLORS.skipped} radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard
-          title="How long assigned points have been waiting"
-          subtitle="Assigned planting points that have not yet been planted."
-          data={agingHasActivity ? aging : []}
-          tableData={aging}
-          chartLabel="Bars showing pending assignment counts in aging bands"
-          xLabel="Days since assignment"
-          yLabel="Planting points not yet planted"
-          columns={[
-            { key: 'label', label: 'Time waiting' },
-            { key: 'count', label: 'Not yet planted', render: (row) => formatCount(row.count) },
-          ]}
-          emptyHint="Assigned points will be grouped into aging bands once assignment timestamps exist."
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={aging} margin={{ top: 12, right: 12, bottom: 8, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} width={44} />
-              <Tooltip formatter={(value) => [formatCount(value), 'Assigned points']} />
-              <Bar dataKey="count" name="Assigned points" fill={COLORS.pending} radius={[5, 5, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -785,7 +768,8 @@ function StackedColumnCountLabel({ x, y, width, height, value }) {
   );
 }
 
-function OutcomesChart({ rows, labelKey = 'name', verticalBars = false }) {
+function OutcomesChart({ rows, labelKey = 'name', verticalBars = false, plantedLabel = 'Planted' }) {
+  const hasUnknown = rows.some((row) => row.unknown > 0);
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart data={rows} layout={verticalBars ? 'horizontal' : 'vertical'} margin={verticalBars ? { top: 24, right: 20, bottom: 8, left: 0 } : { top: 8, right: 28, bottom: 8, left: -14 }}>
@@ -794,38 +778,48 @@ function OutcomesChart({ rows, labelKey = 'name', verticalBars = false }) {
         {verticalBars ? <YAxis type="number" allowDecimals={false} tickFormatter={formatCount} width={54} /> : <YAxis type="category" dataKey={labelKey} width={150} interval={0} tick={<WrappedCategoryTick />} />}
         <Tooltip formatter={(value, name) => [formatCount(value), name]} />
         <Legend verticalAlign="top" height={34} />
-        <Bar dataKey="planted" name="Planted" stackId="outcome" fill={COLORS.planted} maxBarSize={verticalBars ? 90 : undefined}>
+        <Bar dataKey="planted" name={plantedLabel} stackId="outcome" fill={COLORS.planted} maxBarSize={verticalBars ? 90 : undefined}>
           {verticalBars ? <LabelList dataKey="planted" content={<StackedColumnCountLabel />} /> : <LabelList dataKey="planted" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />}
         </Bar>
         <Bar dataKey="dead" name="Dead" stackId="outcome" fill={COLORS.dead} radius={verticalBars ? [4, 4, 0, 0] : [0, 4, 4, 0]} maxBarSize={verticalBars ? 90 : undefined}>
           {verticalBars ? <LabelList dataKey="dead" content={<StackedColumnCountLabel />} /> : <LabelList dataKey="dead" position="center" fill="#ffffff" fontSize={11} fontWeight={700} formatter={formatCount} />}
-          {verticalBars ? <LabelList dataKey="total" position="top" fill="#14532d" fontSize={12} fontWeight={700} formatter={formatCount} /> : null}
+          {verticalBars && !hasUnknown ? <LabelList dataKey="total" position="top" fill="#14532d" fontSize={12} fontWeight={700} formatter={formatCount} /> : null}
         </Bar>
+        {hasUnknown ? <Bar dataKey="unknown" name="Outcome not recorded" stackId="outcome" fill="#94a3b8" /> : null}
       </BarChart>
     </ResponsiveContainer>
   );
 }
 
 function EcologyTab({ data }) {
-  const summary = data?.summary || {};
-  const species = arrayOf(data?.species_outcomes);
-  const sites = arrayOf(data?.site_outcomes);
+  const currentSummary = data?.summary || {};
+  const performance = data?.planting_performance || {};
+  const summary = performance.summary || {};
+  const replanting = performance.replanting || {};
+  const batches = arrayOf(performance.batches);
+  const species = arrayOf(performance.species_outcomes);
+  const sites = arrayOf(performance.site_outcomes);
   const speciesChart = species.filter((row) => firstNumber(row.total, 0) > 0);
   const siteChart = sites.filter((row) => firstNumber(row.total, 0) > 0);
   const healthRows = [
-    { name: 'Planted', value: firstNumber(summary.planted, 0), color: COLORS.planted },
-    { name: 'Dead', value: firstNumber(summary.dead, 0), color: COLORS.dead },
+    { name: 'Planted', value: firstNumber(currentSummary.planted, 0), color: COLORS.planted },
+    { name: 'Dead', value: firstNumber(currentSummary.dead, 0), color: COLORS.dead },
   ];
   const mortality = arrayOf(data?.mortality_causes).map((row) => ({ ...row, name: row.label || row.cause || 'Other' }));
+  const monthlyDeaths = arrayOf(data?.monthly_deaths).map((row) => ({ ...row, label: formatMonth(row.period_start) }));
+  const deathScope = data?.mortality_includes_unlocated === false
+    ? 'Deaths without identified locations are excluded while location or species filters apply.'
+    : 'Includes deaths whose locations are still unknown.';
   const seedlingGrowthGroups = arrayOf(data?.organization_growth?.growth_groups);
-  const planterOutcomes = arrayOf(data?.planter_outcomes)
+  const planterOutcomes = arrayOf(performance.planter_outcomes)
     .map((row) => ({ ...row, name: row.planter_name || row.name || `Planter ${row.planter_id ?? ''}` }));
 
   const healthColumns = [
-    { key: 'total', label: 'Total seedlings', render: (row) => formatCount(row.total) },
-    { key: 'planted', label: 'Planted', render: (row) => formatCount(row.planted) },
-    { key: 'dead', label: 'Dead', render: (row) => formatCount(row.dead) },
-    { key: 'survival_rate_pct', label: 'Survival rate', render: (row) => formatPercent(row.survival_rate_pct) },
+    { key: 'total', label: 'Seedlings planted', render: (row) => formatCount(row.total) },
+    { key: 'planted', label: 'Without recorded death', render: (row) => formatCount(row.planted) },
+    { key: 'dead', label: 'Recorded deaths', render: (row) => formatCount(row.dead) },
+    { key: 'unknown', label: 'Outcome not recorded', render: (row) => formatCount(row.unknown) },
+    { key: 'survival_rate_pct', label: 'Recorded survival', render: (row) => formatPercent(row.survival_rate_pct) },
   ];
   const outcomeColumns = [{ key: 'name', label: 'Group' }, ...healthColumns];
   const planterOutcomeColumns = [
@@ -838,19 +832,41 @@ function EcologyTab({ data }) {
   return (
     <div className="dash-tab-panel">
       <div className="dash-method-note">
-        <strong>Overall seedling totals.</strong> Counts cover all planting dates in the selected project site. Each current planting location is counted once. Date filters apply to the history below.
+        <strong>Planting performance.</strong> Includes seedlings planted during the selected dates, with their recorded outcomes as of today. Replanting keeps the original death and counts the replacement as a new seedling. Seedlings without a recorded death may still be awaiting inspection.
       </div>
       <KpiStrip>
-        <KpiCard label="Total seedlings" value={formatCount(summary.total)} hint="Planted and dead locations combined" tone="blue" />
-        <KpiCard label="Planted" value={formatCount(summary.planted)} hint="Current planted locations, matching the map" />
-        <KpiCard label="Dead" value={formatCount(summary.dead)} hint="Current dead locations, matching the map" tone="red" />
-        <KpiCard label="Survival rate" value={formatPercent(summary.survival_rate_pct)} hint={`${formatCount(summary.planted)} planted out of ${formatCount(summary.total)} total seedlings`} tone="emerald" progress={summary.survival_rate_pct} />
+        <KpiCard label="Seedlings planted" value={formatCount(summary.total)} hint="Actual plantings in the selected dates, including replacements" tone="blue" />
+        <KpiCard label="Without recorded death" value={formatCount(summary.planted)} hint="Includes seedlings awaiting inspection" />
+        <KpiCard label="Recorded deaths" value={formatCount(summary.dead)} hint="Retained after replanting approval or replacement" tone="red" />
+        <KpiCard label="Recorded survival" value={formatPercent(summary.survival_rate_pct)} hint={`${formatCount(summary.planted)} without a recorded death out of ${formatCount(summary.total)} planted`} tone="emerald" progress={summary.survival_rate_pct} />
+      </KpiStrip>
+      {summary.unknown > 0 ? <p className="dash-method-note">{formatCount(summary.unknown)} earlier planting outcomes are missing. Survival is unavailable for affected groups until those records are complete.</p> : null}
+
+      <div className="dash-method-note">
+        <strong>Replanting progress.</strong> Covers recorded deaths across all planting dates for the selected site. Approval and assignment stay pending until a replacement planting is recorded.
+        {replanting.unavailable > 0 ? ` ${formatCount(replanting.unavailable)} pending locations are currently unavailable because of erosion.` : ''}
+      </div>
+      <KpiStrip className="dash-replanting-kpis">
+        <KpiCard label="Awaiting replanting" value={formatCount(replanting.awaiting_replanting)} hint="Recorded dead seedlings with no replacement planted yet" tone="amber" />
+        <KpiCard label="Replacement plantings completed" value={formatCount(replanting.replacements_completed)} hint="Actual replacements planted; earlier deaths remain in history" tone="emerald" />
       </KpiStrip>
 
       <div className="dash-grid">
+        <Card title="Survival by planting batch" className="dash-card-full"
+          subtitle="Grouped by planting date, organization, project site, species, and planting activity. Original and replacement plantings have separate results.">
+          {batches.length ? <DataTable caption="Survival by planting batch" rows={batches} columns={[
+            { key: 'planted_date', label: 'Planting date', render: (row) => formatShortDate(row.planted_date) },
+            { key: 'organization_name', label: 'Organization' },
+            { key: 'site_name', label: 'Project site' },
+            { key: 'species', label: 'Species' },
+            { key: 'planting_type', label: 'Planting', render: (row) => row.planting_type === 'replacement' ? 'Replacement' : 'Original' },
+            ...healthColumns,
+          ]} /> : <EmptyState title="No planting batches in these dates">Choose dates containing recorded plantings to review their results.</EmptyState>}
+        </Card>
+
         <ChartCard
-          title="Overall seedling status"
-          subtitle="Current planted and dead locations across all planting dates. Total seedlings is the sum of these two groups."
+          title="Current mapped seedlings"
+          subtitle="Current planted and dead locations across all planting dates, matching the map. Locations approved for replanting return to Planned; their deaths stay in planting performance above."
           data={healthRows.some((row) => row.value > 0) ? healthRows : []}
           tableData={healthRows}
           chartLabel="Counts of current planted and dead seedlings"
@@ -879,37 +895,65 @@ function EcologyTab({ data }) {
 
         <ChartCard
           title="Seedlings by species"
-          subtitle="Current planted and dead locations for each species, across all planting dates."
+          subtitle="Recorded outcomes for seedlings planted during the selected dates. Earlier deaths remain included after replanting."
           data={speciesChart}
           tableData={species}
-          chartLabel="Vertical stacked columns showing planted and dead seedling counts for each species"
+          chartLabel="Vertical stacked columns showing planting-batch outcomes for each species"
           xLabel="Species"
           yLabel="Number of seedlings"
           height={420}
           columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Species' } : column)}
           emptyHint="Record plantings with a species to compare totals here."
         >
-          <OutcomesChart rows={speciesChart} verticalBars />
+          <OutcomesChart rows={speciesChart} verticalBars plantedLabel="Without recorded death" />
         </ChartCard>
 
         <ChartCard
           title="Seedlings by project site"
-          subtitle="Current planted and dead locations in each project site, counted once."
+          subtitle="Recorded outcomes for seedlings planted during the selected dates, including original and replacement plantings."
           data={siteChart}
           tableData={sites}
-          chartLabel="Counts of planted and dead seedlings in each project site"
+          chartLabel="Counts of planting-batch outcomes in each project site"
           xLabel="Number of seedlings"
           yLabel="Project site"
           height={Math.max(300, Math.min(560, sites.length * 70 + 90))}
           columns={outcomeColumns.map((column) => column.key === 'name' ? { ...column, label: 'Project site' } : column)}
           emptyHint="Record plantings linked to project sites to compare totals here."
         >
-          <OutcomesChart rows={siteChart} />
+          <OutcomesChart rows={siteChart} plantedLabel="Without recorded death" />
+        </ChartCard>
+
+        <ChartCard
+          title="Seedling deaths by month"
+          subtitle={`New deaths recorded in each month during the selected dates, counted once. ${deathScope}`}
+          data={monthlyDeaths}
+          chartLabel="Monthly number of seedlings recorded dead"
+          xLabel="Month"
+          yLabel="Number of dead seedlings"
+          className="dash-card-full"
+          columns={[
+            { key: 'period_start', label: 'Month', render: (row) => formatMonth(row.period_start) },
+            { key: 'deaths', label: 'Seedlings recorded dead', render: (row) => formatCount(row.deaths) },
+          ]}
+          emptyTitle="No recorded death history yet"
+          emptyHint="Monthly counts will appear when the recorded death history is available for these dates."
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={monthlyDeaths} margin={{ top: 12, right: 16, bottom: 8, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" minTickGap={22} tick={{ fontSize: 11 }} />
+              <YAxis allowDecimals={false} width={44} />
+              <Tooltip formatter={(value) => [formatCount(value), 'Seedlings recorded dead']}
+                labelFormatter={(_, payload) => formatMonth(payload?.[0]?.payload?.period_start)} />
+              <Legend verticalAlign="top" height={34} />
+              <Bar dataKey="deaths" name="Seedlings recorded dead" fill={COLORS.dead} radius={[3, 3, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </ChartCard>
 
         <ChartCard
           title="Why seedlings died"
-          subtitle={`Deaths reported during the selected period, counted once across monitoring visits and identified plants. ${data?.mortality_includes_unlocated === false ? 'Deaths without identified locations are excluded while location or species filters apply.' : 'Includes deaths whose locations are still unknown.'}`}
+          subtitle={`Deaths reported during the selected period, counted once across monitoring visits and identified plants. ${deathScope}`}
           data={mortality}
           chartLabel="Bars showing deaths by cause and a line showing each cause's percentage of all deaths"
           xLabel="Number of dead seedlings and share of all deaths (%)"
@@ -983,7 +1027,7 @@ function EcologyTab({ data }) {
               Planting conditions, species, and planting dates affect outcomes. Use these totals to review work at each project site.
             </p>
             {planterOutcomes.length ? (
-              <DataTable caption="Overall seedling totals by planter, project site, and species" rows={planterOutcomes} columns={planterOutcomeColumns} />
+              <DataTable caption="Planting performance by planter, project site, and species" rows={planterOutcomes} columns={planterOutcomeColumns} />
             ) : <EmptyState title="No planting results yet">Results will appear here after plantings are recorded.</EmptyState>}
           </div>
         </details>

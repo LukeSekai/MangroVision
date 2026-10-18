@@ -103,7 +103,12 @@ End the guide before using the highlighted controls to perform the task.
     location status are different. Current location status covers all dates for
     the selected site. Current Planted and historical planting can differ after
     deaths or releases for replanting. Follow-up sites link to their map location
-    or responsible organization's Monitoring view. Select the year in Planting
+    or responsible organization's Monitoring view. Seedling Health selects
+    planting batches by planting date and retains original deaths after
+    replanting approval or replacement. Review batch survival, current map
+    counts, and pending/completed replanting separately. Its monthly
+    deaths chart shows new deaths recorded in each Philippine calendar month
+    within the selected dates, with a matching data table. Select the year in Planting
     goals to review targets. Download Report and Download Monitoring Report open
     scope/preview flows before download.
 11. **Activity Logs and Account.** Use Refresh activity and Load more activity to

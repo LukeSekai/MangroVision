@@ -51,6 +51,8 @@ htmlcov/
 !/tests/test_field_join_api.py
 !/tests/test_booking_tides.py
 !/tests/test_site_wave_risk.py
+!/tests/test_mortality_postgres.py
+!/tests/test_planting_performance.py
 !/tests/test_map_tile_cache.py
 !/tests/test_organization_reset_postgres.py
 !/tests/test_like_appointments.py

@@ -9112,6 +9112,11 @@ def _load_dashboard_events(conn: Any) -> List[dict]:
             pe.inspection_interval_days,
             pe.closed_at,
             pe.closure_reason,
+            pe.replaces_event_id,
+            death.death_at AS recorded_death_at,
+            replacement.approved_at AS replanting_approved_at,
+            replacement.assignment_id AS replanting_assignment_id,
+            org.name AS organization_name,
             pe.point_num,
             pe.latitude,
             pe.longitude,
@@ -9122,6 +9127,9 @@ def _load_dashboard_events(conn: Any) -> List[dict]:
         LEFT JOIN planter_assignments pa ON pa.id = pe.assignment_id
         LEFT JOIN site_zones sz ON sz.id = pe.site_zone_id
         LEFT JOIN planters pl ON pl.id = pe.planter_id
+        LEFT JOIN organizations org ON org.id = pl.organization_id
+        LEFT JOIN point_death_records death ON death.planting_event_id = pe.id
+        LEFT JOIN replanting_requests replacement ON replacement.planting_event_id = pe.id
         LEFT JOIN planting_points pp ON pp.id = pe.planting_point_id
         LEFT JOIN analyses a ON a.id = pp.analysis_id
         WHERE COALESCE(pe.closure_reason, '') != 'completion_reversed'
@@ -10200,8 +10208,9 @@ def get_dashboard_ecology(
         )
         observations = _load_dashboard_observations(conn)
         event_ids = {int(event["id"]) for event in events}
+        all_current_points = _load_current_dashboard_points(conn)
         current_points = [
-            point for point in _load_current_dashboard_points(conn)
+            point for point in all_current_points
             if _matches_dashboard_dimensions(point, site_id, assignment_id, species, planter_id)
         ]
         health = summarize_current_health(
@@ -10210,7 +10219,14 @@ def get_dashboard_ecology(
             species_labels=_ASSIGNMENT_SPECIES_BY_KEY,
         )
 
-        from mangrovision_db.mortality import mortality_cause_counts
+        from mangrovision_db.planting_performance import summarize_planting_performance
+        performance = summarize_planting_performance(
+            all_events, start, end, as_of_dt, site_id=site_id, assignment_id=assignment_id,
+            species=species, planter_id=planter_id, species_labels=_ASSIGNMENT_SPECIES_BY_KEY,
+            points=all_current_points,
+        )
+
+        from mangrovision_db.mortality import mortality_cause_counts, mortality_monthly_counts
         cause_counts = mortality_cause_counts(conn, start, min(end, as_of_dt),
             site_id=site_id, assignment_id=assignment_id, species=species, planter_id=planter_id)
         total_deaths = sum(cause_counts.values())
@@ -10222,6 +10238,14 @@ def get_dashboard_ecology(
                 "deaths": deaths,
                 "percent_of_deaths": round(deaths / total_deaths * 100.0, 2) if total_deaths else None,
             })
+
+        reported_through = min(end, as_of_dt)
+        monthly_counts = mortality_monthly_counts(conn, start, reported_through,
+            site_id=site_id, assignment_id=assignment_id, species=species, planter_id=planter_id)
+        monthly_deaths = [
+            {"period_start": row["period_start"], "deaths": monthly_counts.get(row["period_start"], 0)}
+            for row in _blank_bucket_series(start, reported_through, "month")
+        ] if start <= reported_through else []
 
         growth_buckets = {
             row["period_start"]: {"values": [], "period_start": row["period_start"]}
@@ -10250,7 +10274,9 @@ def get_dashboard_ecology(
 
         envelope.update({
             **health,
+            "planting_performance": performance,
             "mortality_causes": mortality_causes,
+            "monthly_deaths": monthly_deaths,
             "mortality_includes_unlocated": site_id is None and assignment_id is None and not species and planter_id is None,
             "growth": growth,
             # This chart always combines the latest monitoring visit from every organization.

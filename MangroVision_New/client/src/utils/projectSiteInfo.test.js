@@ -112,7 +112,6 @@ test('unavailable site locations remain separate from assigned seedlings and the
   const { text } = card({ properties: { name: 'Jaro Mangrove Protectors' } }, { counts });
   assert.match(text, /Assigned points249/);
   assert.match(text, /Survival rate50\.6%/);
-  assert.match(text, /Mortality rate49\.4%/);
   assert.match(text, /249 seedlings/);
   assert.match(text, /256Mapped points/);
   assert.match(text, /Unavailable7/);

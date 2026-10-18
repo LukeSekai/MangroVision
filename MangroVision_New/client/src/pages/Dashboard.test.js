@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
+import { JSDOM } from 'jsdom';
 import { build } from 'vite';
 import { writeFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -207,19 +208,66 @@ test('goal editing waits for saved targets and disables saving while loading', (
 });
 
 
-test('Seedling Health shows four overall cards including map-based survival', () => {
+test('Seedling Health separates planting performance and replanting progress from current map status', () => {
   const html = render(EcologyTab, { data: {
-    summary: { total: 1145, planted: 860, dead: 285, survival_rate_pct: 75.11 },
+    summary: { total: 860, planted: 860, dead: 0, survival_rate_pct: 100 },
+    planting_performance: {
+      summary: { total: 1145, planted: 860, dead: 285, unknown: 0, survival_rate_pct: 75.11 },
+      replanting: { awaiting_replanting: 20, replacements_completed: 15 },
+      batches: [
+        { planted_date: '2026-05-16', organization_name: 'Coastal guardians', site_name: 'Coastal site', species: 'Bungalon', planting_type: 'original', total: 100, planted: 80, dead: 20, unknown: 0, survival_rate_pct: 80 },
+        { planted_date: '2026-08-01', organization_name: 'Coastal guardians', site_name: 'Coastal site', species: 'Bungalon', planting_type: 'replacement', total: 20, planted: 20, dead: 0, unknown: 0, survival_rate_pct: 100 },
+      ],
+    },
     survival_cohorts: [{ interval_days: 30, alive: 496, dead: 234 }],
-    species_outcomes: [{ name: 'Mangrove', total: 1145, planted: 860, dead: 285 }],
   } });
-  assert.match(html, /Overall seedling totals/);
+  assert.match(html, /Planting performance/);
+  assert.match(html, /Current mapped seedlings/);
   assert.match(html, /all planting dates/);
   for (const value of ['1,145', '860', '285']) assert.match(html, new RegExp(value));
-  assert.equal((html.match(/class="dash-kpi dash-kpi-/g) || []).length, 4);
+  assert.equal((html.match(/class="dash-kpi dash-kpi-/g) || []).length, 6);
   assert.match(html, /75.1%/);
-  for (const label of ['Total seedlings', 'Planted', 'Dead', 'Survival rate']) assert.match(html, new RegExp(label));
-  assert.doesNotMatch(html, /Recorded survival|Awaiting health record|Recorded alive|Health recorded/);
+  for (const label of ['Seedlings planted', 'Without recorded death', 'Recorded deaths', 'Recorded survival', 'Awaiting replanting', 'Replacement plantings completed']) assert.match(html, new RegExp(label));
+  const dom = new JSDOM(html);
+  const batchTable = [...dom.window.document.querySelectorAll('table')].find((table) => table.caption?.textContent === 'Survival by planting batch');
+  const rows = [...batchTable.querySelectorAll('tbody tr')].map((row) => row.textContent);
+  assert.match(rows[0], /Original.*1008020.*80%/);
+  assert.match(rows[1], /Replacement.*20200.*100%/);
+  dom.window.close();
   assert.doesNotMatch(html, /Checked 30 days|days after planting|Show results from|Inspection age|species-inspection-round|site-inspection-round/);
   assert.doesNotMatch(html, /496 alive|234<|Inspections completed/);
+});
+
+test('Planting Work omits assignment waiting ages and keeps its other charts', () => {
+  const html = render(OperationsTab, { data: { backlog_aging: [{ label: '0–7 days', count: 5 }] } });
+  assert.match(html, /Planting work by organization/);
+  assert.match(html, /Planting work over time/);
+  assert.doesNotMatch(html, /How long assigned points have been waiting|Days since assignment|Time waiting/);
+});
+
+test('Seedling Health shows non-cumulative monthly death counts and zero-death months', () => {
+  const html = render(EcologyTab, { data: {
+    summary: { total: 100, planted: 50, dead: 50, survival_rate_pct: 50 },
+    monthly_deaths: [
+      { period_start: '2026-02-01', deaths: 7 },
+      { period_start: '2026-03-01', deaths: 0 },
+      { period_start: '2026-04-01', deaths: 4 },
+    ],
+    mortality_includes_unlocated: false,
+  } });
+  assert.match(html, /Seedling deaths by month/);
+  assert.match(html, /New deaths recorded in each month/);
+  assert.match(html, /Monthly number of seedlings recorded dead/);
+  assert.match(html, /Number of dead seedlings/);
+  assert.match(html, /Deaths without identified locations are excluded/);
+  const dom = new JSDOM(html);
+  const table = [...dom.window.document.querySelectorAll('table')]
+    .find((element) => element.caption?.textContent === 'Seedling deaths by month data');
+  assert.ok(table);
+  assert.deepEqual([...table.querySelectorAll('tbody tr')].map((row) =>
+    [...row.querySelectorAll('td')].map((cell) => cell.textContent)), [
+    ['Feb 2026', '7'], ['Mar 2026', '0'], ['Apr 2026', '4'],
+  ]);
+  dom.window.close();
+  assert.match(render(EcologyTab, { data: {} }), /No recorded death history yet/);
 });

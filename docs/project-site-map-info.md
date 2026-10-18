@@ -30,10 +30,9 @@ dead, skipped and unavailable assigned locations. **Awaiting planting** counts
 only locations whose current map status is Assigned. The assignment total is
 not added as another donut segment, so each mapped location still counts once.
 
-Survival and mortality rates appear above the chart. Survival rate uses current
+Survival rate appears above the chart. It uses current
 Planted divided by Planted plus Recorded dead, matching Dashboard Seedling Health.
 Available, Awaiting planting, Skipped and Unavailable locations do not enter that rate.
-Mortality uses Recorded dead divided by the same planted-plus-dead total.
 Before any seedlings have been planted, it shows **Not available yet**.
 Until planting-point data has loaded successfully, the card shows site details
 and the supplied linked-point count without inventing zero status counts.
