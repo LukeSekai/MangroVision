@@ -33,11 +33,20 @@ export function projectSitePointCounts(points, { scope = 'site' } = {}) {
     }
     groups.get(key).push(point);
   }
-  return new Map([...groups].map(([id, rows]) => [id, countMapPointStatuses(rows)]));
+  return new Map([...groups].map(([id, rows]) => [id, {
+    ...countMapPointStatuses(rows),
+    // Assignment ownership persists after completion or death. Keep this
+    // overlapping total separate from the donut's exclusive current statuses.
+    assignedTotal: rows.filter((point) => !point.deleted_at && !point.is_deleted && (
+      scope === 'participant' || point.assignment_id != null || point.assignment_point_id != null
+      || point.assigned_planter_id != null || point.assigned_planter_name
+      || point.assignment_status != null || point.map_status === 'assigned'
+    )).length,
+  }]));
 }
 
 export function emptyProjectSiteCounts() {
-  return countMapPointStatuses([]);
+  return { ...countMapPointStatuses([]), assignedTotal: 0 };
 }
 
 const EARTH_RADIUS_M = 6371008.8;
@@ -158,9 +167,24 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
   }
 
   if (counts) {
+    if (counts.assignedTotal != null) {
+      detail(scope === 'participant' ? 'Assigned to you' : 'Assigned points', number(counts.assignedTotal), 'linked');
+    }
+    const seedlings = counts.planted + counts.dead;
+    const survival = addText(card, 'div', 'project-site-info-survival', '');
+    const metric = addText(survival, 'dl', '', '');
+    addText(metric, 'dt', '', 'Survival rate');
+    addText(metric, 'dd', '', seedlings > 0
+      ? `${number(counts.planted / seedlings * 100)}%` : 'Not available yet');
+    if (seedlings > 0) {
+      const mortality = addText(survival, 'dl', 'project-site-info-mortality', '');
+      addText(mortality, 'dt', '', 'Mortality rate');
+      addText(mortality, 'dd', '', `${number(counts.dead / seedlings * 100)}%`);
+      addText(survival, 'p', '', `${number(seedlings)} seedlings · ${number(counts.planted)} planted · ${number(counts.dead)} recorded dead`);
+    }
     const statuses = scope === 'participant'
       ? [['assigned', 'Pending'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']]
-      : [['planned', 'Available'], ['assigned', 'Assigned'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']];
+      : [['planned', 'Available'], ['assigned', 'Awaiting planting'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']];
     const analytics = addText(card, 'div', 'project-site-info-analytics', '');
     addStatusDonut(analytics, counts, statuses, scope);
     const grid = addText(analytics, 'dl', 'project-site-info-stats', '');
@@ -185,19 +209,29 @@ export function bindProjectSiteInfo(layer, feature, options) {
   const content = () => createProjectSiteInfo(feature, options);
   const danger = feature?.properties?.big_wave_risk?.active === true;
   if (danger) layer.setStyle?.(projectSiteStyle(feature));
-  layer.bindTooltip(danger ? () => {
-    const label = document.createElement('span');
-    label.textContent = '⚠ Danger: Big waves';
-    return label;
-  } : content, danger
-    ? { className: 'project-site-danger-label', permanent: true, direction: 'center', opacity: 1 }
-    : { className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1 });
+  layer.bindTooltip(content, { className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1 });
+  // A separate non-interactive warning label leaves the boundary's normal
+  // hover tooltip available for analytics, including on wave-exposed sites.
+  if (danger && options?.map && options?.createTooltip) {
+    const label = options.createTooltip({ className: 'project-site-danger-label',
+      permanent: true, interactive: false, direction: 'center', opacity: 1 });
+    const showLabel = () => {
+      const bounds = layer.getBounds();
+      if (!bounds.isValid() || !options.map.hasLayer(layer)) return;
+      const text = (options.document || document).createElement('span');
+      text.textContent = '⚠ Danger: Big waves';
+      label.setLatLng(bounds.getCenter()).setContent(text).addTo(options.map);
+    };
+    layer.on('add', showLabel);
+    layer.on('remove', () => label.remove());
+    showLabel();
+  }
   layer.bindPopup(content, {
     className: 'project-site-popup', maxWidth: 320, minWidth: 180,
     maxHeight: 360, autoPanPadding: [12, 12],
     autoPanPaddingTopLeft: [12, 60],
     ...options?.popupOptions,
   });
-  layer.on('popupopen', () => { if (!danger) layer.closeTooltip(); });
-  layer.on('tooltipopen', () => { if (!danger && layer.isPopupOpen()) layer.closeTooltip(); });
+  layer.on('popupopen', () => layer.closeTooltip());
+  layer.on('tooltipopen', () => { if (layer.isPopupOpen()) layer.closeTooltip(); });
 }

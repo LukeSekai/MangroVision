@@ -79,6 +79,19 @@
 .project-site-info-stat dd { margin-top: 0; text-align: right; }
 .project-site-info-stat.is-zero { opacity: 0.5; }
 .project-site-info p { margin: 7px 0 0; }
+.project-site-info-survival {
+  margin: 10px 0;
+  padding: 8px 10px;
+  border: 1px solid #d5e7df;
+  border-radius: 8px;
+  background: #f4faf7;
+}
+.project-site-info-survival dl { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 0; }
+.project-site-info-survival dt { font-size: 11px; font-weight: 600; }
+.project-site-info-survival dd { margin-top: 0; color: #14532d; font-size: 16px; text-align: right; }
+.project-site-info-survival .project-site-info-mortality { margin-top: 4px; }
+.project-site-info-mortality dd { color: #7f1d1d; font-size: 13px; }
+.project-site-info-survival p { margin-top: 3px; color: #64748b; font-size: 10px; }
 .project-site-info-scope { color: #64748b; font-size: 10px; }
 .project-site-info-notes {
   color: #475569;
