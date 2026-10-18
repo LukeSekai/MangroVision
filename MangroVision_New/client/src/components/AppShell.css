@@ -11,22 +11,6 @@
   overflow: hidden;
 }
 
-.workspace-header {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: var(--workspace-header-height);
-  z-index: 25;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 18px;
-  background: #f9fcf9;
-  color: #17432f;
-  border-bottom: 1px solid #dbe8de;
-  font-size: 13px;
-  font-weight: 700;
-}
-
 /* Map fills the entire main area as a background layer */
 .map-layer {
   position: absolute;

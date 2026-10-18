@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { NavLink, useLocation } from 'react-router-dom';
+import { useState } from 'react';
+import { Link, NavLink, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores/authStore';
 import { PLANTING_TOOLS } from './plantingWorkspaceContext';
 import Logo from './Logo';
@@ -73,50 +73,8 @@ const NAV_ITEMS = [
   },
 ];
 
-function SidebarClock() {
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const dateLabel = useMemo(
-    () => now.toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric',
-    }),
-    [now],
-  );
-  const timeLabel = useMemo(
-    () => now.toLocaleTimeString(undefined, {
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit',
-    }),
-    [now],
-  );
-
-  return (
-    <div className="sidebar-clock" title={`${dateLabel} ${timeLabel}`}>
-      <div className="sidebar-clock-icon" aria-hidden="true">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M12 7v5l3 2" />
-        </svg>
-      </div>
-      <div className="sidebar-clock-text">
-        <span className="sidebar-clock-date">{dateLabel}</span>
-        <span className="sidebar-clock-time">{timeLabel}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function Sidebar() {
   const [logoutOpen, setLogoutOpen] = useState(false);
-  const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const { pathname } = useLocation();
   const inPlantingWorkspace = PLANTING_TOOLS.some((tool) => tool.to === pathname);
@@ -124,12 +82,12 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-top">
-        <div className="sidebar-logo">
+        <Link className="sidebar-logo" to="/map" aria-label="MangroVision — Planting Map" title="Open Planting Map">
           <span className="sidebar-logo-chip" aria-hidden="true">
             <Logo variant="icon" size={28} className="sidebar-logo-icon" />
           </span>
           <span className="sidebar-brand-name">MangroVision</span>
-        </div>
+        </Link>
 
         <nav className="sidebar-nav">
           {NAV_ITEMS.map((item) => {
@@ -153,13 +111,6 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-bottom">
-        <SidebarClock />
-        <NavLink to="/account" className="sidebar-user" title="Account settings" aria-label="Account settings">
-          <div className="sidebar-avatar">
-            {user?.full_name?.charAt(0)?.toUpperCase() || 'U'}
-          </div>
-          <span className="sidebar-user-name">{user?.full_name}</span>
-        </NavLink>
         <button type="button" className="sidebar-nav-item" onClick={() => setLogoutOpen(true)} title="Sign out">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />

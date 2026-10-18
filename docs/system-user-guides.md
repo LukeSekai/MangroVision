@@ -128,7 +128,10 @@ End the guide before using the highlighted controls to perform the task.
     scope/preview flows before download.
 11. **Activity Logs and Account.** Use Refresh activity and Load more activity to
     review recorded actions and their actors. Inspect the relevant screen for the
-    current record. Account settings changes a staff password through current
+    current record. The clock and profile are at the upper right beside Help / Guide
+    and notifications. The clock uses Philippine time. Select the profile to open
+    Account settings; select the sidebar's MangroVision logo to open Planting Map.
+    Account settings changes a staff password through current
     password and email-code verification. The new password needs at least 12
     characters. A successful change ends the account's staff sessions.
 

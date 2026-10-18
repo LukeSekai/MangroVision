@@ -1,11 +1,11 @@
 import test, { before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { act, createElement, useState } from 'react';
-import { MemoryRouter } from 'react-router-dom';
+import { act, createElement, Fragment, useState } from 'react';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 
-let server, dom, root, createRoot, EmailCodeInput, LogoutConfirmation, Sidebar, useAuthStore, useFormFeedback;
+let server, dom, root, createRoot, EmailCodeInput, LogoutConfirmation, Sidebar, WorkspaceHeader, useAuthStore, useFormFeedback;
 let submitted, resendCount, logoutCount;
 const savedGlobals = new Map();
 
@@ -14,6 +14,7 @@ before(async () => {
   for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
     localStorage: dom.window.localStorage, sessionStorage: dom.window.sessionStorage,
     IS_REACT_ACT_ENVIRONMENT: true, requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+    fetch: async () => Response.json({ items: [], unread_count: 0 }),
   })) {
     savedGlobals.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
@@ -26,6 +27,7 @@ before(async () => {
   ({ default: EmailCodeInput } = await server.ssrLoadModule('/src/components/EmailCodeInput.jsx'));
   ({ default: LogoutConfirmation } = await server.ssrLoadModule('/src/components/LogoutConfirmation.jsx'));
   ({ default: Sidebar } = await server.ssrLoadModule('/src/components/Sidebar.jsx'));
+  ({ default: WorkspaceHeader } = await server.ssrLoadModule('/src/components/WorkspaceHeader.jsx'));
   ({ useAuthStore } = await server.ssrLoadModule('/src/stores/authStore.js'));
   ({ default: useFormFeedback } = await server.ssrLoadModule('/src/utils/useFormFeedback.js'));
 });
@@ -152,6 +154,31 @@ test('server errors focus the code boxes; resend resets the code and keeps coold
   await render(createElement(CodeForm, { busy: true, readyAt: Date.now() + 60000 }));
   assert.ok(digits().every(input => input.disabled));
   assert.ok(document.querySelector('.email-code-help button').disabled);
+});
+
+function CurrentRoute() {
+  const location = useLocation();
+  return createElement('output', { 'data-current-route': true }, location.pathname);
+}
+
+test('header profile opens Account and the brand opens Planting Map without signing out', async (context) => {
+  context.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-10-19T00:30:00Z') });
+  useAuthStore.setState({ user: { full_name: 'Test planner' }, logout: () => { logoutCount++; } });
+  await render(createElement(MemoryRouter, { initialEntries: ['/dashboard'] },
+    createElement(Fragment, null, createElement(Sidebar), createElement(WorkspaceHeader), createElement(CurrentRoute))));
+  await settle();
+  const header = document.querySelector('.workspace-header');
+  assert.match(header.textContent, /Test planner/);
+  assert.equal(header.querySelector('.workspace-clock-time').textContent, '8:30:00 AM');
+  assert.match(header.querySelector('.workspace-clock').title, /Philippine time/);
+  assert.equal(document.querySelector('aside .workspace-clock, aside [href="/account"]'), null);
+  await click(header.querySelector('[aria-label="Account settings"]'));
+  assert.equal(document.querySelector('[data-current-route]').textContent, '/account');
+  await click(document.querySelector('.sidebar-logo'));
+  assert.equal(document.querySelector('[data-current-route]').textContent, '/map');
+  assert.equal(logoutCount, 0);
+  await click(header.querySelector('[aria-label="Help / Guide"]'));
+  assert.match(document.querySelector('[role="dialog"]').textContent, /How to use MangroVision/);
 });
 
 test('staff logout requires confirmation; staying signed in or Escape keeps the session', async () => {

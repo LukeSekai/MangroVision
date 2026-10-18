@@ -35,7 +35,7 @@ export const STAFF_TOURS = [
       step('/map', '.map-layer', 'Explore the map', 'Drag to move around and use the zoom controls to inspect locations. Select a planting point to see its details. The map stays available beside planning screens.'),
       step('/map', '.panel-toggle', 'Make room for the map', 'Use Hide to collapse the side panel and Show to bring it back. Open a section heading to reveal its controls.'),
       step('/map', '.notification-button', 'Follow notifications', 'Open the notification bell to review updates and tasks that need attention. Check Activity Logs for the history of recorded actions.'),
-      step('/map', '.sidebar-user', 'Manage your account', 'Select your name to change your staff password through email verification. Use Sign out at the bottom of the navigation when you finish.'),
+      step('/map', '.workspace-profile', 'Manage your account', 'Your profile and the Philippine-time clock sit beside Help / Guide and notifications at the top. Select your profile to change your staff password through email verification. The MangroVision logo opens Planting Map. Use Sign out at the bottom of the navigation when you finish.'),
     ],
   },
   {
