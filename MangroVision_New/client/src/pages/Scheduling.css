@@ -1076,3 +1076,6 @@
 @media (max-width: 620px) {
   .modal-card.modal-card-wide.schedule-form-modal { max-height: calc(100dvh - 20px); }
 }
+.schedule-map-link { display: inline-flex; width: fit-content; align-items: center; min-height: 32px; margin-top: 6px; padding: 5px 10px; border: 1px solid var(--border-medium); border-radius: var(--radius-md); color: var(--green-800); background: white; font-size: 0.75rem; font-weight: 700; text-decoration: none; }
+.schedule-map-link:hover { background: var(--green-50); }
+.schedule-map-link:focus-visible { outline: 3px solid var(--green-600); outline-offset: 3px; }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import MonitoringHeader from '../components/MonitoringHeader';
+import useMapNavigation from '../utils/useMapNavigation';
 import Modal from '../components/Modal';
 import ReplantingApproval from '../components/ReplantingApproval';
 import { FormMessage } from '../components/FormFeedback';
@@ -22,7 +23,7 @@ export function ReplantingSummary({ progress }) {
 }
 
 export default function LGUReplanting() {
-  const navigate = useNavigate();
+  const navigateMap = useMapNavigation();
   const [rows, setRows] = useState([]);
   const [sites, setSites] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -134,16 +135,12 @@ export default function LGUReplanting() {
     const map = useMapStore.getState();
     map.setView([Number(row.longitude), Number(row.latitude)], 22);
     map.setSelectedPoint(row.planting_point_id);
-    navigate('/map');
+    navigateMap('/map');
   }
 
-  return <main className="org-monitoring-page lgu-replanting-page"><div className="org-monitoring-content">
-    <header className="org-monitoring-page-header">
-      <div><span className="org-monitoring-eyebrow">Mangrove care</span><h1>LGU Replanting</h1>
-        <p>Review dead locations, prepare replacement work, and record seedlings planted by LGU staff.</p></div>
-      <div className="org-monitoring-page-actions"><button type="button" onClick={() => navigate('/monitoring/map')}>Show monitoring map</button></div>
-    </header>
-    <nav className="lgu-replanting-navigation" aria-label="Monitoring sections"><Link to="/monitoring">Monitoring visits</Link><Link to="/monitoring/replanting" aria-current="page">LGU Replanting</Link></nav>
+  return <main className="org-monitoring-page org-monitoring-panel lgu-replanting-page"><div className="org-monitoring-content">
+    <MonitoringHeader title="LGU Replanting"
+      description="Review dead locations, prepare replacement work, and record seedlings planted by LGU staff." />
     <ReplantingSummary progress={loading || error ? {} : progress} />
     <FormMessage loading={loading ? 'Loading replanting records…' : ''} error={error} success={notice} onRetry={load} busy={loading} />
     <section className="lgu-replanting-workspace" data-guide-card="lgu-replanting">

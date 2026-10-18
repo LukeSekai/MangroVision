@@ -33,9 +33,9 @@
   accent-color: var(--green-700);
 }
 
-/* Monitoring has a back link in the same corner. */
-.monitoring-map-container .leaflet-top.leaflet-left .leaflet-control-layers {
-  margin-top: 60px;
+/* Leave room for the shared return button above the basemap picker. */
+.has-map-return .map-container .leaflet-top.leaflet-left .leaflet-control-layers {
+  margin-top: 64px;
 }
 
 .map-container.is-brushing,

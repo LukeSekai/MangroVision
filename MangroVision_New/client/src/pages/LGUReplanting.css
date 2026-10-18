@@ -1,6 +1,3 @@
-.lgu-replanting-navigation { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
-.lgu-replanting-navigation a { padding: 10px 15px; border-radius: 9px; background: white; border: 1px solid var(--border-light); color: var(--green-800); font-size: 0.8rem; font-weight: 700; text-decoration: none; }
-.lgu-replanting-navigation a[aria-current="page"] { color: white; background: var(--green-800); }
 .lgu-replanting-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .lgu-replanting-kpis article:nth-child(2)::before { background: #2563eb; }
 .lgu-replanting-kpis article:nth-child(3)::before { background: #eab308; }

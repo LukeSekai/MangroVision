@@ -1,6 +1,7 @@
 import { Activity, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
+import MapLink from '../components/MapLink';
 import GrowthGuide from '../components/GrowthGuide';
 import AppointmentNotice from '../components/AppointmentNotice';
 import RestorationReportDialog from '../components/RestorationReportDialog';
@@ -606,8 +607,8 @@ function SiteFollowUpDialog({ open, data, onClose }) {
             {reasons.has('warning_exposure') && <li className="is-warning"><strong>Warning zone exposure.</strong> {formatCount(site.warning_points)} planting point{Number(site.warning_points) === 1 ? '' : 's'} within warning zones.</li>}
           </ul>
           <div className="dash-follow-up-actions">
-            <Link to={`/map?project_site_id=${siteId}&focus=${focus}`} onClick={onClose}
-              aria-label={`View ${name} on the map`}>View site on map</Link>
+            <MapLink to={`/map?project_site_id=${siteId}&focus=${focus}`} onClick={onClose}
+              aria-label={`View ${name} on the map`}>View site on map</MapLink>
             <Link to={`/monitoring?project_site_id=${siteId}`} onClick={onClose}
               aria-label={`Open Monitoring for ${name}`}>Open Monitoring</Link>
           </div>
@@ -1161,14 +1162,14 @@ function SitesTab({ data }) {
                         <span>{formatCount(site.warning_point_count)} planting points inside risk areas</span>
                       ) : null}
                     </div>
-                    <Link
+                    <MapLink
                       className="dash-table-map-link"
                       to={`/map?project_site_id=${encodeURIComponent(site.id)}&focus=risk_areas`}
                       state={{ mapFocusSite: site }}
                       aria-label={`View ${site.name || `Site ${site.id}`} risk areas on the map`}
                     >
                       View on map
-                    </Link>
+                    </MapLink>
                   </div>
                 ))}
               </div>
@@ -1211,14 +1212,14 @@ function SitesTab({ data }) {
                 key: 'map_action',
                 label: 'Map',
                 render: (row) => (
-                  <Link
+                  <MapLink
                     className="dash-table-map-link"
                     to={`/map?project_site_id=${encodeURIComponent(row.id)}&focus=site_points`}
                     state={{ mapFocusSite: row }}
                     aria-label={`View planting points for ${row.name || `Site ${row.id}`} on the map`}
                   >
                     View points
-                  </Link>
+                  </MapLink>
                 ),
               },
               { key: 'notes', label: 'Notes', render: (row) => row.notes || '—' },

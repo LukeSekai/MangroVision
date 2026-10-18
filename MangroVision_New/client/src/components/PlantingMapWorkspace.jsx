@@ -16,7 +16,7 @@ function ToolIcon({ type }) {
 // Keep the route tree in one stable container. RetainedRoutes preserves each
 // tool's forms and pauses its map effects while a different tool is visible.
 export default function PlantingMapWorkspace({ children }) {
-  const { pathname } = useLocation();
+  const { pathname, state } = useLocation();
   const active = PLANTING_TOOLS.some((tool) => tool.to === pathname);
   const processing = useProcessingStore((s) => s.processing);
   const [hidden, setHidden] = useState(false);
@@ -38,7 +38,7 @@ export default function PlantingMapWorkspace({ children }) {
         <nav className="planting-tool-nav" aria-label="Planting Map tools">
           {PLANTING_TOOLS.map((tool) => {
             const locked = processing && tool.to === '/zones';
-            return <NavLink key={tool.to} to={tool.to} end
+            return <NavLink key={tool.to} to={tool.to} state={{ mapReturnTo: state?.mapReturnTo }} end
               className={({ isActive }) => `planting-tool-link ${isActive ? 'active' : ''}`}
               aria-disabled={locked}
               title={locked ? 'Zone Editor is locked while image processing is running' : tool.title}

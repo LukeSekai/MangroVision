@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import MapLink from '../components/MapLink';
 import { scheduleContactFields } from '../utils/scheduleContact';
 import { appointmentTypeLabel } from '../utils/appointmentTypes';
 import { scheduleProgressStatus, scheduleTrackingState } from '../utils/scheduleTracking';
@@ -142,7 +142,7 @@ function OrganizationDetail({ id, revision }) {
     <div className="organization-tab-content" role="tabpanel" id={`organization-panel-${tab}`} aria-labelledby={`organization-tab-${tab}`}>
       {tab === 'sites' && (detail.project_sites.length ? <div className="organization-sites">{detail.project_sites.map((site) => <article key={site.id}>
         <div><h3>{site.name}</h3><p>{site.notes || 'No site notes recorded.'}</p><span className="organization-muted">{site.deleted_at ? 'Archived project site' : `Plant checks every ${site.inspection_interval_days || organization.inspection_interval_days} days`}</span></div>
-        {!site.deleted_at && <Link className="btn btn-secondary btn-sm" to={`/map?project_site_id=${site.id}&focus=site_points`}>View on map</Link>}
+        {!site.deleted_at && <MapLink className="btn btn-secondary btn-sm" to={`/map?project_site_id=${site.id}&focus=site_points`}>View on map</MapLink>}
       </article>)}</div> : <p className="organization-empty">This organization has no project sites yet.</p>)}
       {tab === 'codes' && <>
         <p className="organization-muted">One organization code is shared by the participants in each planting activity. Access follows the approved activity’s start and finish times. All times are Philippine time.</p>

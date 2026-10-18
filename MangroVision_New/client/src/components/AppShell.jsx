@@ -8,12 +8,15 @@ import ProcessingIndicator from './ProcessingIndicator';
 import NotificationBell from './NotificationBell';
 import GuideButton from './GuideButton';
 import PlantingMapWorkspace from './PlantingMapWorkspace';
+import MapReturnNavigation from './MapReturnNavigation';
+import { mapReturnTarget } from '../utils/mapNavigation';
 import { useAuthStore } from '../stores/authStore';
 import { useMapStore } from '../stores/mapStore';
 import './AppShell.css';
 
 export default function AppShell({ children }) {
-  const { pathname } = useLocation();
+  const location = useLocation();
+  const { pathname } = location;
   const showMap = !['/monitoring', '/monitoring/replanting', '/dashboard', '/account', '/organizations'].includes(pathname);
   const [mapVisited, setMapVisited] = useState(showMap);
   if (showMap && !mapVisited) setMapVisited(true);
@@ -62,7 +65,7 @@ export default function AppShell({ children }) {
   return (
     <div className="app-shell">
       <Sidebar />
-      <main className="app-main">
+      <main className={`app-main${mapReturnTarget(location) ? ' has-map-return' : ''}`}>
         <header className="workspace-header">
           <span>MangroVision workspace</span>
           <div className="workspace-header-actions">
@@ -74,6 +77,7 @@ export default function AppShell({ children }) {
           <MapView />
         </div>}
         <div className="content-layer">
+          <MapReturnNavigation />
           <PlantingMapWorkspace>{children}</PlantingMapWorkspace>
         </div>
       </main>

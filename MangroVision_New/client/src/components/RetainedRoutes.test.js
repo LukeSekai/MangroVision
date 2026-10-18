@@ -9,7 +9,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 
-let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, useMapStore;
+let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, MapReturnNavigation, useMapStore;
 let requests, scheduleRows, mapPoints, appointmentRows, approvals, useAuthStore;
 let goalSaves, goalSaveFailure, savedGoalSettings;
 let followUpRows;
@@ -117,6 +117,7 @@ export { default as Dashboard } from '../pages/Dashboard.jsx';
 export { default as ActivityFeed } from './ActivityFeed.jsx';
 export { default as Scheduling } from '../pages/Scheduling.jsx';
 export { default as MapAnalytics } from '../pages/MapAnalytics.jsx';
+export { default as MapReturnNavigation } from './MapReturnNavigation.jsx';
 export { useMapStore } from '../stores/mapStore.js';
 export { useAuthStore } from '../stores/authStore.js';
 export { installSecureFetch } from '../utils/secureFetch.js';`;
@@ -125,7 +126,7 @@ export { installSecureFetch } from '../utils/secureFetch.js';`;
   });
   await writeFile(bundlePath, bundle.output.find((item) => item.type === 'chunk' && item.isEntry).code);
   const modules = await import(pathToFileURL(bundlePath).href);
-  ({ default: RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, useMapStore, useAuthStore } = modules);
+  ({ default: RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, MapReturnNavigation, useMapStore, useAuthStore } = modules);
   useAuthStore.setState({ token: 'cookie', hydrated: true, isAuthenticated: true });
   const { installSecureFetch } = modules;
   installSecureFetch();
@@ -174,6 +175,7 @@ async function settle() {
 async function render(page = 'dashboard') {
   await act(async () => root.render(createElement(MemoryRouter, { initialEntries: [`/${page}`] },
     createElement(Navigation),
+    createElement(MapReturnNavigation),
     createElement(RetainedRoutes, { paths: ['/dashboard', '/activity', '/scheduling', '/map', '/monitoring'] },
       createElement(Route, { path: '/dashboard', element: createElement(Dashboard) }),
       createElement(Route, { path: '/activity', element: createElement(ActivityFeed) }),
@@ -216,7 +218,8 @@ test('follow-up card lists affected sites and links to their exact map and monit
   await click(dialog.querySelector('[aria-label="View Warning site on the map"]'));
   assert.equal(document.querySelector('[data-location]').textContent, '/map?project_site_id=2&focus=risk_areas');
   assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
-  await click('[data-page="dashboard"]');
+  assert.equal(document.querySelector('.map-return-navigation').textContent.trim(), 'Back to Dashboard');
+  await click('.map-return-navigation a');
   assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
   await click('.dash-kpi-action');
   await click('[aria-label="Open Monitoring for North planting site"]');
@@ -471,6 +474,31 @@ test('Scheduling retains its calendar and tide forecast when returning, and Refr
   await click('.schedule-refresh');
   assert.equal(count('/api/planting-schedules'), 2);
   assert.equal(count('/api/tides/forecast'), 2);
+});
+
+test('Scheduling site links return from the map to the retained list and close calendar details', async () => {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Manila', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  scheduleRows = [{ id: 17, organization_id: 4, organization_name: 'Coastal group',
+    project_site_id: 12, project_site_name: 'Coastal planting area', appointment_type: 'tree_planting',
+    title: 'Completed coastal planting', status: 'completed', scheduled_date: day,
+    start_at: `${day}T07:30:00+08:00`, end_at: `${day}T09:30:00+08:00` }];
+  await render('scheduling');
+  await click('.schedule-calendar-event');
+  await click('.schedule-detail-wide .schedule-map-link');
+  assert.equal(document.querySelector('.schedule-details-modal'), null);
+  assert.equal(document.querySelector('[data-location]').textContent, '/map?project_site_id=12&focus=site_points');
+  await click('.map-return-navigation a');
+  assert.equal(document.querySelector('[data-location]').textContent, '/scheduling');
+  await click('.schedule-tracking-card.is-completed');
+  const retainedList = document.querySelector('#schedule-results');
+  const requestsBefore = count('/api/planting-schedules');
+  await click('#schedule-results .schedule-map-link');
+  assert.equal(document.querySelector('.map-return-navigation').textContent.trim(), 'Back to Scheduling');
+  await click('.map-return-navigation a');
+  assert.equal(document.querySelector('#schedule-results'), retainedList);
+  assert.equal(document.querySelector('.schedule-tracking-card.is-completed').getAttribute('aria-pressed'), 'true');
+  assert.equal(count('/api/planting-schedules'), requestsBefore);
+  assert.equal(scheduleSaves.length, 0);
 });
 
 test('Scheduling shows only completed, pending and cancelled groups without changing records', async () => {

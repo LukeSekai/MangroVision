@@ -2,6 +2,9 @@
 
 Staff use **Monitoring → LGU Replanting** with their existing staff login.
 There is no new planter account, organization, participant slot or access code.
+The heading, section navigation and **Show map** action match Monitoring visits.
+Use the map's upper-left **Back to LGU Replanting** button to return to the queue
+after opening the monitoring map or viewing a specific location.
 
 1. Open **Awaiting review**. Filter by project site or search by photo, point,
    site or original organization. Select eligible deaths, then review and approve.

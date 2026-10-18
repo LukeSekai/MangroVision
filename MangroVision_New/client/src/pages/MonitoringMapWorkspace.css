@@ -6,30 +6,8 @@
 
 .monitoring-map-workspace .panel-toggle,
 .monitoring-map-workspace .floating-panel,
-.monitoring-map-workspace .modal-backdrop,
-.monitoring-map-back { pointer-events: auto; }
+.monitoring-map-workspace .modal-backdrop { pointer-events: auto; }
 
-.monitoring-map-back {
-  position: absolute;
-  top: 16px;
-  left: 16px;
-  z-index: 12;
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 7px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-pill);
-  background: var(--surface-base);
-  box-shadow: var(--shadow-md);
-  color: var(--green-800);
-  font-size: 0.75rem;
-  font-weight: 700;
-  text-decoration: none;
-}
-
-.monitoring-map-back:hover { background: var(--surface-hover); }
-.monitoring-map-back:focus-visible,
 .monitoring-map-workspace button:focus-visible,
 .monitoring-map-workspace input:focus-visible,
 .monitoring-map-workspace select:focus-visible,
@@ -109,7 +87,6 @@
 .monitoring-map-legend i { display: inline-block; width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; }
 
 @media (max-width: 680px) {
-  .monitoring-map-back { top: 12px; left: 12px; }
   .monitoring-map-workspace .floating-panel { top: 58px; width: calc(100% - 24px); }
   .monitoring-map-workspace .panel-toggle:not(.panel-toggle-hidden) { top: 12px; right: 12px; }
 }

@@ -73,8 +73,6 @@ export default function MonitoringMapWorkspace() {
   }
 
   return <div className="monitoring-map-workspace">
-    <Link className="monitoring-map-back" to="/monitoring">← Monitoring</Link>
-    <Link className="monitoring-map-back" to="/monitoring/replanting">LGU Replanting →</Link>
     <Panel title="Monitoring map" subtitle={`${deadPoints.length} dead plants · ${visiblePoints.length} mapped points`}>
       <div className="monitoring-map-organization">
         <label htmlFor="monitoring-map-organization">Show organization</label>
@@ -134,6 +132,7 @@ export default function MonitoringMapWorkspace() {
         </div>
         <p className="monitoring-map-help">Record new deaths during an organization monitoring visit. This map is for locating dead plants and reviewing replanting.</p>
         <Link className="monitoring-map-link" to="/monitoring">Record a monitoring visit →</Link>
+        <Link className="monitoring-map-link" to="/monitoring/replanting">Open LGU Replanting →</Link>
       </PanelCard>
 
       <PanelCard panelKey="monitoring-map-legend" title="Legend" defaultOpen={false}>

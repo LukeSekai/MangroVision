@@ -87,6 +87,8 @@ End the guide before using the highlighted controls to perform the task.
    with field observations. Sites to Monitor keeps **five sites per page**.
    Open a site's map/details, use the clock icon for history, then close to return
    to the list. Counts and visit dates cover the site's organization.
+   The shared navigation under the heading switches between **Monitoring visits**
+   and **LGU Replanting**. Both pages use the same **Show map** action.
 9. **Monitoring map — review replanting.** Choose the organization scope and,
    optionally, Show dead plants only. Select dead locations using Move / click,
    Brush select or Brush erase; selected points turn purple. Escape returns to
@@ -101,6 +103,12 @@ End the guide before using the highlighted controls to perform the task.
    project site, and record replacements after LGU staff have planted them.
    Confirm the planting date, site and species. Each confirmed replacement
    becomes yellow and has a new staff-attributed record linked to its original.
+   When opening a map from Monitoring, LGU Replanting, Dashboard, Organizations,
+   or Scheduling, use the **Back to [section]** button at the upper left to return
+   to that page with its current filters and tab. Scheduling provides map links
+   beside an activity's saved planting area in both List and calendar details.
+   Direct visits to the Monitoring map return to Monitoring; direct Planting Map
+   visits use the sidebar for navigation.
 10. **Dashboard — interpret progress and download reports.** Set From, To and
     Project site, then use Overview, Planting Work, Seedling Health or Project
     Sites. Read the scope on each chart: period-based activity/history and current

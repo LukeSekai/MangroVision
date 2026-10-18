@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import MonitoringHeader from '../components/MonitoringHeader';
+import MapLink from '../components/MapLink';
 import Modal from '../components/Modal';
 import SitesToMonitor from '../components/SitesToMonitor';
 import AutomaticGrowth from '../components/AutomaticGrowth';
@@ -86,7 +88,6 @@ function OrganizationCardAction({ label }) {
 }
 
 export default function OrganizationMonitoring() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [today, setToday] = useState(manilaDateInputValue);
   const scheduleDay = useRef(today);
@@ -386,21 +387,11 @@ export default function OrganizationMonitoring() {
   return (
     <div className="org-monitoring-page org-monitoring-panel">
       <div className="org-monitoring-content">
-      <header className="org-monitoring-page-header">
-        <div>
-          <span className="org-monitoring-eyebrow">Mangrove care</span>
-          <h1>Monitoring</h1>
-          <p>Track plant health, record visits, and review each organization’s progress.</p>
-        </div>
-        <div className="org-monitoring-page-actions">
-          <button type="button" onClick={() => navigate('/monitoring/replanting')}>LGU Replanting</button>
-          <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
-          <button type="button" className="is-primary" onClick={() => navigate(requestedSiteId ? siteMapPath : '/monitoring/map')}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m3 5 6-2 6 2 6-2v16l-6 2-6-2-6 2V5Zm6-2v16m6-14v16" /></svg>
-            Show map
-          </button>
-        </div>
-      </header>
+      <MonitoringHeader title="Monitoring"
+        description="Track plant health, record visits, and review each organization’s progress."
+        mapTo={requestedSiteId ? siteMapPath : '/monitoring/map'}>
+        <button type="button" aria-haspopup="dialog" onClick={() => setReportOpen(true)}>Download Monitoring Report</button>
+      </MonitoringHeader>
 
       {requestedSiteId && <section className="monitoring-site-context" aria-label="Selected follow-up site">
         <div>
@@ -415,7 +406,7 @@ export default function OrganizationMonitoring() {
         </div>
         <div className="monitoring-site-context-actions">
           {siteContext.error && <button type="button" onClick={() => setSiteRevision((value) => value + 1)}>Retry</button>}
-          <Link to={siteMapPath}>View site on map</Link>
+          <MapLink to={siteMapPath}>View site on map</MapLink>
           <button type="button" onClick={() => {
             const next = new URLSearchParams(searchParams);
             next.delete('project_site_id');

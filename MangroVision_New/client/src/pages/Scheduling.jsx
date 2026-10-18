@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
+import MapLink from '../components/MapLink';
 import Modal from '../components/Modal';
 import TideChart from '../components/TideChart';
 import useFormFeedback from '../utils/useFormFeedback';
@@ -395,14 +396,16 @@ function HighTideCaution({ selection, onContinue, onBack }) {
   </Modal>;
 }
 
-function ScheduleDetails({ schedule, showOrganization = true, showStatus = true }) {
+function ScheduleDetails({ schedule, showOrganization = true, showStatus = true, onViewMap }) {
   return <dl>
     <div><dt>Appointment type</dt><dd>{appointmentTypeLabel(schedule.appointment_type)}</dd></div>
     {showStatus ? <div><dt>Status</dt><dd>{scheduleStatusLabel(scheduleProgressStatus(schedule.status))}</dd></div> : null}
     {scheduleProgressStatus(schedule.status) === 'pending' ? <div><dt>Approval</dt><dd>{scheduleTrackingState(schedule).approved ? 'Approved' : 'Awaiting approval'}</dd></div> : null}
     <div><dt>Source</dt><dd>{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</dd></div>
     {showOrganization ? <div className="schedule-detail-wide"><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
-    {isPlantingAppointment(schedule) ? <div className="schedule-detail-wide"><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}</dd></div> : null}
+    {isPlantingAppointment(schedule) ? <div className="schedule-detail-wide"><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}
+      {schedule.project_site_id != null && <MapLink className="schedule-map-link" to={`/map?project_site_id=${encodeURIComponent(schedule.project_site_id)}&focus=site_points`} onClick={onViewMap}>View site on map</MapLink>}
+    </dd></div> : null}
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
     {isPlantingAppointment(schedule) ? <div><dt>Plant checks</dt><dd>{schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set'}</dd></div> : null}
     {schedule.contact ? <div className="schedule-detail-wide"><dt>Contact</dt><dd>{schedule.contact}</dd></div> : null}
@@ -451,14 +454,14 @@ function CalendarEntryDetails({ entry, assessment, guide, payload, now, onClose,
               <h3>{item.organization_name || 'Organization not set'}</h3>
               <span className={`schedule-status is-${scheduleProgressStatus(item.status)}`}>{scheduleStatusLabel(scheduleProgressStatus(item.status))}</span>
             </div>
-            <ScheduleDetails schedule={item} showOrganization={false} showStatus={false} />
+            <ScheduleDetails schedule={item} showOrganization={false} showStatus={false} onViewMap={onClose} />
             {scheduleProgressStatus(item.status) !== 'completed' ? <div className="schedule-group-actions">
               <button type="button" className="schedule-group-edit" onClick={() => editSchedule(item)}
                 aria-label={`Edit activity for ${item.organization_name || 'this organization'}`}>Edit activity</button>
             </div> : null}
           </section>)}
         </div>
-      </> : schedule ? <ScheduleDetails schedule={schedule} /> : <><dl>
+      </> : schedule ? <ScheduleDetails schedule={schedule} onViewMap={onClose} /> : <><dl>
         <div><dt>Water level</dt><dd>{formatHeight(tide.height_m)}</dd></div>
         <div><dt>Estimated planting limit</dt><dd>{formatHeight(guide?.threshold)}</dd></div>
       </dl><DailyTideDetails tide={tide} payload={payload} guide={guide} now={now} /></>}
@@ -1140,7 +1143,9 @@ export default function Scheduling() {
                   <tr key={schedule.id}>
                     <td><strong>{formatDate(`${schedule.scheduled_date}T12:00:00+08:00`)}</strong><small>{scheduleTimeLabel(schedule)}</small></td>
                     <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
-                    <td>{planting ? schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen') : 'Not needed'}</td>
+                    <td>{planting ? schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen') : 'Not needed'}
+                      {planting && schedule.project_site_id != null && <MapLink className="schedule-map-link" to={`/map?project_site_id=${encodeURIComponent(schedule.project_site_id)}&focus=site_points`}>View on map</MapLink>}
+                    </td>
                     <td>{planting ? schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set' : 'Not applicable'}</td>
                     <td><span className={`schedule-status is-${scheduleProgressStatus(schedule.status)}`}>{scheduleStatusLabel(scheduleProgressStatus(schedule.status))}</span>
                       {tracking.pending ? <small>{tracking.approved ? 'Schedule approved' : 'Awaiting approval'}</small> : null}

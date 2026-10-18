@@ -90,6 +90,7 @@ htmlcov/
 !MangroVision_New/client/src/guides/tours.test.js
 !MangroVision_New/client/src/guides/tourRuntime.test.js
 !MangroVision_New/client/src/components/RetainedRoutes.test.js
+!MangroVision_New/client/src/components/MapNavigation.test.js
 !MangroVision_New/client/src/components/Panel.test.js
 !MangroVision_New/client/src/components/FormFeedback.test.js
 !MangroVision_New/client/src/components/AuthInteraction.test.js
