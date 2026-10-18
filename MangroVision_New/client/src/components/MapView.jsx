@@ -75,9 +75,9 @@ const FOCUSED_PROJECT_SITE_STYLE = {
 };
 
 // All boundaries share the points' renderer for hover hit-testing. Keep
-// points above hazards, hazards above assignment zones, and sites at the back.
+// points above hazards, then project-site analytics above assignment summaries.
 function orderZoneLayers(layers) {
-  for (const key of ['warningLayer', 'erodedLayer', 'forbiddenLayer', 'siteZoneLayer', 'projectSiteLayer']) {
+  for (const key of ['warningLayer', 'erodedLayer', 'forbiddenLayer', 'projectSiteLayer', 'siteZoneLayer']) {
     layers[key]?.eachLayer((layer) => layer.bringToBack());
   }
 }
@@ -912,7 +912,7 @@ export default function MapView() {
         },
       });
 
-      const safeName = escapeHtml(props.name || 'Assignment zone');
+      const safeName = escapeHtml(props.organization_name || props.planter_name || props.name || 'Assignment zone');
       const summaryHtml = total > 0
         ? `<div class="site-zone-tooltip-stat">
              <strong>${currentPlanted}</strong> currently planted without a death record
@@ -954,6 +954,7 @@ export default function MapView() {
       bindProjectSiteInfo(layer, { ...layer.feature, properties: {
         ...layer.feature.properties, name: zoneName(layer.feature, index, 'site'),
       } }, {
+        map: mapRef.current, createTooltip: L.tooltip,
         counts: pointsLoaded
           ? (sitePointCounts.get(String(projectSiteId(layer.feature))) || emptyProjectSiteCounts())
           : null,

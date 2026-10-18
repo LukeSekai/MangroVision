@@ -302,6 +302,67 @@ test('recording a death keeps its marker and site membership across all planting
   assert.deepEqual(requests.filter((path) => /release|reset-to-planned|replanting/.test(path)), []);
 });
 
+test('project-site hover shows analytics above assignment zones while point hover keeps individual details', async () => {
+  const zones = zoneFixtures();
+  const base = useMapStore.getState().points[0];
+  useMapStore.setState({ points: [
+    { ...base, planting_status: 'planted' },
+    { ...base, id: 102, point_num: 102, latitude: 10.7801, longitude: 122.6253, planting_status: 'planted' },
+    { ...base, id: 103, point_num: 103, latitude: 10.7802, longitude: 122.6255, planting_status: 'planted', death_at: '2026-10-18' },
+    { ...base, id: 104, point_num: 104, latitude: 10.7803, longitude: 122.6257 },
+  ] });
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  const site = boundaryFor(map, zones.site);
+  const assignment = boundaryFor(map, zones.assignment);
+  let marker;
+  map.eachLayer((layer) => { if (layer.options?.mgPointId === 101) marker = layer; });
+  assert.equal(site._renderer, assignment._renderer);
+  assert.equal(site._renderer, marker._renderer);
+  const initialRequests = [...requests];
+  // This location is inside both boundaries and between the planting points.
+  await hoverMap(map, site, 10.77985, 122.6253);
+  const card = document.querySelector('.project-site-tooltip .project-site-info');
+  assert.ok(card, 'the project site must receive hover ahead of its assignment zone');
+  assert.equal(card.querySelector('.project-site-info-title').textContent, 'Community site');
+  assert.equal(card.querySelector('.project-site-info-total strong').textContent, '4');
+  assert.equal(card.querySelector('.is-planted dd').textContent, '2');
+  assert.equal(card.querySelector('.is-dead dd').textContent, '1');
+  assert.equal(card.querySelector('.project-site-info-survival dd').textContent, '66.67%');
+  assert.equal(document.querySelector('.site-zone-tooltip'), null);
+  await hoverMap(map, site, base.latitude, base.longitude);
+  assert.equal(marker.isTooltipOpen(), true);
+  assert.equal(document.querySelector('.project-site-tooltip'), null);
+  assert.match(document.querySelector('.point-status-tooltip-title').textContent, /Point #101/);
+  await hoverMap(map, site, 10.77985, 122.6253);
+  assert.ok(document.querySelector('.project-site-tooltip .project-site-info-survival'));
+  assert.deepEqual(requests, initialRequests, 'hovering must reuse the already loaded data');
+  assert.equal(mutations.length, 0);
+});
+
+test('project-site hover analytics coexist with permanent big-wave labels and clear with the boundary', async () => {
+  const zones = zoneFixtures();
+  zones.site.properties.big_wave_risk = { active: true, planted_points: 100, wave_death_points: 30, percentage: 30 };
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  const site = boundaryFor(map, zones.site);
+  assert.match(document.querySelector('.project-site-danger-label').textContent, /Danger: Big waves/);
+  await hoverMap(map, site, 10.77985, 122.6253);
+  const card = document.querySelector('.project-site-tooltip .project-site-info');
+  assert.ok(card);
+  assert.match(card.textContent, /Community site/);
+  assert.match(card.textContent, /Danger: This area is prone to big waves/);
+  assert.ok(card.querySelector('.project-site-info-survival'));
+  assert.ok(document.querySelector('.project-site-danger-label'));
+  await hoverMap(map, site, 10.7800, 122.6251);
+  assert.ok(document.querySelector('.point-status-tooltip'));
+  assert.equal(document.querySelector('.project-site-tooltip'), null);
+  assert.ok(document.querySelector('.project-site-danger-label'));
+  await act(async () => useMapStore.setState({ projectSites: { type: 'FeatureCollection', features: [] } }));
+  assert.equal(document.querySelector('.project-site-danger-label'), null);
+  assert.equal(mutations.length, 0);
+});
+
 test('zone hover labels work through the point canvas and identify overlapping boundaries', async () => {
   const zones = zoneFixtures();
   await renderPlantingWorkspace('/zones');

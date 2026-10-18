@@ -175,6 +175,7 @@
   border-radius: 8px;
   background: transparent;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+  white-space: normal;
 }
 
 .site-zone-tooltip::before {
@@ -188,14 +189,14 @@
   background: #ffffff;
   border-radius: 8px;
   font-family: 'Inter', system-ui, sans-serif;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
 }
 
 .site-zone-tooltip-title {
   font-size: 12px;
   font-weight: 800;
   color: #0f172a;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
   margin-bottom: 4px;
 }
 

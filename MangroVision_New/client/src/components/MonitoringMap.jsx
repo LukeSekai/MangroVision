@@ -77,7 +77,7 @@ export default function MonitoringMap() {
       const key = String(index);
       try {
         const layer = L.geoJSON(site, { style: { ...siteStyle, weight: selected === key ? 4 : 2, fillOpacity: selected === key ? 0.25 : 0.1 } });
-        bindProjectSiteInfo(layer, site);
+        bindProjectSiteInfo(layer, site, { map, createTooltip: L.tooltip });
         layer.on('click', () => setSelected(key));
         group.addLayer(layer);
         if (selected === key) selectedLayer = layer;

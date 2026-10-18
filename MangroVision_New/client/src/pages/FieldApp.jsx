@@ -225,6 +225,7 @@ function PointsMap({
         }),
       }).addTo(zoneLayer);
       bindProjectSiteInfo(boundary, { ...feature, geometry }, {
+        map, createTooltip: L.tooltip,
         counts: sitePointCounts.get(String(siteId)) || emptyProjectSiteCounts(),
         scope: 'participant',
         popupOptions: { autoPanPaddingTopLeft: [12, 120] },
