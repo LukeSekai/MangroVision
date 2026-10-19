@@ -38,6 +38,13 @@ SHIPPED_FILES = (
     "MangroVision_New/client/public/logo-icon.png",
     "MangroVision_New/client/public/logo-icon-small.png",
     "MangroVision_New/client/public/logo-lockup.png",
+    "MangroVision_New/client/public/brand/LogoPrimary.png",
+    "MangroVision_New/client/public/brand/LogoPrimaryWithName.png",
+    "MangroVision_New/client/public/brand/LogoPrimaryWithBGAndName.png",
+    "MangroVision_New/client/public/brand/LogoSecondary.png",
+    "MangroVision_New/client/public/brand/LogoSecondaryWithName.png",
+    "MangroVision_New/client/public/brand/LogoSecondaryWithBG.png",
+    "MangroVision_New/client/public/brand/LogoSecondaryWithBGAndName.png",
     "MangroVision_New/client/public/mangrove.jpg",
 )
 PYTHON_MODULES = (

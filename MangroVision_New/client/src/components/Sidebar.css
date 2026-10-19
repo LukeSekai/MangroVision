@@ -31,17 +31,17 @@
   padding: 16px 12px 12px;
   flex-shrink: 0;
   overflow: hidden;
+  text-decoration: none;
 }
+.sidebar-logo:hover { background: rgba(255, 255, 255, 0.05); }
+.sidebar-logo:focus-visible { outline: 2px solid #86efac; outline-offset: -3px; border-radius: var(--radius-md); }
 
 .sidebar-logo-icon {
   flex-shrink: 0;
   /* No drop-shadow / recolor / rotation per brand asset rules. */
 }
 
-/* Circular white chip behind the icon. The logo's own viewfinder design is
-   square; placing it inside a circle gives a polished avatar shape against
-   the dark sidebar without modifying the logo art itself. The chip diameter
-   is sized to give the logo its 25% clear-space buffer. */
+/* A white chip keeps the supplied green monogram clear against the sidebar. */
 .sidebar-logo-chip {
   display: inline-flex;
   align-items: center;
@@ -170,97 +170,6 @@
   gap: 4px;
   padding: 10px 10px 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.sidebar-clock {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 8px;
-  border-radius: var(--radius-md);
-  color: rgba(255, 255, 255, 0.76);
-  overflow: hidden;
-}
-
-.sidebar-clock-icon {
-  width: 28px;
-  height: 28px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  color: var(--green-300);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 50%;
-}
-
-.sidebar-clock-text {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-  opacity: 0;
-  transition: opacity var(--duration-normal) var(--ease-out);
-}
-
-.sidebar:is(:hover, :focus-within) .sidebar-clock-text {
-  opacity: 1;
-}
-
-.sidebar-clock-date {
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.sidebar-clock-time {
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 0.8125rem;
-  font-weight: 700;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-
-.sidebar-user {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px;
-  overflow: hidden;
-}
-
-.sidebar-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, var(--green-500), var(--green-700));
-  color: #fff;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  font-weight: 700;
-  flex-shrink: 0;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.sidebar-user-name {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 0.8125rem;
-  font-weight: 500;
-  opacity: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition: opacity var(--duration-normal) var(--ease-out);
-}
-
-.sidebar:is(:hover, :focus-within) .sidebar-user-name {
-  opacity: 1;
 }
 
 .sidebar-nav-item:focus-visible { outline: 2px solid #86efac; outline-offset: -2px; }

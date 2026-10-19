@@ -106,7 +106,6 @@
 .guide-back-button { border: 1px solid #dbe7df; background: #fff; color: #36513f; }
 .guide-next-button:hover { background: #14532d; }
 .guide-loading { position: fixed; inset: 0; z-index: 12000; display: flex; align-items: center; justify-content: center; gap: 12px; background: #0a1f1590; color: #fff; }
-.workspace-header-actions { display: flex; align-items: center; gap: 12px; }
 .login-guide { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 @media (max-width: 480px) {
   .modal-card.guide-menu-modal { max-height: calc(100dvh - 20px); }
@@ -114,7 +113,4 @@
   .guide-tooltip { padding: 15px; }
   .guide-tooltip h2 { font-size: 17px; }
   .guide-step-content { font-size: 13px; }
-  .workspace-header { padding: 0 10px; }
-  .workspace-header > span { font-size: 11px; }
-  .workspace-header-actions { gap: 6px; }
 }

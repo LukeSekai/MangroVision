@@ -5,8 +5,7 @@ import MapView from './MapView';
 import Modal from './Modal';
 import Logo from './Logo';
 import ProcessingIndicator from './ProcessingIndicator';
-import NotificationBell from './NotificationBell';
-import GuideButton from './GuideButton';
+import WorkspaceHeader from './WorkspaceHeader';
 import PlantingMapWorkspace from './PlantingMapWorkspace';
 import MapReturnNavigation from './MapReturnNavigation';
 import { mapReturnTarget } from '../utils/mapNavigation';
@@ -66,13 +65,7 @@ export default function AppShell({ children }) {
     <div className="app-shell">
       <Sidebar />
       <main className={`app-main${mapReturnTarget(location) ? ' has-map-return' : ''}`}>
-        <header className="workspace-header">
-          <span>MangroVision workspace</span>
-          <div className="workspace-header-actions">
-            <GuideButton />
-            <NotificationBell />
-          </div>
-        </header>
+        <WorkspaceHeader />
         {mapVisited && <div className="map-layer" style={{ display: showMap ? undefined : 'none' }}>
           <MapView />
         </div>}

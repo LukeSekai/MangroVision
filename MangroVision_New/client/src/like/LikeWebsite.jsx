@@ -9,6 +9,7 @@ import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFee
 import { APPOINTMENT_TYPES } from '../utils/appointmentTypes';
 import LikeMapDialog from './LikeMapDialog';
 import PlantingTimeSuggestions from './PlantingTimeSuggestions';
+import Logo from '../components/Logo';
 
 function Icon({ name = 'leaf', size = 24, ...props }) {
   const paths = {
@@ -28,7 +29,7 @@ function Icon({ name = 'leaf', size = 24, ...props }) {
 
 function Brand({ light = false }) {
   return <a className={`like-brand${light ? ' is-light' : ''}`} href="#home" aria-label="LIKE home">
-    <span className="like-brand-mark"><Icon size={26} /></span>
+    <span className="like-brand-mark"><Logo size={38} tone={light ? 'secondary' : 'primary'} alt="MangroVision" /></span>
     <span><strong>LIKE<span className="like-brand-dot">.</span></strong><small>LEGANES · ILOILO</small></span>
   </a>;
 }

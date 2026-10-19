@@ -34,7 +34,7 @@ function GuideMenu({ mode = 'staff', pathname = '/', navigate }) {
 
   return <>
     <button ref={buttonRef} type="button" className="guide-trigger" data-guide="help"
-      aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
+      aria-label="Help / Guide" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(true)}>
       <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
         <circle cx="12" cy="12" r="9" /><path d="M9.4 9a2.7 2.7 0 0 1 5.2 1c0 1.8-2.6 2-2.6 3.5" /><path d="M12 17h.01" />
       </svg>

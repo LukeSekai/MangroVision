@@ -1,45 +1,31 @@
-/**
- * Brand mark renderer.
- *
- * Variants:
- *   - 'icon'    : icon-only (default), use for sidebar, processing badges,
- *                 modals, anywhere with limited horizontal space.
- *   - 'small'   : simplified icon for sizes below 48px (favicon, badges).
- *   - 'lockup'  : horizontal "icon + MangroVision" wordmark for wide
- *                 contexts (login, splash, report covers).
- *
- * The `size` prop controls the rendered HEIGHT in pixels; width auto-scales
- * via CSS so the lockup never gets stretched. Below 48px the component
- * automatically swaps to the 'small' icon for legibility.
- *
- * Brand integrity rules (don't change without design approval):
- *   - never recolor, rotate, or apply effects to the image
- *   - keep at least 25% of icon-width as clear space around the mark
- *   - always provide an alt for accessibility
- */
+// Original artwork from LogoSystem.zip. Icons fit a square; named lockups
+// keep their source aspect ratio and shrink to fit narrow sign-in screens.
+const ARTWORK = {
+  primary: { icon: 'LogoPrimary.png', lockup: 'LogoPrimaryWithName.png', width: 2009, height: 783 },
+  secondary: { icon: 'LogoSecondary.png', lockup: 'LogoSecondaryWithName.png', width: 2172, height: 724 },
+};
+
 export default function Logo({
   variant = 'icon',
+  tone = 'primary',
   size = 32,
   className = '',
   alt = 'MangroVision',
   style,
   ...rest
 }) {
-  let src;
-  if (variant === 'lockup') {
-    src = '/logo-lockup.png';
-  } else if (variant === 'small' || (variant === 'icon' && size < 48)) {
-    src = '/logo-icon-small.png';
-  } else {
-    src = '/logo-icon.png';
-  }
+  const artwork = ARTWORK[tone] || ARTWORK.primary;
+  const lockup = variant === 'lockup';
+  const dimensions = lockup ? { width: artwork.width, height: artwork.height } : { width: 1536, height: 1024 };
 
   return (
     <img
-      src={src}
+      src={`/brand/${lockup ? artwork.lockup : artwork.icon}`}
       alt={alt}
-      className={`mv-logo mv-logo-${variant} ${className}`}
-      style={{ height: size, width: 'auto', display: 'block', ...style }}
+      {...dimensions}
+      className={`mv-logo mv-logo-${variant} mv-logo-${tone} ${className}`}
+      style={{ width: lockup ? size * artwork.width / artwork.height : size,
+        height: lockup ? 'auto' : size, maxWidth: '100%', objectFit: 'contain', display: 'block', ...style }}
       draggable={false}
       {...rest}
     />
