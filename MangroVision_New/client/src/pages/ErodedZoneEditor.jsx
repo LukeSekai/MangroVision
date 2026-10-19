@@ -2,15 +2,12 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import L from 'leaflet';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
-import { useAuthStore } from '../stores/authStore';
 import { Panel, PanelCard } from '../components/Panel';
 import Modal from '../components/Modal';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { submissionError } from '../utils/formValidation';
 import { zoneName as getZoneName } from '../utils/zoneInfo';
-import { focusMapArea, organizationAreaFeatures } from '../utils/organizationArea';
-import { filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 import ProjectSiteActions from '../components/ProjectSiteActions';
 import './ErodedZoneEditor.css';
 
@@ -65,18 +62,16 @@ function coveredPointCount(vertices, points) {
 
 export default function ErodedZoneEditor() {
   const loaded = useRef(false);
-  const adminToken = useAuthStore((s) => s.token);
   const erodedZones = useMapStore((s) => s.erodedZones);
   const warningZones = useMapStore((s) => s.warningZones);
   const projectSites = useMapStore((s) => s.projectSites);
-  const siteZones = useMapStore((s) => s.siteZones);
-  const showLayers = useMapStore((s) => s.showLayers);
   const fetchZones = useMapStore((s) => s.fetchZones);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const points = useMapStore((s) => s.points);
   const mapInstance = useMapStore((s) => s.mapInstance);
   const processing = useProcessingStore((s) => s.processing);
   const processingStage = useProcessingStore((s) => s.stage);
+  const previousProcessingLock = useRef(null);
 
   const [deleting, setDeleting] = useState(null);
   const [pendingDeleteIndex, setPendingDeleteIndex] = useState(null);
@@ -93,7 +88,6 @@ export default function ErodedZoneEditor() {
   // Stable project sites are parent boundaries; assignment zones remain
   // auto-derived and are displayed independently on the map.
   const [drawingKind, setDrawingKind] = useState('eroded');
-  const [projectSiteOrganizationId, setProjectSiteOrganizationId] = useState('');
   const [zoneNotes, setZoneNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [saveMsgText, setSaveMsgText] = useState('');
@@ -101,7 +95,6 @@ export default function ErodedZoneEditor() {
   const [warningType, setWarningType] = useState('deep_mud');
   const [warningSeverity, setWarningSeverity] = useState('medium');
   const feedback = useFormFeedback({
-    organization_id: { label: 'Organization owner', serverTerms: ['organization'] },
     name: { label: 'Zone name' },
     notes: { label: 'Notes' },
     warning_type: { label: 'Warning type' },
@@ -120,63 +113,8 @@ export default function ErodedZoneEditor() {
   const matchingProjectSites = projectSiteFeatures.map((feature, index) => ({ feature, index }))
     .filter(({ feature, index }) => !siteQuery || [getZoneName(feature, index, 'site'), feature.properties?.organization_name]
       .some((value) => String(value || '').toLowerCase().includes(siteQuery)));
-  const organizationOptions = (() => {
-    const sources = projectSites?.organizations || projectSites?.organization_options || [];
-    const options = new Map();
-    sources.forEach((organization) => {
-      const id = organization?.id ?? organization?.organization_id;
-      const name = organization?.name ?? organization?.organization_name;
-      if (id !== null && id !== undefined && name) options.set(String(id), { id, name });
-    });
-    projectSiteFeatures.forEach((feature) => {
-      const props = feature?.properties || {};
-      const id = props.organization_id;
-      const name = props.organization_name;
-      if (id !== null && id !== undefined && name) options.set(String(id), { id, name });
-    });
-    return [...options.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
-  })();
-  const selectedProjectOrganization = organizationOptions.find(
-    (organization) => String(organization.id) === String(projectSiteOrganizationId),
-  );
-  const ownerHasProjectSite = projectSiteFeatures.some((feature) => (
-    String(feature.properties?.organization_id) === String(projectSiteOrganizationId)
-    && ['Polygon', 'MultiPolygon'].includes(feature.geometry?.type)
-  ));
-  const coveredPoints = useMemo(() => (drawingKind === 'site'
-    ? ownerHasProjectSite
-      ? filterMonitoringPoints(points, projectSiteOrganizationId)
-      : points.filter((point) => {
-        const ownerId = point.source_organization_id ?? point.assigned_organization_id;
-        return ownerId == null || String(ownerId) === String(projectSiteOrganizationId);
-      })
-    : points)
-    .filter((point) => !point.deleted_at && !point.is_deleted && point.inside_visible_map !== false),
-  [points, drawingKind, projectSiteOrganizationId, ownerHasProjectSite]);
-
-  const chooseProjectOrganization = (organizationId) => {
-    setProjectSiteOrganizationId(organizationId);
-    feedback.clear();
-    const organization = organizationOptions.find((option) => String(option.id) === String(organizationId));
-    setZoneName(organization?.name || '');
-    setSaveMsgText('');
-    setSaveMsgIsError(false);
-    setBoundaryStatus(drawnCoords ? 'checking' : 'idle');
-    if (!organizationId) return;
-    showLayers(['projectSites', 'siteZones', 'points']);
-    const features = organizationAreaFeatures({ ...projectSites, released_areas: null }, siteZones, organizationId);
-    if (!features.length) {
-      setSaveMsgText('Draw this organization’s first site on unclaimed land inside the drone map.');
-      return;
-    }
-    try {
-      const bounds = L.geoJSON({ type: 'FeatureCollection', features }).getBounds();
-      if (!focusMapArea(mapInstance, bounds)) throw new Error('Area unavailable');
-    } catch {
-      setSaveMsgText('Could not show the organization’s area. Refresh the map and try again.');
-      setSaveMsgIsError(true);
-    }
-  };
+  const coveredPoints = useMemo(() => points.filter((point) => !point.deleted_at
+    && !point.is_deleted && point.inside_visible_map !== false), [points]);
 
   useEffect(() => {
     if (loaded.current) return;
@@ -188,17 +126,15 @@ export default function ErodedZoneEditor() {
   const erodedFeatures = erodedZones?.features || [];
 
   useEffect(() => {
-    if (!drawnCoords || (drawingKind === 'site' && !projectSiteOrganizationId)) return undefined;
+    if (!drawnCoords) return undefined;
     const controller = new AbortController();
     let active = true;
     const timeout = window.setTimeout(() => controller.abort(), 15000);
-    const checkBoundary = async () => {
+    async function check() {
       try {
-        const response = await fetch(`${API}${drawingKind === 'site' ? '/api/project-sites/validate-boundary' : '/api/zones/validate-boundary'}`, {
+        const response = await fetch(`${API}/api/zones/validate-boundary`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ geometry: { type: 'Polygon', coordinates: [drawnCoords] },
-            ...(drawingKind === 'site' ? { organization_id: Number(projectSiteOrganizationId) } : {}),
-          }),
+          body: JSON.stringify({ geometry: { type: 'Polygon', coordinates: [drawnCoords] } }),
           signal: controller.signal,
         });
         const result = await response.json().catch(() => ({}));
@@ -209,22 +145,15 @@ export default function ErodedZoneEditor() {
           : typeof result.detail === 'string' ? result.detail : 'Could not check the map boundary. Please try again.');
         setSaveMsgIsError(!valid);
         setCoveredCount(coveredPointCount(drawnCoords.map(([longitude, latitude]) => [latitude, longitude]), coveredPoints));
-        drawLayer?.eachLayer((layer) => layer.setStyle?.({
-          color: valid ? KIND_COLORS[drawingKind] : '#dc2626',
-          fillColor: valid ? KIND_COLORS[drawingKind] : '#dc2626',
-        }));
+        drawLayer?.eachLayer((layer) => layer.setStyle?.({ color: valid ? KIND_COLORS[drawingKind] : '#dc2626',
+          fillColor: valid ? KIND_COLORS[drawingKind] : '#dc2626', weight: 2, fillOpacity: .24 }));
       } catch {
-        if (!active) return;
-        setBoundaryStatus('failed');
-        setSaveMsgText('Could not check the map boundary. Check your connection and try again.');
-        setSaveMsgIsError(true);
-      } finally {
-        window.clearTimeout(timeout);
-      }
-    };
-    checkBoundary();
+        if (active) { setBoundaryStatus('failed'); setSaveMsgText('Could not check the map boundary. Check your connection and try again.'); setSaveMsgIsError(true); }
+      } finally { window.clearTimeout(timeout); }
+    }
+    void check();
     return () => { active = false; controller.abort(); window.clearTimeout(timeout); };
-  }, [drawnCoords, drawingKind, drawLayer, boundaryRetry, projectSiteOrganizationId, coveredPoints]);
+  }, [drawnCoords, drawingKind, drawLayer, boundaryRetry, coveredPoints]);
 
   // Start freehand drawing mode. Holding for a short moment prevents an
   // accidental pan from becoming a project boundary; after the hold the
@@ -232,11 +161,6 @@ export default function ErodedZoneEditor() {
   const startDrawing = useCallback(() => {
     if (zoneLocked) {
       setSaveMsgText('Zone editing is locked while image processing is running.');
-      setSaveMsgIsError(true);
-      return;
-    }
-    if (drawingKind === 'site' && !projectSiteOrganizationId) {
-      setSaveMsgText('Select the organization that owns this project site before drawing it.');
       setSaveMsgIsError(true);
       return;
     }
@@ -395,10 +319,10 @@ export default function ErodedZoneEditor() {
       container.style.touchAction = '';
       if (draggingWasEnabled) mapInstance.dragging.enable();
     };
-  }, [mapInstance, zoneLocked, drawingKind, projectSiteOrganizationId, coveredPoints]);
+  }, [mapInstance, zoneLocked, drawingKind, coveredPoints]);
 
   // Cancel drawing
-  const cancelDrawing = useCallback(({ keepOwner = false } = {}) => {
+  const cancelDrawing = useCallback(() => {
     if (drawLayer) {
       if (drawLayer._cleanupFn) drawLayer._cleanupFn();
       if (mapInstance && mapInstance.hasLayer(drawLayer)) {
@@ -412,7 +336,6 @@ export default function ErodedZoneEditor() {
     setCoveredCount(0);
     setZoneName('');
     setZoneNotes('');
-    if (!keepOwner) setProjectSiteOrganizationId('');
     setWarningType('deep_mud');
     setWarningSeverity('medium');
     setSaveMsgText('');
@@ -420,14 +343,19 @@ export default function ErodedZoneEditor() {
   }, [drawLayer, mapInstance]);
 
   useEffect(() => {
-    if (!zoneLocked) return undefined;
+    const staleLock = !zoneLocked && previousProcessingLock.current !== false
+      && /(?:zone|project-site).*locked.*image processing/i.test(saveMsgText);
+    previousProcessingLock.current = zoneLocked;
+    if (!zoneLocked && !staleLock) return undefined;
     const timer = window.setTimeout(() => {
-      if (drawing) cancelDrawing();
-      setSaveMsgText('Zone editing is locked while image processing is running.');
-      setSaveMsgIsError(true);
+      if (zoneLocked && drawing) cancelDrawing();
+      // The live banner above already explains an active lock. Do not retain a
+      // processing warning as a form error after the operation has finished.
+      // Keep fresh server rejections: another user's job may still be active.
+      if (staleLock) { setSaveMsgText(''); setSaveMsgIsError(false); }
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [zoneLocked, drawing, cancelDrawing]);
+  }, [zoneLocked, drawing, cancelDrawing, saveMsgText]);
 
   useEffect(() => () => {
     if (!drawLayer) return;
@@ -448,38 +376,12 @@ export default function ErodedZoneEditor() {
       return;
     }
     if (!feedback.validate()) return;
-    if (drawingKind === 'site' && !projectSiteOrganizationId) {
-      feedback.reject({ organization_id: 'Choose the organization that owns this project site.' });
-      return;
-    }
     setSaving(true);
     setSaveMsgText('');
     setSaveMsgIsError(false);
     try {
       const geometry = { type: 'Polygon', coordinates: [drawnCoords] };
-
-      if (drawingKind === 'site') {
-        if (!adminToken) throw new Error('Your LGU session has expired. Sign in again to save a project site.');
-        const name = zoneName.trim() || selectedProjectOrganization?.name || `Project Site ${projectSiteFeatures.length + 1}`;
-        const res = await fetch(`${API}/api/project-sites`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            organization_id: Number(projectSiteOrganizationId),
-            name,
-            geometry,
-            notes: zoneNotes.trim() || null,
-          }),
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw submissionError(err.detail, 'Failed to save project site. Please try again.', res.status);
-        }
-        cancelDrawing();
-        setSaveMsgText('Project site saved');
-        setSaveMsgIsError(false);
-        await Promise.all([fetchZones(), fetchPoints()]);
-      } else if (drawingKind === 'warning') {
+      if (drawingKind === 'warning') {
         const name = zoneName.trim() || `Warning Zone ${warningFeatures.length + 1}`;
         const res = await fetch(`${API}/api/zones/warnings`, {
           method: 'POST',
@@ -654,221 +556,65 @@ export default function ErodedZoneEditor() {
           </span>
         </div>
       )}
-      {/* Draw tools */}
-      <PanelCard
-        title="Draw Zone"
-        icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/><path d="M2 2l7.586 7.586"/><circle cx="11" cy="11" r="2"/></svg>}
-      >
-        {!drawing ? (
-          <div>
-            <div className="zone-kind-row" role="radiogroup" aria-label="Zone kind">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={drawingKind === 'eroded'}
-                className={`zone-kind-btn ${drawingKind === 'eroded' ? 'zone-kind-btn-active' : ''}`}
-                onClick={() => {
-                  setDrawingKind('eroded');
-                  setProjectSiteOrganizationId('');
-                }}
-                disabled={zoneLocked}
-              >
-                <span className="zone-kind-swatch" style={{ background: KIND_COLORS.eroded }} aria-hidden="true" />
-                Eroded
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={drawingKind === 'site'}
-                className={`zone-kind-btn ${drawingKind === 'site' ? 'zone-kind-btn-active' : ''}`}
-                onClick={() => setDrawingKind('site')}
-                disabled={zoneLocked}
-              >
-                <span className="zone-kind-swatch" style={{ background: KIND_COLORS.site }} aria-hidden="true" />
-                Project Site
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={drawingKind === 'warning'}
-                className={`zone-kind-btn ${drawingKind === 'warning' ? 'zone-kind-btn-active' : ''}`}
-                onClick={() => {
-                  setDrawingKind('warning');
-                  setProjectSiteOrganizationId('');
-                }}
-                disabled={zoneLocked}
-              >
-                <span className="zone-kind-swatch" style={{ background: KIND_COLORS.warning }} aria-hidden="true" />
-                Warning
-              </button>
-            </div>
-            {drawingKind === 'site' ? (
-              <div className="form-group project-site-owner-first">
-                <label className="form-label" htmlFor="project-site-organization">Organization owner *</label>
-                <select {...feedback.props('organization_id')}
-                  id="project-site-organization"
-                  className="form-input"
-                  value={projectSiteOrganizationId}
-                  onChange={(event) => chooseProjectOrganization(event.target.value)}
-                  disabled={zoneLocked}
-                  required
-                >
-                  <option value="">Select an organization before drawing</option>
-                  {organizationOptions.map((organization) => (
-                    <option key={organization.id} value={organization.id}>{organization.name}</option>
-                  ))}
-                </select>
-                <FieldError feedback={feedback} field="organization_id" />
-                <small className="project-site-owner-help">
-                  Organizations appear here after their first planting schedule is created.
-                </small>
-              </div>
-            ) : null}
-            <button
-              className="btn btn-primary btn-sm"
-              style={{ width: '100%' }}
-              onClick={startDrawing}
-              disabled={zoneLocked || !mapInstance || (drawingKind === 'site' && !projectSiteOrganizationId)}
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              {drawingKind === 'warning'
-                ? 'Draw New Warning Zone'
-                : drawingKind === 'site'
-                  ? 'Draw New Project Site'
-                  : 'Draw New Eroded Zone'}
-            </button>
-            <p className="text-sm" style={{ color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
-              {drawingKind === 'warning'
-                ? 'Draw inside the drone map. Warning zones mark hazards such as deep mud or difficult access. They do not block assignment.'
-                : drawingKind === 'site'
-                  ? ownerHasProjectSite
-                    ? 'Draw inside this organization’s area or released land available to other organizations.'
-                    : 'Choose the owner, then draw its first site on unclaimed land inside the drone map. Avoid other organizations’ areas.'
-                  : 'Start on the left, drag right, then trace a closed area inside the drone map. Covered points become unavailable for planting.'}
-            </p>
-            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
+      <PanelCard title="Draw Zone">
+        {!drawing ? <div>
+          <div className="zone-kind-row" role="radiogroup" aria-label="Zone kind">
+            {[['eroded', 'Eroded'], ['warning', 'Warning']].map(([value, label]) => <button key={value} type="button" role="radio"
+              aria-checked={drawingKind === value} className={`zone-kind-btn ${drawingKind === value ? 'zone-kind-btn-active' : ''}`}
+              disabled={zoneLocked} onClick={() => setDrawingKind(value)}>
+              <span className="zone-kind-swatch" style={{ background: KIND_COLORS[value] }} aria-hidden="true" />{label}
+            </button>)}
           </div>
-        ) : !drawnCoords ? (
-          <div>
-            <div className="drawing-active">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" strokeWidth="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-              <span>Start on the left. Hold, drag right, then trace the outline.</span>
-            </div>
-            <div className="zone-covered-count" role="status" aria-live="polite">
-              <strong>{coveredCount}</strong>
-              <span>mapped point{coveredCount === 1 ? '' : 's'} covered</span>
-            </div>
-            <button className="btn btn-ghost btn-sm" style={{ width: '100%', marginTop: 8 }} onClick={cancelDrawing}>
-              Cancel
-            </button>
-            <FormMessage error={saveMsgIsError ? saveMsgText : ""} success={!saveMsgIsError ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
-          </div>
-        ) : (
-          <div className="save-form" onChangeCapture={feedback.onChange}>
-            <FormErrorSummary feedback={feedback} />
-            <FormMessage error={saveMsgIsError ? saveMsgText : ""}
-              loading={boundaryStatus === 'checking' ? 'Checking the zone boundary...' : ""} />
-            {['invalid', 'failed'].includes(boundaryStatus) && <div className="zone-actions" style={{ marginTop: 8 }}>
-              {boundaryStatus === 'failed' && <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked}
-                onClick={() => {
-                  setBoundaryStatus('checking'); setBoundaryRetry((value) => value + 1);
-                  setSaveMsgText('Checking the zone boundary...'); setSaveMsgIsError(false);
-                }}>Try again</button>}
-              <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked || (drawingKind === 'site' && !projectSiteOrganizationId)}
-                onClick={() => { cancelDrawing({ keepOwner: drawingKind === 'site' }); startDrawing(); }}>Redraw zone</button>
-            </div>}
-            {drawingKind === 'site' && <label className="form-group">
-              <span className="form-label">Organization owner *</span>
-              <select {...feedback.props('organization_id')} className="form-input" required disabled={saving} value={projectSiteOrganizationId}
-                onChange={(event) => chooseProjectOrganization(event.target.value)}>
-                <option value="">Select an organization</option>
-                {organizationOptions.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
-              </select>
-              <FieldError feedback={feedback} field="organization_id" />
-            </label>}
-            <div className={`zone-covered-count${boundaryStatus === 'valid' ? ' is-ready' : ''}`} role="status">
-              <strong>{coveredCount}</strong>
-              <span>mapped point{coveredCount === 1 ? '' : 's'} inside this boundary</span>
-            </div>
-            <div className="form-group">
-              <label className="form-label">
-                {drawingKind === 'site' ? 'Project Site Name' : 'Zone Name'}
-              </label>
-              <input {...feedback.props('name')}
-                className="form-input"
-                type="text"
-                placeholder={drawingKind === 'warning'
-                  ? `Warning Zone ${warningFeatures.length + 1}`
-                  : drawingKind === 'site'
-                    ? selectedProjectOrganization?.name || `Project Site ${projectSiteFeatures.length + 1}`
-                    : `Eroded Zone ${erodedFeatures.length + 1}`}
-                value={zoneName}
-                onChange={(e) => setZoneName(e.target.value)}
-              />
-              <FieldError feedback={feedback} field="name" />
-            </div>
-            {drawingKind === 'warning' && (
-              <>
-                <div className="form-group">
-                  <label className="form-label">Warning Type</label>
-                  <select {...feedback.props('warning_type')}
-                    className="form-input"
-                    value={warningType}
-                    onChange={(e) => setWarningType(e.target.value)}
-                  >
-                    {WARNING_TYPES.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-              <FieldError feedback={feedback} field="warning_type" />
-                </div>
-                <div className="form-group">
-                  <label className="form-label">Severity</label>
-                  <select {...feedback.props('severity')}
-                    className="form-input"
-                    value={warningSeverity}
-                    onChange={(e) => setWarningSeverity(e.target.value)}
-                  >
-                    {WARNING_SEVERITIES.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
-                    ))}
-                  </select>
-              <FieldError feedback={feedback} field="severity" />
-                </div>
-              </>
-            )}
-            {(drawingKind === 'warning' || drawingKind === 'site') && (
-              <div className="form-group">
-                <label className="form-label">Notes (optional)</label>
-                <textarea {...feedback.props('notes')}
-                  className="form-input"
-                  rows={2}
-                  placeholder={drawingKind === 'site'
-                    ? 'Project location, restoration phase, access notes, or local site name'
-                    : 'e.g. mud is too deep for planters during low tide, access only from the west'}
-                  value={zoneNotes}
-                  onChange={(e) => setZoneNotes(e.target.value)}
-                />
+          <button type="button" className="btn btn-primary btn-sm" style={{ width: '100%', marginTop: 8 }} disabled={zoneLocked || !mapInstance} onClick={startDrawing}>
+            {drawingKind === 'warning' ? 'Draw New Warning Zone' : 'Draw New Eroded Zone'}
+          </button>
+          <p className="text-sm">{drawingKind === 'warning' ? 'Mark hazards inside the drone map. Warning zones do not block assignment.'
+            : 'Draw an eroded area inside the drone map. Covered points become unavailable for planting.'}</p>
+          <p className="text-sm">Project sites are formed automatically when planting points are assigned.</p>
+        </div> : !drawnCoords ? <div>
+          <div className="drawing-active">Start on the left. Hold, drag right, then trace the outline.</div>
+          <div className="zone-covered-count" role="status"><strong>{coveredCount}</strong><span>mapped points covered</span></div>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={cancelDrawing}>Cancel</button>
+        </div> : <div className="save-form" onChangeCapture={feedback.onChange}>
+          <FormErrorSummary feedback={feedback} />
+          <FormMessage error={saveMsgIsError ? saveMsgText : ''} success={!saveMsgIsError ? saveMsgText : ''}
+            loading={saving ? 'Saving zone...' : boundaryStatus === 'checking' ? 'Checking the zone boundary...' : ''} />
+          {['invalid', 'failed'].includes(boundaryStatus) && <div className="zone-actions">
+            {boundaryStatus === 'failed' && <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked}
+              onClick={() => { setBoundaryStatus('checking'); setBoundaryRetry((value) => value + 1); }}>Try again</button>}
+            <button type="button" className="btn btn-secondary btn-sm" disabled={zoneLocked}
+              onClick={() => { cancelDrawing(); startDrawing(); }}>Redraw zone</button>
+          </div>}
+          <div className="zone-covered-count" role="status"><strong>{coveredCount}</strong><span>mapped points inside this boundary</span></div>
+          <label className="form-group"><span className="form-label">Zone Name</span>
+            <input {...feedback.props('name')} className="form-input" value={zoneName} onChange={(event) => setZoneName(event.target.value)} />
+            <FieldError feedback={feedback} field="name" />
+          </label>
+          {drawingKind === 'warning' && <>
+            <label className="form-group"><span className="form-label">Warning Type</span>
+              <select {...feedback.props('warning_type')} className="form-input" value={warningType} onChange={(event) => setWarningType(event.target.value)}>
+                {WARNING_TYPES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select><FieldError feedback={feedback} field="warning_type" />
+            </label>
+            <label className="form-group"><span className="form-label">Severity</span>
+              <select {...feedback.props('severity')} className="form-input" value={warningSeverity} onChange={(event) => setWarningSeverity(event.target.value)}>
+                {WARNING_SEVERITIES.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select><FieldError feedback={feedback} field="severity" />
+            </label>
+            <label className="form-group"><span className="form-label">Notes (optional)</span>
+              <textarea {...feedback.props('notes')} className="form-input" rows={2} value={zoneNotes} onChange={(event) => setZoneNotes(event.target.value)} />
               <FieldError feedback={feedback} field="notes" />
-              </div>
-            )}
-            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              <button className="btn btn-primary btn-sm" style={{ flex: 1 }} onClick={saveZone} disabled={saving || zoneLocked || boundaryStatus !== 'valid'}>
-                {saving
-                  ? 'Saving...'
-                  : boundaryStatus === 'checking'
-                    ? 'Checking boundary...'
-                  : drawingKind === 'warning'
-                    ? 'Save Warning Zone'
-                    : drawingKind === 'site'
-                      ? 'Save Project Site'
-                      : 'Save Zone'}
-              </button>
-              <button className="btn btn-ghost btn-sm" onClick={cancelDrawing}>Cancel</button>
-            </div>
-            <FormMessage success={!saveMsgIsError && boundaryStatus !== 'checking' ? saveMsgText : ""} loading={saving ? "Saving zone..." : ""} />
+            </label>
+          </>}
+          <div className="zone-actions">
+            <button type="button" className="btn btn-primary btn-sm" onClick={saveZone} disabled={saving || zoneLocked || boundaryStatus !== 'valid'}>
+              {saving ? 'Saving...' : boundaryStatus === 'checking' ? 'Checking boundary...'
+                : drawingKind === 'warning' ? 'Save Warning Zone' : 'Save Zone'}
+            </button><button type="button" className="btn btn-ghost btn-sm" disabled={saving} onClick={cancelDrawing}>Cancel</button>
           </div>
-        )}
+        </div>}
+        {(!drawing || !drawnCoords) && <FormMessage error={saveMsgIsError ? saveMsgText : ''} success={!saveMsgIsError ? saveMsgText : ''}
+          loading={saving ? 'Saving zone...' : boundaryStatus === 'checking' ? 'Checking the zone boundary...' : ''} />}
       </PanelCard>
 
       {/* Stable parent sites used for long-term LGU reporting. */}
@@ -1006,7 +752,7 @@ export default function ErodedZoneEditor() {
                   <span className="zone-info">
                     <span className="zone-name">{getZoneName(f, i, 'warning')}</span>
                     <span className="zone-area">
-                      {(props.warning_label || 'Planner warning')} - {severity}
+                      {props.automatic ? 'Automatic - ' : ''}{(props.warning_label || 'Planner warning')} - {severity}
                       {props.notes ? ` - ${props.notes}` : ''}
                     </span>
                   </span>
@@ -1014,7 +760,7 @@ export default function ErodedZoneEditor() {
                     {severity}
                   </span>
                   </button>
-                  <button
+                  {!props.automatic && <button
                     className="btn btn-ghost btn-sm btn-icon"
                     onClick={() => setPendingWarningDelete(props)}
                     disabled={warningDeleting === props.id || zoneLocked}
@@ -1024,7 +770,7 @@ export default function ErodedZoneEditor() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
-                  </button>
+                  </button>}
                 </div>
               );
             })

@@ -40,6 +40,7 @@
 
 .map-container.is-brushing,
 .map-container.is-brushing .leaflet-interactive { cursor: crosshair; }
+.map-container.is-brushing .leaflet-tooltip { display: none; }
 .replanting-brush {
   display: none;
   position: absolute;
@@ -160,6 +161,10 @@
 .map-zone-legend-swatch-warning {
   border-color: #f59e0b;
   background: rgba(245, 158, 11, 0.18);
+}
+
+.map-zone-legend-swatch-mortality {
+  border: 2px dashed #d97706;
 }
 
 .map-zone-legend-label {

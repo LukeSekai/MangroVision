@@ -26,7 +26,7 @@ DatabaseError = SQLAlchemyError
 
 _IDENTITY_INSERT_TARGETS = {
     "activity_logs", "staff_notifications", "email_reminders",
-    "monitoring_death_locations", "replanting_requests",
+    "monitoring_death_locations", "replanting_requests", "lgu_site_monitoring_records",
     "users", "organizations", "project_sites", "site_zones", "analyses",
     "planting_points", "planters", "planter_assignments",
     "planter_assignment_points", "auth_sessions", "map_zones", "warning_zones",

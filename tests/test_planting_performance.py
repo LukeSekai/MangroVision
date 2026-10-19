@@ -61,6 +61,24 @@ def test_actual_replacements_are_new_seedlings_and_original_batch_remains_80_per
     assert sum(row['total'] for row in result['site_outcomes']) == 120
 
 
+def test_released_locations_replanted_under_another_site_have_independent_survival():
+    originals = original_batch()
+    for event in originals[:20]:
+        event.update(replanting_approved_at='2026-07-01T08:00:00+08:00', replanting_assignment_id=30)
+    new_site = [seedling(100+i, i, site_id=2, site_name='New site', planter_id=11,
+        organization_name='Organization 2', assignment_id=30, planted_at='2026-08-01T08:00:00+08:00',
+        replaces_event_id=i) for i in range(1, 21)]
+    original = report(originals + new_site, site_id=1)
+    replacement = report(originals + new_site, site_id=2)
+    assert original['summary']['total'] == 100
+    assert original['summary']['dead'] == 20
+    assert original['summary']['survival_rate_pct'] == 80
+    assert replacement['summary']['total'] == 20
+    assert replacement['summary']['dead'] == 0
+    assert replacement['summary']['survival_rate_pct'] == 100
+    assert {batch['organization_name'] for batch in replacement['batches']} == {'Organization 2'}
+
+
 def test_multiple_deaths_at_one_location_are_separate_seedlings_and_only_latest_is_pending():
     events = [seedling(1, recorded_death_at='2026-06-01T08:00:00+08:00'),
               seedling(2, 1, planted_at='2026-07-01T08:00:00+08:00', replaces_event_id=1,

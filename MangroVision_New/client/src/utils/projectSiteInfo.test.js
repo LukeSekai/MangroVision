@@ -100,18 +100,18 @@ test('assigned totals retain completed and dead allocations without counting dir
   assert.equal(counts.assignedTotal, 3);
   assert.equal(counts.mapped, 4);
   assert.equal(counts.assigned, 1);
-  const { text } = card({ properties: {} }, { counts });
+  const { text } = card({ properties: { planting_history: { total: 3, planted: 2, dead: 1, survival_rate_pct: 66.67 } } }, { counts });
   assert.match(text, /Assigned points3/);
   assert.match(text, /Awaiting planting1/);
-  assert.match(text, /Survival rate \(current map\)66\.67%/);
+  assert.match(text, /Site survival \(planting history\)66\.67%/);
 });
 
 test('unavailable site locations remain separate from assigned seedlings and the survival denominator', () => {
   const counts = { mapped: 256, planned: 0, assigned: 0, planted: 126, dead: 123,
     skipped: 0, unavailable: 7, assignedTotal: 249 };
-  const { text } = card({ properties: { name: 'Jaro Mangrove Protectors' } }, { counts });
+  const { text } = card({ properties: { name: 'Jaro Mangrove Protectors', planting_history: { total: 249, planted: 126, dead: 123, survival_rate_pct: 50.6 } } }, { counts });
   assert.match(text, /Assigned points249/);
-  assert.match(text, /Survival rate \(current map\)50\.6%/);
+  assert.match(text, /Site survival \(planting history\)50\.6%/);
   assert.match(text, /249 seedlings/);
   assert.match(text, /256Mapped points/);
   assert.match(text, /Unavailable7/);
@@ -125,63 +125,57 @@ test('user-entered names, organizations and notes remain plain text in map overl
   assert.match(html, /&lt;img/);
 });
 
-test('site survival uses current planted and dead seedlings rather than all mapped locations', () => {
-  const { text } = card({ properties: {} }, { counts: {
-    mapped: 300, planned: 50, assigned: 20, planted: 89, dead: 129, skipped: 2, unavailable: 10,
-  } });
-  assert.match(text, /Survival rate \(current map\)40\.83%/);
-  assert.match(text, /89 planted.*129 recorded dead/);
-  assert.doesNotMatch(text, /29\.67%/);
+test('site survival retains historical deaths after locations leave the boundary', () => {
+  const feature = { properties: { planting_history: { total: 100, planted: 80, dead: 20, survival_rate_pct: 80 } } };
+  const counts = { ...emptyProjectSiteCounts(), mapped: 80, planted: 80 };
+  const { text } = card(feature, { counts });
+  assert.match(text, /Site survival \(planting history\)80%/);
+  assert.match(text, /100 seedlings planted.*80 without recorded death.*20 recorded dead/);
+  assert.match(text, /80Mapped points/);
+  assert.doesNotMatch(text, /100%/);
 });
 
-test('survival is unavailable before planting and zero when every planted seedling has died', () => {
-  assert.match(card({ properties: {} }, { counts: emptyProjectSiteCounts() }).text, /Survival rate \(current map\)Not available yet/);
-  const counts = { ...emptyProjectSiteCounts(), mapped: 10, dead: 10 };
-  assert.match(card({ properties: {} }, { counts }).text, /Survival rate \(current map\)0%/);
-  assert.match(card({ properties: {} }, { counts: { ...counts, planted: 8, dead: 2 }, scope: 'participant' }).text, /Survival rate \(current map\)80%/);
+test('survival is unavailable without history and zero when every original seedling died', () => {
+  const counts = { ...emptyProjectSiteCounts(), mapped: 10, planted: 10 };
+  assert.match(card({ properties: {} }, { counts }).text, /Site survival \(planting history\)Not available yet/);
+  const feature = { properties: { planting_history: { total: 10, planted: 0, dead: 10, survival_rate_pct: 0 } } };
+  assert.match(card(feature, { counts }).text, /Site survival \(planting history\)0%/);
+  feature.properties.planting_history = { total: 100, planted: 80, dead: 20, survival_rate_pct: 80 };
+  assert.match(card(feature, { counts, scope: 'participant' }).text, /Site survival \(planting history\)80%/);
 });
 
-test('big-wave site warnings show their historical site denominator even on participant maps', () => {
-  const feature = { properties: { name: 'North site', big_wave_risk: {
-    active: true, planted_points: 100, wave_death_points: 30, percentage: 30,
+test('the site card gives a brief mortality overview even on participant maps', () => {
+  const feature = { properties: { name: 'North site', mortality_warning: {
+    active: true, total_planted: 100, dead_count: 30, mortality_rate_pct: 30,
   } } };
   const { text } = card(feature, { counts: emptyProjectSiteCounts(), scope: 'participant' });
-  assert.match(text, /Danger: This area is prone to big waves/);
-  assert.match(text, /30 of 100 planted locations \(30%\)/);
-  assert.match(text, /whole project site’s recorded history/);
-  assert.match(text, /Other causes of death do not count/);
-  assert.equal(projectSiteStyle(feature, { weight: 2 }).color, '#b91c1c');
-  for (const risk of [undefined, { active: false, wave_death_points: 10, planted_points: 100, percentage: 10 }]) {
-    const normal = { properties: { big_wave_risk: risk } };
-    assert.doesNotMatch(card(normal).text, /Danger|prone to big waves/);
+  assert.match(text, /High mortality · 30%/);
+  assert.doesNotMatch(text, /30 of 100|Severity:|threshold|all recorded causes|whole project site/);
+  assert.equal(projectSiteStyle(feature, { weight: 2 }).color, '#d97706');
+  assert.equal(projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity, 0);
+  for (const risk of [undefined, { active: false, dead_count: 10, total_planted: 100, mortality_rate_pct: 10 }]) {
+    const normal = { properties: { mortality_warning: risk } };
+    assert.doesNotMatch(card(normal).text, /High mortality|prone to big waves/);
     assert.deepEqual(projectSiteStyle(normal, { color: '#15803d' }), { color: '#15803d' });
   }
 });
 
-test('flagged site boundaries carry a permanent danger label and a detailed popup', () => {
+test('warning site boundaries have detailed hover and popup information without covering the points with a label', () => {
   const calls = {};
   const events = {};
   const dom = new JSDOM();
-  const label = { setLatLng: () => label, setContent: (text) => { calls.label = text.textContent; return label; },
-    addTo: () => { calls.visible = true; return label; }, remove: () => { calls.visible = false; } };
   const layer = { setStyle: (style) => { calls.style = style; }, bindTooltip: (content, options) => { calls.tooltip = options; },
     bindPopup: (content) => { calls.popup = content; }, on: (event, handler) => { events[event] = handler; },
     getBounds: () => ({ isValid: () => true, getCenter: () => [10.78, 122.625] }) };
-  bindProjectSiteInfo(layer, { properties: { big_wave_risk: { active: true } } }, {
+  bindProjectSiteInfo(layer, { properties: { mortality_warning: { active: true } } }, {
     document: dom.window.document, map: { hasLayer: () => true },
-    createTooltip: (options) => { calls.warningOptions = options; return label; },
+    createTooltip: () => { assert.fail('No permanent danger label should be created'); },
   });
   assert.equal(calls.tooltip.className, 'project-site-tooltip');
-  assert.equal(calls.warningOptions.permanent, true);
-  assert.equal(calls.warningOptions.interactive, false);
-  assert.equal(calls.warningOptions.className, 'project-site-danger-label');
-  assert.equal(calls.label, '⚠ Danger: Big waves');
-  assert.equal(calls.visible, true);
-  events.remove();
-  assert.equal(calls.visible, false);
-  events.add();
-  assert.equal(calls.visible, true);
-  assert.equal(calls.style.color, '#b91c1c');
+  assert.equal(events.add, undefined);
+  assert.equal(events.remove, undefined);
+  assert.equal(calls.style.color, '#d97706');
+  assert.equal(calls.style.fillOpacity, 0);
   assert.equal(typeof calls.popup, 'function');
   dom.window.close();
 });

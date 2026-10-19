@@ -43,6 +43,11 @@ export default function PlanterAuthScreen() {
     try {
       if (mode === 'first' && !activity) {
         const verified = await checkOrganizationCode(form.access_code);
+        if (verified.permanent_access) {
+          setMode('return'); setActivity(null); feedback.clear();
+          setForm((current) => ({ ...current, username: verified.username }));
+          return;
+        }
         setForm((current) => ({ ...current, username: '' }));
         feedback.clear();
         setActivity(verified);

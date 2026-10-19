@@ -262,6 +262,8 @@ def update_warning_zone_endpoint(zone_id: int, body: WarningZoneUpdate):
     _require_lgu_user()
     if get_warning_zone(zone_id) is None:
         raise HTTPException(status_code=404, detail="Warning zone not found")
+    if zone_id < 0:
+        raise HTTPException(status_code=409, detail='Automatic mortality warnings are updated from monitoring records and cannot be edited manually.')
     if body.geometry is not None:
         _require_zone_inside_map(body.geometry)
     try:
@@ -283,5 +285,7 @@ def delete_warning_zone_endpoint(zone_id: int):
     _require_lgu_user()
     if get_warning_zone(zone_id) is None:
         raise HTTPException(status_code=404, detail="Warning zone not found")
+    if zone_id < 0:
+        raise HTTPException(status_code=409, detail='Automatic mortality warnings remain while recorded site mortality is at least 30%. Correct the monitoring records to update them.')
     delete_warning_zone(zone_id)
     return {"status": "deleted", "id": zone_id}

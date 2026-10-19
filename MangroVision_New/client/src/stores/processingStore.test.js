@@ -170,3 +170,37 @@ test('without browser state only this users active job is discovered and retaine
   assert.equal(store.getState().result.analysis_key, result.analysis_key);
   assert.equal(JSON.parse(sessionStorage.getItem(key)).jobId, 'active-job');
 });
+
+test('checking for an old analysis on page load does not lock editing when no job is running', async () => {
+  let replyToRecovery;
+  const observed=[];
+  const unsubscribe=store.subscribe((state)=>observed.push(state.processing));
+  fetcher=async () => new Promise((resolve)=>{ replyToRecovery=resolve; });
+  const pending=store.getState().resumeProcessing(7);
+  await until(()=>replyToRecovery);
+  assert.equal(store.getState().processing,false);
+  replyToRecovery(reply({ job:null }));
+  await pending;unsubscribe();
+  assert.ok(observed.every((processing)=>processing===false));
+});
+
+test('an old completed job never briefly locks editing while its result is restored', async () => {
+  sessionStorage.setItem(key,JSON.stringify({ jobId:'already-finished' }));
+  const observed=[];
+  const unsubscribe=store.subscribe((state)=>observed.push(state.processing));
+  fetcher=async () => reply({ status:'succeeded',payload:result });
+  await store.getState().resumeProcessing(7);unsubscribe();
+  assert.equal(store.getState().result.analysis_key,result.analysis_key);
+  assert.ok(observed.every((processing)=>processing===false));
+});
+
+test('a recovered job locks editing only after the server confirms running and unlocks at completion', async () => {
+  sessionStorage.setItem(key,JSON.stringify({ jobId:'really-running' }));
+  let finish=false;
+  fetcher=async () => reply(finish?{ status:'succeeded',payload:result }:{ status:'running',stage:'Detecting',pct:40 });
+  const pending=store.getState().resumeProcessing(7);
+  await until(()=>store.getState().processing);
+  assert.equal(store.getState().stage,'Detecting');
+  finish=true;await pending;
+  assert.equal(store.getState().processing,false);
+});

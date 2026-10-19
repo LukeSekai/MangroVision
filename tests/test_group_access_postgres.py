@@ -46,7 +46,7 @@ def test_username_setup_rechecks_code_after_welcome(workspace):
     _, sid, code = activity(workspace)
     group.check_group_code(code)
     group.manage_activity_code(sid, action='replace')
-    with pytest.raises(group.CodeError, match='incorrect or no longer valid'):
+    with pytest.raises(group.CodeError, match='code not found'):
         join(code, mode='first')
     assert workspace.execute(text('SELECT count(*) FROM auth_sessions')).scalar_one() == 0
     assert workspace.execute(text('SELECT count(*) FROM organization_participants WHERE username_key IS NOT NULL')).scalar_one() == 0
@@ -156,8 +156,14 @@ def test_activity_window_and_status_end_existing_and_new_access_when_restored(wo
     else:
         workspace.execute(text('UPDATE planting_schedules SET status=:state WHERE id=:id'), {'state': change, 'id': sid})
     assert current(token) is None
-    with pytest.raises(group.CodeError):
+    expected_kind={'expired':'code_expired','future':'activity_not_started','cancelled':'activity_cancelled',
+        'completed':'activity_completed','revoked':'code_revoked'}[change]
+    with pytest.raises(group.GroupAccessError) as failed:
+        group.check_group_code(code)
+    assert failed.value.kind == expected_kind
+    with pytest.raises(group.GroupAccessError) as failed:
         join(code)
+    assert failed.value.kind == expected_kind
     assert workspace.execute(text('SELECT participant_username FROM organization_participants WHERE slot=1')).scalar_one() == 'Ana'
 
 

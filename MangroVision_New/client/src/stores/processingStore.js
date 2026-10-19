@@ -67,6 +67,7 @@ async function watchJob(set, get, jobId, controller, previewUrl = '') {
       onProgress: (job) => {
         if (activeController !== controller) return;
         const next = {};
+        if (job.status === 'running') next.processing = true;
         if (typeof job.stage === 'string') next.stage = job.stage;
         if (typeof job.pct === 'number') next.progress = job.pct;
         set(next);
@@ -139,7 +140,9 @@ export const useProcessingStore = create((set, get) => ({
     const controller = new AbortController();
     activeController = controller;
     const entry = readRecovery(ownerId);
-    set({ ...initialState, ownerId, recoveryChecked: true, processing: true,
+    // Looking for an old job is not an active analysis. Lock editing only when
+    // the server confirms that the recovered job is actually running.
+    set({ ...initialState, ownerId, recoveryChecked: true,
       stage: 'Reconnecting to analysis...', fileName: entry?.fileName || '' });
     try {
       const job = entry?.jobId ? { job_id: entry.jobId }
@@ -153,7 +156,7 @@ export const useProcessingStore = create((set, get) => ({
         return;
       }
       writeRecovery(ownerId, { ...entry, jobId: job.job_id, fileName: entry?.fileName || job.file_name || '' });
-      set({ fileName: entry?.fileName || job.file_name || '' });
+      set({ fileName: entry?.fileName || job.file_name || '', processing: job.status === 'running' });
       await watchJob(set, get, job.job_id, controller);
     } catch (error) {
       if (activeController !== controller) return;

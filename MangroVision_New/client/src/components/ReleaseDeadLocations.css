@@ -1,0 +1,39 @@
+.modal-card.release-locations-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 40px);
+  font-family: var(--font-sans, system-ui, sans-serif);
+}
+
+.release-locations-modal .modal-content {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 16px 12px;
+  padding: 24px;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.release-locations-modal .modal-icon { width: 36px; height: 36px; margin: 0; }
+.release-locations-modal .modal-icon svg { width: 21px; height: 21px; }
+.release-locations-modal .modal-title { margin: 0; padding-right: 24px; font-size: 1.125rem; }
+.release-locations-modal .modal-body { grid-column: 1 / -1; max-width: none; margin: 0; font-size: 0.875rem; }
+.release-locations-modal .release-locations-history { color: var(--text-secondary, #475569); }
+.release-locations-modal .release-locations-status { color: var(--text-muted, #64748b); font-size: 0.8125rem; }
+.release-locations-modal [role='alert'] { color: #b91c1c; }
+
+.release-locations-modal .modal-actions {
+  display: grid;
+  grid-template-columns: minmax(76px, 0.8fr) minmax(0, 1.2fr);
+  flex-shrink: 0;
+  padding: 16px 24px;
+}
+.release-locations-modal .modal-action-btn { min-width: 0; padding-inline: 12px; font-size: 0.8125rem; }
+
+@media (max-width: 520px) {
+  .modal-card.release-locations-modal { max-height: calc(100dvh - 24px); }
+  .release-locations-modal .modal-content { padding: 24px 20px 20px; }
+  .release-locations-modal .modal-actions { padding: 14px 20px 20px; }
+}

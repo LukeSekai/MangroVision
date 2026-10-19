@@ -15,8 +15,7 @@ def current_point_status(point: dict) -> str | None:
     if point.get("eroded_unavailable") or point.get("inside_eroded_zone"):
         return "unavailable"
     if (
-        point.get('lgu_replanting_pending')
-        or assignment == "pending"
+        assignment == "pending"
         or point.get("assignment_id") is not None
         or point.get("assigned_planter_id") is not None
         or point.get("assigned_planter_name")

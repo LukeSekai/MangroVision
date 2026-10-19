@@ -431,3 +431,56 @@ test('leaving username setup allows another code without reserving a participant
   assert.equal(document.querySelector('[name="username"]').value, '');
   assert.equal(calls, 2);
 });
+
+
+test('a future planting code explains its opening time and keeps the code entry editable',async () => {
+  const message='It is not your planting schedule yet. Sign-in opens on Oct 20, 2026 at 08:00 AM (Philippine time).';
+  globalThis.fetch=async()=>Response.json({ detail:{ kind:'activity_not_started',field:'access_code',message } },{ status:403 });
+  await act(async()=>root.render(createElement(AuthScreen)));
+  await change('access_code','K7MP-4R9X'); await submit();
+  assert.match(document.body.textContent,/not your planting schedule yet/);
+  assert.match(document.body.textContent,/08:00 AM/);
+  assert.equal(document.querySelector('[name="access_code"]').value,'K7MP-4R9X');
+  assert.equal(document.querySelector('[name="username"]'),null);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated,false);
+});
+
+test('a code that expires during username setup returns to the code screen with its reason',async () => {
+  globalThis.fetch=async(url)=>url.endsWith('/join')
+    ? Response.json({ activity:{ title:'Tree planting',organization_name:'Test group' } })
+    : Response.json({ detail:{ kind:'code_expired',field:'access_code',message:'This organization code expired when your planting activity ended. Your saved progress is kept.' } },{ status:403 });
+  await act(async()=>root.render(createElement(AuthScreen)));
+  await change('access_code','K7MP-4R9X'); await submit();
+  await change('username','Ana'); await submit();
+  assert.ok(document.querySelector('[name="access_code"]'));
+  assert.equal(document.querySelector('[name="username"]'),null);
+  assert.match(document.body.textContent,/code expired/);
+  assert.doesNotMatch(document.body.textContent,/service is temporarily unavailable/);
+});
+
+test('returning with an unregistered username explains how to join without creating a participant',async () => {
+  globalThis.fetch=async()=>Response.json({ detail:{ kind:'username_not_found',field:'username',
+    message:'Username not found for this organization. Check your username and organization code. If you have not chosen a username here yet, choose First time.' } },{ status:401 });
+  await act(async()=>root.render(createElement(AuthScreen)));
+  await act(async()=>[...document.querySelectorAll('button')].find((button)=>button.textContent==='Returning planter').click());
+  await change('access_code','K7MP-4R9X'); await change('username','Ana'); await submit();
+  assert.match(document.body.textContent,/Username not found for this organization/);
+  assert.match(document.body.textContent,/choose First time/);
+  assert.equal(document.querySelector('[name="username"]').getAttribute('aria-invalid'),'true');
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated,false);
+});
+
+test('a temporary database failure explains the reason and can be retried without reloading',async () => {
+  let failed=true;
+  globalThis.fetch=async()=>failed
+    ? Response.json({ detail:{ kind:'sign_in_database_unavailable',message:'The sign-in database could not be reached. Please try again shortly.' } },{ status:503 })
+    : Response.json({ activity:{ title:'Tree planting',organization_name:'Test group' } });
+  await act(async()=>root.render(createElement(AuthScreen)));
+  await change('access_code','K7MP-4R9X'); await submit();
+  assert.match(document.body.textContent,/database could not be reached/);
+  assert.equal(document.querySelector('[name="access_code"]').value,'K7MP-4R9X');
+  failed=false; await submit();
+  assert.match(document.body.textContent,/Choose your username/);
+  assert.ok(document.querySelector('[name="username"]'));
+  assert.doesNotMatch(document.body.textContent,/database could not be reached/);
+});

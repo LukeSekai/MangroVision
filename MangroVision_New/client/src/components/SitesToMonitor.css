@@ -13,7 +13,7 @@
 .monitoring-sites-header h2 > span { padding: 3px 8px; border-radius: 20px; background: var(--green-50); color: var(--green-700); font-size: 0.72rem; }
 .monitoring-sites-header p { margin-top: 6px; color: var(--text-secondary); font-size: 0.76rem; line-height: 1.5; }
 .monitoring-sites-list { display: grid; gap: 12px; }
-.monitoring-site-row { position: relative; display: flex; align-items: center; gap: 18px; padding: 16px; border: 1px solid var(--border-light); border-radius: var(--radius-lg); background: var(--surface-base); box-shadow: var(--shadow-xs); transition: border-color 0.15s, background 0.15s; }
+.monitoring-site-row { position: relative; display: flex; align-items: flex-start; gap: 18px; padding: 16px; border: 1px solid var(--border-light); border-radius: var(--radius-lg); background: var(--surface-base); box-shadow: var(--shadow-xs); transition: border-color 0.15s, background 0.15s; }
 .monitoring-site-open { position: absolute; inset: 0; z-index: 1; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
 .monitoring-site-open:focus-visible { outline: 3px solid var(--green-600); outline-offset: 2px; }
 .monitoring-site-row:hover, .monitoring-site-row:focus-within { border-color: var(--green-300); background: var(--green-50); }
@@ -24,7 +24,7 @@
 .monitoring-site-map-attribution { position: absolute; bottom: 0; left: 0; padding: 1px 3px; background: rgba(255, 255, 255, 0.9); color: #374151; font-size: 7px; line-height: 1.4; }
 .monitoring-site-map-unavailable { position: absolute; inset: auto 0 14px; padding: 3px; background: rgba(255, 255, 255, 0.9); color: var(--text-secondary); font-size: 0.6rem; text-align: center; }
 .monitoring-site-no-preview { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 10px; color: var(--text-secondary); font-size: 0.68rem; line-height: 1.4; text-align: center; }
-.monitoring-site-main { flex: 1; }
+.monitoring-site-main { flex: 1; min-width: 0; }
 .monitoring-site-main h3 { color: var(--text-primary); font-size: 0.92rem; line-height: 1.4; overflow-wrap: anywhere; }
 .monitoring-site-owner { margin-top: 3px; color: var(--text-secondary); font-size: 0.76rem; overflow-wrap: anywhere; }
 .monitoring-site-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 5px; color: var(--gray-500); font-size: 0.68rem; line-height: 1.4; }
@@ -126,16 +126,4 @@
   .monitoring-site-point-counts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitoring-site-detail-map .monitoring-site-map-large { width: 100%; }
   .org-monitoring-history-inline .org-monitoring-record-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-.monitoring-site-wave-warning {
-  display: grid;
-  gap: 4px;
-  margin: 8px 0;
-  padding: 9px 11px;
-  border: 1px solid #fca5a5;
-  border-radius: 8px;
-  background: #fef2f2;
-  color: #991b1b;
-  font-size: 12px;
-  line-height: 1.45;
 }

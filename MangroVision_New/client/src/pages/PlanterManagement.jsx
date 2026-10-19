@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { availableOrganizationPoints } from '../utils/organizationAssignment';
+import { availableSitePoints } from '../utils/projectSiteSelection';
 import { useMapStore } from '../stores/mapStore';
 import { useProcessingStore } from '../stores/processingStore';
 import { Panel, PanelCard } from '../components/Panel';
-import Modal from '../components/Modal';
 import OrganizationAccess from '../components/OrganizationAccess';
-import { getPlanterColor } from '../utils/planterColors';
-import { useLocation } from 'react-router-dom';
+import PlantingPointSelector from '../components/PlantingPointSelector';
 import useFormFeedback from '../utils/useFormFeedback';
 import { FieldError, FormErrorSummary, FormMessage } from '../components/FormFeedback';
 import { formRequest } from '../utils/formValidation';
@@ -14,381 +14,174 @@ import './PlanterManagement.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
 
-const ASSIGNMENT_SPECIES_LABELS = {
-  bungalon: 'Bungalon',
-  rhizophora: 'Rhizophora',
-  'api-api': 'Api-Api',
-};
-
-function normalizeAssignmentSpecies(species) {
-  const key = String(species || '').trim().toLowerCase().replace(/_/g, '-');
-  if (key === 'api api' || key === 'apiapi') return 'api-api';
-  return ASSIGNMENT_SPECIES_LABELS[key] ? key : '';
-}
-
 export default function PlanterManagement() {
   const location = useLocation();
-  const requestedSection = new URLSearchParams(location.search).get('section');
+  const active = location.pathname === '/planters';
   const [openPanel, setOpenPanel] = useState('assign');
-  const feedback = useFormFeedback({
-    organization: { label: 'Organization', aliases: ['organization_id', 'site_zone_id', 'project_site_id'], serverTerms: ['project site'] },
-    activity: { label: 'Planting activity', aliases: ['planting_schedule_id'], serverTerms: ['planting activity'] },
-    point_count: { label: 'Number of points', serverTerms: ['point count'] },
-  });
-  useEffect(() => {
-    if (requestedSection === 'assign') queueMicrotask(() => setOpenPanel(requestedSection));
-  }, [requestedSection, location.key]);
   const points = useMapStore((s) => s.points);
+  const map = useMapStore((s) => s.mapInstance);
   const loadingPoints = useMapStore((s) => s.loadingPoints);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
   const fetchZones = useMapStore((s) => s.fetchZones);
-  const projectSites = useMapStore((s) => s.projectSites);
-  const setAssignmentSelection = useMapStore((s) => s.setAssignmentSelection);
-  const clearAssignmentSelection = useMapStore((s) => s.clearAssignmentSelection);
-  const setAssignmentScope = useMapStore((s) => s.setAssignmentScope);
+  const selected = useMapStore((s) => s.assignmentSelectedPointIds);
+  const setSelection = useMapStore((s) => s.setAssignmentSelection);
+  const clearSelection = useMapStore((s) => s.clearAssignmentSelection);
+  const setScope = useMapStore((s) => s.setAssignmentScope);
   const processing = useProcessingStore((s) => s.processing);
-  const processingStage = useProcessingStore((s) => s.stage);
-
+  const stage = useProcessingStore((s) => s.stage);
   const [planters, setPlanters] = useState([]);
   const [organizations, setOrganizations] = useState([]);
-  const [plantingSchedules, setPlantingSchedules] = useState([]);
-  const [assignmentActivityChoice, setAssignmentActivityChoice] = useState('');
+  const [schedules, setSchedules] = useState([]);
+  const [organizationId, setOrganizationId] = useState(() => new URLSearchParams(location.search).get('organization_id') || '');
+  const [activityId, setActivityId] = useState(() => new URLSearchParams(location.search).get('activity_id') || '');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const submitting = useRef(false);
+  const sequence = useRef(0);
+  const loaded = useRef(false);
+  const initialized = useRef(false);
+  const appliedNavigation = useRef(null);
+  const invalidate = useCallback(() => { ++sequence.current; }, []);
+  const feedback = useFormFeedback({
+    organization: { label: 'Organization', aliases: ['organization_id'] },
+    activity: { label: 'Planting activity', aliases: ['planting_schedule_id'], serverTerms: ['planting activity'] },
+  });
 
-  // One unified assign form: one clicked point and many clicked points share
-  // the same selected-id list and batch endpoint.
-  const [assignOrganizationId, setAssignOrganizationId] = useState(null);
-  const [assignmentCount, setAssignmentCount] = useState(null);
-  const [assignBusy, setAssignBusy] = useState(false);
-  const [assignError, setAssignError] = useState('');
-  const [assignSuccess, setAssignSuccess] = useState('');
-  const [noAvailableSite, setNoAvailableSite] = useState(null);
-
-  const loadSequence = useRef(0);
-  const dataLoaded = useRef(false);
-  const loadData = useCallback(async () => {
-    const sequence = ++loadSequence.current;
+  const load = useCallback(async () => {
+    const current = ++sequence.current;
     setLoading(true);
     try {
-      const [pRes, oRes, sRes] = await Promise.all([
+      const responses = await Promise.all([
         fetch(`${API}/api/planters/?include_inactive=true`),
         fetch(`${API}/api/planter-auth/organizations`),
         fetch(`${API}/api/planting-schedules`),
       ]);
-      if (![pRes, oRes, sRes].every((response) => response.ok)) throw new Error('Could not load planter data.');
-      const [nextPlanters, nextOrganizations, nextSchedules] = await Promise.all([pRes.json(), oRes.json(), sRes.json()]);
-      if (sequence !== loadSequence.current) return;
-      setPlanters(nextPlanters);
-      setOrganizations(nextOrganizations.organizations);
-      setPlantingSchedules(nextSchedules.schedules || []);
-    } catch (err) {
-      console.error('Failed to load planter data:', err);
-    } finally {
-      if (sequence === loadSequence.current) { dataLoaded.current = true; setLoading(false); }
-    }
+      if (!responses.every((response) => response.ok)) throw new Error('Could not load organizations and planting activities.');
+      const [accounts, owners, activities] = await Promise.all(responses.map((response) => response.json()));
+      if (current !== sequence.current) return;
+      setPlanters(accounts); setOrganizations(owners.organizations || []); setSchedules(activities.schedules || []); setLoadError('');
+    } catch (failure) { if (current === sequence.current) setLoadError(failure.message); }
+    finally { if (current === sequence.current) { loaded.current = true; setLoading(false); } }
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (!dataLoaded.current) void loadData();
-    }, 0);
-    const refresh = () => { void loadData(); };
+    const timer = window.setTimeout(() => { if (!loaded.current) void load(); }, 0);
+    const refresh = () => { if (!submitting.current) void load(); };
     window.addEventListener('mv:data-changed', refresh);
-    return () => {
-      window.clearTimeout(timer);
-      loadSequence.current += 1;
-      window.removeEventListener('mv:data-changed', refresh);
-    };
-  }, [loadData]);
+    return () => { window.clearTimeout(timer); invalidate(); window.removeEventListener('mv:data-changed', refresh); };
+  }, [load, invalidate]);
 
-  // Drop assignment selection on unmount so a forgotten selection doesn't
-  // leak into other pages (the same map instance is shared).
-  useEffect(() => () => {
-    clearAssignmentSelection();
-    setAssignmentScope(null, null);
-  }, [clearAssignmentSelection, setAssignmentScope]);
-
-  const activePlanters = planters.filter((p) => p.status === 'active');
-  const assignmentOrganizations = organizations.map((organization) => {
-    const account = planters.find((planter) => Number(planter.organization_id) === Number(organization.id));
-    return {
-      ...account,
-      organization_id: organization.id,
-      organization_name: organization.name,
-      registration_pending: !account || account.registration_pending,
-    };
-  }).filter((organization) => !organization.status || organization.status === 'active');
-  const selectedAssignmentPlanter = assignmentOrganizations.find(
-    (organization) => Number(organization.organization_id) === Number(assignOrganizationId),
-  );
-  const organizationProjectSites = (projectSites?.features || []).filter((feature) => {
-    const ownerId = feature?.properties?.organization_id;
-    return selectedAssignmentPlanter?.organization_id != null
-      && Number(ownerId) === Number(selectedAssignmentPlanter.organization_id);
-  });
-  const defaultSiteId = organizationProjectSites[0]?.id ?? organizationProjectSites[0]?.properties?.id ?? null;
-  const activityOptions = plantingSchedules.filter((activity) =>
-    Number(activity.organization_id) === Number(assignOrganizationId)
-    && activity.appointment_type === 'tree_planting'
-    && ['confirmed', 'in_progress'].includes(activity.status));
-  const assignmentActivity = activityOptions.find((activity) => String(activity.id) === String(assignmentActivityChoice))
-    || (activityOptions.length === 1 ? activityOptions[0] : null);
-  const activitySite = organizationProjectSites.find((site) => Number(site.id ?? site.properties?.id) === Number(assignmentActivity?.project_site_id));
-  const assignProjectSiteId = assignmentActivity?.project_site_id != null
-    ? activitySite?.id ?? activitySite?.properties?.id ?? null : defaultSiteId;
   useEffect(() => {
-    setAssignmentScope(selectedAssignmentPlanter?.organization_id ?? null, assignProjectSiteId);
-  }, [assignProjectSiteId, selectedAssignmentPlanter?.organization_id, setAssignmentScope]);
-  const assignmentLocked = processing;
-  const scopeOrganizationId = selectedAssignmentPlanter?.organization_id == null ? null : Number(selectedAssignmentPlanter.organization_id);
-  const scopeProjectSiteId = assignProjectSiteId == null ? null : Number(assignProjectSiteId);
-  const availablePoints = useMemo(() => availableOrganizationPoints(points, scopeOrganizationId, scopeProjectSiteId),
-    [points, scopeOrganizationId, scopeProjectSiteId]);
-  const requestedCount = assignmentCount ?? availablePoints.length;
-  const validCount = !loadingPoints && Number.isInteger(requestedCount) && requestedCount > 0 && requestedCount <= availablePoints.length;
-  const pointIdsToAssign = useMemo(() => validCount ? availablePoints.slice(0, requestedCount).map((point) => point.id) : [],
-    [availablePoints, requestedCount, validCount]);
-  useEffect(() => { setAssignmentSelection(pointIdsToAssign); }, [pointIdsToAssign, setAssignmentSelection]);
-  const selectedPointIdSet = new Set(pointIdsToAssign.map((id) => Number(id)));
-  const selectedSpeciesCounts = {};
-  for (const point of points) {
-    if (!selectedPointIdSet.has(Number(point.id))) continue;
-    const label = ASSIGNMENT_SPECIES_LABELS[normalizeAssignmentSpecies(point.species)] || 'Species not recorded';
-    selectedSpeciesCounts[label] = (selectedSpeciesCounts[label] || 0) + 1;
-  }
-  const selectedSpeciesSummary = Object.entries(selectedSpeciesCounts)
-    .map(([label, count]) => `${count} ${label}`).join(' · ');
+    const params = new URLSearchParams(location.search);
+    if (location.pathname !== '/planters' || !params.has('organization_id')) return undefined;
+    if (appliedNavigation.current === location.key) return undefined;
+    const timer = window.setTimeout(() => {
+      appliedNavigation.current = location.key;
+      setOrganizationId(params.get('organization_id') || '');
+      setActivityId(params.get('activity_id') || '');
+      clearSelection(); setError(''); setSuccess('');
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [location.key, location.pathname, location.search, clearSelection]);
 
-  const warnIfNoAvailablePoints = (planter, site) => {
-    const siteId = site?.id ?? site?.properties?.id;
-    setAssignError('');
-    setAssignSuccess('');
-    setNoAvailableSite(
-      planter && siteId != null && !loadingPoints
-        && availableOrganizationPoints(points, planter.organization_id, siteId).length === 0
-        ? { organizationName: planter.organization_name, siteName: site.properties?.name || 'this project site' }
-        : null,
-    );
-  };
+  useEffect(() => {
+    if (!initialized.current) { initialized.current = true; clearSelection(); }
+    return () => { setScope(null, null); };
+  }, [clearSelection, setScope]);
 
-  const handleAssign = async () => {
-    setAssignError('');
-    setAssignSuccess('');
-    if (assignmentLocked) {
-      setAssignError('Planting point assignment is locked while image processing is running.');
-      return;
-    }
-    if (!assignOrganizationId) {
-      feedback.reject({ organization: 'Choose the organization receiving these points.' });
-      return;
-    }
-    if (!assignProjectSiteId) {
-      feedback.reject({ organization: 'This organization needs a mapped planting area. Create or review its area in Zone Editor before assigning points.' });
-      return;
-    }
-    if (activityOptions.length && !assignmentActivity) {
-      feedback.reject({ activity: 'Choose the planting activity receiving these points.' });
-      return;
-    }
-    if (!pointIdsToAssign.length) {
-      feedback.reject({ point_count: `Enter a whole number from 1 to ${availablePoints.length}.` });
-      return;
-    }
+  const choices = organizations.map((organization) => {
+    const account = planters.find((item) => Number(item.organization_id) === Number(organization.id));
+    return { ...account, organization_id: organization.id, organization_name: organization.name,
+      registration_pending: !account || account.registration_pending };
+  }).filter((item) => !item.status || item.status === 'active');
+  const owner = choices.find((item) => String(item.organization_id) === String(organizationId));
+  const activities = schedules.filter((activity) => !owner?.permanent_access
+    && Number(activity.organization_id) === Number(organizationId)
+    && activity.appointment_type === 'tree_planting' && ['confirmed', 'in_progress'].includes(activity.status));
+  const activity = activities.find((item) => String(item.id) === String(activityId)) || (activities.length === 1 ? activities[0] : null);
+  // Existing activities keep their recorded area; new activities claim their
+  // selected points automatically. There is no site selector or creation form.
+  const linkedSiteId = activity?.project_site_id == null ? null : Number(activity.project_site_id);
+  const available = useMemo(() => linkedSiteId == null ? availableSitePoints(points)
+    : availableOrganizationPoints(points, Number(organizationId), Number(linkedSiteId)), [points, organizationId, linkedSiteId]);
+  const eligible = useMemo(() => new Set(available.map((point) => Number(point.id))), [available]);
+  const validSelected = selected.filter((id) => eligible.has(Number(id)));
+  const staleSelection = validSelected.length !== selected.length;
+  const ready = Boolean(owner && (owner.permanent_access || activity));
+  const locked = !active || processing || busy || loading || loadingPoints || Boolean(loadError) || !ready;
+  useEffect(() => { setScope(active ? owner?.organization_id ?? null : null, active ? linkedSiteId : null); },
+    [active, owner?.organization_id, linkedSiteId, setScope]);
+
+  function resetSelection() { clearSelection(); feedback.clear(); setError(''); setSuccess(''); }
+  async function refreshPoints() { await Promise.all([fetchPoints({ force: true }), fetchZones({ force: true }), load()]); }
+  async function assign() {
+    if (submitting.current || locked) return;
+    setError(''); setSuccess('');
+    if (!owner) { feedback.reject({ organization: 'Choose the organization receiving these points.' }); return; }
+    if (!owner.permanent_access && !activity) { feedback.reject({ activity: 'Choose a confirmed tree-planting activity.' }); return; }
+    if (staleSelection) { setError('Some selected points are no longer available. Review or clear the selection.'); return; }
+    if (!validSelected.length) { setError('Select at least one available point on the map.'); return; }
     if (!feedback.validate()) return;
-    setAssignBusy(true);
+    submitting.current = true; setBusy(true);
     try {
-      await formRequest(`${API}/api/planters/organizations/${assignOrganizationId}/assignments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          planting_point_ids: pointIdsToAssign,
-          site_zone_id: assignProjectSiteId,
-          ...(assignmentActivity ? { planting_schedule_id: assignmentActivity.id } : {}),
-        }),
+      await formRequest(`${API}/api/planters/organizations/${owner.organization_id}/assignments`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planting_point_ids: validSelected, ...(activity ? { planting_schedule_id: activity.id } : {}) }),
       });
-      const planter = selectedAssignmentPlanter;
-      setAssignSuccess(
-        `Assigned ${pointIdsToAssign.length} point${pointIdsToAssign.length === 1 ? '' : 's'} to ${planter?.organization_name || 'organization'}.`,
-      );
-      clearAssignmentSelection();
-      setAssignmentCount(null);
-      // Refresh zones too — each new assignment auto-generates a site zone
-      // polygon (convex hull of its points) that should appear on the map
-      // immediately without a manual page reload.
-      await Promise.all([fetchPoints(), fetchZones(), loadData()]);
-    } catch (err) {
-      if (!feedback.fromServer(err)) setAssignError(err.message);
-    } finally {
-      setAssignBusy(false);
-    }
-  };
+      setSuccess(`Assigned ${validSelected.length} point${validSelected.length === 1 ? '' : 's'} to ${owner.organization_name}. Its project site is shown on the map.`);
+      clearSelection();
+      await refreshPoints();
+    } catch (failure) { if (!feedback.fromServer(failure)) setError(failure.message); }
+    finally { submitting.current = false; setBusy(false); }
+  }
 
-  return (
-    <Panel plantingTool title="Planting Assignments" subtitle={`${activePlanters.length} active organizations`} openKey={openPanel} onOpenKeyChange={setOpenPanel}>
-      <PanelCard
-        title="Assign available points"
-        panelKey="assign"
-        icon={
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-        }
-      >
-        {assignmentLocked && (
-          <div className="assignment-lock-banner">
-            <strong>Assignment locked</strong>
-            <span>
-              Image processing is running{processingStage ? `: ${processingStage}` : ''}.
-            </span>
-          </div>
-        )}
-        <div className="assign-card" onChangeCapture={feedback.onChange}>
-          <FormErrorSummary feedback={feedback} />
-          <p className="text-sm" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-            Select an organization and choose how many points to assign. Each participant receives staggered point locations forming zigzag strips, divided equally. Short strips at the site boundary continue into the next strip.
-          </p>
-
-          <div className="form-group" style={{ marginTop: 10 }}>
-            <label className="form-label" htmlFor="assign-organization">Assign to organization</label>
-            <select {...feedback.props('organization')}
-              required
-              className="form-select"
-              id="assign-organization"
-              value={assignOrganizationId || ''}
-              onChange={(e) => {
-                const nextPlanterId = Number(e.target.value) || null;
-                feedback.clear();
-                const nextPlanter = assignmentOrganizations.find((organization) => Number(organization.organization_id) === nextPlanterId);
-                setAssignOrganizationId(nextPlanterId);
-                setAssignmentActivityChoice('');
-                setAssignmentCount(null);
-                const ownedSites = (projectSites?.features || []).filter((feature) => Number(feature.properties?.organization_id) === Number(nextPlanter?.organization_id));
-                const activities = plantingSchedules.filter((activity) => Number(activity.organization_id) === nextPlanterId
-                  && activity.appointment_type === 'tree_planting' && ['confirmed', 'in_progress'].includes(activity.status));
-                const linkedSiteId = activities.length === 1 ? activities[0].project_site_id : null;
-                const site = linkedSiteId != null
-                  ? ownedSites.find((feature) => Number(feature.id ?? feature.properties?.id) === Number(linkedSiteId)) : ownedSites[0];
-                const siteId = site?.id ?? site?.properties?.id ?? null;
-                warnIfNoAvailablePoints(nextPlanter, site);
-                clearAssignmentSelection();
-                setAssignmentScope(nextPlanter?.organization_id ?? null, siteId);
-              }}
-              disabled={assignmentLocked || assignBusy || loading || loadingPoints || !projectSites}
-            >
-              <option value="">Select an organization...</option>
-              {assignmentOrganizations.map((p) => (
-                <option key={p.organization_id} value={p.organization_id}>
-                  {p.organization_name}
-                </option>
-              ))}
-            </select>
-              <FieldError feedback={feedback} field="organization" />
-            {selectedAssignmentPlanter?.organization_name && (
-              <span className="text-sm" style={{ color: 'var(--color-primary)', lineHeight: 1.4 }}>
-                <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: getPlanterColor(selectedAssignmentPlanter.organization_id), marginRight: 6 }} />
-                {selectedAssignmentPlanter.registration_pending
-                  ? 'Login not created yet · Points can be reserved now'
-                  : `${selectedAssignmentPlanter.participant_count} participant slots · Shared organization code`}
-              </span>
-            )}
-            {selectedAssignmentPlanter && !assignProjectSiteId && !loadingPoints && (
-              <span className="text-sm" role="status">
-                {assignmentActivity?.project_site_id != null
-                  ? 'This activity’s planting area is unavailable. Review its area in Scheduling.'
-                  : 'This organization has no mapped planting area. Create one in Zone Editor first.'}
-              </span>
-            )}
-          </div>
-
-          <div className="form-group" style={{ marginTop: 10 }}>
-            <label className="form-label" htmlFor="assign-activity">Planting activity</label>
-            <select {...feedback.props('activity')} id="assign-activity" className="form-select"
-              value={assignmentActivity?.id || ''} required={activityOptions.length > 0}
-              onChange={(event) => {
-                setAssignmentActivityChoice(event.target.value);
-                setAssignmentCount(null);
-                setNoAvailableSite(null);
-                feedback.clear();
-              }}
-              disabled={assignmentLocked || assignBusy || loading || !activityOptions.length}>
-              <option value="">{activityOptions.length ? 'Select a planting activity' : 'Unscheduled planting'}</option>
-              {activityOptions.map((activity) => <option key={activity.id} value={activity.id}>
-                {activity.title} · {activity.date}
-              </option>)}
-            </select>
-            <FieldError feedback={feedback} field="activity" />
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
-              {assignmentActivity?.project_site_id == null && assignmentActivity
-                ? "These points belong to the selected activity. Its planting area will use this organization's mapped area."
-                : activityOptions.length ? 'These points belong to the selected activity.' : 'No confirmed planting activity is available for this site.'}
-            </span>
-          </div>
-
-          <div className="form-group" style={{ marginTop: 10 }}>
-            <label className="form-label" htmlFor="organization-point-count">Number of points to assign</label>
-            <input {...feedback.props('point_count')} id="organization-point-count" className="form-input" type="number" required min="1" max={availablePoints.length} step="1" value={requestedCount || ''} onChange={(event) => setAssignmentCount(Number(event.target.value))} disabled={!assignProjectSiteId || assignBusy || assignmentLocked || loadingPoints || availablePoints.length === 0} />
-              <FieldError feedback={feedback} field="point_count" />
-            <span className="text-sm">
-              {loadingPoints ? 'Checking available points…' : `${availablePoints.length} available points for this organization.`}
-            </span>
-            {assignProjectSiteId && !loadingPoints && availablePoints.length === 0 && (
-              <span className="text-sm" role="status">No points are available to assign. Review this organization's mapped area in Zone Editor.</span>
-            )}
-          </div>
-
-          {selectedAssignmentPlanter && (
-            <div className="assign-point-info" role="status">
-              <strong>{pointIdsToAssign.length} points{!selectedAssignmentPlanter.registration_pending && ` / ${selectedAssignmentPlanter.participant_count} participants`}</strong>
-              {selectedSpeciesSummary && <span className="text-sm">{selectedSpeciesSummary}</span>}
-              {selectedAssignmentPlanter.registration_pending ? (
-                <span className="text-sm">Select a confirmed planting activity and prepare its organization code below. Its participant count determines the initial allocation.</span>
-              ) : <span className="text-sm">Each participant receives {Math.floor(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}{pointIdsToAssign.length % selectedAssignmentPlanter.participant_count ? `–${Math.ceil(pointIdsToAssign.length / selectedAssignmentPlanter.participant_count)}` : ''} points in a first batch. Later batches balance existing allocations.</span>}
-              <span className="text-sm">All planted points count toward {selectedAssignmentPlanter.organization_name}.</span>
-            </div>
-          )}
-
-          <button
-            className="btn btn-primary btn-sm"
-            style={{ marginTop: 8, width: '100%' }}
-            onClick={handleAssign}
-            disabled={
-              assignmentLocked
-              || assignBusy
-              || !assignOrganizationId
-              || !assignProjectSiteId
-              || loadingPoints
-              || availablePoints.length === 0
-            }
-          >
-            {assignBusy
-              ? 'Assigning…'
-              : assignmentLocked
-                ? 'Assignment Locked'
-                : `Assign ${pointIdsToAssign.length || ''} Point${pointIdsToAssign.length === 1 ? '' : 's'}`.trim()}
-          </button>
-          <FormMessage error={assignError} success={assignSuccess} loading={assignBusy ? 'Assigning planting points…' : ''} />
+  return <Panel plantingTool title="Planting Assignments" subtitle="Assign points and form the organization's project site" openKey={openPanel} onOpenKeyChange={setOpenPanel}>
+    <PanelCard title="Assign available points" panelKey="assign">
+      {processing && <div className="assignment-lock-banner"><strong>Assignment locked</strong><span>Image processing is running{stage ? `: ${stage}` : ''}.</span></div>}
+      <FormMessage error={loadError} loading={loading ? 'Loading organizations and activities...' : ''} onRetry={load} />
+      <div className="assign-card" onChangeCapture={feedback.onChange}>
+        <FormErrorSummary feedback={feedback} />
+        <p className="text-sm">Choose the organization and select available planting points. Assigning them automatically forms the project site.</p>
+        <div className="form-group">
+          <label className="form-label" htmlFor="assign-organization">Assign to organization</label>
+          <select {...feedback.props('organization')} id="assign-organization" className="form-select" required value={organizationId}
+            disabled={processing || busy || loading || Boolean(loadError)} onChange={(event) => {
+              setOrganizationId(event.target.value); setActivityId(''); resetSelection();
+            }}>
+            <option value="">Select an organization</option>
+            {choices.map((item) => <option key={item.organization_id} value={item.organization_id}>{item.organization_name}</option>)}
+          </select><FieldError feedback={feedback} field="organization" />
         </div>
-      </PanelCard>
-
-      {selectedAssignmentPlanter && (
-        <PanelCard title="Organization code" defaultOpen={selectedAssignmentPlanter.registration_pending}>
-          <OrganizationAccess key={`${selectedAssignmentPlanter.organization_id}:${assignmentActivity?.id || ''}`} organization={selectedAssignmentPlanter}
-            activity={assignmentActivity}
-            onCreated={() => { void loadData(); }} />
-        </PanelCard>
-      )}
-
-      <Modal
-        open={Boolean(noAvailableSite)}
-        title="No available points"
-        variant="warning"
-        cancelLabel="Close"
-        onCancel={() => setNoAvailableSite(null)}
-      >
-        <p>
-          No points are available to assign in <strong>{noAvailableSite?.siteName}</strong> for <strong>{noAvailableSite?.organizationName}</strong>.
-        </p>
-        <p>Review this organization's mapped area in Zone Editor, or choose another organization with available points.</p>
-      </Modal>
-
-    </Panel>
-  );
+        {owner && !owner.permanent_access && <div className="form-group">
+          <label className="form-label" htmlFor="assign-activity">Planting activity</label>
+          <select {...feedback.props('activity')} id="assign-activity" className="form-select" required value={activity?.id || ''}
+            disabled={processing || busy || loading || !activities.length} onChange={(event) => { setActivityId(event.target.value); resetSelection(); }}>
+            <option value="">{activities.length ? 'Select a confirmed activity' : 'No confirmed tree-planting activity'}</option>
+            {activities.map((item) => <option key={item.id} value={item.id}>{item.title} - {item.date || item.start_at?.slice(0, 10)}</option>)}
+          </select><FieldError feedback={feedback} field="activity" />
+          {!activities.length && <p className="text-sm">Confirm the organization's tree-planting activity in Scheduling first.</p>}
+        </div>}
+        {owner?.permanent_access && <p className="text-sm">LGU uses its permanent account. Select available points for planting.</p>}
+        {ready && <>
+          <p className="text-sm">{loadingPoints ? 'Checking available points...' : `${available.length} available points. Click a point or use the brush to select locations.`}</p>
+          {active && <PlantingPointSelector key={`${organizationId}:${activity?.id || 'lgu'}`} map={map} points={available}
+            selected={validSelected} onChange={setSelection} disabled={locked} />}
+          {!map && <p role="status" className="text-sm">Loading the planting map...</p>}
+          {staleSelection && <p role="alert" className="text-sm">Some selected points are no longer available. Review or clear the selection.</p>}
+          <p className="text-sm">Selected points remain awaiting planting. Survival and monitoring start from recorded planting.</p>
+        </>}
+        <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8, width: '100%' }} onClick={assign}
+          disabled={locked || !validSelected.length || staleSelection}>{busy ? 'Assigning...' : `Assign ${validSelected.length || ''} point${validSelected.length === 1 ? '' : 's'}`.replace('  ', ' ')}</button>
+        <FormMessage error={error} success={success} loading={busy ? 'Assigning points and saving the project site...' : ''} />
+        <button type="button" className="btn btn-ghost btn-sm" disabled={busy || processing || loadingPoints} onClick={() => void refreshPoints()}>Refresh available points</button>
+      </div>
+    </PanelCard>
+    {owner && <PanelCard title="Organization code" defaultOpen={owner.registration_pending}>
+      {owner.permanent_access ? <p className="text-sm">LGU uses its permanent planter account. <Link to="/monitoring/lgu-sites">View credentials in LGU Sites</Link>.</p>
+        : <OrganizationAccess key={`${owner.organization_id}:${activity?.id || ''}`} organization={owner} activity={activity} onCreated={() => void load()} />}
+    </PanelCard>}
+  </Panel>;
 }

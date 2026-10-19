@@ -62,7 +62,7 @@ export function reportRequests(type, filters) {
   if (type === 'planting') return [dashboard('overview')];
   if (type === 'organizations') return [dashboard('operations')];
   if (type === 'monitoring') return [dashboard('ecology'), ...(!filters.siteId ? [{ key: 'organizationVisits', path: '/api/monitoring/organization-records?limit=1000' }] : [])];
-  if (type === 'mortality') return [dashboard('ecology'), { key: 'replanting', path: '/api/monitoring/replanting' }];
+  if (type === 'mortality') return [dashboard('ecology'), { key: 'replanting', path: '/api/monitoring/release-candidates' }];
   throw new Error('Choose a supported report type.');
 }
 
@@ -140,13 +140,13 @@ function performanceRow(row = {}) {
 }
 
 const REPLANTING_LABELS = {
-  awaiting_review: 'Awaiting LGU review', approved: 'Ready for LGU replanting', ready_lgu: 'Assigned — LGU replanting',
+  awaiting_release: 'Awaiting site release', released: 'Released from project site',
+  awaiting_review: 'Awaiting site release', approved: 'Released from project site',
   assigned: 'Assigned for replanting', completed: 'Replacement seedling planted',
 };
 
 const HEALTH_LABELS = { excellent: 'Excellent', good: 'Good', fair: 'Fair', poor: 'Poor', critical: 'Critical' };
 const responsibleGroup = (row) => {
-  if (row.owner_type === 'lgu') return row.organization_name || 'LGU replanting';
   if (row.organization_id !== null) return row.organization_name;
   const site = row.site_name || row.organization_name;
   return site && site !== 'No organization assigned' ? `No organization assigned (${site})` : 'No organization assigned';
@@ -183,7 +183,6 @@ export function buildRestorationReport(type, data, filters) {
     const performance = source.planting_performance;
     if (!performance?.summary) throw new Error('Planting performance data is incomplete. Refresh and try again.');
     const summary = performanceRow(performance.summary);
-    const replanting = performance.replanting || {};
     const healthColumns = [
       column('total', 'Seedlings planted', 'count'),
       column('planted', 'Without recorded death', 'count'), column('dead', 'Recorded deaths', 'count'),
@@ -193,11 +192,8 @@ export function buildRestorationReport(type, data, filters) {
     report.stats = [
       stat('Seedlings planted', summary.total, 'count', 'Plantings during the selected dates, including replacements'),
       stat('Without recorded death', summary.planted, 'count', 'Includes seedlings awaiting inspection'),
-      stat('Recorded deaths', summary.dead, 'count', 'Retained after replanting approval or replacement'),
+      stat('Recorded deaths', summary.dead, 'count', 'Retained after site release or later planting'),
       stat('Recorded survival', summary.survival_rate_pct, 'percent', 'Recorded outcomes of the selected planting batches'),
-      stat('Awaiting review', replanting.awaiting_review, 'count', 'Across all planting dates; recorded deaths awaiting LGU approval'),
-      stat('Ready for LGU replanting', replanting.ready_lgu, 'count', 'Across all planting dates; also counted as Assigned on the map'),
-      stat('Replacements planted', replanting.replacements_completed, 'count', 'Across all planting dates; actual replacements planted'),
     ];
     report.sections = [{
       title: 'Planting performance', columns: healthColumns, rows: [summary],
@@ -233,9 +229,8 @@ export function buildRestorationReport(type, data, filters) {
     report.notes = [
       'Planting performance selects seedlings by planting date and uses their recorded outcomes as of the report generation date. Each original or replacement seedling is counted once. Original and replacement batches have separate results.',
       'Recorded survival is seedlings without a recorded death divided by seedlings planted. This includes seedlings awaiting inspection and does not mean every survivor has been verified. N/A means no plantings or missing earlier outcomes.',
-      'Replanting approval and assignment do not remove the original death or count as a new planting. A recorded replacement planting starts a new seedling record at the same location. Earlier deaths remain in their original batches.',
-      'Current mapped seedlings cover all planting dates. Each currently planted or dead mapped location counts once. Locations ready for LGU replanting appear as Assigned and leave current seedling totals while their deaths remain in planting performance.',
-      'Replanting progress covers all planting dates for the selected site. Ready for LGU replanting is a subset of Assigned map locations; do not add these counts together. Removed locations are excluded from pending work. Eroded locations require site review before planting.',
+      'Site release and assignment do not remove the original death or count as a new planting. A recorded replacement planting starts a new seedling record at the same location. Earlier deaths remain in their original batches.',
+      'Current mapped seedlings cover all planting dates. Each currently planted or dead mapped location counts once. Released locations return to Planned and leave current seedling totals while their deaths remain in their original site’s planting performance.',
       'Monthly death history uses death reporting dates within the selected dates. It can differ from deaths in planting performance, which selects batches by planting date. Deaths without identified planting records are excluded from batch survival.',
     ];
     if (growth.length) report.notes.push('Height figures use recorded measurements of alive seedlings, grouped by inspection month. They are measured heights, not growth forecasts; repeated observations may include the same seedling.');
@@ -266,29 +261,29 @@ export function buildRestorationReport(type, data, filters) {
       const day = manilaDay(row.death_at);
       return day && day >= filters.dateFrom && day <= filters.dateTo
         && (!filters.siteId || String(row.project_site_id) === String(filters.siteId));
-    }).map((row) => ({ ...row, status_label: REPLANTING_LABELS[row.replanting_status] || 'Status unavailable' }));
+    }).map((row) => ({ ...row, status_label: REPLANTING_LABELS[row.release_status ?? row.replanting_status] || 'Status unavailable' }));
     report.stats = [
       stat('Reported seedling deaths', sum(causes, 'deaths'), 'count', source.mortality_includes_unlocated ? 'Includes deaths without identified locations' : 'Deaths linked to the selected project site'),
       stat('Dead seedlings with locations', replacements.length, 'count', 'Recorded death dates within the reporting period'),
-      stat('Replacement seedlings planted', replacements.filter((row) => row.replanting_status === 'completed').length, 'count', 'For seedlings in the location table; status when generated'),
-      stat('Replacement seedlings pending', replacements.filter((row) => row.replanting_status !== 'completed').length, 'count', 'For seedlings in the location table; status when generated'),
+      stat('Replacement seedlings planted', replacements.filter((row) => (row.release_status ?? row.replanting_status) === 'completed').length, 'count', 'For seedlings in the location table; status when generated'),
+      stat('Replacement seedlings pending', replacements.filter((row) => (row.release_status ?? row.replanting_status) !== 'completed').length, 'count', 'For seedlings in the location table; status when generated'),
     ];
     report.sections = [{
       title: 'Reported seedling deaths by cause',
       columns: [column('label', 'Reported cause of death'), column('deaths', 'Seedling deaths', 'count'), column('percent_of_deaths', 'Share of reported deaths', 'percent')],
       rows: causes,
     }, {
-      title: 'Dead seedlings with locations and current replanting status',
-      columns: [column('planting_event_id', 'Seedling record ID', 'count'), column('point_num', 'Point number', 'count'), column('project_site_name', 'Project site'), column('organization_name', 'Planting organization'), column('death_at', 'Recorded death date', 'date'), column('latitude', 'Latitude', 'coordinate'), column('longitude', 'Longitude', 'coordinate'), column('status_label', 'Current replanting status')],
+      title: 'Dead seedlings with locations and current location status',
+      columns: [column('planting_event_id', 'Seedling record ID', 'count'), column('point_num', 'Point number', 'count'), column('project_site_name', 'Project site'), column('organization_name', 'Planting organization'), column('death_at', 'Recorded death date', 'date'), column('latitude', 'Latitude', 'coordinate'), column('longitude', 'Longitude', 'coordinate'), column('status_label', 'Current location status')],
       rows: replacements,
     }];
     report.notes = [
       'Cause totals use the date a death was reported in a monitoring visit, or the recorded death date for individual records. The location table uses each seedling’s recorded death date. Differences in these dates can produce different counts.',
-      'The location table lists individual dead seedlings, rather than distinct physical points. Different seedlings may have been planted at the same point over time. Replanting status is current when generated, including work completed after the period end.',
+      'The location table lists individual dead seedlings, rather than distinct physical points. Different seedlings may have been planted at the same point over time. Location status is current when generated, including work completed after the period end.',
       source.mortality_includes_unlocated
         ? 'Reported deaths include deaths without identified locations. The cause totals and location table are separate views of death records; do not add their counts together.'
         : 'Deaths without identified locations are excluded from the cause totals when a project site is selected because their site is unknown.',
-      'Replanting approval and assignment are preparation steps. Replacement seedlings planted counts cases with a recorded replacement planting confirmation.',
+      'Site release and assignment are preparation steps. Replacement seedlings planted counts cases with a recorded replacement planting confirmation.',
     ];
   }
 

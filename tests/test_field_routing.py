@@ -47,7 +47,8 @@ def assert_navigation_endpoints(result, origin, destination):
     assert len(guides) <= 1
     if guides:
         start = list(origin) if result['route_source'] == 'within_site' else result['entrance'] or result['polyline'][-1]
-        assert guides[0]['polyline'] == [start, list(destination)]
+        assert guides[0]['polyline'][0] == start
+        assert guides[0]['polyline'][-1] == list(destination)
         assert result['segments'][-1] == guides[0]
 
 
@@ -154,6 +155,43 @@ def test_local_direction_through_trees_is_omitted_but_target_is_preserved(routin
     assert result['target'] == destination
     assert result['entrance'] == site['access_path'][-1]
     assert result['segments'][-1] == {'kind': 'road', 'polyline': site['access_path']}
+
+
+@pytest.mark.parametrize('destination', [
+    [10.7802641034854, 122.627143274877],  # Saved shoreline point #3.
+    [10.7801742723679, 122.626685431092],
+    [10.7798823212361, 122.628103471578],
+])
+def test_concave_shoreline_keeps_bridge_and_bends_guide_to_saved_points(routing, monkeypatch, destination):
+    from api.site_access import access_routes, guidance_within_area, inside_or_near_area
+    site = access_routes()[0]
+    assert inside_or_near_area(destination, site['planting_area'])
+    assert not guidance_within_area(site['access_path'][-1], destination, site['planting_area'])
+    monkeypatch.setattr(routing, '_google_route', lambda *args: pytest.fail('Already on bridge'))
+    result = routing.compute_route(request(routing, site['bridge_start'], destination))
+    assert result['segments'][0]['kind'] == 'road'
+    assert result['segments'][0]['polyline'][-1] == site['access_path'][-1]
+    assert_navigation_endpoints(result, site['bridge_start'], destination)
+    guide = result['segments'][-1]
+    assert guide['kind'] == 'guidance'
+    assert len(guide['polyline']) > 2
+    assert all(guidance_within_area(a, b, site['planting_area'])
+               for a, b in zip(guide['polyline'], guide['polyline'][1:]))
+
+
+def test_onsite_guidance_bends_instead_of_disappearing_across_a_shoreline_indent(routing, monkeypatch):
+    from api.site_access import access_routes, guidance_within_area
+    site = access_routes()[0]
+    origin, destination = [10.78005, 122.6261], [10.7802641034854, 122.627143274877]
+    monkeypatch.setattr(routing, '_google_route', lambda *args: pytest.fail('Already on foreshore'))
+    result = routing.compute_route(request(routing, origin, destination))
+    assert result['route_source'] == 'within_site'
+    assert result['polyline'] == []
+    assert_navigation_endpoints(result, origin, destination)
+    guide = result['segments'][0]
+    assert len(guide['polyline']) > 2
+    assert all(guidance_within_area(a, b, site['planting_area'])
+               for a, b in zip(guide['polyline'], guide['polyline'][1:]))
 
 
 def test_pond_position_does_not_snap_to_access_road(routing):
@@ -478,3 +516,59 @@ def test_missing_routes_key_reports_configuration_error_without_contacting_googl
         routing._google_route([10.7, 122.55], [10.78, 122.62], 'walking')
     assert unavailable.value.status_code == 503
     assert 'GOOGLE_ROUTES_API_KEY' in unavailable.value.detail
+
+
+def test_remote_route_without_key_explains_missing_configuration_and_keeps_site_guide(routing, monkeypatch):
+    monkeypatch.setattr(routing, '_load_google_routes_api_key', lambda: '')
+    monkeypatch.setattr(routing, 'urlopen', lambda *args, **kwargs: pytest.fail('No key must not contact Google'))
+    result = routing.compute_route(request(routing, (10.70, 122.55)))
+    assert result['route_source'] == 'partial_route'
+    assert result['road_route_available'] is False
+    assert result['road_route_error'] == {
+        'kind': 'routing_not_configured',
+        'message': 'Road navigation is not configured. Contact LGU staff.',
+    }
+    assert [segment['kind'] for segment in result['segments']] == ['road', 'guidance']
+    assert all([10.70, 122.55] not in segment['polyline'] for segment in result['segments'])
+    assert 'GOOGLE_ROUTES_API_KEY' not in json.dumps(result)
+
+
+@pytest.mark.parametrize('status,kind', [(403, 'routing_access_denied'), (429, 'request_limit_reached'), (500, 'provider_unavailable')])
+def test_provider_failures_return_a_specific_reason_with_partial_navigation(routing, monkeypatch, status, kind):
+    from urllib.error import HTTPError
+    def rejected(*args, **kwargs):
+        raise HTTPError('https://example.test', status, 'private provider diagnostics', {}, None)
+    monkeypatch.setattr(routing, 'urlopen', rejected)
+    result = routing.compute_route(request(routing))
+    assert result['route_source'] == 'partial_route'
+    assert result['road_route_error']['kind'] == kind
+    assert 'private provider diagnostics' not in json.dumps(result)
+    assert result['segments'][-1]['kind'] == 'guidance'
+
+
+def test_local_request_cap_keeps_known_site_approach_and_never_calls_provider(routing, monkeypatch, tmp_path):
+    from api.routing_usage import reserve_google_request
+    monkeypatch.setenv('GOOGLE_ROUTES_DAILY_LIMIT', '0')
+    monkeypatch.setattr(routing, 'reserve_google_request',
+        lambda key: reserve_google_request(key, usage_path=tmp_path / 'usage.sqlite3'))
+    monkeypatch.setattr(routing, 'urlopen', lambda *args, **kwargs: pytest.fail('Cap must not be bypassed'))
+    result = routing.compute_route(request(routing))
+    assert result['route_source'] == 'partial_route'
+    assert result['road_route_error']['kind'] == 'request_limit_reached'
+    assert result['segments'][0]['kind'] == 'road'
+
+
+def test_retry_after_configuration_is_restored_returns_full_road_route(routing, monkeypatch):
+    monkeypatch.setattr(routing, '_load_google_routes_api_key', lambda: '')
+    origin = [10.70, 122.55]
+    assert routing.compute_route(request(routing, origin))['road_route_error']['kind'] == 'routing_not_configured'
+    from api.site_access import access_routes
+    site = access_routes()[0]
+    street_path = [origin, [10.783, 122.58], site['access_path'][0]]
+    monkeypatch.setattr(routing, '_google_route', lambda *args: (12000, 9000, street_path))
+    result = routing.compute_route(request(routing, origin))
+    assert result['route_source'] == 'site_route'
+    assert result['road_route_available'] is True
+    assert 'road_route_error' not in result
+    assert result['segments'][0]['polyline'] == street_path
+    assert result['segments'][1]['polyline'] == site['access_path']

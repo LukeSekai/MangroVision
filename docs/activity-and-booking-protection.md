@@ -76,6 +76,29 @@ The dump checksum, all 136 object checksums and dump readability were verified;
 this was not a full restore rehearsal. The ignored operation report and backup
 verification are retained under `backups/pending-activity-completion-*`.
 
+## October 20: automatic planting completion
+
+Confirmed and ongoing tree-planting activities now complete automatically when
+every point assigned to that activity is recorded as planted. All assignment
+batches are checked together under the activity's row lock, in the same
+transaction as the last planting update. Empty activities and activities with
+pending or skipped points stay open. Other activities at the same organization
+or site are independent. Deaths after planting do not reopen an activity.
+
+The change writes one system activity entry and does not queue a booking email.
+Completed planting records cannot be reverted to pending or skipped through
+the point-status action. Scheduling shows Completed, exposes only View, and
+uses Planting completed instead of current tide advice in its list and details.
+The planter recording the final point sees a success acknowledgement before
+returning to sign-in, rather than reloading with the now-completed activity code.
+
+For older fully planted activities, run
+`python scripts/complete_planted_activity.py --schedule-id ID` to preview one
+activity without writes. `--apply` uses the same locked completion rule,
+verifies that assignments, planting events and queued email records remain
+unchanged, and saves a small report under `run_logs/`.
+GET requests never change completion status.
+
 ## Verification
 
 Development checks used mocked email delivery and PostgreSQL session-local temporary tables, rolled back afterward:

@@ -18,7 +18,7 @@ outcomes as of generation time. Each planting event represents one seedling.
 The **Survival by planting batch** table groups by Philippine planting date,
 assignment, organization, site, species, and original/replacement planting.
 Species, site, and planter comparisons use these planting-cycle totals.
-Approving or assigning replacement work changes no historical outcome.
+Releasing locations or assigning them again changes no historical outcome.
 Original deaths remain in their batches. An actual replacement planting adds
 a separate seedling; repeated deaths at one location remain separate events.
 Reversed planting completions and future plantings are excluded. Historical
@@ -26,39 +26,29 @@ attribution comes from the planting event, even if the location is later moved
 to another organization or removed from the map.
 
 The overall rate combines the selected batches. For example, 80 surviving
-original seedlings and 20 deaths produce 80% recorded survival. Approval stays
-at 80%. Planting 20 replacements produces 100 seedlings without recorded death
-out of 120 planted, or 83.33% overall; the original batch stays at 80% and the
-replacement batch begins at 100% until further outcomes are recorded.
+original seedlings and 20 deaths produce 80% recorded survival. Release stays
+at 80%. If the 20 replacements belong to another site, that new site has 20 new plantings
+and its own survival result. The original site stays at 80%. An all-sites report
+combining both batches has 100 seedlings without recorded death out of 120
+plantings, or 83.33%; this is a different scope from either individual site.
 
-## Replanting progress and current map status
+## Released locations and current map status
 
-Replanting progress covers all planting dates for the selected dimensions:
+**Current mapped seedlings** counts each currently planted or dead physical
+location once across all planting dates. **Release from project site** removes
+selected dead planting cells from the site's current boundary and returns their
+locations to green Planned. Earlier planting and death records remain in the
+original site's planting performance. A newly claimed site uses its own new
+planting events and survival results.
 
-- **Awaiting review:** recorded dead seedlings at retained locations awaiting
-  approval. They remain dark red on the map.
-- **Ready for LGU replanting:** approved, eligible locations reserved for the
-  LGU team. They appear blue and count as Assigned on the map. Eroded locations
-  appear Unavailable and cannot be recorded as replanted while erosion applies.
-- **Replacements planted:** dead seedlings followed by a recorded
-  replacement cycle. A replacement that later dies still counts as completed
-  work for its predecessor and separately creates pending work for itself.
+Map site popups use historical site planting outcomes for survival; their status
+donuts continue to show current mapped locations. Releasing dead cells cannot
+increase the popup?s survival rate.
 
-**Current mapped seedlings** continues to count each current planted or dead
-physical location once across all planting dates, matching Planting Map.
-Approval reserves a location for LGU work. Its stored physical value is Planned,
-while its current map classification is Assigned. It leaves current seedling
-totals; its earlier planting and death remain in planting performance.
-Current map counts and historical planting totals can therefore differ.
-
-The API keeps its current-map `summary` and comparisons for compatibility and
-adds `planting_performance` for batch results and replanting progress. These
-are assembled by `mangrovision_db/health_summary.py` and
-`mangrovision_db/planting_performance.py` through `get_dashboard_ecology`.
-Staff handle replacements in **Monitoring → LGU Replanting** using their
-existing login. The queue uses existing approval records, so no new account or
-schema migration is needed. Actual planting creates a staff-attributed event
-linked to the original seedling. See [LGU replanting](lgu-replanting.md).
+There is no dedicated LGU replacement queue or replacement form. Monitoring's
+**LGU Sites** tab manages the fixed LGU organization's separate planting sites,
+permanent planter access, and site-specific monitoring. See
+[LGU Sites](lgu-sites.md) and [Release dead locations](project-site-location-release.md).
 
 ## Monthly death history
 

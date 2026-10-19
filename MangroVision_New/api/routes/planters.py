@@ -8,6 +8,9 @@ from shapely.geometry import Point
 from shapely.prepared import prep
 from api.routes.monitoring import _require_lgu_user
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
+from api.routes.zones import _load_zone_coverage
+from mangrovision_db.site_point_selection import assign_points_as_site
 from mangrovision_db.organization_accounts import list_participant_devices, reset_participant_device
 from mangrovision_db.planter_codes import create_code_account, manage_codes, CodeError
 from mangrovision_db.group_access import manage_activity_code
@@ -62,7 +65,7 @@ class UpdatePlanterRequest(BaseModel):
 
 
 class CreateAssignmentRequest(BaseModel):
-    planting_point_ids: List[int]
+    planting_point_ids: List[int] = Field(min_length=1, max_length=10000)
     assigned_by_user_id: Optional[int] = None
     title: str = ""
     assignment_date: str = ""
@@ -83,6 +86,16 @@ def create_organization_assignment_endpoint(organization_id: int, body: CreateAs
                                            user: dict = Depends(_require_lgu_user)):
     _raise_if_processing_active()
     try:
+        if body.site_zone_id is None:
+            try:
+                coverage = _load_zone_coverage()
+            except Exception as error:
+                raise HTTPException(status_code=503, detail='Could not check the drone map boundary. Please try again.') from error
+            return assign_points_as_site(organization_id=organization_id,
+                planting_point_ids=body.planting_point_ids, coverage=coverage,
+                planting_schedule_id=body.planting_schedule_id, user_id=int(user['id']),
+                title=body.title, assignment_date=body.assignment_date,
+                travel_mode=body.travel_mode, notes=body.notes, species=body.species)
         assignment_ids = create_organization_assignments(
             organization_id, body.planting_point_ids,
             assigned_by_user_id=int(user["id"]), title=body.title,
@@ -92,6 +105,8 @@ def create_organization_assignment_endpoint(organization_id: int, body: CreateAs
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except SQLAlchemyError as error:
+        raise HTTPException(status_code=503, detail='Could not assign the selected points. Refresh the map and try again.') from error
     return {"assignment_id": assignment_ids[0], "assignment_ids": assignment_ids}
 
 
@@ -201,6 +216,8 @@ def update_planter_endpoint(planter_id: int, body: UpdatePlanterRequest):
     planter = get_planter(planter_id)
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
+    if planter.get('permanent_access') and body.status is not None and body.status != 'active':
+        raise HTTPException(status_code=409, detail='The permanent LGU account must remain active.')
 
     if planter.get("merged_into_planter_id") is not None:
         raise HTTPException(status_code=409, detail="This legacy account was merged into its organization login.")
@@ -244,6 +261,8 @@ def deactivate_planter_endpoint(planter_id: int, hard: bool = False):
     planter = get_planter(planter_id)
     if not planter:
         raise HTTPException(status_code=404, detail="Planter not found")
+    if planter.get('permanent_access'):
+        raise HTTPException(status_code=409, detail='The permanent LGU account cannot be removed or deactivated.')
 
     conn = _get_connection()
     if hard:

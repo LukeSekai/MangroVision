@@ -53,6 +53,7 @@ export default function Modal({
   cancelLabel = 'Cancel',
   variant = 'default',
   busy = false,
+  confirmDisabled = false,
   onConfirm,
   onCancel,
   className = '',
@@ -69,14 +70,16 @@ export default function Modal({
   const confirmButtonRef = useRef(null);
   const cancelButtonRef = useRef(null);
   const busyRef = useRef(busy);
+  const confirmDisabledRef = useRef(confirmDisabled);
   const onCancelRef = useRef(onCancel);
   const onConfirmRef = useRef(onConfirm);
 
   useEffect(() => {
     busyRef.current = busy;
+    confirmDisabledRef.current = confirmDisabled;
     onCancelRef.current = onCancel;
     onConfirmRef.current = onConfirm;
-  }, [busy, onCancel, onConfirm]);
+  }, [busy, confirmDisabled, onCancel, onConfirm]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -93,7 +96,7 @@ export default function Modal({
         return;
       }
       // Focused controls must keep their native action (especially Cancel).
-      if (event.key === 'Enter' && typeof onConfirmRef.current === 'function' && event.target?.tagName !== 'TEXTAREA'
+      if (event.key === 'Enter' && !confirmDisabledRef.current && typeof onConfirmRef.current === 'function' && event.target?.tagName !== 'TEXTAREA'
           && !event.target?.closest?.('button, a, select')) {
         event.preventDefault();
         onConfirmRef.current();
@@ -195,7 +198,7 @@ export default function Modal({
               type="button"
               className={`${confirmClass} modal-action-btn${busy ? ' is-busy' : ''}`}
               onClick={onConfirm}
-              disabled={busy}
+              disabled={busy || confirmDisabled}
             >
               {busy ? (
                 <>

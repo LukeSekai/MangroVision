@@ -29,16 +29,13 @@ End the guide before using the highlighted controls to perform the task.
    with search and 25 members per page. Information reloads on return and
    workspace data-change updates. There is no Refresh information button;
    failed requests retain **Retry**.
-3. **Planting Map → Zone Editor — prepare the area.** Choose the owner before
-   drawing a project site. An organization's first site can occupy unclaimed
-   land inside the drone map. Later sites must fit its area or released land
-   available to other organizations. Avoid other owners' areas. Start at the
-   left, drag right, trace the boundary, then check the validation before saving.
-   Eroded zones retain planting locations but block assignment and planting;
-   removing the zone restores eligible locations. Warning zones record hazards
-   and severity without blocking assignment. Site **Release area** and **Delete
-   site** show eligibility and affected locations before confirmation. Release
-   preserves living seedlings and earlier planting, death and monitoring history.
+3. **Planting Map -> Zone Editor - review sites and hazards.** Project sites
+   are formed automatically from assigned planting points. Use Zone Editor to
+   draw eroded and warning areas inside the drone map. Eroded zones retain
+   locations but block assignment and planting; removing one restores eligible
+   locations. Warnings record hazards without blocking assignment. Site
+   **Release area** and **Delete site** show eligibility before confirmation.
+   Release preserves living seedlings and all earlier planting/death history.
 4. **Analyze Image — create and review potential planting locations.** Upload an
    original geotagged drone JPEG or PNG. Check GPS, coverage and alignment.
    Review partial coverage, actual overlaps with earlier analysis boundaries,
@@ -57,17 +54,16 @@ End the guide before using the highlighted controls to perform the task.
    Use map layers and Legend to inspect points and zones. Export Saved Points
    supports CSV, GPX, KML and GeoJSON. KML uses small dots with hidden labels;
    selecting a dot shows its name and details in Google Earth.
-6. **Scheduling and Assign Points — allocate approved work.** Approve the
-   tree-planting activity and choose its planting area. In Assign Points, select
-   the organization and approved activity, then review the available
-   points and allocation before assigning. An incomplete activity can be
-   rescheduled until a linked assignment point is recorded as planted. Once
-   planting starts, its date, times and planting plan are protected; permitted
-   contact/notes corrections and progress updates remain available. A separate
-   future activity at the same site is independent. **Completed activities are
-   read-only**: they cannot be edited, reopened, cancelled or deleted.
-   The planting area is linked automatically from the activity or organization;
-   Assign Points has no separate project-site selector.
+6. **Scheduling and Assign Points - allocate approved work.** Approve the
+   tree-planting activity and open **Assign points**. Choose its organization
+   and activity, then click or brush available locations. Assigning the selected
+   points forms the project site and links the activity automatically. There
+   is no site creation step or new/existing-site choice. Planters receive the
+   selected work, while survival and monitoring begin from actual planting.
+   LGU uses the same tool with its permanent account and no timed booking.
+   Existing linked activities keep their saved area and history. Activity
+   planning details are protected after planting starts; completed activities
+   remain read-only.
 7. **Field access — share the link and activity code privately.** Share the
    deployed website's `/field` URL. Organization code manages the selected
    planting activity's shared code. Each participant uses a personal username.
@@ -88,22 +84,24 @@ End the guide before using the highlighted controls to perform the task.
    Open a site's map/details, use the clock icon for history, then close to return
    to the list. Counts and visit dates cover the site's organization.
    The shared navigation under the heading switches between **Monitoring visits**
-   and **LGU Replanting**. Both pages use the same **Show map** action.
-9. **Monitoring map — review replanting.** Choose the organization scope and,
-   optionally, Show dead plants only. Select dead locations using Move / click,
-   Brush select or Brush erase; selected points turn purple. Escape returns to
-   Move / click. Review up to 500 points per batch and check eligibility before
-   approval. Approved locations enter the LGU queue and appear blue as Assigned;
-   earlier planting and death records remain in history. Changing the organization
-   clears the selection. Shared risk-zone layers are hidden in a single-organization
-   view. Big-wave danger marks sites where at least 30% of historically planted
-   locations have recorded big-wave deaths; it describes recorded losses, so check
-   present conditions before planning work.
-   Open **Monitoring → LGU Replanting** to review pending deaths, filter by
-   project site, and record replacements after LGU staff have planted them.
-   Confirm the planting date, site and species. Each confirmed replacement
-   becomes yellow and has a new staff-attributed record linked to its original.
-   When opening a map from Monitoring, LGU Replanting, Dashboard, Organizations,
+   and **LGU Sites**. Both pages use the same **Show map** action.
+9. **Monitoring map ? release locations.** Choose the organization scope and,
+   optionally, Show dead plants only. Select confirmed dead locations using
+   Move / click, Brush select, or Brush erase; selected points turn purple.
+   Escape returns to Move / click. Choose **Release from project site** to review
+   and confirm up to 500 locations. Their planting cells leave the old boundary
+   and the locations return to green Planned. The original site's planting
+   counts, deaths, visits, and survival results remain in history. Another
+   organization can draw its own site on the released land and use the normal
+   assignment and planting process. Erosion restrictions still apply.
+   Changing the organization clears the selection. Shared risk-zone layers are
+   hidden in a single-organization view. Mortality warning zones mark sites with at least 30% recorded deaths
+   across all causes. Review field conditions before planning more planting.
+   **Monitoring → LGU Sites** shows LGU's permanent planter credentials and
+   separate site results. Each site follows its own planting-based monitoring
+   dates. Use **Record monitoring** when due and **History** to review visits.
+   The combined LGU survival uses total surviving and planted seedlings.
+   When opening a map from Monitoring, LGU Sites, Dashboard, Organizations,
    or Scheduling, use the **Back to [section]** button at the upper left to return
    to that page with its current filters and tab. Scheduling provides map links
    beside an activity's saved planting area in both List and calendar details.
@@ -117,11 +115,9 @@ End the guide before using the highlighted controls to perform the task.
     deaths or releases for replanting. Follow-up sites link to their map location
     or responsible organization's Monitoring view. Seedling Health selects
     planting batches by planting date and retains original deaths after
-    replanting approval or replacement. Review batch survival, current map
-    counts, and replanting progress separately. Awaiting review, Ready for LGU
-    replanting, and Replacements planted cover all planting dates for the site.
-    Ready locations also count as Assigned on the map; these totals overlap.
-    Its monthly
+    site release or later planting. Review historical batch survival and current
+    map counts separately. Released points become Planned until assigned under
+    a newly claimed site. Its monthly
     deaths chart shows new deaths recorded in each Philippine calendar month
     within the selected dates, with a matching data table. Select the year in Planting
     goals to review targets. Download Report and Download Monitoring Report open

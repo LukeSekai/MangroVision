@@ -294,7 +294,9 @@ export default function MapView() {
     }).addTo(map);
     const warningLayer = L.geoJSON(null, {
       pane: 'overlayPane',
-      style: { color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.14, dashArray: '4 4' },
+      style: (feature) => projectSiteStyle(feature, {
+        color: '#f59e0b', weight: 2, fillColor: '#f59e0b', fillOpacity: 0.14, dashArray: '4 4',
+      }),
     }).addTo(map);
 
     // Assignment zones are derived from each assignment. They remain neutral:
@@ -357,8 +359,8 @@ export default function MapView() {
           <span class="map-zone-legend-label">Warning zone</span>
         </div>
         <div class="map-zone-legend-row">
-          <span class="map-zone-legend-swatch" style="border-color:#b91c1c;background:#fee2e2" aria-hidden="true"></span>
-          <span class="map-zone-legend-label">Big-wave danger site (≥30%)</span>
+          <span class="map-zone-legend-swatch map-zone-legend-swatch-mortality" aria-hidden="true"></span>
+          <span class="map-zone-legend-label">High mortality (≥30%)</span>
         </div>
       `;
       // Stop map drag/zoom from firing when the user interacts with the legend
@@ -404,7 +406,7 @@ export default function MapView() {
       const visibilityKey = { site: 'projectSites', eroded: 'eroded', warning: 'warnings', forbidden: 'forbidden' }[kind];
       useMapStore.getState().showLayers([visibilityKey]);
       if (!map.hasLayer(group)) group.addTo(map);
-      layer.setStyle({ weight: 4, fillOpacity: 0.22 });
+      layer.setStyle({ weight: 4, fillOpacity: projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity });
       orderZoneLayers(layersRef.current);
       focusMapArea(map, bounds);
       layer.openTooltip(bounds.getCenter());
@@ -518,9 +520,6 @@ export default function MapView() {
     // Skip rebuilding markers only when both the complete dataset and the
     // selection/filter context match the last render.
     const assignmentSelectedIds = new Set(assignmentSelectedPointIds.map(Number));
-    const assignmentSelectionKey = isPlanterMode
-      ? [...assignmentSelectedIds].sort((a, b) => a - b).join(',')
-      : '';
     const modeKey = isMonitoringMapMode
       ? `monitor:${showDeadPointsOnly}:${monitoringOrganizationId ?? 'all'}`
       : (isPlanterMode ? 'planters' : isAnalyticsMode ? 'analytics' : 'normal');
@@ -533,7 +532,7 @@ export default function MapView() {
     const assignmentScopeKey = isPlanterMode
       ? `${assignmentOrganizationId ?? ''}:${assignmentProjectSiteId ?? ''}`
       : '';
-    const fingerprint = `${modeKey}:${assignmentSelectionKey}:${assignmentScopeKey}:${pointsDataKey}`;
+    const fingerprint = `${modeKey}:${assignmentScopeKey}:${pointsDataKey}`;
 
     if (fingerprint === pointsFingerprintRef.current) return;
     pointsFingerprintRef.current = fingerprint;
@@ -555,8 +554,7 @@ export default function MapView() {
     const currentReplantingSelection = new Set(useMapStore.getState().replantingSelectedPointIds);
     displayPoints.forEach((p) => {
       const status = getPointDisplayStatus(p);
-      const statusLabel = p.lgu_replanting_pending && status === 'assigned'
-        ? 'Assigned — LGU replanting' : formatStatusLabel(status);
+      const statusLabel = formatStatusLabel(status);
       const pointId = Number(p.id);
       const isAssignmentSelected = isPlanterMode && assignmentSelectedIds.has(pointId);
       const isReplantingSelected = isMonitoringMapMode && currentReplantingSelection.has(p.id);
@@ -565,13 +563,16 @@ export default function MapView() {
         && p.source_organization_id != null
         && Number(p.source_organization_id) !== Number(assignmentOrganizationId);
       const belongsToAnotherProjectSite = isPlanterMode
-        && assignmentProjectSiteId != null
-        && (
-          p.source_project_site_id == null
-          || Number(p.source_project_site_id) !== Number(assignmentProjectSiteId)
-        );
+        && (assignmentProjectSiteId == null ? p.source_project_site_id != null : (
+          p.source_project_site_id == null || Number(p.source_project_site_id) !== Number(assignmentProjectSiteId)
+        ));
       const outsideAssignmentScope = belongsToAnotherOrganization || belongsToAnotherProjectSite;
       const hasWarning = Boolean(p.survival_warning);
+      // Negative zone IDs identify automatic site mortality warnings. Keep
+      // their points' ordinary outlines; the amber site boundary carries it.
+      const mortalityWarningOnly = p.warning_zone_ids?.length > 0
+        && p.warning_zone_ids.every((id) => Number(id) < 0);
+      const showWarningRing = hasWarning && !mortalityWarningOnly;
 
       // In Planter Management, override the single "assigned = blue" with a
       // organization hue so the admin can identify the owner without hovering.
@@ -596,10 +597,10 @@ export default function MapView() {
       const highlight = isAssignmentSelected || isReplantingSelected;
       const markerStroke = highlight
         ? '#4c1d95'
-        : hasWarning
+        : showWarningRing
           ? '#f59e0b'
           : '#000000';
-      const markerWeight = hasWarning
+      const markerWeight = showWarningRing
         ? Math.max(getPointWeight(z, highlight), z >= 20 ? 1.1 : 0.75)
         : getPointWeight(z, highlight);
       const marker = L.circleMarker([p.latitude, p.longitude], {
@@ -610,16 +611,17 @@ export default function MapView() {
         fillOpacity: outsideAssignmentScope ? 0.2 : (highlight ? 0.96 : 0.92),
         opacity: 0.95,
         mgAssignmentSelected: highlight,
-        mgWarning: hasWarning,
+        mgWarning: showWarningRing,
         mgDead: status === 'dead',
         mgPointId: p.id,
         mgBaseColor: baseStatusColor,
-        mgBaseStroke: hasWarning ? '#f59e0b' : '#000000',
+        mgBaseStroke: showWarningRing ? '#f59e0b' : '#000000',
+        mgOutsideAssignmentScope: outsideAssignmentScope,
       });
 
       const pointTitle = escapeHtml(p.point_num);
       const imageName = escapeHtml(p.image_name || '');
-      const planterName = escapeHtml(p.lgu_replanting_pending ? 'LGU replanting queue' : p.planted_by_user_id
+      const planterName = escapeHtml(p.planted_by_user_id
         ? `LGU${p.planted_by_name ? ` (${p.planted_by_name})` : ''}`
         : p.assigned_planter_name || '');
       const safeStatusLabel = escapeHtml(statusLabel);
@@ -629,7 +631,7 @@ export default function MapView() {
       const warningSummary = escapeHtml(p.warning_summary || 'Planner warning');
       const warningSeverity = escapeHtml(p.warning_severity || 'medium');
       const tooltipWarning = hasWarning
-        ? `<div class="point-status-tooltip-detail point-status-tooltip-warning">Warning: ${warningSeverity} - ${warningSummary}</div>`
+        ? `<div class="point-status-tooltip-detail point-status-tooltip-warning">Warning: ${warningSummary}</div>`
         : '';
       // Species hint — visible on every point that knows its species, so the
       // planner can hover any green/yellow dot and see "Bungalon (1 m)" or
@@ -661,14 +663,13 @@ export default function MapView() {
       const warningDetail = hasWarning
         ? `
           <div style="margin-top:8px;padding:8px;border-radius:8px;background:#fffbeb;border-left:4px solid #f59e0b;">
-            <div style="font-size:11px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.03em;">Planner warning</div>
-            <div style="font-size:12px;color:#374151;margin-top:3px;"><strong>Level:</strong> ${warningSeverity}</div>
+            <div style="font-size:11px;font-weight:800;color:#92400e;text-transform:uppercase;letter-spacing:.03em;">Warning (${warningSeverity})</div>
             <div style="font-size:12px;color:#374151;margin-top:3px;">${warningSummary}</div>
           </div>
         `
         : '';
       const monitorHint = isMonitoringMapMode && isDeadPoint
-        ? '<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:#fff7ed;border:1px dashed #fdba74;font-size:11px;color:#9a3412;font-weight:600;">Click to select this dead point for replanting review.</div>'
+        ? '<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:#fff7ed;border:1px dashed #fdba74;font-size:11px;color:#9a3412;font-weight:600;">Click to select this dead point for release from its project site.</div>'
         : '';
 
       marker.bindTooltip(`
@@ -712,8 +713,8 @@ export default function MapView() {
           if (useMapStore.getState().replantingSelectionMode === 'click') toggleReplantingPoint(p.id);
           return;
         }
-        // Organization batches are selected by count in the panel. Clicking
-        // a marker only opens its details; there is no individual assignment.
+        // The assignment selector handles eligible point clicks and brushing
+        // in its own pane. These base markers retain point details.
         if (isPlanterMode) return;
         setSelectedPoint(p.id);
       });
@@ -738,23 +739,24 @@ export default function MapView() {
 
   // Recolor changed selections in place, keeping brush movement smooth.
   useEffect(() => {
-    if (!isMonitoringMapMode || !mapRef.current) return;
-    const selected = new Set(replantingSelectedPointIds);
+    if ((!isMonitoringMapMode && !isPlanterMode) || !mapRef.current) return;
+    const selected = new Set((isPlanterMode ? assignmentSelectedPointIds : replantingSelectedPointIds).map(Number));
     const z = mapRef.current.getZoom();
     layersRef.current.pointLayer?.eachLayer((marker) => {
-      if (!marker.options.mgDead) return;
-      const chosen = selected.has(marker.options.mgPointId);
+      if (isMonitoringMapMode && !marker.options.mgDead) return;
+      const chosen = selected.has(Number(marker.options.mgPointId));
       if (marker.options.mgAssignmentSelected === chosen) return;
       marker.options.mgAssignmentSelected = chosen;
       marker.setRadius(getPointRadius(z, chosen));
       marker.setStyle({
         fillColor: chosen ? '#7c3aed' : marker.options.mgBaseColor,
         color: chosen ? '#4c1d95' : marker.options.mgBaseStroke,
-        fillOpacity: chosen ? 0.96 : 0.92,
+        fillOpacity: marker.options.mgOutsideAssignmentScope ? 0.2 : chosen ? 0.96 : 0.92,
         weight: marker.options.mgWarning ? Math.max(getPointWeight(z, chosen), z >= 20 ? 1.1 : 0.75) : getPointWeight(z, chosen),
       });
     });
-  }, [replantingSelectedPointIds, isMonitoringMapMode, points, showDeadPointsOnly]);
+  }, [replantingSelectedPointIds, assignmentSelectedPointIds, isMonitoringMapMode, isPlanterMode, points,
+    showDeadPointsOnly, assignmentOrganizationId, assignmentProjectSiteId]);
 
   // Brush selection uses screen-space sweeps, independent of marker redraws.
   useEffect(() => {
@@ -773,7 +775,7 @@ export default function MapView() {
     handlers.forEach((handler) => handler.disable());
     let previous = null;
     let moving = false;
-    let activeTouch = null;
+    let activePointer = null;
     let frame = null;
     const pending = new Set();
     const eligible = filterMonitoringPoints(filterCrossSpeciesDisplayPoints(points), monitoringOrganizationId)
@@ -791,65 +793,86 @@ export default function MapView() {
       useMapStore.getState().paintReplantingPoints(ids, replantingSelectionMode);
     };
     const reset = () => { previous = null; brush.style.display = 'none'; };
+    const hasOpenDialog = () => [...document.querySelectorAll('[role="dialog"]')].some((dialog) => {
+      if (dialog.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+      // Retained pages can also hide an ancestor with display:none while
+      // keeping the dialog's DOM mounted for a later return.
+      for (let node = dialog; node; node = node.parentElement) {
+        const style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      }
+      return true;
+    });
+    const endStroke = () => {
+      const pointerId = activePointer;
+      activePointer = null;
+      if (frame !== null) cancelAnimationFrame(frame);
+      frame = null;
+      if (pending.size) flush();
+      if (pointerId !== null && container.hasPointerCapture?.(pointerId)) container.releasePointerCapture(pointerId);
+      reset();
+    };
     const sweep = (event) => {
-      if (moving || (event.pointerType === 'touch' && event.pointerId !== activeTouch)
-          || event.target.closest?.('.leaflet-control') || document.querySelector('[role="dialog"]')) {
-        reset(); return;
+      const target = document.elementFromPoint?.(event.clientX, event.clientY) || event.target;
+      if (moving || !container.contains(target) || target.closest?.('.leaflet-control') || hasOpenDialog()) {
+        endStroke(); return;
       }
       const position = map.mouseEventToContainerPoint(event);
       const size = map.getSize();
-      if (position.x < 0 || position.y < 0 || position.x > size.x || position.y > size.y) { reset(); return; }
+      if (position.x < 0 || position.y < 0 || position.x > size.x || position.y > size.y) { endStroke(); return; }
       brush.style.display = 'block';
       brush.style.left = `${position.x}px`;
       brush.style.top = `${position.y}px`;
+      // Hover only previews the brush. A stroke must start on this map, and
+      // mouse/pen movement must retain the primary button throughout.
+      if (activePointer === null || event.pointerId !== activePointer) { previous = null; return; }
+      if (event.pointerType !== 'touch' && (event.buttons & 1) === 0) { endStroke(); return; }
       pointsAlongBrush(projected, previous || position, position).forEach((id) => pending.add(id));
       previous = position;
       if (pending.size && frame === null) frame = requestAnimationFrame(flush);
     };
     const down = (event) => {
-      if (event.target.closest?.('.leaflet-control') || event.button !== 0) return;
+      if (moving || activePointer !== null || event.isPrimary === false || event.button !== 0
+          || event.target.closest?.('.leaflet-control') || hasOpenDialog()) return;
       previous = null;
-      if (event.pointerType === 'touch') {
-        activeTouch = event.pointerId;
-        container.setPointerCapture(event.pointerId);
-        event.preventDefault();
-      }
+      activePointer = event.pointerId;
+      container.setPointerCapture?.(event.pointerId);
+      event.preventDefault();
       sweep(event);
     };
     const up = (event) => {
-      if (activeTouch !== event.pointerId) return;
-      if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId);
-      activeTouch = null;
-      reset();
+      if (activePointer === event.pointerId) endStroke();
     };
     const escape = (event) => {
       if (event.key === 'Escape') useMapStore.getState().setReplantingSelectionMode('click');
     };
-    const movingStart = () => { moving = true; reset(); };
+    const movingStart = () => { moving = true; endStroke(); };
     const movingEnd = () => { moving = false; project(); };
     map.closePopup();
     map.on('movestart zoomstart', movingStart);
     map.on('moveend zoomend resize', movingEnd);
     container.addEventListener('pointermove', sweep);
     container.addEventListener('pointerdown', down);
-    container.addEventListener('pointerup', up);
-    container.addEventListener('pointercancel', up);
-    container.addEventListener('pointerleave', reset);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    container.addEventListener('lostpointercapture', up);
+    container.addEventListener('pointerleave', endStroke);
     document.addEventListener('keydown', escape);
-    window.addEventListener('blur', reset);
+    window.addEventListener('blur', endStroke);
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
       pending.clear();
-      if (activeTouch !== null && container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
       map.off('movestart zoomstart', movingStart);
       map.off('moveend zoomend resize', movingEnd);
       container.removeEventListener('pointermove', sweep);
       container.removeEventListener('pointerdown', down);
-      container.removeEventListener('pointerup', up);
-      container.removeEventListener('pointercancel', up);
-      container.removeEventListener('pointerleave', reset);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      container.removeEventListener('lostpointercapture', up);
+      container.removeEventListener('pointerleave', endStroke);
       document.removeEventListener('keydown', escape);
-      window.removeEventListener('blur', reset);
+      window.removeEventListener('blur', endStroke);
+      if (activePointer !== null && container.hasPointerCapture?.(activePointer)) container.releasePointerCapture(activePointer);
       handlers.forEach((handler) => handler.enable());
       container.style.touchAction = previousTouchAction;
       container.classList.remove('is-brushing');
@@ -869,16 +892,28 @@ export default function MapView() {
       group.clearLayers();
       (collection?.features || []).forEach((feature, index) => {
         try {
-          const layer = L.geoJSON(feature, { ...group.options });
+          const automaticMortality = kind === 'warning' && feature.properties?.automatic
+            && feature.properties.warning_type === 'high_mortality';
+          const parentSite = automaticMortality ? projectSites?.features?.find((site) =>
+            String(projectSiteId(site)) === String(feature.properties.project_site_id)) : null;
+          const layer = L.geoJSON(feature, { ...group.options, interactive: !automaticMortality || Boolean(parentSite) });
           layer.eachLayer((boundary) => {
-            bindZoneInfo(boundary, feature, index, kind);
+            if (parentSite) {
+              // Automatic mortality belongs to the project's existing card;
+              // do not open a second, detailed warning-zone popup over it.
+              bindProjectSiteInfo(boundary, parentSite, {
+                counts: pointsLoaded
+                  ? (sitePointCounts.get(String(projectSiteId(parentSite))) || emptyProjectSiteCounts())
+                  : null,
+              });
+            } else if (!automaticMortality) bindZoneInfo(boundary, feature, index, kind);
             group.addLayer(boundary);
           });
         } catch { /* Skip a malformed boundary without changing list indexes. */ }
       });
     }
     orderZoneLayers(layersRef.current);
-  }, [forbiddenZones, erodedZones, warningZones]);
+  }, [forbiddenZones, erodedZones, warningZones, projectSites, sitePointCounts, pointsLoaded]);
 
   // Sync assignment zones. Legacy current/death counts are operational
   // context only, so polygons use a neutral style and never claim survival.
@@ -1247,7 +1282,7 @@ export default function MapView() {
     const focusTarget = params.get('focus');
 
     if (!projectSiteId) {
-      layersRef.current.projectSiteLayer?.setStyle(PROJECT_SITE_STYLE);
+      layersRef.current.projectSiteLayer?.setStyle((feature) => projectSiteStyle(feature, PROJECT_SITE_STYLE));
       focusedProjectSiteRef.current = '';
       return;
     }
@@ -1264,7 +1299,7 @@ export default function MapView() {
     layersRef.current.projectSiteLayer?.eachLayer((siteLayer) => {
       const layerSiteId = siteLayer.feature?.id ?? siteLayer.feature?.properties?.id;
       const isFocused = String(layerSiteId ?? '') === String(projectSiteId);
-      siteLayer.setStyle(isFocused ? FOCUSED_PROJECT_SITE_STYLE : PROJECT_SITE_STYLE);
+      siteLayer.setStyle(projectSiteStyle(siteLayer.feature, isFocused ? FOCUSED_PROJECT_SITE_STYLE : PROJECT_SITE_STYLE));
       // Keep the boundary behind point markers even when it is highlighted.
       siteLayer.bringToBack();
     });

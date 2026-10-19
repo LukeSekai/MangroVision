@@ -7,6 +7,33 @@ class ActivityConflict(ValueError):
     """A planning change conflicts with recorded work or an active delivery."""
 
 
+def complete_fully_planted_activity(conn, schedule_id):
+    """Close one activity atomically with its final planted point, never a GET."""
+    if schedule_id is None:
+        return None
+    current = conn.execute('''SELECT id, organization_id, project_site_id, status, appointment_type
+        FROM planting_schedules WHERE id = ? FOR UPDATE''', (int(schedule_id),)).fetchone()
+    if not current or current['appointment_type'] != 'tree_planting' or current['status'] not in {'confirmed', 'in_progress'}:
+        return None
+    work = conn.execute('''SELECT COUNT(p.id) AS total_points,
+            COUNT(p.id) FILTER (WHERE p.status = 'completed') AS planted_points
+        FROM planter_assignments a
+        JOIN planter_assignment_points p ON p.assignment_id = a.id
+        WHERE a.planting_schedule_id = ?''', (int(schedule_id),)).fetchone()
+    if not work['total_points'] or work['planted_points'] != work['total_points']:
+        return None
+    conn.execute('''UPDATE planting_schedules SET status = 'completed',
+        updated_at = CURRENT_TIMESTAMP, updated_by_user_id = NULL WHERE id = ?''', (int(schedule_id),))
+    from .activity import append_activity
+    append_activity(conn, action='schedule.updated', actor_type='system',
+        organization_id=current['organization_id'], project_site_id=current['project_site_id'],
+        summary='Completed planting activity: all assigned points are planted.',
+        details={'schedule_id': int(schedule_id), 'changed_fields': ['status'],
+                 'before': {'status': current['status']}, 'after': {'status': 'completed'},
+                 'source': 'all_assigned_points_planted', 'planted_points': int(work['planted_points'])})
+    return int(schedule_id)
+
+
 def activity_work(conn, schedule_id):
     row = conn.execute("""
         SELECT COUNT(DISTINCT pa.id) AS assignments, COUNT(pe.id) AS plantings
@@ -109,3 +136,4 @@ def lock_assignment_activity(conn, assignment_id):
     """, (assignment_id,)).fetchone()
     if row and row['status'] not in {'confirmed', 'in_progress', 'completed'}:
         raise ActivityConflict('This activity is not confirmed. Contact LGU staff before recording planting.')
+    return row['status'] if row else None

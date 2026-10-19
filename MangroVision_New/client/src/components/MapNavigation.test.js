@@ -67,8 +67,8 @@ async function mount(entry = '/dashboard', header = false) {
     header ? createElement(MonitoringHeader, { title: 'Page title', description: 'Page description' },
       createElement('button', null, 'Download Monitoring Report'))
       : createElement(PlantingMapWorkspace, null,
-        createElement(RetainedRoutes, { paths: ['/dashboard', '/scheduling', '/organizations', '/monitoring', '/monitoring/replanting', '/map', '/zones', '/monitoring/map'] },
-          ...['/dashboard', '/scheduling', '/organizations', '/monitoring', '/monitoring/replanting'].map((path) =>
+        createElement(RetainedRoutes, { paths: ['/dashboard', '/scheduling', '/organizations', '/monitoring', '/monitoring/lgu-sites', '/map', '/zones', '/monitoring/map'] },
+          ...['/dashboard', '/scheduling', '/organizations', '/monitoring', '/monitoring/lgu-sites'].map((path) =>
             createElement(Route, { key: path, path, element: createElement(Source) })),
           createElement(Route, { path: '/map', element: createElement('p', null, 'Map view') }),
           createElement(Route, { path: '/zones', element: createElement('p', null, 'Zone editor') }),
@@ -103,7 +103,7 @@ test('return restores the source URL, router state and retained filter, includin
 
 test('Dashboard, Scheduling, Organizations and LGU links identify the source and persist across map tools', async () => {
   // Exercise the real Link wrapper for each distinct source instead of guessing history length.
-  for (const [pathname, label] of [['/dashboard', 'Dashboard'], ['/scheduling', 'Scheduling'], ['/organizations', 'Organizations'], ['/monitoring/replanting', 'LGU Replanting']]) {
+  for (const [pathname, label] of [['/dashboard', 'Dashboard'], ['/scheduling', 'Scheduling'], ['/organizations', 'Organizations'], ['/monitoring/lgu-sites', 'LGU Sites']]) {
     await act(async () => root.unmount()); root = createRoot(document.getElementById('root'));
     await mount(pathname); await click('View site on map');
     assert.match(document.querySelector('.map-return-navigation').textContent, new RegExp(`Back to ${label}`));
@@ -114,14 +114,14 @@ test('Dashboard, Scheduling, Organizations and LGU links identify the source and
   }
 });
 
-test('LGU location action and Show map both return to the LGU queue', async () => {
-  await mount('/monitoring/replanting');
+test('LGU location action and Show map both return to the LGU Sites', async () => {
+  await mount('/monitoring/lgu-sites');
   await click('View location');
-  await click('Back to LGU Replanting');
+  await click('Back to LGU Sites');
   await click('Show monitoring map');
   assert.equal(currentLocation.pathname, '/monitoring/map');
-  await click('Back to LGU Replanting');
-  assert.equal(currentLocation.pathname, '/monitoring/replanting');
+  await click('Back to LGU Sites');
+  assert.equal(currentLocation.pathname, '/monitoring/lgu-sites');
 });
 
 test('direct map opens have no stale source, and direct monitoring maps have a safe return', async () => {
@@ -148,9 +148,9 @@ test('both Monitoring headers use identical navigation and map action styling wi
   const shape = document.querySelector('.org-monitoring-page-header').innerHTML;
   assert.equal(document.querySelector('.monitoring-section-navigation [aria-current="page"]').textContent, 'Monitoring visits');
   assert.equal(document.querySelector('.org-monitoring-page-actions a.is-primary').textContent.trim(), 'Show map');
-  await click('LGU Replanting');
+  await click('LGU Sites');
   assert.equal(document.querySelector('.org-monitoring-page-header').innerHTML, shape);
-  assert.equal(document.querySelector('.monitoring-section-navigation [aria-current="page"]').textContent, 'LGU Replanting');
+  assert.equal(document.querySelector('.monitoring-section-navigation [aria-current="page"]').textContent, 'LGU Sites');
   await click('Show map');
-  assert.equal(currentLocation.state.mapReturnTo.pathname, '/monitoring/replanting');
+  assert.equal(currentLocation.state.mapReturnTo.pathname, '/monitoring/lgu-sites');
 });

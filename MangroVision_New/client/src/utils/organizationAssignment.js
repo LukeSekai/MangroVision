@@ -84,5 +84,7 @@ export function availableOrganizationPoints(points, organizationId, siteId) {
     && !point.death_at
     && !point.eroded_unavailable
     && !point.inside_eroded_zone
+    && !point.inside_forbidden_zone
+    && point.inside_visible_map !== false
   )));
 }

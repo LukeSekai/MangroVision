@@ -4,8 +4,8 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
-from mangrovision_db.monitoring_locations import monitoring_points, reconcile_locations, list_replanting, approve_replanting, approve_replanting_batch
-from mangrovision_db.lgu_replanting import record_lgu_replanting
+from mangrovision_db.monitoring_locations import monitoring_points, reconcile_locations, list_release_candidates, release_dead_locations_batch
+from api.runtime_state import is_processing_active
 
 from planting_database import (
     DEATH_REASON_CATEGORIES,
@@ -192,31 +192,10 @@ class DeathLocationsUpdate(BaseModel):
     correction_note: str = Field(default='', max_length=2000)
 
 
-class ReplantingReview(BaseModel):
-    expected_version: int = Field(ge=0)
-
-
-class ReplantingAssignment(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    planting_event_ids: list[int]
-    versions: dict[str, int]
-    organization_id: int = Field(gt=0)
-    assignment_date: str
-
-
-class ReplantingBatchReview(BaseModel):
+class DeadLocationsRelease(BaseModel):
     model_config = ConfigDict(extra='forbid')
     planting_event_ids: list[int] = Field(min_length=1, max_length=500)
     versions: dict[str, int]
-
-
-class LGUReplantingCreate(ReplantingBatchReview):
-    project_site_id: int = Field(gt=0)
-    planted_date: str
-    species: str
-    initial_height_cm: float | None = Field(default=None, ge=0, le=1000)
-    initial_condition: str | None = None
-    initial_notes: str | None = Field(default=None, max_length=1000)
 
 
 @router.get('/organizations/{organization_id}/planting-locations')
@@ -238,46 +217,19 @@ def update_death_locations(record_id: int, body: DeathLocationsUpdate):
         raise HTTPException(status_code=409, detail=str(error)) from error
 
 
-@router.get('/replanting')
-def replanting_candidates(organization_id: Optional[int] = None):
+@router.get('/release-candidates')
+def dead_location_release_candidates(organization_id: Optional[int] = None):
     _require_lgu_user()
-    return {'points': list_replanting(organization_id)}
+    return {'points': list_release_candidates(organization_id)}
 
 
-@router.post('/replanting/{event_id}/approve')
-def review_replanting(event_id: int, body: ReplantingReview):
+@router.post('/release-locations')
+def release_locations(body: DeadLocationsRelease):
     user = _require_lgu_user()
+    if is_processing_active():
+        raise HTTPException(status_code=409, detail='Project-site editing is locked while image processing is running.')
     try:
-        return approve_replanting(event_id, body.expected_version, int(user['id']))
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@router.post('/replanting/approve')
-def review_replanting_batch(body: ReplantingBatchReview):
-    user = _require_lgu_user()
-    try:
-        return approve_replanting_batch(body.planting_event_ids, body.versions, int(user['id']))
-    except ValueError as error:
-        raise HTTPException(status_code=409, detail=str(error)) from error
-
-
-@router.post('/replanting/assign')
-def create_replanting_assignment(body: ReplantingAssignment):
-    _require_lgu_user()
-    raise HTTPException(status_code=409,
-        detail='Approved replacements are handled by LGU staff. Open Monitoring > LGU Replanting to record planting.')
-
-
-@router.post('/replanting/lgu-plantings', status_code=201)
-def create_lgu_replacements(body: LGUReplantingCreate):
-    user = _require_lgu_user()
-    try:
-        return record_lgu_replanting(body.planting_event_ids, body.versions,
-            project_site_id=body.project_site_id, planted_date=body.planted_date,
-            species=body.species, staff_user_id=int(user['id']),
-            initial_height_cm=body.initial_height_cm, initial_condition=body.initial_condition,
-            initial_notes=body.initial_notes)
+        return release_dead_locations_batch(body.planting_event_ids, body.versions, int(user['id']))
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 

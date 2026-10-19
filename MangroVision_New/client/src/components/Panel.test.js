@@ -8,7 +8,7 @@ import { manilaDateKey } from '../utils/monitoringSchedule.js';
 import { STAFF_TOURS } from '../guides/tours.js';
 
 let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore, useProcessingStore, originalStartProcess;
-let PlantingMapWorkspace, Sidebar, MapView;
+let PlantingMapWorkspace, Sidebar, MapView, Modal;
 const pages = new Map();
 const originalGlobals = new Map();
 let requests, responses, mutations;
@@ -65,6 +65,7 @@ before(async () => {
   ({ default: PlantingMapWorkspace } = await server.ssrLoadModule('/src/components/PlantingMapWorkspace.jsx'));
   ({ default: Sidebar } = await server.ssrLoadModule('/src/components/Sidebar.jsx'));
   ({ default: MapView } = await server.ssrLoadModule('/src/components/MapView.jsx'));
+  ({ default: Modal } = await server.ssrLoadModule('/src/components/Modal.jsx'));
   for (const page of ['MapAnalytics', 'ImageProcessing', 'PlanterManagement', 'ErodedZoneEditor', 'MonitoringMapWorkspace', 'OrganizationMonitoring']) {
     const module = await server.ssrLoadModule(`/src/pages/${page}.jsx`);
     pages.set(page, module.default);
@@ -253,6 +254,87 @@ async function hoverMap(map, layer, latitude, longitude) {
   })));
 }
 
+for (const pointerType of ['mouse', 'touch']) {
+test(`monitoring release brush requires a held primary pointer and ignores hidden dialogs (${pointerType})`, async () => {
+  zoneFixtures();
+  const base = useMapStore.getState().points[0];
+  useMapStore.setState({ showDeadPointsOnly: true, replantingSelectionMode: 'click', points: [
+    { ...base, death_at: '2026-10-20', planting_status: 'planted' },
+    { ...base, id: 102, point_num: 102, longitude: 122.6253, planting_status: 'planted' },
+    { ...base, id: 103, point_num: 103, longitude: 122.6257, death_at: '2026-10-20', planting_status: 'planted' },
+  ] });
+  function RetainedDialog() {
+    const [open, setOpen] = useState(false);
+    return createElement('div', null,
+      createElement('button', { onClick: () => setOpen(true) }, 'Show test dialog'),
+      createElement(Modal, { open, keepMounted: true, title: 'Site details', onCancel: () => setOpen(false) }));
+  }
+  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: ['/monitoring/map'] },
+    createElement(MapView), createElement(pages.get('MonitoringMapWorkspace')), createElement(RetainedDialog))));
+  await settle();
+  const map = useMapStore.getState().mapInstance;
+  const button = (label) => [...document.querySelectorAll('button')].find(element => element.textContent.trim() === label);
+  const pointer = async (type, longitude, buttons = 0, target = map.getContainer()) => {
+    const position = map.latLngToContainerPoint([base.latitude, longitude]);
+    const event = new window.MouseEvent(type, { bubbles: true, clientX: position.x, clientY: position.y, buttons });
+    Object.defineProperty(event, 'pointerType', { value: pointerType });
+    Object.defineProperty(event, 'pointerId', { value: 1 });
+    await act(async () => { target.dispatchEvent(event); await settle(); });
+  };
+  const drag = async (start, end = start) => {
+    await pointer('pointerdown', start, 1);
+    await pointer('pointermove', end, 1);
+    await pointer('pointerup', end, 0, window);
+  };
+  assert.ok(document.querySelector('[role="dialog"]').closest('[hidden]'));
+  await click(button('Brush select'));
+  await pointer('pointermove', base.longitude);
+  await pointer('pointermove', 122.6257);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [], 'hovering in Brush select must not paint');
+  await pointer('pointermove', base.longitude, 1);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [], 'the press must begin on the map');
+  await drag(base.longitude);
+  await pointer('pointermove', 122.6257);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [101], 'painting stops when the button is released outside the map');
+  await drag(122.6257);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [101, 103]);
+  assert.match(document.querySelector('.monitoring-map-actions').textContent, /2 selected.*Release from project site/);
+  const markers = new Map();
+  map.eachLayer(marker => { if (marker.options.mgPointId != null) markers.set(marker.options.mgPointId, marker); });
+  assert.equal(markers.get(101).options.fillColor, '#7c3aed');
+  assert.equal(markers.get(103).options.fillColor, '#7c3aed');
+  assert.equal(markers.has(102), false, 'living points stay excluded by the dead-only filter');
+  await click(button('Brush erase'));
+  await pointer('pointermove', base.longitude);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [101, 103], 'hovering must not erase');
+  await drag(base.longitude);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [103]);
+  await click(button('Show test dialog'));
+  await drag(122.6257);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [103], 'a visible dialog still pauses the brush');
+  await click(document.querySelector('.modal-close'));
+  await drag(122.6257);
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, []);
+  await click(button('Move / click'));
+  await act(async () => markers.get(101).fire('click'));
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [101]);
+  await click(button('Brush select'));
+  await click(button('Clear'));
+  for (const reason of ['blur', 'pointercancel', 'pointerleave', 'lostpointercapture']) {
+    await pointer('pointerdown', 122.6254, 1);
+    if (reason === 'blur') await act(async () => window.dispatchEvent(new window.Event('blur')));
+    else await pointer(reason, 122.6254, 0, reason === 'pointercancel' ? window : map.getContainer());
+    await pointer('pointermove', base.longitude, 1);
+    assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [], `${reason} must end the stroke`);
+  }
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  assert.equal(useMapStore.getState().replantingSelectionMode, 'click');
+  assert.equal(document.querySelector('.replanting-brush'), null);
+  assert.equal(map.dragging.enabled(), true);
+  assert.equal(mutations.length, 0, 'selection must never release locations without confirmation');
+});
+}
+
 test('recording a death keeps its marker and site membership across all planting tools until release', async () => {
   const zones = zoneFixtures();
   const planted = { ...useMapStore.getState().points[0], planting_status: 'planted',
@@ -304,6 +386,7 @@ test('recording a death keeps its marker and site membership across all planting
 
 test('project-site hover shows analytics above assignment zones while point hover keeps individual details', async () => {
   const zones = zoneFixtures();
+  zones.site.properties.planting_history = { total:3, planted:2, dead:1, survival_rate_pct:66.67 };
   const base = useMapStore.getState().points[0];
   useMapStore.setState({ points: [
     { ...base, planting_status: 'planted' },
@@ -340,24 +423,44 @@ test('project-site hover shows analytics above assignment zones while point hove
   assert.equal(mutations.length, 0);
 });
 
-test('project-site hover analytics coexist with permanent big-wave labels and clear with the boundary', async () => {
+test('mortality warning outlines retain site hover analytics without permanent danger labels', async () => {
   const zones = zoneFixtures();
-  zones.site.properties.big_wave_risk = { active: true, planted_points: 100, wave_death_points: 30, percentage: 30 };
+  zones.site.properties.mortality_warning = { active: true, total_planted: 100, dead_count: 30, mortality_rate_pct: 30 };
+  const base = useMapStore.getState().points[0];
+  const warning = { survival_warning: true, warning_zone_ids: [-5], warning_severity: 'high',
+    warning_summary: 'High mortality (30% dead). Check before planting.' };
+  useMapStore.setState({ points: [
+    { ...base, ...warning },
+    { ...base, ...warning, id: 102, longitude: 122.6253, planting_status: 'planted' },
+    { ...base, ...warning, id: 103, longitude: 122.6255, planting_status: 'planted', death_at: '2026-10-20' },
+    { ...base, ...warning, id: 104, longitude: 122.6257, warning_zone_ids: [-5, 3] },
+  ] });
   await renderPlantingWorkspace();
   const map = useMapStore.getState().mapInstance;
   const site = boundaryFor(map, zones.site);
-  assert.match(document.querySelector('.project-site-danger-label').textContent, /Danger: Big waves/);
+  assert.equal(site.options.fillOpacity, 0);
+  const checkPointColors = () => map.eachLayer((marker) => {
+    if (marker.options.mgPointId == null) return;
+    assert.equal(marker.options.fillColor, marker.options.mgBaseColor);
+    assert.equal(marker.options.color, marker.options.mgPointId === 104 ? '#f59e0b' : '#000000');
+  });
+  checkPointColors();
+  await act(async () => map.setZoom(20, { animate: false }));
+  checkPointColors();
+  await act(async () => map.setZoom(18, { animate: false }));
+  assert.equal(document.querySelector('.project-site-danger-label'), null);
   await hoverMap(map, site, 10.77985, 122.6253);
   const card = document.querySelector('.project-site-tooltip .project-site-info');
   assert.ok(card);
   assert.match(card.textContent, /Community site/);
-  assert.match(card.textContent, /Danger: This area is prone to big waves/);
+  assert.match(card.textContent, /High mortality · 30%/);
   assert.ok(card.querySelector('.project-site-info-survival'));
-  assert.ok(document.querySelector('.project-site-danger-label'));
+  assert.equal(document.querySelector('.project-site-danger-label'), null);
   await hoverMap(map, site, 10.7800, 122.6251);
   assert.ok(document.querySelector('.point-status-tooltip'));
+  assert.match(document.querySelector('.point-status-tooltip').textContent, /Warning: High mortality \(30% dead\)/);
   assert.equal(document.querySelector('.project-site-tooltip'), null);
-  assert.ok(document.querySelector('.project-site-danger-label'));
+  assert.equal(document.querySelector('.project-site-danger-label'), null);
   await act(async () => useMapStore.setState({ projectSites: { type: 'FeatureCollection', features: [] } }));
   assert.equal(document.querySelector('.project-site-danger-label'), null);
   assert.equal(mutations.length, 0);
@@ -443,6 +546,33 @@ test('each zone list locates its own boundary, reveals hidden layers and keeps d
   await click(document.querySelector('[aria-label="Delete Eroded zone 1"]'));
   assert.match(document.querySelector('[role="dialog"]').textContent, /Delete "Eroded zone 1"/);
   assert.equal(frames.length, frameCount + 1, 'delete must not move the map');
+  assert.equal(mutations.length, 0);
+});
+
+test('automatic mortality zones appear in Warning Zones and cannot be deleted manually', async () => {
+  const zones = zoneFixtures();
+  zones.warning.id = -5;
+  Object.assign(zones.warning.properties, { id: -5, name: 'Community site', automatic: true,
+    project_site_id: 5, warning_type: 'high_mortality', warning_label: 'High mortality (at least 30%)', notes: '30 of 100 planted seedlings have recorded deaths.' });
+  zones.site.properties.mortality_warning = { active: true, total_planted: 100, dead_count: 30, mortality_rate_pct: 30 };
+  await renderPlantingWorkspace('/zones');
+  const header = [...document.querySelectorAll('.panel-card-header')].find(element => element.textContent.includes('Warning Zones'));
+  if (header.getAttribute('aria-expanded') !== 'true') await click(header);
+  const row = document.querySelector('.warning-zone-row');
+  assert.match(row.textContent, /Automatic.*High mortality/);
+  assert.equal(row.querySelector('[aria-label^="Delete"]'), null);
+  await click(row.querySelector('.zone-locate'));
+  const outline = boundaryFor(useMapStore.getState().mapInstance, zones.warning);
+  assert.equal(outline.isTooltipOpen(), true);
+  assert.equal(outline.options.fillOpacity, 0, 'focusing the warning must not shade the points');
+  const card = document.querySelector('.project-site-tooltip .project-site-info');
+  assert.ok(card, 'The warning opens the general project-site card');
+  assert.match(card.textContent, /Community site/);
+  assert.match(card.textContent, /High mortality · 30%/);
+  assert.ok(card.querySelector('.project-site-info-survival'));
+  assert.ok(card.querySelector('.project-site-info-chart'));
+  assert.equal(document.querySelector('.zone-tooltip-warning'), null);
+  assert.doesNotMatch(card.textContent, /Severity:|All recorded causes|Review this area/);
   assert.equal(mutations.length, 0);
 });
 
@@ -560,108 +690,15 @@ test('a timed-out boundary check ends with a retryable error instead of enabling
   }
 });
 
-async function selectSiteOwner(id) {
-  const select = document.querySelector('.project-site-owner-first select') || document.querySelector('.save-form select');
-  await act(async () => { select.value = String(id); select.dispatchEvent(new Event('change', { bubbles: true })); });
-  await settle();
-}
-
-async function openProjectSiteDrawing() {
-  const drawHeader = [...document.querySelectorAll('.panel-card-header')].find((element) => element.textContent.includes('Draw Zone'));
-  if (drawHeader.getAttribute('aria-expanded') !== 'true') await click(drawHeader);
-  await click(namedButton('Project Site'));
-}
-
-test('choosing a project-site owner frames its area and rejects drawing outside it', async () => {
-  const zones = zoneFixtures();
-  useMapStore.setState({ points: [{ ...useMapStore.getState().points[0], source_organization_id: 11 }] });
-  responses.set('/api/project-sites/validate-boundary', (options) => {
-    const request = JSON.parse(options.body);
-    assert.equal(request.organization_id, 11);
-    return Response.json({ detail: "This site extends outside the selected organization's area. Redraw it inside that area." }, { status: 400 });
-  });
-  await renderPlantingWorkspace('/zones');
-  await openProjectSiteDrawing();
-  assert.equal(namedButton('Draw New Project Site').disabled, true);
-  const map = useMapStore.getState().mapInstance;
-  const frames = [];
-  const fitBounds = map.fitBounds.bind(map);
-  map.fitBounds = (bounds, options) => { frames.push(bounds); return fitBounds(bounds, options); };
-  await selectSiteOwner(11);
-  assert.ok(frames.at(-1).equals(boundaryFor(map, zones.site).getBounds()));
-  assert.equal(namedButton('Draw New Project Site').disabled, false);
-  await click(namedButton('Draw New Project Site'));
-  await drawZone('site', { start: false });
-  assert.equal(namedButton('Save Project Site').disabled, true);
-  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /outside the selected organization's area/);
-  await click(namedButton('Save Project Site'));
-  assert.equal(mutations.length, 0);
-  responses.set('/api/project-sites/validate-boundary', { valid: true });
-  responses.set('/api/project-sites', { id: 8 });
-  await click(namedButton('Redraw zone'));
-  await drawZone('site', { start: false });
-  assert.equal(document.querySelector('.save-form select').value, '11', 'redraw retains the chosen owner');
-  assert.match(document.querySelector('.zone-covered-count').textContent, /1mapped point/);
-  assert.equal(namedButton('Save Project Site').disabled, false);
-  await click(namedButton('Save Project Site'));
-  assert.equal(mutations.length, 1);
-  assert.equal(mutations[0].path, '/api/project-sites');
-  assert.equal(mutations[0].body.organization_id, 11);
-});
-
-for (const releasedLand of [false, true]) {
-test(`an organization without a recorded area can draw its first site and count unclaimed points (${releasedLand ? 'with' : 'without'} released land)`, async () => {
-  const zones = zoneFixtures();
-  const point = useMapStore.getState().points[0];
-  useMapStore.setState({
-    points: [{ ...point, source_project_site_id: null },
-      { ...point, id: 102, source_organization_id: 11 }],
-    projectSites: { ...useMapStore.getState().projectSites,
-      released_areas: { features: releasedLand ? [zones.site] : [] },
-      organizations: [{ id: 99, name: 'Nasugban Warriors' }] },
-  });
-  responses.set('/api/project-sites/validate-boundary', { valid: true });
-  responses.set('/api/project-sites', { id: 8 });
-  await renderPlantingWorkspace('/zones');
-  await openProjectSiteDrawing();
-  await selectSiteOwner(99);
-  assert.equal(namedButton('Draw New Project Site').disabled, false);
-  assert.equal(document.querySelector('[data-guide-panel="Zone Editor"] [role="alert"]'), null);
-  assert.match(document.querySelector('[data-guide-panel="Zone Editor"]').textContent, /first site on unclaimed land/);
-  await click(namedButton('Draw New Project Site'));
-  await drawZone('site', { start: false });
-  assert.match(document.querySelector('.zone-covered-count').textContent, /1mapped point/);
-  assert.equal(namedButton('Save Project Site').disabled, false);
-  await click(namedButton('Save Project Site'));
-  assert.equal(mutations.length, 1);
-  assert.equal(mutations[0].body.organization_id, 99);
-  assert.equal(mutations[0].body.name, 'Nasugban Warriors');
-});
-}
-
-test('changing the project-site owner cancels the previous boundary approval', async () => {
-  const zones = zoneFixtures();
-  const otherSite = { ...zones.site, id: 15, properties: { organization_id: 22, organization_name: 'CICT', name: 'CICT' } };
-  useMapStore.setState({ projectSites: { features: [zones.site, otherSite] } });
-  let finishPrevious;
-  responses.set('/api/project-sites/validate-boundary', (options) => {
-    if (JSON.parse(options.body).organization_id === 11) return new Promise((resolve) => { finishPrevious = resolve; });
-    return Response.json({ detail: "This site extends outside the selected organization's area." }, { status: 400 });
-  });
-  await renderPlantingWorkspace('/zones');
-  await openProjectSiteDrawing();
-  await selectSiteOwner(11);
-  await click(namedButton('Draw New Project Site'));
-  await drawZone('site', { start: false });
-  assert.equal(namedButton('Checking boundary...').disabled, true);
-  await selectSiteOwner(22);
-  assert.equal(namedButton('Save Project Site').disabled, true);
-  await act(async () => finishPrevious(Response.json({ valid: true })));
-  await settle();
-  assert.equal(namedButton('Save Project Site').disabled, true);
-  assert.equal(document.querySelector('.save-form select').value, '22');
-  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /outside the selected organization/);
-  assert.equal(mutations.length, 0);
+test('project sites come from assignment and cannot be drawn or claimed separately in Zone Editor', async () => {
+  zoneFixtures(); await renderPlantingWorkspace('/zones');
+  const header=[...document.querySelectorAll('.panel-card-header')].find((item) => item.textContent.includes('Draw Zone'));
+  if (header.getAttribute('aria-expanded') !== 'true') await click(header);
+  assert.equal(namedButton('Project Site'),undefined);
+  assert.equal(namedButton('Draw New Project Site'),undefined);
+  assert.equal(document.getElementById('project-site-organization'),null);
+  assert.ok(namedButton('Draw New Eroded Zone'));
+  assert.equal(mutations.length,0);
 });
 
 test('an outline must begin from left to right and can then close back to the left', async () => {
@@ -922,48 +959,32 @@ test('Assign Points opens the form without the old sharing, report or project-si
   assert.equal(mutations.length, 0);
 });
 
-test('Quick Assign shows available points and explains invalid counts only when assigning', async () => {
-  responses.set('/api/planters/', [{ id: 23, organization_id: 21, organization_name: 'OTON',
-    status: 'active', participant_count: 10, registration_pending: false }]);
-  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 21, name: 'OTON' }] });
-  useMapStore.setState({
-    projectSites: { features: [{ type: 'Feature', id: 14,
-      properties: { name: 'OTON', organization_id: 21, point_count: 100 } }] },
-    points: Array.from({ length: 100 }, (_, index) => ({
-      id: index + 1, point_num: index + 1, analysis_id: 1, latitude: 10.5,
-      longitude: 123.5 + index * .00001, source_project_site_id: 14,
-      source_organization_id: 21, planting_status: 'planned', species: 'Rhizophora',
-    })),
-  });
-  await render(pages.get('PlanterManagement'));
-  const quickAssign = headers().find((header) => header.textContent.includes('Assign available points'));
-  if (quickAssign.getAttribute('aria-expanded') === 'false') await click(quickAssign);
-  const organization = document.querySelector('select');
-  await act(async () => {
-    organization.value = '21';
-    organization.dispatchEvent(new window.Event('change', { bubbles: true }));
-  });
+function assignmentFixture(activities = [{ id:31,project_site_id:null }], locations = null) {
+  responses.set('/api/planters/', [{ id:24,organization_id:22,status:'active',participant_count:10,registration_pending:false }]);
+  responses.set('/api/planter-auth/organizations', { organizations:[{ id:22,name:'CICT' }] });
+  responses.set('/api/planting-schedules', { schedules:activities.map((item) => ({ organization_id:22,
+    appointment_type:'tree_planting',status:'confirmed',title:`Planting ${item.id}`,date:'2090-01-01',...item })) });
+  responses.set('/api/planters/organizations/22/assignments', { project_site_id:77,assignment_ids:[1] });
+  useMapStore.setState({ points:locations || [1,2].map((id) => ({ id,point_num:id,analysis_id:1,
+    latitude:10.780,longitude:122.625+id*.00001,planting_status:'planned',species:id===1?'bungalon':'rhizophora' })) });
+}
+async function pickAssignmentPoint(id) {
+  let marker;
+  useMapStore.getState().mapInstance.eachLayer((layer) => { if (layer.options?.sitePointId===id) marker=layer; });
+  assert.ok(marker,`Available point ${id}`);
+  await act(async () => marker.fire('click',{ originalEvent:new window.MouseEvent('click') }));
   await settle();
-  assert.match(document.body.textContent, /100 available points for this organization/);
-  assert.doesNotMatch(document.body.textContent, /No points are available to assign in/);
-  const count = document.getElementById('organization-point-count');
-  assert.equal(count.disabled, false);
-  assert.equal(count.value, '100');
-  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 100 Points/.test(button.textContent));
-  assert.ok(assign);
-  assert.equal(assign.disabled, false);
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(count, '1.5');
-    count.dispatchEvent(new window.Event('input', { bubbles: true }));
-    count.focus();
-    assign.focus();
-  });
-  assert.equal(count.getAttribute('aria-invalid'), 'false');
-  assert.equal(assign.disabled, false);
-  await click(assign);
-  assert.equal(count.getAttribute('aria-invalid'), 'true');
-  assert.match(document.getElementById(count.getAttribute('aria-describedby')).textContent, /whole number from 1 to 100/);
-  assert.equal(mutations.length, 0);
+}
+
+test('Assign Points starts empty and only selected map points become planting work', async () => {
+  assignmentFixture(); await renderPlantingWorkspace('/planters?organization_id=22');
+  assert.match(document.body.textContent,/2 available points/);
+  assert.equal(document.getElementById('organization-point-count'),null);
+  assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds,[]);
+  await pickAssignmentPoint(2);
+  assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds,[2]);
+  await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 1 point'));
+  assert.deepEqual(mutations[0],{ path:'/api/planters/organizations/22/assignments',body:{ planting_point_ids:[2],planting_schedule_id:31 } });
 });
 
 test('the Planting Map starts with its overview and has no Next steps cards', async () => {
@@ -972,99 +993,43 @@ test('the Planting Map starts with its overview and has no Next steps cards', as
   assert.match(expanded()[0].textContent, /Overview/);
 });
 
-test('Quick Assign submits CICT mixed species together using their recorded species', async () => {
-  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'CICT',
-    status: 'active', participant_count: 10, registration_pending: false }]);
-  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'CICT' }] });
-  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1, 2] });
-  useMapStore.setState({
-    projectSites: { features: [{ type: 'Feature', id: 15,
-      properties: { name: 'CICT', organization_id: 22, point_count: 103 } }] },
-    points: Array.from({ length: 103 }, (_, index) => ({
-      id: index + 1, point_num: index + 1, analysis_id: index < 99 ? 148 : 170, latitude: 10.5,
-      longitude: 122.5 + index * .00001, source_project_site_id: 15,
-      source_organization_id: 22, planting_status: 'planned', species: index < 99 ? 'bungalon' : 'rhizophora',
-    })),
-  });
-  await render(pages.get('PlanterManagement'));
-  const quickAssign = headers().find((header) => header.textContent.includes('Assign available points'));
-  if (quickAssign.getAttribute('aria-expanded') === 'false') await click(quickAssign);
-  await act(async () => {
-    const organization = document.querySelector('select');
-    organization.value = '22';
-    organization.dispatchEvent(new window.Event('change', { bubbles: true }));
-  });
-  await settle();
-  assert.match(document.body.textContent, /99 Bungalon · 4 Rhizophora/);
-  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 103 Points/.test(button.textContent));
-  assert.equal(assign.disabled, false);
-  await click(assign);
-  assert.equal(mutations.length, 1);
-  assert.equal(mutations[0].path, '/api/planters/organizations/22/assignments');
-  assert.deepEqual({ ...mutations[0].body, planting_point_ids: [...mutations[0].body.planting_point_ids].sort((a, b) => a - b) },
-    { planting_point_ids: Array.from({ length: 103 }, (_, i) => i + 1), site_zone_id: 15 });
-  assert.match(document.body.textContent, /Assigned 103 points to CICT/);
+test('selected mixed species are submitted together without a site or species override', async () => {
+  assignmentFixture(); await renderPlantingWorkspace('/planters?organization_id=22');
+  await pickAssignmentPoint(1); await pickAssignmentPoint(2);
+  await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 2 points'));
+  assert.deepEqual(mutations[0].body,{ planting_point_ids:[1,2],planting_schedule_id:31 });
 });
 
-test('Quick Assign links points to the selected planting activity and requires a choice when ambiguous', async () => {
-  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
-  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
-  responses.set('/api/planting-schedules', { schedules: [31, 32].map((id) => ({
-    id, organization_id: 22, project_site_id: id === 31 ? 15 : 16, appointment_type: 'tree_planting',
-    status: 'confirmed', title: `Activity ${id}`, date: '2090-01-01',
-  })) });
-  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1] });
-  useMapStore.setState({ projectSites: { features: [15, 16].map(id => ({ id, properties: { name: `Demo site ${id}`, organization_id: 22 } })) },
-    points: [{ id: 1, point_num: 1, analysis_id: 1, latitude: 10.5, longitude: 122.5,
-      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' },
-    { id: 2, point_num: 2, analysis_id: 1, latitude: 10.5, longitude: 122.50001,
-      source_project_site_id: 16, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
-  await render(pages.get('PlanterManagement'));
+test('point assignment requires a choice between multiple confirmed activities', async () => {
+  assignmentFixture([{ id:31,project_site_id:null },{ id:32,project_site_id:null }]);
+  await renderPlantingWorkspace('/planters?organization_id=22');
+  assert.equal(document.querySelector('.planting-point-selector'),null);
   await act(async () => {
-    const organization = document.getElementById('assign-organization');
-    organization.value = '22'; organization.dispatchEvent(new window.Event('change', { bubbles: true }));
+    const activity=document.getElementById('assign-activity');activity.value='32';
+    activity.dispatchEvent(new window.Event('change',{ bubbles:true }));
   });
-  await settle();
-  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 1 Point/.test(button.textContent));
-  await click(assign);
-  assert.equal(mutations.length, 0);
-  assert.match(document.body.textContent, /Choose the planting activity/);
-  await act(async () => {
-    const activity = document.getElementById('assign-activity');
-    activity.value = '32'; activity.dispatchEvent(new window.Event('change', { bubbles: true }));
-  });
-  await click(assign);
-  assert.equal(mutations.length, 1);
-  assert.equal(mutations[0].body.planting_schedule_id, 32);
-  assert.equal(mutations[0].body.site_zone_id, 16);
-  assert.deepEqual(mutations[0].body.planting_point_ids, [2]);
-  assert.equal(useMapStore.getState().assignmentProjectSiteId, 16);
-  assert.equal(document.getElementById('assign-site'), null);
+  await settle(); await pickAssignmentPoint(1);
+  await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 1 point'));
+  assert.equal(mutations[0].body.planting_schedule_id,32);
+  assert.equal(mutations[0].body.site_zone_id,undefined);
 });
 
-test('Quick Assign links an activity without an area to its organization’s mapped area', async () => {
-  responses.set('/api/planters/', [{ id: 24, organization_id: 22, organization_name: 'Demo group', status: 'active', participant_count: 10 }]);
-  responses.set('/api/planter-auth/organizations', { organizations: [{ id: 22, name: 'Demo group' }] });
-  responses.set('/api/planting-schedules', { schedules: [{
-    id: 31, organization_id: 22, project_site_id: null, appointment_type: 'tree_planting',
-    status: 'confirmed', title: 'Confirmed activity', date: '2090-01-01',
-  }] });
-  responses.set('/api/planters/organizations/22/assignments', { assignment_id: 1, assignment_ids: [1] });
-  useMapStore.setState({ projectSites: { features: [{ id: 15, properties: { name: 'Demo site', organization_id: 22 } }] },
-    points: [{ id: 1, point_num: 1, analysis_id: 1, latitude: 10.5, longitude: 122.5,
-      source_project_site_id: 15, source_organization_id: 22, planting_status: 'planned', species: 'bungalon' }] });
-  await render(pages.get('PlanterManagement'));
-  await act(async () => {
-    const organization = document.getElementById('assign-organization');
-    organization.value = '22'; organization.dispatchEvent(new window.Event('change', { bubbles: true }));
-  });
-  await settle();
-  assert.match(document.body.textContent, /Its planting area will use this organization's mapped area/);
-  const assign = [...document.querySelectorAll('button')].find((button) => /Assign 1 Point/.test(button.textContent));
-  await click(assign);
-  assert.equal(mutations.length, 1);
-  assert.equal(mutations[0].body.planting_schedule_id, 31);
-  assert.equal(mutations[0].body.site_zone_id, 15);
+test('leaving Assign Points removes its brush and returning retains the organization', async () => {
+  assignmentFixture(); await renderPlantingWorkspace('/planters?organization_id=22');
+  const map=useMapStore.getState().mapInstance;
+  await pickAssignmentPoint(1);
+  await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Brush select'));
+  assert.equal(map.dragging.enabled(),false);
+  await click(toolLink('/map'));
+  assert.equal(map.dragging.enabled(),true);
+  assert.equal(document.querySelector('.seedling-selection-brush'),null);
+  let overlays=0;map.eachLayer((layer) => { if(layer.options?.sitePointId) overlays+=1; });
+  assert.equal(overlays,0);
+  await click(toolLink('/planters'));
+  assert.equal(document.getElementById('assign-organization').value,'22');
+  assert.equal(map.dragging.enabled(),true);
+  assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds,[1]);
+  assert.equal(mutations.length,0);
 });
 
 test('review-analysis links open history when there is no current result', async () => {
@@ -1494,6 +1459,33 @@ test('history shows an empty filtered state, resets filters and handles a broken
   assert.equal(document.querySelector('.analysis-history-open').disabled, false);
 });
 
+test('saving a monitoring visit uses one busy button without a duplicate pale status box', async () => {
+  responses.set('/api/monitoring/organizations', { organizations: [
+    { id: 1, name: 'Due organization', total_planted: 100, monitoring_available: true, next_monitoring_date: manilaDateKey() },
+  ] });
+  responses.set('/api/monitoring/organizations/1/visit-context', { organization_id: 1, monitored_date: manilaDateKey(),
+    total_planted: 100, previous_dead_count: 0, alive_before_count: 100, baseline_record_id: null,
+    latest_record: { health_status: 'good', actions_taken: 'Checked living seedlings and cleared debris.' } });
+  responses.set('/api/monitoring/organizations/1/planting-locations', { points: [] });
+  let finishSave;
+  responses.set('/api/monitoring/organization-records', () => new Promise(resolve => { finishSave = resolve; }));
+  await render(pages.get('OrganizationMonitoring'));
+  await click(document.querySelector('.org-monitoring-organization-card'));
+  await settle();
+  const submit = document.querySelector('.org-monitoring-submit');
+  assert.equal(submit.disabled, false);
+  await act(async () => document.querySelector('.org-monitoring-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+  assert.equal(submit.getAttribute('aria-busy'), 'true');
+  assert.equal(submit.disabled, true);
+  assert.ok(submit.querySelector('.org-monitoring-save-spinner'));
+  assert.equal(document.querySelector('.org-monitoring-form .form-message.is-loading'), null);
+  assert.equal(document.querySelectorAll('.org-monitoring-submit').length, 1);
+  assert.equal(mutations.length, 1);
+  await act(async () => finishSave(Response.json({ organization_name: 'Due organization' })));
+  await settle();
+  assert.equal(document.querySelector('.org-monitoring-save-spinner'), null);
+});
+
 test('monitoring tabs separate today and overdue visits, hide locked organizations and support keyboard navigation', async () => {
   const today = manilaDateKey();
   const yesterday = manilaDateKey(new Date(Date.now() - 86_400_000));
@@ -1854,24 +1846,24 @@ test('quickly reopening a section cancels its pending collapse animation', async
   const body = document.getElementById(overview.getAttribute('aria-controls'));
   assert.equal(body.style.height, '120px');
 });
-test('big-wave site warnings appear in monitoring cards and update after a death correction', async () => {
+test('mortality warnings align in monitoring cards and update after a death correction', async () => {
   responses.set('/api/monitoring/organizations', { organizations: [
     { id: 1, name: 'Site owner', total_planted: 100, alive_seedlings: 70, monitoring_available: true },
   ] });
-  const site = { id: 1, properties: { id: 1, name: 'Wave-exposed site', organization_id: 1,
+  const site = { id: 1, properties: { id: 1, name: 'High mortality site', organization_id: 1,
     organization_name: 'Site owner', point_count: 100,
-    big_wave_risk: { active: true, planted_points: 100, wave_death_points: 30, percentage: 30 } },
+    mortality_warning: { active: true, total_planted: 100, dead_count: 30, mortality_rate_pct: 30 } },
     geometry: { type: 'Polygon', coordinates: [[[122.625,10.78],[122.626,10.78],[122.626,10.781],[122.625,10.781],[122.625,10.78]]] } };
   responses.set('/api/project-sites', { features: [site] });
   await render(pages.get('OrganizationMonitoring'));
   const row = document.querySelector('.monitoring-site-row');
-  assert.match(row.textContent, /Danger: This area is prone to big waves/);
-  assert.match(row.textContent, /30 of 100 planted locations \(30%\)/);
-  assert.equal(row.querySelector('.monitoring-site-map-outline path[fill-rule="evenodd"]').getAttribute('stroke'), '#b91c1c');
+  assert.match(row.textContent, /Warning: High mortality/);
+  assert.match(row.textContent, /30 of 100 planted seedlings have recorded deaths \(30% mortality\)/);
+  assert.equal(row.querySelector('.monitoring-site-map-outline path[fill-rule="evenodd"]').getAttribute('stroke'), '#d97706');
   await click(row.querySelector('.monitoring-site-open'));
-  assert.match(document.querySelector('.monitoring-site-details').textContent, /site history, including past plantings/);
-  site.properties.big_wave_risk = { active: false, planted_points: 100, wave_death_points: 29, percentage: 29 };
+  assert.match(document.querySelector('.monitoring-site-details').textContent, /All recorded causes are included/);
+  site.properties.mortality_warning = { active: false, total_planted: 100, dead_count: 29, mortality_rate_pct: 29 };
   await act(async () => window.dispatchEvent(new window.Event('mv:data-changed')));
   await settle();
-  assert.equal(document.querySelector('.monitoring-site-wave-warning'), null);
+  assert.equal(document.querySelector('.monitoring-site-mortality-warning'), null);
 });

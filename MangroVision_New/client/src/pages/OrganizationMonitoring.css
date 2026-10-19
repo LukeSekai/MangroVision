@@ -357,6 +357,7 @@
 .org-monitoring-form > .seedling-location-fieldset,
 .org-monitoring-actions-field,
 .org-monitoring-form > .org-monitoring-message,
+.org-monitoring-form-feedback,
 .org-monitoring-submit {
   grid-column: 1 / -1;
 }
@@ -382,6 +383,10 @@
 }
 
 .org-monitoring-submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   justify-self: end;
   min-width: 220px;
   min-height: 44px;
@@ -407,6 +412,12 @@
   cursor: not-allowed;
   opacity: 0.6;
 }
+
+.org-monitoring-submit[aria-busy="true"] { background: #166534; color: #fff; opacity: 1; cursor: wait; }
+.org-monitoring-form-feedback { min-width: 0; }
+.org-monitoring-save-spinner { width: 16px; height: 16px; flex: 0 0 16px; border: 2px solid #ffffff66; border-top-color: currentColor; border-radius: 50%; animation: monitoring-save-spin 0.8s linear infinite; }
+@keyframes monitoring-save-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .org-monitoring-save-spinner { animation: none; } }
 
 .org-monitoring-message {
   padding: 10px 12px;

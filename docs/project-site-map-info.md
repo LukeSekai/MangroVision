@@ -8,9 +8,11 @@ Assignment-zone hover titles show the organization name, without repeating the
 assignment title. Names keep their original capitalization and wrap inside the card.
 Hovering a planting point still shows that point's individual details; hazard
 boundaries retain their warning information.
-Sites flagged for big waves keep their permanent danger label while still
-opening the full analytics card on hover. Hiding a site's boundary hides its
-label too.
+Sites with at least 30% recorded mortality have an amber warning outline.
+Hover or tap for the site card, including a brief mortality percentage. The permanent danger label
+has been removed so it does not cover planting points. Automatic mortality
+areas also appear under Warning Zones. These automatic areas open the same
+project-site card rather than a separate warning popup with severity and notes.
 
 The same card appears in Planting Map, Zone Editor, Analyze Image, Planting
 Assignments, Monitoring Map, the field workspace, and the independent project

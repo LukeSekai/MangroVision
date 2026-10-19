@@ -1,0 +1,17 @@
+.monitoring-site-mortality-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.monitoring-site-mortality-warning > svg { flex: 0 0 18px; margin-top: 1px; }
+.monitoring-site-mortality-warning > div { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.monitoring-site-mortality-warning strong, .monitoring-site-mortality-warning span { display: block; }
+.monitoring-site-detail-content > .monitoring-site-mortality-warning { grid-column: 1 / -1; margin: 0; }

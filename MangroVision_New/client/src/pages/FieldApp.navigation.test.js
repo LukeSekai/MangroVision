@@ -8,7 +8,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
 
-let dom, root, createRoot, FieldApp, store, leaflet, site, rows, requests, marks, watches, gps, locate, logoutCount;
+let dom, root, createRoot, FieldApp, store, leaflet, site, rows, requests, marks, watches, gps, locate, logoutCount, routeReplies;
 const maps = [], savedGlobals = new Map();
 const bundlePath = resolve(`node_modules/.field-navigation-${process.pid}.mjs`);
 const fixtures = [100, 99, 98, 97].map((point_num, index) => ({
@@ -46,6 +46,7 @@ before(async () => {
         site_area: site.site_area, planting_area: site.planting_area,
         polyline: site.access_path, segments: [{ kind: 'road', polyline: site.access_path }],
         route_source: 'site_route',
+        ...routeReplies.shift(),
       });
     },
   };
@@ -77,7 +78,7 @@ after(async () => {
   }
 });
 beforeEach(() => {
-  maps.length = 0; rows = structuredClone(fixtures); requests = []; marks = []; watches = new Map(); logoutCount = 0;
+  maps.length = 0; rows = structuredClone(fixtures); requests = []; marks = []; watches = new Map(); logoutCount = 0; routeReplies = [];
   gps = { coords: { latitude: site.bridge_start[0], longitude: site.bridge_start[1], accuracy: 5 } };
   locate = success => success(gps);
   localStorage.clear(); sessionStorage.clear();
@@ -124,6 +125,56 @@ test('Next starts navigation immediately and the orange overlay connects every a
   assert.equal(document.querySelector('.field-overlay[role="dialog"]'), null);
   assert.deepEqual(marks, [], 'Navigating does not mark points as planted');
   assert.ok(rows.every(point => point.assignment_status === 'pending'));
+});
+
+test('the map renders the missing shoreline guide to Point #3 and retains it on Next', async () => {
+  rows = fixtures.slice(0, 2).map((point, index) => ({ ...point, point_num: index + 3,
+    latitude: 10.7802641034854 - index * 0.000009, longitude: 122.627143274877 - index * 0.000016 }));
+  await render();
+  await selectPoint(3);
+  await click(button('Navigate to this point'));
+  assert.equal(activeLabel(), 'Point #3');
+  const lines = orangeLines();
+  assert.equal(lines.length, 2, 'Bridge-to-point guide and the next assigned leg both render');
+  assert.ok(lines[0].getLatLngs().length > 2, 'Guide bends at the shoreline instead of disappearing');
+  assert.equal(lines[0].getLatLngs().at(-1).lat, rows[0].latitude);
+  assert.equal(lines[0].getLatLngs().at(-1).lng, rows[0].longitude);
+  await click(nextButton());
+  assert.equal(activeLabel(), 'Point #4');
+  assert.equal(orangeLines().length, 1);
+  assert.ok(orangeLines()[0].getLatLngs().length > 2);
+  assert.equal(requests.length, 1, 'Next reuses the physical bridge approach');
+  assert.deepEqual(marks, []);
+});
+
+test('remote road retry draws the recovered route without advancing the point or losing its queue', async () => {
+  const origin = [10.70, 122.55];
+  gps = { coords: { latitude: origin[0], longitude: origin[1], accuracy: 5 } };
+  const streetPath = [origin, [10.783, 122.58], site.access_path[0]];
+  routeReplies = [{ route_source: 'partial_route', road_route_error: {
+    kind: 'routing_not_configured', message: 'Road navigation is not configured. Contact LGU staff.',
+  } }, { polyline: [...streetPath, ...site.access_path], segments: [
+    { kind: 'road', polyline: streetPath }, { kind: 'road', polyline: site.access_path },
+  ] }];
+  await render(); await click(nextButton());
+  assert.equal(activeLabel(), 'Point #100');
+  assert.match(document.querySelector('[role="alert"]').textContent, /Road navigation is not configured/);
+  assert.ok(orangeLines().length > 0, 'Known local guidance stays visible during road failure');
+  await click(button('Retry road route'));
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].origin_lat, origin[0]);
+  assert.equal(requests[1].origin_lon, origin[1]);
+  assert.equal(requests[1].dest_lat, requests[0].dest_lat);
+  assert.equal(requests[1].dest_lon, requests[0].dest_lon);
+  assert.equal(activeLabel(), 'Point #100');
+  assert.equal(document.querySelector('.field-navigation-road-error'), null);
+  const roadLines = Object.values(maps.at(-1)._layers).filter(layer => layer instanceof leaflet.Polyline && layer.options.color === '#4169e1');
+  assert.ok(roadLines.some(line => line.getLatLngs()[0].lat === origin[0] && line.getLatLngs()[0].lng === origin[1]));
+  assert.match(nextButton().textContent, /#99/);
+  await click(nextButton());
+  assert.equal(activeLabel(), 'Point #99');
+  assert.equal(requests.length, 2, 'The recovered working road route can be reused');
+  assert.deepEqual(marks, []);
 });
 
 test('starting from a chosen marker still covers all points and Next reaches the end without cycling', async () => {
@@ -204,6 +255,22 @@ test('recording planting keeps navigation active so the next point needs only on
   assert.equal(activeLabel(), 'Point #99');
   assert.equal(document.querySelector('.field-overlay[role="dialog"]'), null);
   assert.equal(watches.size, 1);
+});
+
+test('the final planted point acknowledges activity completion before its session ends', async () => {
+  rows = [rows[0]];
+  store.setState({ planter: { ...store.getState().planter, planting_schedule_id: 72 },
+    markPointStatus: async () => ({ completed_activity_ids: [72] }) });
+  await render();
+  await act(async () => store.setState({ fetchFieldPoints: async () => assert.fail('Do not reload using the just-completed activity session') }));
+  await selectPoint(100);
+  await click(button('Mark as Planted'));
+  await click(button('Yes, mark as planted'));
+  assert.match(document.querySelector('[role="dialog"]').textContent, /Planting activity completed.*progress is saved/);
+  assert.equal(document.querySelector('.field-auth-error'), null);
+  await click(button('Return to sign in'));
+  assert.equal(logoutCount, 1);
+  assert.equal(store.getState().isAuthenticated, false);
 });
 
 test('completed and eroded future points disappear from the route after assignments refresh', async () => {

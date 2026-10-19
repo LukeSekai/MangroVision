@@ -31,7 +31,7 @@ def workspace(monkeypatch):
                           'planting_events', 'point_death_records', 'auth_sessions',
                           'project_sites', 'analyses', 'planting_points', 'users',
                           'map_zones', 'replanting_requests', 'activity_logs', 'planting_schedules',
-                          'activity_schedule_emails', 'like_appointment_emails', 'like_appointment_requests'):
+                          'activity_schedule_emails', 'like_appointment_emails', 'like_appointment_requests', 'activity_access_codes'):
                 connection.execute(text(f'CREATE TEMP TABLE {table} (LIKE mangrovision.{table} INCLUDING ALL)'))
             connection.execute(text('ALTER TABLE pg_temp.planter_assignments ADD COLUMN IF NOT EXISTS planting_schedule_id BIGINT'))
             connection.execute(text('SET LOCAL search_path = pg_temp, mangrovision, extensions, public'))
@@ -140,6 +140,64 @@ def test_failed_assignment_rolls_back_its_activity_area_link(workspace):
     assert workspace.scalar(text("SELECT count(*) FROM activity_logs WHERE action='schedule.updated'")) == 0
 
 
+@pytest.mark.parametrize('last_point_method', ['single', 'bulk'])
+def test_final_planted_point_completes_only_its_activity_across_all_batches(workspace, last_point_method):
+    from mangrovision_db.activity_rules import complete_fully_planted_activity, ActivityConflict
+    activity = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Complete all batches', start_at='2090-01-01T08:00:00+08:00',
+        end_at='2090-01-01T10:00:00+08:00', status='confirmed')
+    conn = db._get_connection()
+    assert complete_fully_planted_activity(conn, activity['id']) is None
+    conn.close()
+    batch = db.create_organization_assignments(1, [1, 2, 3], site_zone_id=1,
+        planting_schedule_id=activity['id'])[0]
+    owner = workspace.scalar(text('SELECT planter_id FROM planter_assignments WHERE id=:id'), {'id': batch})
+    # Copy a domain-created batch, including its required species and metadata.
+    original = dict(workspace.execute(text('SELECT * FROM planter_assignments WHERE id=:id'), {'id': batch}).mappings().one())
+    original.pop('id')
+    columns = ', '.join(original)
+    values = ', '.join(':' + column for column in original)
+    second = workspace.scalar(text(f'INSERT INTO planter_assignments ({columns}) VALUES ({values}) RETURNING id'), original)
+    workspace.execute(text('UPDATE planter_assignment_points SET assignment_id=:batch WHERE planting_point_id=3'), {'batch': second})
+    ids = dict(workspace.execute(text('SELECT planting_point_id, id FROM planter_assignment_points')).all())
+    future = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Separate future planting', start_at='2091-01-01T08:00:00+08:00',
+        end_at='2091-01-01T10:00:00+08:00', status='confirmed')
+    db.create_organization_assignments(1, [4], site_zone_id=1, planting_schedule_id=future['id'])
+    result = db.mark_planter_points_completed(owner, [ids[1], ids[2]])
+    assert result['completed_activity_ids'] == []
+    assert db.get_planting_schedule(activity['id'])['status'] == 'confirmed'
+    email_count = workspace.scalar(text('SELECT count(*) FROM activity_schedule_emails'))
+    result = (db.update_assignment_point_status(ids[3], 'completed') if last_point_method == 'single'
+              else db.mark_planter_points_completed(owner, [ids[3]]))
+    assert result['completed_activity_ids'] == [activity['id']]
+    assert db.get_planting_schedule(activity['id'])['status'] == 'completed'
+    assert db.get_planting_schedule(future['id'])['status'] == 'confirmed'
+    assert workspace.scalar(text('SELECT count(*) FROM activity_schedule_emails')) == email_count
+    conn = db._get_connection()
+    assert complete_fully_planted_activity(conn, activity['id']) is None
+    conn.close()
+    assert workspace.scalar(text("SELECT count(*) FROM activity_logs WHERE details->>'source'='all_assigned_points_planted'")) == 1
+    with pytest.raises(ActivityConflict, match='cannot be reopened'):
+        db.update_assignment_point_status(ids[3], 'pending')
+    assert workspace.scalar(text('SELECT status FROM planter_assignment_points WHERE id=:id'), {'id': ids[3]}) == 'completed'
+
+
+@pytest.mark.parametrize('remaining_status', ['pending', 'skipped'])
+def test_unplanted_points_prevent_automatic_activity_completion(workspace, remaining_status):
+    activity = db.create_planting_schedule(organization='NASUGBAN test', organization_id=1,
+        inspection_interval_days=14, title='Unfinished activity', start_at='2090-01-01T08:00:00+08:00',
+        end_at='2090-01-01T10:00:00+08:00', status='confirmed')
+    batch = db.create_organization_assignments(1, [1, 2], site_zone_id=1,
+        planting_schedule_id=activity['id'])[0]
+    ids = workspace.execute(text('SELECT id FROM planter_assignment_points WHERE assignment_id=:id ORDER BY id'), {'id': batch}).scalars().all()
+    db.update_assignment_point_status(ids[0], 'completed')
+    if remaining_status == 'skipped':
+        db.update_assignment_point_status(ids[1], 'skipped', 'Unsafe footing')
+        assert workspace.scalar(text('SELECT status FROM planter_assignments WHERE id=:id'), {'id': batch}) == 'completed'
+    assert db.get_planting_schedule(activity['id'])['status'] == 'confirmed'
+
+
 def test_assignment_links_to_activity_then_field_planting_locks_it(workspace):
     from mangrovision_db.activity_rules import ActivityConflict
     start = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=3)
@@ -158,7 +216,7 @@ def test_assignment_links_to_activity_then_field_planting_locks_it(workspace):
     assert db.update_planting_schedule(activity['id'], notes='Corrected note')['notes'] == 'Corrected note'
 
 
-def test_reserve_then_register_and_open_field_account(workspace, monkeypatch):
+def test_reservation_survives_retired_registration_endpoint(workspace, monkeypatch):
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
     auth = importlib.import_module('api.routes.planter_auth')
     planters = importlib.import_module('api.routes.planters')
@@ -183,23 +241,12 @@ def test_reserve_then_register_and_open_field_account(workspace, monkeypatch):
         'organization_id': 1, 'username': 'nasugban_test', 'password': 'test-password',
         'participant_count': 10, 'device_key': 'nasugban-device-key-01',
     })
-    assert signup.status_code == 200, signup.text
-    assert signup.json()['planter']['id'] == reserved['id']
-    assert 'password_hash' not in signup.json()['planter']
-    assert not db.list_planters()[0]['registration_pending']
+    assert signup.status_code == 410
+    after = db.list_planters()[0]
+    assert after['id'] == reserved['id'] and after['registration_pending']
+    assert after['pending_points'] == 95
     points = db.get_planter_field_points(reserved['id'])
-    assert len(points) == 95
-    assert {p['planting_point_id'] for p in points} == set(range(1,96))
-    shares = Counter(p['participant_slot'] for p in points)
-    assert sorted(shares.values()) == [9]*5 + [10]*5
-    token = db.create_planter_session(reserved['id'], 1)
-    monkeypatch.setattr(auth, 'get_planter_by_session_token', lambda _: db.get_planter_by_session_token(token))
-    field = client.get('/api/planter-auth/me/field-points')
-    assert field.status_code == 200, field.text
-    assert len(field.json()['points']) == 10
-    assert {p['participant_slot'] for p in field.json()['points']} == {1}
-    with pytest.raises(ValueError, match='already has an account'):
-        db.create_planter('duplicate', 'different_user', 'test', organization_id=1)
+    assert {point['planting_point_id'] for point in points} == set(range(1, 96))
     with pytest.raises(ValueError, match='already assigned'):
         db.create_organization_assignment(1, [1], species='Rhizophora', site_zone_id=1)
 

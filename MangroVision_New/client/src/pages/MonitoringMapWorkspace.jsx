@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Panel, PanelCard } from '../components/Panel';
-import ReplantingApproval from '../components/ReplantingApproval';
+import ReleaseDeadLocations from '../components/ReleaseDeadLocations';
+import SiteMortalityWarning from '../components/SiteMortalityWarning';
 import { useMapStore } from '../stores/mapStore';
 import { filterMonitoringFeatures, filterMonitoringPoints, monitoringOrganizations } from '../utils/monitoringOrganizationFilter';
 import './MonitoringMapWorkspace.css';
@@ -51,8 +52,8 @@ export default function MonitoringMapWorkspace() {
 
   const visiblePoints = filterMonitoringPoints(points, monitoringOrganizationId);
   const organizations = monitoringOrganizations(projectSites);
-  const waveWarnings = filterMonitoringFeatures(projectSites, monitoringOrganizationId)?.features
-    ?.filter((site) => site.properties?.big_wave_risk?.active === true) || [];
+  const mortalityWarnings = filterMonitoringFeatures(projectSites, monitoringOrganizationId)?.features
+    ?.filter((site) => site.properties?.mortality_warning?.active === true) || [];
   const deadPoints = visiblePoints.filter((point) => Boolean(point.death_at));
   const selected = deadPoints.filter((point) => selectedIds.includes(point.id));
   const plantedCount = visiblePoints.filter((point) => !point.death_at && (
@@ -63,10 +64,10 @@ export default function MonitoringMapWorkspace() {
     if (!layerVisibility.points) toggleLayer('points');
   }
 
-  function handleApproval(count) {
+  function handleRelease(count) {
     setReviewing(false);
     clearSelection();
-    setNotice(`${count} location${count === 1 ? ' is' : 's are'} assigned to the LGU replanting queue. Blue locations await LGU planting. Original deaths remain in history.`);
+    setNotice(`${count} location${count === 1 ? ' is' : 's are'} released from the project site and now Planned. Another organization can include them in a new project site. Original deaths and survival results remain in history.`);
     void fetchPoints({ force: true });
     void fetchStats({ force: true });
     void fetchZones({ force: true });
@@ -86,13 +87,13 @@ export default function MonitoringMapWorkspace() {
           {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
         </select>
       </div>
-      {waveWarnings.length > 0 && <PanelCard panelKey="monitoring-wave-warnings" title="Big-wave danger zones" badge={waveWarnings.length} defaultOpen>
-        {waveWarnings.map((site) => <p className="monitoring-map-help" key={site.id ?? site.properties.id}>
-          <strong>{site.properties.name}: Danger, this area is prone to big waves.</strong><br />
-          {site.properties.big_wave_risk.wave_death_points} of {site.properties.big_wave_risk.planted_points} planted locations ({site.properties.big_wave_risk.percentage}%) have recorded big-wave deaths.
-        </p>)}
+      {mortalityWarnings.length > 0 && <PanelCard panelKey="monitoring-mortality-warnings" title="Mortality warning zones" badge={mortalityWarnings.length} defaultOpen>
+        {mortalityWarnings.map((site) => <div className="monitoring-map-help" key={site.id ?? site.properties.id}>
+          <strong>{site.properties.name}</strong>
+          <SiteMortalityWarning warning={site.properties.mortality_warning} />
+        </div>)}
       </PanelCard>}
-      <PanelCard panelKey="monitoring-map-review" title="Dead plants & replanting" badge={deadPoints.length} className="monitoring-map-review-card" defaultOpen>
+      <PanelCard panelKey="monitoring-map-review" title="Dead plants & site release" badge={deadPoints.length} className="monitoring-map-review-card" defaultOpen>
         <label className="monitoring-map-check">
           <input type="checkbox" checked={showDeadPointsOnly} onChange={(event) => {
             setShowDeadPointsOnly(event.target.checked);
@@ -111,13 +112,13 @@ export default function MonitoringMapWorkspace() {
         </div>
         <p className="monitoring-map-instruction">{selectionMode === 'click'
           ? 'Click a dead point to select it. Use a brush for several points; selected points turn purple.'
-          : `Move over dead points to ${selectionMode === 'select' ? 'select' : 'deselect'} them. Press Esc or choose Move / click to finish.`}</p>
+          : `Hold the left mouse button and drag to ${selectionMode === 'select' ? 'select' : 'deselect'} dead points. Release to stop; Esc exits.`}</p>
         {loadingPoints && !points.length ? <p className="monitoring-map-help" role="status">Loading planting points…</p> : null}
         {!loadingPoints && !deadPoints.length ? <p className="monitoring-map-help">No dead plants are currently mapped.</p> : null}
-        {selected.length >= 500 ? <p className="monitoring-map-help" role="status">500 points selected. Approve this batch before selecting more.</p> : null}
+        {selected.length >= 500 ? <p className="monitoring-map-help" role="status">500 points selected. Release this batch before selecting more.</p> : null}
         {selected.length > 0 ? <div className="monitoring-map-actions">
           <strong>{selected.length} selected</strong>
-          <button type="button" className="is-primary" onClick={() => { setSelectionMode('click'); setReviewing(true); }}>Review for replanting</button>
+          <button type="button" className="is-primary" onClick={() => { setSelectionMode('click'); setReviewing(true); }}>Release from project site</button>
           <button type="button" onClick={clearSelection}>Clear</button>
         </div> : null}
         {notice ? <p className="monitoring-map-notice" role="status">{notice}</p> : null}
@@ -130,16 +131,15 @@ export default function MonitoringMapWorkspace() {
           <div><span>Dead</span><strong>{deadPoints.length.toLocaleString()}</strong></div>
           <div><span>Selected</span><strong>{selected.length.toLocaleString()}</strong></div>
         </div>
-        <p className="monitoring-map-help">Record new deaths during an organization monitoring visit. This map is for locating dead plants and reviewing replanting.</p>
+        <p className="monitoring-map-help">Record new deaths during an organization monitoring visit. This map is for locating dead plants and releasing them from project sites.</p>
         <Link className="monitoring-map-link" to="/monitoring">Record a monitoring visit →</Link>
-        <Link className="monitoring-map-link" to="/monitoring/replanting">Open LGU Replanting →</Link>
       </PanelCard>
 
       <PanelCard panelKey="monitoring-map-legend" title="Legend" defaultOpen={false}>
         <div className="monitoring-map-legend">
           <div><i style={{ background: '#7f1d1d' }} />Dead</div>
-          <div><i style={{ background: '#dc2626', border: '1px dashed #b91c1c' }} />Big-wave danger site (at least 30% of planted locations)</div>
-          <div><i style={{ background: '#7c3aed' }} />Selected for replanting review</div>
+          <div><i style={{ background: '#f59e0b', border: '1px dashed #d97706' }} />Mortality warning zone (at least 30%)</div>
+          <div><i style={{ background: '#7c3aed' }} />Selected for release</div>
           <div><i style={{ background: '#eab308' }} />Planted</div>
           <div><i style={{ background: '#2563eb' }} />Assigned</div>
           <div><i style={{ background: '#16a34a' }} />Planned</div>
@@ -159,8 +159,8 @@ export default function MonitoringMapWorkspace() {
         {monitoringOrganizationId != null ? <p className="monitoring-map-help">Shared risk zones are hidden while viewing one organization.</p> : null}
       </PanelCard>
     </Panel>
-    {reviewing && selected.length > 0 ? <ReplantingApproval
+    {reviewing && selected.length > 0 ? <ReleaseDeadLocations
       key={selected.map((point) => point.id).join(',')} points={selected}
-      onClose={() => setReviewing(false)} onApproved={handleApproval} /> : null}
+      onClose={() => setReviewing(false)} onReleased={handleRelease} /> : null}
   </div>;
 }

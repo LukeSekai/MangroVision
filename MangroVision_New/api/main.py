@@ -118,6 +118,8 @@ app.include_router(seedlings.router, prefix="/api/seedlings", tags=["Seedlings"]
 app.include_router(assignments.router, prefix="/api/assignments", tags=["Assignments"])
 app.include_router(dashboard.router, prefix="/api/dashboard", tags=["Dashboard"])
 app.include_router(monitoring.router, prefix="/api/monitoring", tags=["Monitoring"])
+from api.routes import lgu_sites
+app.include_router(lgu_sites.router, prefix="/api/monitoring/lgu-sites", tags=["LGU Sites"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(planting_schedules.router, prefix="/api/planting-schedules", tags=["Planting Schedules"])
 app.include_router(like_appointments.public_router, prefix="/api/public/like", tags=["Public LIKE"])

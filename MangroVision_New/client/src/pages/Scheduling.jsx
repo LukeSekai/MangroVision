@@ -159,18 +159,6 @@ function normalizeOrganization(source) {
   };
 }
 
-function normalizeProjectSite(source) {
-  const properties = source?.properties || {};
-  const organization = source?.organization || properties.organization;
-  return {
-    ...source,
-    id: source?.id ?? source?.project_site_id ?? properties.id,
-    name: source?.name ?? source?.project_site_name ?? properties.name ?? `Planting area ${source?.id ?? properties.id ?? ''}`,
-    organization_id: source?.organization_id ?? organization?.id ?? properties.organization_id ?? null,
-    organization_name: source?.organization_name ?? (typeof organization === 'string' ? organization : organization?.name) ?? properties.organization_name ?? '',
-  };
-}
-
 function scheduleDate(schedule) {
   if (schedule?.scheduled_date ?? schedule?.date) return schedule.scheduled_date ?? schedule.date;
   const parsed = schedule?.start_at ? new Date(schedule.start_at) : null;
@@ -262,7 +250,9 @@ function scheduleProgressHint(schedule) {
   if (scheduleProgressStatus(schedule.status) !== 'pending') {
     return 'Select Pending to reopen this activity for approval.';
   }
-  return scheduleTrackingState(schedule).approved ? 'This schedule is approved. Pending keeps its approval until you mark it completed.'
+  return scheduleTrackingState(schedule).approved ? isPlantingAppointment(schedule)
+    ? 'This activity completes automatically when all its assigned points are planted.'
+    : 'This schedule is approved. Mark it completed when the activity is finished.'
     : 'Use Approve in List to approve this schedule. Approval keeps the activity Pending.';
 }
 
@@ -303,17 +293,6 @@ function monthLabel(monthKey) {
   }).format(new Date(Date.UTC(year, month - 1, 1)));
 }
 
-function sameOrganization(site, schedule) {
-  const scheduleId = schedule?.organization_id;
-  const siteId = site?.organization_id;
-  if (scheduleId !== null && scheduleId !== undefined && siteId !== null && siteId !== undefined) {
-    return String(scheduleId) === String(siteId);
-  }
-  const scheduleName = String(schedule?.organization_name || '').trim().toLocaleLowerCase();
-  const siteName = String(site?.organization_name || '').trim().toLocaleLowerCase();
-  return Boolean(scheduleName && siteName && scheduleName === siteName);
-}
-
 function Message({ type = 'error', children }) {
   return <div className={`schedule-message is-${type}`} role={type === 'error' ? 'alert' : 'status'}>{children}</div>;
 }
@@ -323,6 +302,7 @@ function Loading({ label }) {
 }
 
 function PlantingBadge({ assessment }) {
+  if (assessment?.status === 'completed') return <span className="schedule-status is-completed">Planting completed</span>;
   const state = PLANTING_STATES[assessment?.status] || PLANTING_STATES.unknown;
   if (!assessment || assessment.status === 'unknown') return <span className="schedule-tide-pending" title={assessment?.reason}>
     {assessment?.label || state.label}
@@ -346,7 +326,7 @@ function ScheduleCalendarEvent({ group, assessment, onOpen }) {
       ? `${group.organizationCount} organizations`
       : `${group.schedules.length} schedules`
     : schedule.organization_name || 'Organization not set';
-  const state = PLANTING_STATES[assessment.status] || PLANTING_STATES.unknown;
+  const state = assessment.status === 'completed' ? assessment : PLANTING_STATES[assessment.status] || PLANTING_STATES.unknown;
   return <button type="button" className={`schedule-calendar-event planting-${assessment.status}`} onClick={() => onOpen(group)}
     aria-haspopup="dialog" aria-label={`${schedule.title}, ${scheduleTimeLabel(schedule)}. ${organizationLabel}. ${isPlantingAppointment(schedule) ? state.label : appointmentTypeLabel(schedule.appointment_type)}. View activity details.`}>
     <span className="schedule-entry-top"><time>{scheduleTimeLabel(schedule)}</time></span>
@@ -403,7 +383,7 @@ function ScheduleDetails({ schedule, showOrganization = true, showStatus = true,
     {scheduleProgressStatus(schedule.status) === 'pending' ? <div><dt>Approval</dt><dd>{scheduleTrackingState(schedule).approved ? 'Approved' : 'Awaiting approval'}</dd></div> : null}
     <div><dt>Source</dt><dd>{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</dd></div>
     {showOrganization ? <div className="schedule-detail-wide"><dt>Organization</dt><dd>{schedule.organization_name || 'Not set'}</dd></div> : null}
-    {isPlantingAppointment(schedule) ? <div className="schedule-detail-wide"><dt>Planting area</dt><dd>{schedule.project_site_name || 'No planting area chosen'}
+    {isPlantingAppointment(schedule) ? <div className="schedule-detail-wide"><dt>Planting area</dt><dd className="schedule-site-summary"><span>{schedule.project_site_name || 'Formed when points are assigned'}</span>
       {schedule.project_site_id != null && <MapLink className="schedule-map-link" to={`/map?project_site_id=${encodeURIComponent(schedule.project_site_id)}&focus=site_points`} onClick={onViewMap}>View site on map</MapLink>}
     </dd></div> : null}
     <div><dt>Participants</dt><dd>{formatCount(schedule.expected_participants)}</dd></div>
@@ -615,7 +595,6 @@ export default function Scheduling() {
     status: { label: 'Activity status' },
     notes: { label: 'Notes' },
   });
-  const assignmentFeedback = useFormFeedback({ site: { label: 'Planting area', aliases: ['project_site_id'], serverTerms: ['planting area', 'project site'] } });
   const [saving, setSaving] = useState(false);
   const [timeCaution, setTimeCaution] = useState(null);
   const lastWarnedTime = useRef(null);
@@ -623,10 +602,6 @@ export default function Scheduling() {
   const saveInFlight = useRef(false);
   const [notice, setNotice] = useState('');
   const [deletingId, setDeletingId] = useState(null);
-  const [assigningSchedule, setAssigningSchedule] = useState(null);
-  const [assignmentSiteId, setAssignmentSiteId] = useState('');
-  const [assignmentError, setAssignmentError] = useState('');
-  const [assignmentSaving, setAssignmentSaving] = useState(false);
   const [confirmingSchedule, setConfirmingSchedule] = useState(null);
   const [confirmationError, setConfirmationError] = useState('');
   const [confirmationSaving, setConfirmationSaving] = useState(false);
@@ -730,10 +705,6 @@ export default function Scheduling() {
     });
     return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [apiData, schedules]);
-  const projectSites = useMemo(() => arrayOf(apiData?.project_sites)
-    .map(normalizeProjectSite)
-    .filter((site) => site.id !== null && site.id !== undefined)
-    .sort((a, b) => a.name.localeCompare(b.name)), [apiData]);
   const forecastKey = COASTAL_FORECAST_KEY;
   const forecastRecords = useTideForecasts([forecastKey], tideRetryKey);
   const activeForecast = forecastRecords[forecastKey];
@@ -774,6 +745,7 @@ export default function Scheduling() {
   }, [tides]);
   const assessmentFor = (schedule) => {
     if (schedule && !isPlantingAppointment(schedule)) return { status: 'unknown', label: appointmentTypeLabel(schedule.appointment_type), reason: 'Check staff availability and site conditions with LIKE.' };
+    if (schedule?.status === 'completed') return { status: 'completed', label: 'Planting completed', reason: '' };
     if (!tidePayload && tideLoading) return { status: 'unknown', label: 'Loading tide forecast...', reason: 'Checking the same water levels shown in the graph.' };
     if (!tidePayload && tideError) return { status: 'unknown', label: 'Refresh tides to check this activity', reason: tideError };
     return assessPlantingTime({ payload: tidePayload, now,
@@ -793,10 +765,6 @@ export default function Scheduling() {
     });
     return grouped;
   }, [approvedSchedules]);
-  const assignmentSites = useMemo(() => assigningSchedule
-    ? projectSites.filter((site) => sameOrganization(site, assigningSchedule))
-    : [], [assigningSchedule, projectSites]);
-
   const today = dateInManila();
   const selectedDateTides = form.date ? arrayOf(tidesByDate.get(form.date)) : [];
 
@@ -972,51 +940,6 @@ export default function Scheduling() {
     }
   };
 
-  const openAssignment = (schedule) => {
-    if (!isPlantingAppointment(schedule)) return;
-    assignmentFeedback.clear();
-    setAssigningSchedule(schedule);
-    setAssignmentSiteId('');
-    setAssignmentError('');
-  };
-
-  const assignSite = async () => {
-    setAssignmentError('');
-    if (!token || !assigningSchedule) {
-      setAssignmentError('Please sign in again.');
-      return;
-    }
-    if (!isPlantingAppointment(assigningSchedule)) {
-      setAssignmentError('Only tree-planting appointments need a planting area.');
-      return;
-    }
-    if (String(assigningSchedule.status).toLowerCase() !== 'confirmed' || assigningSchedule.project_site_id) {
-      setAssignmentError('Only an approved schedule without a planting area can be assigned.');
-      return;
-    }
-    const site = assignmentSites.find((option) => String(option.id) === String(assignmentSiteId));
-    if (!site) {
-      assignmentFeedback.reject({ site: 'Choose a planting area owned by this organization. Add one in the Zone Editor if none are listed.' });
-      return;
-    }
-    setAssignmentSaving(true);
-    try {
-      await fetchJson(`/api/planting-schedules/${encodeURIComponent(assigningSchedule.id)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project_site_id: site.id }),
-      });
-      setAssigningSchedule(null);
-      setAssignmentSiteId('');
-      setNotice(`Planting area â€œ${site.name}â€ assigned to the approved schedule.`);
-      setReloadKey((value) => value + 1);
-    } catch (saveError) {
-      if (!assignmentFeedback.fromServer(saveError)) setAssignmentError(saveError.message || 'Could not assign the planting area.');
-    } finally {
-      setAssignmentSaving(false);
-    }
-  };
-
   const deleteSchedule = async (schedule) => {
     if (!token) {
       setError('Sign in as LGU staff to delete planting schedules.');
@@ -1133,19 +1056,20 @@ export default function Scheduling() {
           </div>
         ) : visibleSchedules.length ? (
           <div className="schedule-table-wrap">
-            <table>
+            <table className="schedule-activity-table">
               <caption className="sr-only">{activeTrackingGroup ? `${activeTrackingGroup.label}: organization schedules` : 'Organization schedules'}</caption>
               <thead><tr><th scope="col">Date</th><th scope="col">Activity</th><th scope="col">Planting area</th><th scope="col">Days between plant checks</th><th scope="col">Status</th><th scope="col">Activity guidance</th><th scope="col">Actions</th></tr></thead>
               <tbody>{visibleSchedules.map(({ schedule, tracking }) => {
                 const planting = isPlantingAppointment(schedule);
-                const canAssign = planting && String(schedule.status).toLowerCase() === 'confirmed' && !schedule.project_site_id;
+                const canAssign = planting && ['confirmed', 'in_progress'].includes(String(schedule.status).toLowerCase());
                 return (
                   <tr key={schedule.id}>
-                    <td><strong>{formatDate(`${schedule.scheduled_date}T12:00:00+08:00`)}</strong><small>{scheduleTimeLabel(schedule)}</small></td>
-                    <td><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
-                    <td>{planting ? schedule.project_site_name || (canAssign ? 'Choose a planting area' : 'No planting area chosen') : 'Not needed'}
+                    <td className="schedule-date-cell"><strong>{formatDate(`${schedule.scheduled_date}T12:00:00+08:00`)}</strong><small>{scheduleTimeLabel(schedule)}</small></td>
+                    <td className="schedule-activity-cell"><strong>{schedule.title}</strong><small>{schedule.organization_name}</small><small>{formatCount(schedule.expected_participants)} participants</small><small className="schedule-entry-source">{schedule.source === 'website' ? 'LIKE website' : 'Staff-entered'}</small></td>
+                    <td className="schedule-area-cell"><div className="schedule-site-summary">
+                      <span>{planting ? schedule.project_site_name || (canAssign ? 'Formed when points are assigned' : 'Awaiting point assignment') : 'Not needed'}</span>
                       {planting && schedule.project_site_id != null && <MapLink className="schedule-map-link" to={`/map?project_site_id=${encodeURIComponent(schedule.project_site_id)}&focus=site_points`}>View on map</MapLink>}
-                    </td>
+                    </div></td>
                     <td>{planting ? schedule.inspection_interval_days ? `Every ${formatCount(schedule.inspection_interval_days)} days` : 'Not set' : 'Not applicable'}</td>
                     <td><span className={`schedule-status is-${scheduleProgressStatus(schedule.status)}`}>{scheduleStatusLabel(scheduleProgressStatus(schedule.status))}</span>
                       {tracking.pending ? <small>{tracking.approved ? 'Schedule approved' : 'Awaiting approval'}</small> : null}
@@ -1155,7 +1079,7 @@ export default function Scheduling() {
                     <td><div className="schedule-row-actions">
                       {tracking.completed ? <button type="button" onClick={() => setCalendarEntry({ kind: 'schedule', schedule })}>View</button> : <>
                         {tracking.needs_confirmation && !schedule.planting_started ? <button type="button" className="is-primary" onClick={() => openConfirmation(schedule)}>Approve</button> : null}
-                        {canAssign ? <button type="button" className="is-primary" onClick={() => openAssignment(schedule)}>Choose area</button> : null}
+                        {canAssign ? <MapLink className="is-primary" to={`/planters?section=assign&organization_id=${encodeURIComponent(schedule.organization_id)}&activity_id=${encodeURIComponent(schedule.id)}`}>Assign points</MapLink> : null}
                         <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
                         <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel approved activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
                       </>}
@@ -1230,7 +1154,7 @@ export default function Scheduling() {
               <datalist id="schedule-organizations">
                 {organizations.map((organization) => <option key={organization.id} value={organization.name} />)}
               </datalist>
-              {!organizations.length ? <small>Enter the organization name. After saving, you can add planting areas for it.</small> : null}
+              {!organizations.length ? <small>Enter the organization name. After approval, assign planting points to form its project site.</small> : null}
               {editingSchedule?.project_site_id ? <small>This activity already has a planting area, so its organization cannot be changed.</small> : null}
             </label>
             <label>
@@ -1309,7 +1233,7 @@ export default function Scheduling() {
               )) : <small>High and low tide times are not available for this date yet.</small>}
             </div>
           ) : null}
-          <p className="schedule-form-footnote">{formPlanting ? 'Choose a planting area after approving the activity. ' : ''}All times are Philippine time.</p>
+          <p className="schedule-form-footnote">{formPlanting ? 'After approval, use Assign Points to form the project site. ' : ''}All times are Philippine time.</p>
         </form>
       </Modal>, document.body)}
 
@@ -1324,33 +1248,7 @@ export default function Scheduling() {
         </div> : null}
       </Modal>
 
-      <Modal
-        open={Boolean(assigningSchedule)}
-        title="Choose planting area"
-        confirmLabel="Choose area"
-        cancelLabel="Close"
-        busy={assignmentSaving}
-        onConfirm={assignSite}
-        onCancel={() => {
-          if (!assignmentSaving) setAssigningSchedule(null);
-        }}
-        variant="success"
-      >
-        <div className="schedule-assignment-form" onChangeCapture={assignmentFeedback.onChange}>
-          <FormErrorSummary feedback={assignmentFeedback} />
-          <p><strong>{assigningSchedule?.title}</strong> is approved for {assigningSchedule?.organization_name}.</p>
-          {assignmentError ? <Message>{assignmentError}</Message> : null}
-          <label>
-            <span>Organization’s planting area *</span>
-            <select {...assignmentFeedback.props('site')} required value={assignmentSiteId} onChange={(event) => setAssignmentSiteId(event.target.value)}>
-              <option value="">Select a planting area</option>
-              {assignmentSites.map((site) => <option key={site.id} value={site.id}>{site.name}</option>)}
-            </select>
-            <FieldError feedback={assignmentFeedback} field="site" />
-          </label>
-          {!assignmentSites.length ? <small>This organization has no planting areas yet. Add one in the Zone Editor first.</small> : null}
-        </div>
-      </Modal>
+
     </main>
   );
 }

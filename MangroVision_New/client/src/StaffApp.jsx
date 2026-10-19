@@ -11,7 +11,7 @@ import ErodedZoneEditor from './pages/ErodedZoneEditor';
 import ImageProcessing from './pages/ImageProcessing';
 import Monitoring from './pages/OrganizationMonitoring';
 import MonitoringMapWorkspace from './pages/MonitoringMapWorkspace';
-import LGUReplanting from './pages/LGUReplanting';
+import LGUSites from './pages/LGUSites';
 import LoginScreen from './components/LoginScreen';
 import AccountSettings from './pages/AccountSettings';
 import Organizations from './pages/Organizations';
@@ -19,7 +19,7 @@ import { useAuthStore } from './stores/authStore';
 import { useProcessingStore } from './stores/processingStore';
 
 const WORKSPACE_PAGES = ['/map', '/dashboard', '/scheduling', '/activity', '/account',
-  '/monitoring', '/monitoring/map', '/monitoring/replanting', '/planters', '/processing', '/zones', '/organizations'];
+  '/monitoring', '/monitoring/map', '/monitoring/lgu-sites', '/monitoring/replanting', '/planters', '/processing', '/zones', '/organizations'];
 
 export default function StaffApp() {
   const userId = useAuthStore((s) => s.user?.id);
@@ -56,7 +56,8 @@ export default function StaffApp() {
         <Route path="/reports" element={<Navigate to="/dashboard" replace />} />
         <Route path="/monitoring" element={<Monitoring />} />
         <Route path="/monitoring/map" element={<MonitoringMapWorkspace />} />
-        <Route path="/monitoring/replanting" element={<LGUReplanting />} />
+        <Route path="/monitoring/lgu-sites" element={<LGUSites />} />
+        <Route path="/monitoring/replanting" element={<Navigate to="/monitoring/lgu-sites" replace />} />
         <Route path="/planters" element={<PlanterManagement />} />
         <Route path="/processing" element={<ImageProcessing />} />
         <Route path="/zones" element={<ErodedZoneEditor />} />

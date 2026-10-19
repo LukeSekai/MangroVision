@@ -5,7 +5,8 @@ const PAGE_LABELS = {
   '/scheduling': 'Scheduling',
   '/organizations': 'Organizations',
   '/monitoring': 'Monitoring',
-  '/monitoring/replanting': 'LGU Replanting',
+  '/monitoring/lgu-sites': 'LGU Sites',
+  '/monitoring/replanting': 'LGU Sites',
   '/activity': 'Activity Logs',
   '/account': 'Account',
 };

@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from dotenv import dotenv_values
 
-from api.site_access import access_for_destination, distance_m, guidance_within_area, inside_area, inside_or_near_area, path_distance, remaining_access_path
+from api.site_access import access_for_destination, distance_m, guidance_path_within_area, inside_area, inside_or_near_area, path_distance, remaining_access_path
 from api.routing_usage import reserve_google_request
 
 router = APIRouter()
@@ -34,6 +34,12 @@ class RouteRequest(BaseModel):
     dest_lon: float = Field(ge=-180, le=180)
     travel_mode: Optional[str] = "walking"
     origin_accuracy_m: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class RoadRouteError(HTTPException):
+    def __init__(self, status_code, kind, detail):
+        super().__init__(status_code=status_code, detail=detail)
+        self.kind = kind
 
 
 def _travel_mode_to_google(mode: str) -> str:
@@ -116,10 +122,8 @@ def _google_route(origin, destination, travel_mode):
     """Choose the shortest valid walking route returned by the provider."""
     api_key = _load_google_routes_api_key()
     if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="Routing is not configured. Set GOOGLE_ROUTES_API_KEY on the server.",
-        )
+        raise RoadRouteError(503, 'routing_not_configured',
+                             'Routing is not configured. Set GOOGLE_ROUTES_API_KEY on the server.')
 
     request_body = {
         "origin": {
@@ -156,15 +160,22 @@ def _google_route(origin, destination, travel_mode):
         },
     )
 
-    reserve_google_request(api_key)
+    try:
+        reserve_google_request(api_key)
+    except HTTPException as error:
+        kind = 'request_limit_reached' if error.status_code == 429 else 'usage_check_failed'
+        raise RoadRouteError(error.status_code, kind, error.detail) from error
     try:
         with urlopen(http_request, timeout=20) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as err:
-        raise HTTPException(status_code=502, detail=f"Walking directions are unavailable (provider status {err.code}). Please retry.") from err
+        kind = ('routing_access_denied' if err.code in (401, 403) else
+                'request_limit_reached' if err.code == 429 else 'provider_unavailable')
+        raise RoadRouteError(502, kind, f'Walking directions are unavailable (provider status {err.code}). Please retry.') from err
     except (URLError, TimeoutError) as err:
-        reason = err.reason if isinstance(err, URLError) else 'timed out'
-        raise HTTPException(status_code=502, detail=f"Google Routes API connection error: {reason}") from err
+        raise RoadRouteError(502, 'connection_failed', 'Could not connect to the road navigation service. Please retry.') from err
+    except (ValueError, UnicodeError) as err:
+        raise RoadRouteError(502, 'provider_unavailable', 'The road navigation service returned an unreadable response. Please retry.') from err
 
     candidates = []
     for route in payload.get('routes') or []:
@@ -185,7 +196,7 @@ def _google_route(origin, destination, travel_mode):
             continue
         candidates.append((meters, _parse_duration_seconds(route.get('duration')), polyline))
     if not candidates:
-        raise HTTPException(status_code=404, detail="No route found between those points.")
+        raise RoadRouteError(404, 'no_route_found', 'No route found between those points.')
     return min(candidates, key=lambda item: (item[0], item[1] if item[1] is not None else float('inf')))
 
 
@@ -203,9 +214,10 @@ def _navigation_to_point(origin, destination, mode, road_path, source, site=None
     if guide_start is None and road_path and distance_m(road_path[-1], destination) <= 20:
         guide_start = road_path[-1]
     planting_area = site.get('planting_area') if site else None
-    if (guide_start is not None and guide_start != destination
-            and (not planting_area or guidance_within_area(guide_start, destination, planting_area, guidance_tolerance_m))):
-        segments.append({'kind': 'guidance', 'polyline': [guide_start, destination]})
+    if guide_start is not None and guide_start != destination:
+        guide = guidance_path_within_area(guide_start, destination, planting_area, guidance_tolerance_m)
+        if guide:
+            segments.append({'kind': 'guidance', 'polyline': guide})
     navigation_path = [coordinate for segment in segments for coordinate in segment['polyline']]
     return {
         'origin': origin, 'target': destination,
@@ -225,13 +237,24 @@ def _navigation_to_point(origin, destination, mode, road_path, source, site=None
     }
 
 
-def _unavailable_route_guidance(origin, destination, mode, site=None):
+def _unavailable_route_guidance(origin, destination, mode, site=None, error=None):
     """Keep the known access road and local point guide during provider outages."""
     result = _navigation_to_point(origin, destination, mode,
         site['access_path'] if site else [], 'partial_route' if site else 'point_guidance', site)
+    kind = getattr(error, 'kind', 'road_route_unavailable')
+    messages = {
+        'routing_not_configured': 'Road navigation is not configured. Contact LGU staff.',
+        'routing_access_denied': "The navigation service rejected this app's access. Contact LGU staff.",
+        'request_limit_reached': 'The navigation request limit has been reached. Contact LGU staff or try after the limit resets.',
+        'usage_check_failed': 'The navigation request limit could not be checked. Please retry.',
+        'connection_failed': 'Could not connect to the road navigation service. Check the connection and retry.',
+        'no_route_found': 'No walking road route was found from your location to this site.',
+    }
+    message = messages.get(kind, 'Road directions from your location are temporarily unavailable. Please retry.')
     result.update({
         'distance_label': 'Road directions unavailable', 'duration_label': None,
-        'navigation_note': 'Road directions from your location are unavailable. Open Google Maps for road directions. '
+        'road_route_error': {'kind': kind, 'message': message},
+        'navigation_note': 'Road directions from your location are unavailable. '
             + ('Follow the mapped access road and bridge, then marked planting lanes to your point.'
                if site else 'No unmapped shortcut is drawn.'),
     })
@@ -279,9 +302,9 @@ def compute_route(body: RouteRequest):
             try:
                 meters, seconds, polyline = _google_route(origin, path[0], mode)
             except HTTPException as error:
-                if error.status_code not in (404, 502, 503):
+                if error.status_code not in (404, 429, 502, 503):
                     raise
-                return _unavailable_route_guidance(origin, destination, mode, site)
+                return _unavailable_route_guidance(origin, destination, mode, site, error)
             access_meters = path_distance(path)
             # A provider endpoint can be up to 20 m from the traced road start;
             # keep these sections separate so the gap is never drawn as a road.
@@ -294,9 +317,9 @@ def compute_route(body: RouteRequest):
         try:
             meters, seconds, polyline = _google_route(origin, destination, mode)
         except HTTPException as error:
-            if error.status_code not in (404, 502, 503):
+            if error.status_code not in (404, 429, 502, 503):
                 raise
-            return _unavailable_route_guidance(origin, destination, mode)
+            return _unavailable_route_guidance(origin, destination, mode, error=error)
     return _navigation_to_point(origin, destination, mode, polyline,
                                 'site_route' if site else 'google_routes', site,
                                 meters, seconds, note, road_sections)

@@ -107,3 +107,26 @@ or email. This check reports the problem; it does not apply migrations at runtim
 
 Tests use rollback-only temporary PostgreSQL tables and fictional contacts.
 No verification sends real mail or modifies live credentials or planting records.
+
+
+## Sign-in failure messages
+
+Sign-in identifies an unknown code, a revoked code, an activity awaiting LGU
+approval, cancellation, completion, and an unknown participant username.
+When scheduled access is enabled, a future activity gives its exact opening
+date and time in Philippine time; an ended activity explains that its code has
+expired and retains saved progress. Permanent LGU access has no activity expiry.
+The temporary testing flag above continues to control whether schedule dates
+restrict access; messages never claim a schedule block while that flag is off.
+
+First time verifies the code before asking for a personal username. Returning
+planter requires a username already registered in that organization. A missing
+username explains how to use First time; it never creates another participant
+or moves saved progress automatically. A code that becomes invalid during
+username setup returns to the code screen with the actual reason.
+
+Database connection failures and incomplete server setup have separate,
+retryable messages. Unknown server failures retain a general service message.
+No SQL, connection addresses, keys, codes or browser identifiers are included
+in public diagnostic messages or sign-in error logs. Retrying an unavailable
+service keeps the entered code and does not require a page reload.

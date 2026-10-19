@@ -534,7 +534,7 @@ function OverviewTab({ data }) {
       <div className="dash-grid">
         <ChartCard
           title="Current status of planting locations"
-          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Planting Map. Locations ready for LGU replanting count as Assigned; their original deaths stay in history."
+          subtitle="Current map locations for the selected project site, across all dates. Choose all project sites to compare with Planting Map. Released locations return to Planned; their original deaths stay in history."
           data={lifecycle}
           chartLabel="Cards showing the current status of all planting points"
           columns={[
@@ -798,7 +798,6 @@ function EcologyTab({ data }) {
   const currentSummary = data?.summary || {};
   const performance = data?.planting_performance || {};
   const summary = performance.summary || {};
-  const replanting = performance.replanting || {};
   const batches = arrayOf(performance.batches);
   const species = arrayOf(performance.species_outcomes);
   const sites = arrayOf(performance.site_outcomes);
@@ -840,20 +839,10 @@ function EcologyTab({ data }) {
       <KpiStrip>
         <KpiCard label="Seedlings planted" value={formatCount(summary.total)} hint="Actual plantings in the selected dates, including replacements" tone="blue" />
         <KpiCard label="Without recorded death" value={formatCount(summary.planted)} hint="Includes seedlings awaiting inspection" />
-        <KpiCard label="Recorded deaths" value={formatCount(summary.dead)} hint="Retained after replanting approval or replacement" tone="red" />
+        <KpiCard label="Recorded deaths" value={formatCount(summary.dead)} hint="Retained after site release or later planting" tone="red" />
         <KpiCard label="Recorded survival" value={formatPercent(summary.survival_rate_pct)} hint={`${formatCount(summary.planted)} without a recorded death out of ${formatCount(summary.total)} planted`} tone="emerald" progress={summary.survival_rate_pct} />
       </KpiStrip>
       {summary.unknown > 0 ? <p className="dash-method-note">{formatCount(summary.unknown)} earlier planting outcomes are missing. Survival is unavailable for affected groups until those records are complete.</p> : null}
-
-      <div className="dash-method-note">
-        <strong>Replanting progress.</strong> Covers recorded deaths across all planting dates for the selected site. Ready locations are assigned to the LGU and also count as Assigned on the map. <Link to="/monitoring/replanting">Open LGU Replanting →</Link>
-        {replanting.unavailable > 0 ? ` ${formatCount(replanting.unavailable)} pending locations are currently unavailable because of erosion.` : ''}
-      </div>
-      <KpiStrip className="dash-replanting-kpis">
-        <KpiCard label="Awaiting review" value={formatCount(replanting.awaiting_review)} hint="Recorded deaths awaiting LGU approval" tone="amber" />
-        <KpiCard label="Ready for LGU replanting" value={formatCount(replanting.ready_lgu)} hint="Blue assigned points awaiting actual LGU planting" tone="blue" />
-        <KpiCard label="Replacements planted" value={formatCount(replanting.replacements_completed)} hint="Actual replacements planted; earlier deaths remain in history" tone="emerald" />
-      </KpiStrip>
 
       <div className="dash-grid">
         <Card title="Survival by planting batch" className="dash-card-full"
@@ -870,7 +859,7 @@ function EcologyTab({ data }) {
 
         <ChartCard
           title="Current mapped seedlings"
-          subtitle="Current planted and dead locations across all planting dates, matching the map. Locations ready for LGU replanting appear as Assigned; their original deaths stay in planting performance above."
+          subtitle="Current planted and dead locations across all planting dates, matching the map. Released locations appear as Planned; their original deaths stay in planting performance above."
           data={healthRows.some((row) => row.value > 0) ? healthRows : []}
           tableData={healthRows}
           chartLabel="Counts of current planted and dead seedlings"
@@ -1023,6 +1012,13 @@ function EcologyTab({ data }) {
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
+
+        <Card title="Survival by organization" className="dash-card-full"
+          subtitle="Each organization appears once. LGU combines all its sites using total seedling counts.">
+          <DataTable caption="Planting performance by organization" rows={arrayOf(performance.organization_outcomes)} columns={[
+            { key: 'organization_name', label: 'Organization' }, ...healthColumns,
+          ]} />
+        </Card>
 
         <details className="dash-insight-drawer">
           <summary>More information about planting results</summary>

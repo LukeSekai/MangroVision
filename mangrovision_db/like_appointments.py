@@ -85,6 +85,8 @@ def _rate_gate(conn, peer, now):
 
 def submit_appointment(values: dict, peer: str) -> dict:
     values = dict(values)
+    if str(values.get('organization') or '').strip().lower() == 'lgu':
+        raise ValueError('LGU is reserved for internal planting. Enter your organization’s name.')
     if values.get('appointment_type') not in APPOINTMENT_TYPES:
         raise ValueError('Choose a field visit, clean-up drive, or tree planting appointment.')
     values['title'] = APPOINTMENT_TYPES[values['appointment_type']]

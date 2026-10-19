@@ -288,6 +288,39 @@
   line-height: 1.4;
 }
 
+.field-navigation-road-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 3px 12px #0f172a20;
+  pointer-events: auto;
+}
+
+.field-navigation-road-error button {
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 1px solid #fdba74;
+  border-radius: 8px;
+  background: #fff;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.field-navigation-road-error button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
 .field-route-error {
   position: absolute;
   top: 12px;

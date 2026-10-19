@@ -160,6 +160,8 @@ export function upcomingNavigationPoints(points, route) {
 // All points in the mapped physical site share the same bridge approach.
 // Other sites need their own route request instead of reusing this bridge.
 export function retargetSiteRoute(route, point, currentPosition = null, accuracy = 3) {
+  // A failed road request must be retried, rather than cached for every Next.
+  if (route?.road_route_error || ['partial_route', 'point_guidance'].includes(route?.route_source)) return null;
   const target = [Number(point?.latitude), Number(point?.longitude)];
   if (route?.route_source === 'within_site' && validCoordinate(currentPosition)
     && !nearSite(currentPosition, route.planting_area || route.site_area, accuracy)) return null;
@@ -212,6 +214,62 @@ function localGuidanceAllowed(start, target, area, tolerance = 3) {
   return true;
 }
 
+// A straight guide can leave a concave shoreline even with both ends inside.
+// Bend at visible boundary vertices instead of dropping the final connection.
+// This remains direction guidance; participants follow the marked lanes.
+const boundaryVisibility = new WeakMap();
+
+export function localGuidancePath(start, target, area, tolerance = 3) {
+  if (localGuidanceAllowed(start, target, area, tolerance)) return [start, target];
+  if (!nearSite(start, area, tolerance) || !nearSite(target, area, tolerance)) return null;
+  const last = area.at(-1);
+  const vertices = area[0][0] === last[0] && area[0][1] === last[1] ? area.slice(0, -1) : area;
+  const nodes = [start, target, ...vertices];
+  // GPS updates and successive assigned points share this fixed boundary.
+  // Cache only its vertex connections; actual origin/target checks stay fresh.
+  // Limit accuracy variants, and let discarded route areas be garbage-collected.
+  let byTolerance = boundaryVisibility.get(area);
+  if (!byTolerance) { byTolerance = new Map(); boundaryVisibility.set(area, byTolerance); }
+  if (!byTolerance.has(tolerance)) {
+    if (byTolerance.size >= 4) byTolerance.delete(byTolerance.keys().next().value);
+    byTolerance.set(tolerance, new Map());
+  }
+  const visibility = byTolerance.get(tolerance);
+  const canConnect = (a, b) => {
+    if (a < 2 || b < 2) return localGuidanceAllowed(nodes[a], nodes[b], area, tolerance);
+    const key = `${Math.min(a, b)}:${Math.max(a, b)}`;
+    if (!visibility.has(key)) visibility.set(key, localGuidanceAllowed(nodes[a], nodes[b], area, tolerance));
+    return visibility.get(key);
+  };
+  const costs = nodes.map(() => Infinity), previous = nodes.map(() => null);
+  const pending = new Set(nodes.map((_, index) => index));
+  costs[0] = 0;
+  while (pending.size) {
+    let current = null;
+    for (const index of pending) {
+      if (current == null || costs[index] < costs[current]) current = index;
+    }
+    if (!Number.isFinite(costs[current])) return null;
+    if (current === 1) {
+      const path = [];
+      while (current != null) {
+        path.unshift(nodes[current]);
+        current = previous[current];
+      }
+      return path;
+    }
+    pending.delete(current);
+    for (const neighbor of pending) {
+      const cost = costs[current] + pointGuidance(nodes[current], nodes[neighbor]).distance;
+      if (cost < costs[neighbor] && canConnect(current, neighbor)) {
+        costs[neighbor] = cost;
+        previous[neighbor] = current;
+      }
+    }
+  }
+  return null;
+}
+
 // Retain the road route and restore only local guidance to the active point.
 // Never reuse an older server's remote GPS-to-point shortcut across water.
 function activeNavigationSegments(route, currentPosition, accuracy) {
@@ -220,8 +278,8 @@ function activeNavigationSegments(route, currentPosition, accuracy) {
     if (start[0] === route.target[0] && start[1] === route.target[1]) return [];
     // A compass line is only useful on the foreshore. Never draw one through
     // trees just because both ends belong to the larger park footprint.
-    if (!localGuidanceAllowed(start, route.target, route.planting_area, tolerance)) return [];
-    return [{ kind: 'guidance', polyline: [start, route.target] }];
+    const polyline = localGuidancePath(start, route.target, route.planting_area, tolerance);
+    return polyline ? [{ kind: 'guidance', polyline }] : [];
   };
   if (currentPosition[0] === route.target[0] && currentPosition[1] === route.target[1]) return [];
   const targetInSite = nearSite(route.target, route.site_area, 3);
@@ -263,10 +321,10 @@ export function navigationSegments(route, currentPosition, accuracy = null) {
     // Only connect known local planting locations. Never join different sites
     // or draw a continuation through the wooded bridge approach.
     if (!validCoordinate(start) || !validCoordinate(target)
-      || !nearSite(start, route.site_area, 3) || !nearSite(target, route.site_area, 3)
-      || !localGuidanceAllowed(start, target, route.planting_area || route.site_area)) continue;
+      || !nearSite(start, route.site_area, 3) || !nearSite(target, route.site_area, 3)) continue;
     if (start[0] === target[0] && start[1] === target[1]) continue;
-    segments.push({ kind: 'guidance', polyline: [start, target] });
+    const polyline = localGuidancePath(start, target, route.planting_area || route.site_area);
+    if (polyline) segments.push({ kind: 'guidance', polyline });
   }
   return segments;
 }

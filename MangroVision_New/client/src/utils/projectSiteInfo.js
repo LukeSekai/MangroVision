@@ -6,8 +6,11 @@ export function projectSiteId(feature) {
 }
 
 export function projectSiteStyle(feature, base = {}) {
-  return feature?.properties?.big_wave_risk?.active === true
-    ? { ...base, color: '#b91c1c', fillColor: '#dc2626', fillOpacity: 0.14, weight: 3, dashArray: '8 5' }
+  const props = feature?.properties;
+  const highMortality = props?.mortality_warning?.active === true
+    || (props?.automatic === true && props.warning_type === 'high_mortality');
+  return highMortality
+    ? { ...base, color: '#d97706', fillOpacity: 0, weight: Math.max(3, base.weight || 0), dashArray: '8 5' }
     : base;
 }
 
@@ -38,7 +41,7 @@ export function projectSitePointCounts(points, { scope = 'site' } = {}) {
     // Assignment ownership persists after completion or death. Keep this
     // overlapping total separate from the donut's exclusive current statuses.
     assignedTotal: rows.filter((point) => !point.deleted_at && !point.is_deleted && (
-      scope === 'participant' || point.lgu_replanting_pending || point.replacement_of_event_id != null
+      scope === 'participant' || point.replacement_of_event_id != null
       || point.assignment_id != null || point.assignment_point_id != null
       || point.assigned_planter_id != null || point.assigned_planter_name
       || point.assignment_status != null || point.map_status === 'assigned'
@@ -146,13 +149,14 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     addText(card, 'div', 'project-site-info-owner', owner);
   }
 
-  const risk = props.big_wave_risk;
+  const risk = props.mortality_warning;
   if (risk?.active === true) {
-    const warning = addText(card, 'div', 'project-site-wave-warning', '');
+    const warning = addText(card, 'p', 'project-site-mortality-warning', '');
+    addText(warning, 'span', 'project-site-mortality-icon', '⚠').setAttribute('aria-hidden', 'true');
+    addText(warning, 'span', '', risk.mortality_rate_pct != null
+      ? `High mortality · ${number(risk.mortality_rate_pct)}%`
+      : 'High mortality');
     warning.setAttribute('role', 'note');
-    addText(warning, 'strong', '', 'Danger: This area is prone to big waves.');
-    addText(warning, 'p', '', `${number(risk.wave_death_points)} of ${number(risk.planted_points)} planted locations (${number(risk.percentage)}%) have recorded deaths from big waves.`);
-    addText(warning, 'p', '', 'This warning uses the whole project site’s recorded history, including past plantings. Other causes of death do not count toward the 30% threshold.');
   }
 
   const details = addText(card, 'dl', 'project-site-info-details', '');
@@ -171,14 +175,15 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     if (counts.assignedTotal != null) {
       detail(scope === 'participant' ? 'Assigned to you' : 'Assigned points', number(counts.assignedTotal), 'linked');
     }
-    const seedlings = counts.planted + counts.dead;
+    const history = props.planting_history;
     const survival = addText(card, 'div', 'project-site-info-survival', '');
     const metric = addText(survival, 'dl', '', '');
-    addText(metric, 'dt', '', 'Survival rate (current map)');
-    addText(metric, 'dd', '', seedlings > 0
-      ? `${number(counts.planted / seedlings * 100)}%` : 'Not available yet');
-    if (seedlings > 0) {
-      addText(survival, 'p', '', `${number(seedlings)} seedlings · ${number(counts.planted)} planted · ${number(counts.dead)} recorded dead`);
+    addText(metric, 'dt', '', 'Site survival (planting history)');
+    addText(metric, 'dd', '', history?.survival_rate_pct != null
+      ? `${number(history.survival_rate_pct)}%` : 'Not available yet');
+    if (history?.total > 0) {
+      addText(survival, 'p', '', `${number(history.total)} seedlings planted · ${number(history.planted)} without recorded death · ${number(history.dead)} recorded dead`);
+      addText(survival, 'p', '', 'Includes this site’s earlier plantings after locations are released.');
     }
     const statuses = scope === 'participant'
       ? [['assigned', 'Pending'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']]
@@ -205,25 +210,8 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
 
 export function bindProjectSiteInfo(layer, feature, options) {
   const content = () => createProjectSiteInfo(feature, options);
-  const danger = feature?.properties?.big_wave_risk?.active === true;
-  if (danger) layer.setStyle?.(projectSiteStyle(feature));
+  if (feature?.properties?.mortality_warning?.active === true) layer.setStyle?.(projectSiteStyle(feature));
   layer.bindTooltip(content, { className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1 });
-  // A separate non-interactive warning label leaves the boundary's normal
-  // hover tooltip available for analytics, including on wave-exposed sites.
-  if (danger && options?.map && options?.createTooltip) {
-    const label = options.createTooltip({ className: 'project-site-danger-label',
-      permanent: true, interactive: false, direction: 'center', opacity: 1 });
-    const showLabel = () => {
-      const bounds = layer.getBounds();
-      if (!bounds.isValid() || !options.map.hasLayer(layer)) return;
-      const text = (options.document || document).createElement('span');
-      text.textContent = '⚠ Danger: Big waves';
-      label.setLatLng(bounds.getCenter()).setContent(text).addTo(options.map);
-    };
-    layer.on('add', showLabel);
-    layer.on('remove', () => label.remove());
-    showLabel();
-  }
   layer.bindPopup(content, {
     className: 'project-site-popup', maxWidth: 320, minWidth: 180,
     maxHeight: 360, autoPanPadding: [12, 12],

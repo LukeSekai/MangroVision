@@ -45,6 +45,15 @@ beforeEach(() => {
 });
 const login = (options) => usePlanterAuthStore.getState().login(code, 'Ana', options);
 
+test('permanent LGU access signs in without a timed planting activity', async () => {
+  loginFailure = () => Response.json({ planter: { id: 9, organization_id: 10, participant_slot: 1,
+    participant_username: 'lgu', permanent_access: true, planting_schedule_id: null } });
+  const planter = await usePlanterAuthStore.getState().login(code, 'lgu', { mode: 'return' });
+  assert.equal(planter.permanent_access, true);
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+  assert.ok(!localStorage.getItem('mv_planter')?.includes(code));
+});
+
 test('code entry opens username setup without authenticating or storing the code', async () => {
   const activity = await usePlanterAuthStore.getState().checkOrganizationCode(code);
   assert.equal(activity.organization_name, 'Test group');
@@ -169,4 +178,36 @@ test('connection errors and throttling remain clear and retryable', async () => 
   const workspace = await usePlanterAuthStore.getState().fetchFieldPoints();
   assert.deepEqual(workspace.points, points);
   assert.deepEqual(workspace.siteAccess, [{ label: 'LIKE entrance', entrance: [10.77999592, 122.625672] }]);
+});
+
+
+for (const [kind,status,field,message] of [
+  ['code_not_found',401,'access_code','Organization code not found. Please check the code and try again.'],
+  ['activity_not_started',403,'access_code','It is not your planting schedule yet. Sign-in opens on Oct 20, 2026 at 08:00 AM (Philippine time).'],
+  ['code_expired',403,'access_code','This organization code expired when your planting activity ended.'],
+  ['code_revoked',403,'access_code','This organization code is no longer active. Ask for the current code.'],
+  ['username_not_found',401,'username','Username not found for this organization. Choose First time if you have not registered here.'],
+]) test(`sign-in preserves the ${kind} reason and identifies the correction field`,async () => {
+  loginFailure=()=>Response.json({ detail:{ kind,field,message } },{ status });
+  await assert.rejects(login(),(error)=>error.kind===kind && error.message===message
+    && error.detail[0].loc.includes(field));
+  // Field reasons are returned to the form instead of duplicated in its
+  // general error banner.
+  assert.equal(usePlanterAuthStore.getState().error,'');
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated,false);
+});
+
+for (const kind of ['sign_in_database_unavailable','shared_access_setup_required','sign_in_setup_required'])
+  test(`known service failure ${kind} keeps its actionable explanation`,async () => {
+    const message=kind==='sign_in_database_unavailable' ? 'The sign-in database could not be reached. Please try again shortly.' : 'Planter sign-in setup is not finished. Contact LGU staff.';
+    loginFailure=()=>Response.json({ detail:{ kind,message } },{ status:503 });
+    await assert.rejects(usePlanterAuthStore.getState().checkOrganizationCode(code),(error)=>error.kind===kind && error.message===message);
+    loginFailure=null;
+    assert.equal((await usePlanterAuthStore.getState().checkOrganizationCode(code)).organization_name,'Test group');
+  });
+
+test('unexpected server diagnostics remain hidden behind a service failure message',async () => {
+  loginFailure=()=>Response.json({ detail:{ kind:'internal_debug',message:'private database connection details' } },{ status:500 });
+  await assert.rejects(login(),/sign-in service is temporarily unavailable/);
+  assert.doesNotMatch(usePlanterAuthStore.getState().error,/private database/);
 });

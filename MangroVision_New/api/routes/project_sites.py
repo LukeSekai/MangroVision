@@ -3,15 +3,14 @@
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field, FiniteFloat
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, ConfigDict, Field, FiniteFloat, PositiveInt
 from shapely.geometry import shape
 from shapely.ops import unary_union
 from sqlalchemy.exc import SQLAlchemyError
 
 from api.runtime_state import is_processing_active
 from planting_database import (
-    create_project_site,
     delete_project_site,
     get_user_by_session_token,
     get_project_site,
@@ -22,8 +21,9 @@ from planting_database import (
     set_project_site_tide_calibration,
 )
 from .tides import tides_forecast
-from .zones import _checked_zone_polygon, _require_zone_inside_map
+from .zones import _load_zone_coverage
 from mangrovision_db.site_actions import apply_site_action, available_released_areas, preview_site_actions
+from mangrovision_db.site_point_selection import prepare_drawn_site_boundary
 
 router = APIRouter()
 
@@ -62,10 +62,23 @@ class ProjectSiteBoundary(BaseModel):
     geometry: dict
 
 
+class ProjectSitePoints(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    organization_id: PositiveInt
+    planting_point_ids: list[PositiveInt] = Field(min_length=1, max_length=10000)
+    name: str = Field(default='', max_length=120)
+    notes: str = Field(default='', max_length=2000)
+
+
+@router.post('/from-points', include_in_schema=False)
+def add_project_site_from_points(body: ProjectSitePoints):
+    _require_lgu_user()
+    raise HTTPException(status_code=410, detail='Project sites are created automatically in Assign Points. Select an organization and assign its planting points there.')
+
+
 def _require_organization_boundary(organization_id: int, geometry: dict):
-    polygon = _checked_zone_polygon(geometry)
-    _require_zone_inside_map(geometry)
     try:
+        coverage = _load_zone_coverage()
         sites = [feature for feature in list_project_sites()
                  if (feature.get('geometry') or {}).get('type') in {'Polygon', 'MultiPolygon'}]
         assignments = list_site_zones()
@@ -86,10 +99,7 @@ def _require_organization_boundary(organization_id: int, geometry: dict):
         # A first project site establishes the organization's boundary. Assignment
         # hulls and released land must not become a prerequisite for creating it.
         # Existing owners remain limited to their sites and available releases.
-        if own_sites:
-            allowed = unary_union(polygons(own_sites + available_released_areas()['features']))
-            if not allowed.covers(polygon):
-                raise HTTPException(status_code=400, detail="This site extends outside the selected organization's area. Redraw it inside that area.")
+        allowed = unary_union(polygons(own_sites + available_released_areas()['features'])) if own_sites else None
         # Shared edges are allowed; an area belonging to another owner is not.
         recorded_owners = {str((feature.get('properties') or {}).get('organization_id')) for feature in sites}
         other_areas = sites + [feature for feature in assignments
@@ -97,20 +107,33 @@ def _require_organization_boundary(organization_id: int, geometry: dict):
         others = [feature for feature in other_areas
                   if (feature.get("properties") or {}).get("organization_id") is not None
                   and str(feature["properties"]["organization_id"]) != str(organization_id)]
-        if others and unary_union(polygons(others)).intersection(polygon).area > 0:
-            raise HTTPException(status_code=400, detail="This site overlaps another organization's area. Redraw it inside the selected organization's area.")
+        other_area = unary_union(polygons(others)) if others else None
+        cleanup_limit = coverage.intersection(allowed) if allowed is not None else coverage
+        if other_area is not None:
+            cleanup_limit = cleanup_limit.difference(other_area)
     except HTTPException:
         raise
     except Exception as error:
         raise HTTPException(status_code=503, detail="Could not check the organization's area. Refresh the map and try again.") from error
+    try:
+        prepared = prepare_drawn_site_boundary(geometry, coverage, cleanup_limit)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    except Exception as error:
+        raise HTTPException(status_code=503, detail='Could not check the map boundary. Please try again.') from error
+    polygon = shape(prepared['geometry'])
+    if allowed is not None and not allowed.covers(polygon):
+        raise HTTPException(status_code=400, detail="This site extends outside the selected organization's area. Redraw it inside that area.")
+    if other_area is not None and other_area.intersection(polygon).area > 0:
+        raise HTTPException(status_code=400, detail="This site overlaps another organization's area. Redraw it inside the selected organization's area.")
+    return prepared
 
 
 @router.post("/validate-boundary")
 def validate_project_site_boundary(body: ProjectSiteBoundary):
     _require_lgu_user()
     _raise_if_processing_active()
-    _require_organization_boundary(body.organization_id, body.geometry)
-    return {"valid": True}
+    return {"valid": True, **_require_organization_boundary(body.organization_id, body.geometry)}
 
 
 class ProjectSiteUpdate(BaseModel):
@@ -217,41 +240,30 @@ def project_site(site_id: int):
     return result
 
 
-@router.post("", status_code=status.HTTP_201_CREATED)
-@router.post("/", status_code=status.HTTP_201_CREATED, include_in_schema=False)
+@router.post("", include_in_schema=False)
+@router.post("/", include_in_schema=False)
 def add_project_site(body: ProjectSiteCreate):
     _require_lgu_user()
-    _raise_if_processing_active()
-    _require_organization_boundary(body.organization_id, body.geometry)
-    try:
-        return create_project_site(
-            name=body.name,
-            geometry=body.geometry,
-            notes=body.notes or "",
-            analysis_ids=body.analysis_ids,
-            assignment_ids=body.assignment_ids,
-            organization_id=body.organization_id,
-        )
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+    raise HTTPException(status_code=410, detail='Project sites are created automatically in Assign Points. Select an organization and assign its planting points there.')
 
 
 def _update_project_site(site_id: int, body: ProjectSiteUpdate):
     _require_lgu_user()
     _raise_if_processing_active()
-    if body.geometry is not None:
+    geometry = body.geometry
+    if geometry is not None:
         existing = get_project_site(site_id)
         if existing is None:
             raise HTTPException(status_code=404, detail="Project site not found.")
         owner_id = existing.get("properties", {}).get("organization_id")
         if owner_id is None:
             raise HTTPException(status_code=400, detail="This project site has no organization owner. Assign its owner before changing the boundary.")
-        _require_organization_boundary(int(owner_id), body.geometry)
+        geometry = _require_organization_boundary(int(owner_id), geometry)['geometry']
     try:
         result = update_project_site(
             site_id=site_id,
             name=body.name,
-            geometry=body.geometry,
+            geometry=geometry,
             notes=body.notes,
             analysis_ids=body.analysis_ids,
             assignment_ids=body.assignment_ids,

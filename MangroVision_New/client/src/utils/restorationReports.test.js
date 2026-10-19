@@ -11,7 +11,7 @@ const envelope = {
   period: { from: '2026-07-01T00:00:00+08:00', to: '2026-09-30T23:59:59+08:00' },
   as_of: '2026-10-04T09:00:00+08:00',
   filter_options: { sites: [{ id: 4, name: 'Nasugban' }] },
-  planting_performance: { summary: { total: 0, planted: 0, dead: 0, unknown: 0 }, replanting: { awaiting_review: 0, ready_lgu: 0, replacements_completed: 0 } },
+  planting_performance: { summary: { total: 0, planted: 0, dead: 0, unknown: 0 }, replanting: { awaiting_review: 0, replacements_completed: 0 } },
 };
 
 test('quarter presets work across the year boundary and use Philippine dates', () => {
@@ -34,7 +34,7 @@ test('reports request only their existing sources and apply the project-site fil
   const requests = reportRequests('mortality', { ...filters, siteId: '4' });
   assert.equal(requests.length, 2);
   assert.match(requests[0].path, /site_id=4/);
-  assert.equal(requests[1].path, '/api/monitoring/replanting');
+  assert.equal(requests[1].path, '/api/monitoring/release-candidates');
   assert.deepEqual(reportRequests('planting', filters).map((item) => item.key), ['overview']);
   assert.deepEqual(reportRequests('monitoring', filters).map((item) => item.key), ['ecology', 'organizationVisits']);
   assert.deepEqual(reportRequests('monitoring', { ...filters, siteId: '4' }).map((item) => item.key), ['ecology']);
@@ -95,12 +95,12 @@ test('monitoring report uses planting-batch survival and keeps current map count
   const ecology = { ...envelope,
     summary: { total: 18, planted: 18, dead: 0 },
     planting_performance: { summary: { total: 20, planted: 18, dead: 2, unknown: 0 },
-      replanting: { awaiting_review: 1, ready_lgu: 1, replacements_completed: 0 } },
+      replanting: { awaiting_review: 1, replacements_completed: 0 } },
     survival_cohorts: [{ interval_days: 30, alive: 60, dead: 20, due: 200, inspected: 90 }],
   };
   const report = buildRestorationReport('monitoring', { ecology }, filters);
-  assert.deepEqual(report.stats.map((row) => row.value), [20, 18, 2, 90, 1, 1, 0]);
-  assert.deepEqual(report.stats.map((row) => row.label), ['Seedlings planted', 'Without recorded death', 'Recorded deaths', 'Recorded survival', 'Awaiting review', 'Ready for LGU replanting', 'Replacements planted']);
+  assert.deepEqual(report.stats.map((row) => row.value), [20, 18, 2, 90]);
+  assert.deepEqual(report.stats.map((row) => row.label), ['Seedlings planted', 'Without recorded death', 'Recorded deaths', 'Recorded survival']);
   assert.equal(report.sections[0].columns.length, 5);
   assert.equal(report.sections.find((section) => section.title === 'Current mapped seedlings').rows[0].dead, 0);
   assert.match(report.notes.join(' '), /all planting dates/);
@@ -161,7 +161,7 @@ test('mortality counts reported deaths once and filters location detail by death
   assert.equal(report.site, 'Nasugban');
   assert.deepEqual(report.stats.map((item) => item.value), [8, 2, 1, 1]);
   assert.equal(report.sections[1].rows.length, 2);
-  assert.equal(report.sections[1].rows[0].status_label, 'Ready for LGU replanting');
+  assert.equal(report.sections[1].rows[0].status_label, 'Released from project site');
   assert.equal(report.sections[1].columns[0].label, 'Seedling record ID');
   assert.match(report.notes.join(' '), /after the period end/);
   assert.match(report.notes.join(' '), /Differences in these dates can produce different counts/);
@@ -207,12 +207,12 @@ test('CSV handles Unicode, quotes and newlines while neutralizing spreadsheet fo
 test('PDF exports overall totals with formatted dates and optional remarks', () => {
   const report = buildRestorationReport('monitoring', { ecology: { ...envelope,
     summary: { total: 20, planted: 20, alive: 0, dead: 0, missing: 1, uninspected: 19 },
-    planting_performance: { summary: { total: 20, planted: 20, dead: 0, unknown: 0 }, replanting: { awaiting_review: 0, ready_lgu: 0, replacements_completed: 0 } },
+    planting_performance: { summary: { total: 20, planted: 20, dead: 0, unknown: 0 }, replanting: { awaiting_review: 0, replacements_completed: 0 } },
   } }, filters);
   const payload = reportPdfPayload(report, { preparedBy: 'LGU Staff', generatedAt: 'Oct 4, 2026', remarks: 'Inspect erosion.\nFollow up next week.' });
   assert.equal(payload.report_type, 'monitoring');
   assert.equal(payload.period_from, '2026-07-01');
-  assert.deepEqual(payload.stats.map((row) => row.value), ['20', '20', '0', '100%', '0', '0', '0']);
+  assert.deepEqual(payload.stats.map((row) => row.value), ['20', '20', '0', '100%']);
   assert.equal(payload.remarks, 'Inspect erosion.\nFollow up next week.');
   assert.deepEqual(payload.sections[0].rows[0], report.sections[0].columns.map((column) => formatReportValue(report.sections[0].rows[0][column.key], column.type)));
 });

@@ -74,12 +74,11 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
 
     current_points = {int(point['id']): point for point in points}
     progress = {'awaiting_replanting': 0, 'replacements_completed': 0,
-                'ready_lgu': 0,
                 'awaiting_review': 0, 'approved': 0, 'assigned': 0,
                 'unavailable': 0, 'scope': 'all_planting_dates'}
     total = _counts()
     batches = {}
-    groups = {key: {} for key in ('species_outcomes', 'site_outcomes', 'planter_outcomes')}
+    groups = {key: {} for key in ('species_outcomes', 'site_outcomes', 'planter_outcomes', 'organization_outcomes')}
     for event in ordered:
         if not matches(event):
             continue
@@ -95,8 +94,6 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
                 approved_at = _date(event.get('replanting_approved_at'))
                 status = ('assigned' if event.get('replanting_assignment_id') is not None else 'approved') if approved_at and approved_at <= as_of else 'awaiting_review'
                 progress[status] += 1
-                if status == 'approved' and not (point.get('eroded_unavailable') or point.get('inside_eroded_zone')):
-                    progress['ready_lgu'] += 1
                 if point.get('eroded_unavailable') or point.get('inside_eroded_zone'):
                     progress['unavailable'] += 1
 
@@ -110,6 +107,7 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
         species_name = species_labels.get(raw_species.casefold().replace('_', '-')) or raw_species or 'Unspecified'
         site_name = event.get('site_name') or 'Unassigned site'
         planter_name = event.get('planter_name') or 'Unattributed'
+        organization_name = event.get('organization_name') or planter_name
         planting_type = 'replacement' if event_id in replacement_ids else 'original'
         day = event['_planted_at'].astimezone(MANILA).date().isoformat()
         key = (day, event.get('assignment_id'), event.get('site_id'), event.get('planter_id'),
@@ -120,6 +118,8 @@ def summarize_planting_performance(events, start, end, as_of, *, site_id=None,
             'site_name': site_name, 'organization_name': event.get('organization_name') or planter_name,
             'species': species_name, 'planting_type': planting_type})
         metadata = {
+            'organization_outcomes': (organization_name.casefold(), {'name': organization_name,
+                'organization_name': organization_name}),
             'species_outcomes': (species_name.casefold(), {'name': species_name, 'species_name': species_name}),
             'site_outcomes': (event.get('site_id'), {'name': site_name, 'site_name': site_name, 'site_id': event.get('site_id')}),
             'planter_outcomes': ((event.get('planter_id'), event.get('site_id'), species_name.casefold()), {

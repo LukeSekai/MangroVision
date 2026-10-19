@@ -612,14 +612,18 @@ export default function OrganizationMonitoring() {
               <FieldError feedback={feedback} field="actions_taken" />
           </div>
 
-          <FormMessage error={formError} loading={saving ? 'Saving monitoring visit…' : ''} />
-          {notice && <div className="org-monitoring-message is-success">{notice}</div>}
+          {(formError || notice) && <div className="org-monitoring-form-feedback">
+            <FormMessage error={formError} />
+            {notice && <div className="org-monitoring-message is-success">{notice}</div>}
+          </div>}
           <button
             className="org-monitoring-submit"
             type="submit"
+            aria-busy={saving}
             disabled={saving || loading || !contextReady || !visitContext?.total_planted}
           >
-            {saving ? 'Saving monitoring visit...' : 'Save monitoring visit'}
+            {saving && <span className="org-monitoring-save-spinner" aria-hidden="true" />}
+            <span>{saving ? 'Saving monitoring visit...' : 'Save monitoring visit'}</span>
           </button>
         </form>
       </Modal>

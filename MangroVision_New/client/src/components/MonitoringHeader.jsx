@@ -16,7 +16,7 @@ export default function MonitoringHeader({ title, description, mapTo = '/monitor
     </header>
     <nav className="monitoring-section-navigation" aria-label="Monitoring sections">
       <NavLink to="/monitoring" end>Monitoring visits</NavLink>
-      <NavLink to="/monitoring/replanting">LGU Replanting</NavLink>
+      <NavLink to="/monitoring/lgu-sites">LGU Sites</NavLink>
     </nav>
   </>;
 }

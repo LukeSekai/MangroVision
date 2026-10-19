@@ -238,7 +238,7 @@ test('calendar and upcoming totals exclude unapproved requests while drafts rema
   assert.equal(document.querySelector('.schedule-calendar-request'), null);
   assert.match(document.querySelector('#website-requests').textContent, /Unapproved website group/);
   assert.ok([...document.querySelectorAll('#website-requests button')].find((button) => button.textContent === 'Review request'));
-  assert.deepEqual([...document.querySelectorAll('.schedule-kpis article strong')].map((value) => value.textContent), ['2', '1', '15']);
+  assert.deepEqual([...document.querySelectorAll('.schedule-kpis .schedule-tracking-card strong')].map((value) => value.textContent), ['1', '4', '1']);
   assert.doesNotMatch(document.body.textContent, /Expected seedlings/);
   const approvedCard = calendar.querySelector('.schedule-calendar-event');
   await act(async () => approvedCard.click());
@@ -272,4 +272,33 @@ test('a website request enters the calendar only after successful approval and r
   assert.equal(document.querySelectorAll('.schedule-calendar-event').length, 1);
   assert.match(document.querySelector('.schedule-calendar').textContent, /Website volunteers/);
   assert.match(document.querySelector('#website-requests').textContent, /No pending website requests/);
+});
+
+
+test('approved tree planting opens Assign Points with the activity instead of an area chooser', async () => {
+  schedules = [{ id: 70,organization_id: 2,organization: 'Coastal volunteers',title: 'Approved planting',
+    appointment_type: 'tree_planting',status: 'confirmed',start_at: `${date}T08:00:00+08:00`,
+    end_at: `${date}T09:30:00+08:00`,project_site_id: null }];
+  await render(); await click('List');
+  const link=document.querySelector('a[href="/planters?section=assign&organization_id=2&activity_id=70"]');
+  assert.ok(link); assert.equal(link.textContent,'Assign points');
+  assert.doesNotMatch(document.body.textContent,/Choose area|Add one in the Zone Editor/);
+  assert.match(document.body.textContent,/Formed when points are assigned/);
+  assert.equal(writes.length,0);
+});
+
+test('completed planting shows its result without missed warnings, assignment actions or tide advice', async () => {
+  schedules = [{ id: 72, organization_id: 2, organization: 'Hamtic Coastal Organization', title: 'Tree planting',
+    appointment_type: 'tree_planting', status: 'completed', start_at: '2026-10-19T20:25:00+08:00',
+    end_at: '2026-10-19T22:25:00+08:00', project_site_id: 29, project_site_name: 'Hamtic Site 1',
+    planting_started: true, recorded_planting_count: 150 }];
+  await render(); await click('List');
+  const table = document.querySelector('.schedule-activity-table');
+  assert.match(table.textContent, /Completed/);
+  assert.match(table.textContent, /Planting completed/);
+  assert.doesNotMatch(table.textContent, /Pending|Missed|Assign points|Update notes|Good time to plant|Avoid planting|Refresh tides/);
+  await act(async () => table.querySelector('button').click());
+  assert.match(document.querySelector('.schedule-details-modal').textContent, /Planting completed/);
+  assert.doesNotMatch(document.querySelector('.schedule-details-modal').textContent, /Good time to plant|Tide forecast is unavailable/);
+  assert.equal(writes.length, 0);
 });

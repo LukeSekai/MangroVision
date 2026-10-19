@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { manilaDateKey, monitoringSchedule, monitoringScheduleLabel } from '../utils/monitoringSchedule';
 import { projectSiteAreaM2, projectSiteId } from '../utils/projectSiteInfo';
 import SiteMapPreview from './SiteMapPreview';
+import SiteMortalityWarning from './SiteMortalityWarning';
 import MonitoringSiteDetails, { SiteHistoryButton } from './MonitoringSiteDetails';
 import { groupSitePreviewPoints } from '../utils/siteMapPreview';
 import './SitesToMonitor.css';
@@ -131,10 +132,7 @@ export default function SitesToMonitor({ organizations, requestedSiteId, token, 
               <SiteMapPreview key={`${revision}:${id}:${JSON.stringify(site.geometry)}`} site={site} name={name} points={pointsBySite.get(String(id)) || []} />
               <div className="monitoring-site-main">
                 <h3>{name}</h3>
-                {props.big_wave_risk?.active === true && <p className="monitoring-site-wave-warning" role="note">
-                  <strong>Danger: This area is prone to big waves.</strong>
-                  <span>{count(props.big_wave_risk.wave_death_points)} of {count(props.big_wave_risk.planted_points)} planted locations ({props.big_wave_risk.percentage}%) have recorded big-wave deaths.</span>
-                </p>}
+                <SiteMortalityWarning warning={props.mortality_warning} />
                 <p className="monitoring-site-owner">{props.organization_name || props.organization || owner?.name || 'No organization assigned'}</p>
                 <p className="monitoring-site-meta">
                   {area != null ? <span>{area.toLocaleString('en-PH', { maximumFractionDigits: 1 })} m² area</span> : null}

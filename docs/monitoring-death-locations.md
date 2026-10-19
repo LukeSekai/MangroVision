@@ -30,28 +30,19 @@ visits remain supported, with all reported deaths initially unlocated.
 3. In **Monitoring History → Identify remaining locations**, add or correct
    locations whenever field information becomes available. This does not change
    the visit's reported count, survival calculation, or two-week schedule.
-   Removing a selection requires a correction note. Approved replacement work
+   Removing a selection requires a correction note. Releasing a location
    protects the linked death from location changes.
-4. In **Map Analytics**, enable **Show dead plants only**, click an identified
-   dead points to select them, and choose **Approve selected**. Click a selected
-   point again to deselect it. Approval is atomic: stale or ineligible points
-   reject the entire batch. Each approved location is released
-   from its organization allocation and reserved for the LGU replanting queue.
-   It appears blue as Assigned. The
-   original organization's historical planted, dead, alive, and survival totals
-   remain unchanged. Open **Monitoring → LGU Replanting** for the replacement; geographic site,
-   deleted-point, erosion, and assignment restrictions still apply.
-   For quicker selection, choose **Brush select** and sweep the pointer over
-   dead points (drag on touch screens). **Brush deselect** removes points from
-   the selection. The circular cursor shows the brush area. Repeated passes
-   leave the selected state unchanged, and fast sweeps include points between
-   pointer positions. Press **Esc** or choose **Move map / click** to resume
-   navigation. Approval remains a separate action after selecting the points.
-5. After LGU staff have planted replacements, open **LGU Replanting → LGU queue**,
-   select their locations and choose **Record replacement planting**. Confirm
-   the site, planting date and species; height, condition and notes are optional.
-   The location becomes yellow. A new staff-attributed planting event links to
-   the original seedling; old planting and mortality records stay in history.
+4. In **Monitoring ? Show map**, optionally enable **Show dead plants only**.
+   Select dead locations using Move / click, Brush select, or Brush erase, then
+   choose **Release from project site**. Selected planting cells leave the old
+   boundary and the locations become green Planned. The selection is atomic:
+   stale, living, removed, eroded, or subsequently replanted locations reject
+   the entire batch. Original planting counts, deaths, visits, and survival stay
+   with the old site. Escape returns to Move / click.
+5. Another organization can claim the released land as a new project site,
+   assign its points, and record planting through the normal participant flow.
+   Each new planting has a new event and independent site reporting. See
+   [Release dead locations](project-site-location-release.md).
 
 ## Data and API
 
@@ -72,15 +63,8 @@ Authenticated LGU endpoints:
   `death_reason_notes`. A valid cause is required when new deaths exceed zero.
 - `PUT /api/monitoring/organization-records/{id}/death-locations`, accepting IDs,
   `expected_version`, and optional `correction_note`.
-- `GET /api/monitoring/replanting`
-- `POST /api/monitoring/replanting/{event_id}/approve` with `expected_version`.
-- `POST /api/monitoring/replanting/approve` with `planting_event_ids` and their `versions`.
-- `POST /api/monitoring/replanting/lgu-plantings` with event IDs, their versions,
-  project site, planting date, species and optional initial observations.
-  The staff identity comes from the authenticated session.
-- The old organization `/replanting/assign` route returns a conflict message
-  directing staff to LGU Replanting. Earlier organization assignments remain
-  historical records.
+- `GET /api/monitoring/release-candidates`
+- `POST /api/monitoring/release-locations` with `planting_event_ids` and their `versions`.
 
 Visit history returns `reported_dead_count`, `located_dead_count`,
 `unlocated_dead_count`, `dead_planting_event_ids`, `location_version`, and

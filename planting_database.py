@@ -66,6 +66,7 @@ _WARNING_TYPE_LABELS = {
     "tidal_exposure": "High tidal exposure",
     "wave_exposure": "Wave exposure",
     "low_survival_confidence": "Low survival confidence",
+    "high_mortality": "High mortality (at least 30%)",
     "planner_warning": "Planner warning",
     "other": "Other",
 }
@@ -1327,6 +1328,7 @@ def _get_subject_by_session(subject_type: str, token: str) -> Optional[dict]:
             SELECT {subject_columns}, session.id AS _auth_session_id,
                    session.participant_slot AS _auth_participant_slot,
                    to_jsonb(session)->>'planting_schedule_id' AS _auth_schedule_id,
+                   to_jsonb(session)->>'activity_code_digest' AS _auth_access_digest,
                    (session.last_seen_at IS NULL OR session.last_seen_at
                        < CURRENT_TIMESTAMP - INTERVAL '5 minutes') AS _auth_heartbeat_due
             FROM auth_sessions session
@@ -1340,7 +1342,8 @@ def _get_subject_by_session(subject_type: str, token: str) -> Optional[dict]:
         session_id = result.pop("_auth_session_id")
         participant_slot = result.pop("_auth_participant_slot")
         activity_id = result.pop("_auth_schedule_id")
-        if subject_type == 'planter' and activity_id is not None:
+        access_digest = result.pop("_auth_access_digest")
+        if subject_type == 'planter' and (activity_id is not None or access_digest is not None):
             from mangrovision_db.group_access import session_details
             details = session_details(conn, token_hash)
             if not details:
@@ -1500,7 +1503,8 @@ def get_planter_by_username(username: str) -> Optional[dict]:
     conn = _get_connection()
     row = conn.execute(
         """
-        SELECT p.*, o.name AS organization_name
+        SELECT p.*, o.name AS organization_name,
+            COALESCE(to_jsonb(o)->>'system_key', '') = 'lgu' AS permanent_access
         FROM planters p
         LEFT JOIN organizations o ON o.id = p.organization_id
         WHERE lower(p.username) = lower(?)
@@ -3133,26 +3137,20 @@ def _clean_warning_severity(severity: Optional[str]) -> str:
 
 
 def _load_warning_zone_geometries() -> List[dict]:
-    """Load DB-backed warning polygons as shapely geometries."""
+    """Load manual and automatic warning polygons as shapely geometries."""
     if Point is None or shape is None:
         return []
 
-    conn = _get_connection()
     try:
-        rows = conn.execute("""
-            SELECT id, name, warning_type, severity, notes, polygon_geojson
-            FROM warning_zones
-            ORDER BY id
-        """).fetchall()
+        features = list_warning_zones()
     except DatabaseError:
-        rows = []
-    finally:
-        conn.close()
+        features = []
 
     zones = []
-    for row in rows:
+    for feature in features:
+        row = feature['properties']
         try:
-            geom = shape(json.loads(row["polygon_geojson"]))
+            geom = shape(feature['geometry'])
             if geom.is_empty:
                 continue
             if not geom.is_valid:
@@ -3206,7 +3204,7 @@ def _resolve_point_species(item: dict) -> tuple[Optional[str], Optional[float]]:
     Legacy points just stay species=None and the map falls back to the
     generic 'planned' green.
     """
-    snapshot = item.get('replanting_species') if item.get('lgu_replanting_pending') else (
+    snapshot = (
         item.get('planted_species') if item.get('planting_status') == 'planted' or item.get('death_at') else None)
     raw_species = (snapshot or item.get("analysis_species") or "").strip().lower() or None
     distance = None if snapshot else item.get("analysis_planting_distance_m")
@@ -3275,10 +3273,13 @@ def _annotate_point_advisories(rows, *, eroded_point_ids=None) -> List[dict]:
             )
             primary_label = _warning_type_label(primary["warning_type"])
             item["warning_severity"] = primary["severity"]
-            item["warning_summary"] = (
-                f"{primary['name']} - {primary_label}"
-                + (f": {primary['notes']}" if primary.get("notes") else "")
-            )
+            if primary["warning_type"] == "high_mortality" and primary.get("notes"):
+                item["warning_summary"] = primary["notes"]
+            else:
+                item["warning_summary"] = (
+                    f"{primary['name']} - {primary_label}"
+                    + (f": {primary['notes']}" if primary.get("notes") else "")
+                )
         else:
             item["warning_severity"] = None
             item["warning_summary"] = None
@@ -3602,6 +3603,9 @@ def restore_planting_point_to_planted(point_id: int) -> dict:
             WHERE planting_event_id = ?
             ORDER BY death_at DESC, id DESC LIMIT 1
         """, (row["planting_event_id"],)).fetchone() if row["planting_event_id"] else None
+        from mangrovision_db.lgu_sites import owns_death
+        if row['planting_event_id'] and owns_death(conn, row['planting_event_id']):
+            raise ValueError('This death belongs to an LGU site monitoring visit. Its history must be preserved.')
         if row['planting_event_id'] and conn.execute("""SELECT 1 FROM monitoring_death_locations WHERE planting_event_id = ? AND revoked_at IS NULL
             UNION ALL SELECT 1 FROM replanting_requests WHERE planting_event_id = ?""",
             (row['planting_event_id'], row['planting_event_id'])).fetchone():
@@ -3636,11 +3640,11 @@ def restore_planting_point_to_planted(point_id: int) -> dict:
 
 
 def reset_planting_point_to_planned(point_id: int) -> dict:
-    """Review replacement work without deleting original assignment evidence."""
-    from mangrovision_db.monitoring_locations import approve_replanting
+    """Release a dead location from its project site while retaining its history."""
+    from mangrovision_db.monitoring_locations import release_dead_locations_batch
     user = get_user_by_session_token('')
     if not user or str(user.get('role', '')).lower() not in {'admin', 'lgu', 'planner'}:
-        raise ValueError('LGU staff must approve replacement planting.')
+        raise ValueError('LGU staff must release dead locations from their project sites.')
     conn = _get_connection()
     try:
         event = conn.execute('SELECT id FROM planting_events WHERE planting_point_id = ? ORDER BY id DESC LIMIT 1', (int(point_id),)).fetchone()
@@ -3648,7 +3652,7 @@ def reset_planting_point_to_planned(point_id: int) -> dict:
             raise ValueError('Planting event was not found.')
     finally:
         conn.close()
-    return approve_replanting(event['id'], 0, int(user['id']))
+    return release_dead_locations_batch([event['id']], {str(event['id']): 0}, int(user['id']))
 
 
 def get_mortality_stats() -> dict:
@@ -4034,6 +4038,7 @@ def list_planters(include_inactive: bool = True) -> List[dict]:
             p.*,
             (p.username IS NULL AND p.password_hash IS NULL) AS registration_pending,
             o.name AS organization_name,
+            COALESCE(to_jsonb(o)->>'system_key', '') = 'lgu' AS permanent_access,
             COUNT(DISTINCT CASE WHEN pa.status = 'active' THEN pa.id END) AS active_assignments,
             COALESCE(SUM(CASE WHEN pa.status = 'active' AND pap.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_points,
             COALESCE(SUM(CASE WHEN pa.status = 'active' AND pap.status = 'completed' THEN 1 ELSE 0 END), 0) AS completed_points
@@ -4059,7 +4064,8 @@ def get_planter(planter_id: int) -> Optional[dict]:
     """Return one planter row or None."""
     conn = _get_connection()
     row = conn.execute("""
-        SELECT p.*, o.name AS organization_name
+        SELECT p.*, o.name AS organization_name,
+            COALESCE(to_jsonb(o)->>'system_key', '') = 'lgu' AS permanent_access
         FROM planters p
         LEFT JOIN organizations o ON o.id = p.organization_id
         WHERE p.id = ?
@@ -4227,11 +4233,12 @@ def get_planter_dashboard_stats() -> dict:
     return dict(row)
 
 
-def _refresh_assignment_status(conn: Any, assignment_id: int) -> None:
+def _refresh_assignment_status(conn: Any, assignment_id: int) -> Optional[int]:
     """Refresh one assignment batch status after point-level changes."""
     row = conn.execute("""
         SELECT
             pa.status AS current_status,
+            pa.planting_schedule_id,
             COUNT(pap.id) AS total_points,
             COALESCE(SUM(CASE WHEN pap.status = 'pending' THEN 1 ELSE 0 END), 0) AS pending_points
         FROM planter_assignments pa
@@ -4264,6 +4271,10 @@ def _refresh_assignment_status(conn: Any, assignment_id: int) -> None:
         "UPDATE planter_assignments SET status = ? WHERE id = ?",
         (new_status, assignment_id),
     )
+    if new_status == 'completed':
+        from mangrovision_db.activity_rules import complete_fully_planted_activity
+        return complete_fully_planted_activity(conn, row['planting_schedule_id'])
+    return None
 
 
 def _distance_score(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -4398,9 +4409,6 @@ def _create_planter_assignment(
         )
 
     conn = connection or _get_connection()
-    from mangrovision_db.lgu_replanting import pending_lgu_requests
-    if pending_lgu_requests(conn, point_ids):
-        raise ValueError('These locations are reserved for LGU replanting. Open Monitoring > LGU Replanting.')
     # Serialize batches for this organization before calculating each slot's share.
     row = conn.execute("SELECT * FROM planters WHERE id = ? FOR UPDATE", (planter_id,)).fetchone()
     if not row:
@@ -4440,10 +4448,12 @@ def _create_planter_assignment(
             "Choose a species for this assignment or record one on its image analysis before assigning points."
         )
 
-    planting_schedule_id, assignment_date = resolve_assignment_activity(
-        conn, int(planter['organization_id']), normalized_site_zone_id,
-        assignment_date, planting_schedule_id, actor_user_id=assigned_by_user_id,
-    )
+    from mangrovision_db.lgu_sites import is_lgu
+    if planting_schedule_id is not None or not is_lgu(conn, planter['organization_id']):
+        planting_schedule_id, assignment_date = resolve_assignment_activity(
+            conn, int(planter['organization_id']), normalized_site_zone_id,
+            assignment_date, planting_schedule_id, actor_user_id=assigned_by_user_id,
+        )
 
     placeholders = ",".join("?" for _ in point_ids)
     requested_rows = conn.execute(f"""
@@ -4473,9 +4483,6 @@ def _create_planter_assignment(
         found = {int(row["id"]) for row in requested_rows}
         missing = [point_id for point_id in point_ids if point_id not in found]
         raise ValueError(f"Unknown planting point id(s): {', '.join(map(str, missing))}.")
-    from mangrovision_db.lgu_replanting import pending_lgu_requests
-    if pending_lgu_requests(conn, point_ids):
-        raise ValueError('These locations are reserved for LGU replanting. Record their replacements in Monitoring > LGU Replanting.')
     missing_analysis_species = [
         row for row in requested_rows
         if not _canonical_assignment_species(row["analysis_species"])
@@ -4599,6 +4606,15 @@ def _create_planter_assignment(
             slots[idx - 1],
         ))
 
+    # Released deaths remain attached to their original site. Link only their
+    # next allocation so the completion trigger can create a new planting cycle.
+    conn.execute(f"""UPDATE replanting_requests r SET assignment_id = ?, version = version + 1
+        FROM planting_events pe WHERE pe.id = r.planting_event_id
+        AND pe.planting_point_id IN ({placeholders}) AND r.replacement_event_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM planting_events newer WHERE newer.planting_point_id = pe.planting_point_id
+            AND (newer.planted_at, newer.id) > (pe.planted_at, pe.id)
+            AND COALESCE(newer.closure_reason, '') <> 'completion_reversed')""", (assignment_id, *point_ids))
+
     append_activity(
         conn, action="assignment.created", actor_type="staff" if assigned_by_user_id else "system",
         actor_user_id=assigned_by_user_id, actor_planter_id=planter_id,
@@ -4615,9 +4631,9 @@ def create_organization_assignment(organization_id: int, planting_point_ids: Lis
     return create_organization_assignments(organization_id, planting_point_ids, **kwargs)[0]
 
 
-def create_organization_assignments(organization_id: int, planting_point_ids: List[int], **kwargs) -> List[int]:
+def create_organization_assignments(organization_id: int, planting_point_ids: List[int], *, _connection=None, **kwargs) -> List[int]:
     """Reserve points for an organization, even before its shared login exists."""
-    conn = _get_connection()
+    conn = _connection or _get_connection()
     try:
         organization = conn.execute("SELECT * FROM organizations WHERE id = ? FOR UPDATE",
                                     (organization_id,)).fetchone()
@@ -4677,13 +4693,16 @@ def create_organization_assignments(organization_id: int, planting_point_ids: Li
         ]
         # Every species group succeeds together; any validation error rolls
         # back the entire selection, including a new reservation account.
-        conn.commit()
+        if _connection is None:
+            conn.commit()
         return assignment_ids
     except Exception:
-        conn.rollback()
+        if _connection is None:
+            conn.rollback()
         raise
     finally:
-        conn.close()
+        if _connection is None:
+            conn.close()
 
 
 def list_planter_assignment_map_points() -> List[dict]:
@@ -4815,11 +4834,7 @@ def list_planter_assignment_map_points() -> List[dict]:
     # Ownership and erosion come from the same fresh read as the point data.
     # Keep the internal coverage flag out of the public response contract.
     resolved_rows = [dict(row) for row in rows]
-    from mangrovision_db.lgu_replanting import annotate_lgu_replanting
-    try:
-        annotate_lgu_replanting(conn, resolved_rows)
-    finally:
-        conn.close()
+    conn.close()
     eroded_ids = {int(row['id']) for row in resolved_rows if row.pop('map_eroded_coverage')}
     return _annotate_point_advisories(resolved_rows, eroded_point_ids=eroded_ids)
 
@@ -4870,10 +4885,6 @@ def assign_planting_point_to_planter(
         conn.close()
         raise ValueError("Selected planting point was not found.")
 
-    if conn.execute("""SELECT 1 FROM replanting_requests r JOIN planting_events pe ON pe.id = r.planting_event_id
-        WHERE pe.planting_point_id = ? AND r.replacement_event_id IS NULL""", (planting_point_id,)).fetchone():
-        conn.close()
-        raise ValueError('This location is reserved for LGU replanting. Open Monitoring > LGU Replanting.')
     point = dict(point_row)
     if point.get("deleted_at"):
         conn.close()
@@ -5228,8 +5239,8 @@ def update_assignment_point_status(
     actor_user_id: Optional[int] = None,
     actor_planter_id: Optional[int] = None,
     participant_slot: Optional[int] = None,
-) -> None:
-    """Update one assignment point status and auto-close completed batches."""
+) -> Optional[dict]:
+    """Update one point and auto-close fully planted batches and their activity."""
     status = (status or "").strip().lower()
     if status not in {"pending", "completed", "skipped"}:
         raise ValueError("Invalid assignment point status.")
@@ -5277,8 +5288,9 @@ def update_assignment_point_status(
         raise ValueError("Assignment point was not found.")
     point = dict(row)
     try:
-        if status == 'completed':
-            lock_assignment_activity(conn, int(point['assignment_id']))
+        activity_status = lock_assignment_activity(conn, int(point['assignment_id']))
+        if activity_status == 'completed' and status != 'completed':
+            raise ActivityConflict('This activity is completed. Its planted points cannot be reopened or skipped.')
     except Exception:
         conn.close()
         raise
@@ -5331,7 +5343,7 @@ def update_assignment_point_status(
         WHERE id = ?
     """, (planting_status, completed_at, planted_date, row["planting_point_id"]))
 
-    _refresh_assignment_status(conn, row["assignment_id"])
+    completed_activity_id = _refresh_assignment_status(conn, row["assignment_id"])
 
     event = conn.execute("""
         SELECT id FROM planting_events WHERE assignment_point_id = ? AND closed_at IS NULL
@@ -5350,6 +5362,7 @@ def update_assignment_point_status(
 
     conn.commit()
     conn.close()
+    return {'completed_activity_ids': [completed_activity_id] if completed_activity_id is not None else []}
 
 
 def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[int],
@@ -5456,8 +5469,11 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
         WHERE id IN ({planting_placeholders})
     """, (completed_at, planted_date, *planting_point_ids))
 
+    completed_activity_ids = set()
     for assignment_id in assignment_ids:
-        _refresh_assignment_status(conn, assignment_id)
+        completed_activity_id = _refresh_assignment_status(conn, assignment_id)
+        if completed_activity_id is not None:
+            completed_activity_ids.add(completed_activity_id)
 
     for point in actionable:
         event = conn.execute("""
@@ -5481,6 +5497,7 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
         "requested_points": len(selected_ids),
         "unavailable_points": unavailable_count,
         "deleted_points": deleted_count,
+        "completed_activity_ids": sorted(completed_activity_ids),
     }
 
 
@@ -5506,6 +5523,8 @@ def delete_planter_assignment(assignment_id: int) -> None:
             raise ValueError(
                 "This assignment has planting history and cannot be deleted; archive it instead."
             )
+        conn.execute('''UPDATE replanting_requests SET assignment_id = NULL, version = version + 1
+            WHERE assignment_id = ? AND replacement_event_id IS NULL''', (int(assignment_id),))
         conn.execute("DELETE FROM planter_assignments WHERE id = ?", (int(assignment_id),))
         conn.commit()
     finally:
@@ -5721,28 +5740,30 @@ def _warning_zone_feature(row: Any) -> Optional[dict]:
     }
 
 
-def list_warning_zones() -> List[dict]:
-    """Return planner warning polygons as GeoJSON Features."""
-    conn = _get_connection()
+def list_warning_zones(*, _connection: Any = None) -> List[dict]:
+    """Return manual warnings and current automatic mortality warning zones."""
+    conn = _connection if _connection is not None else _get_connection()
     try:
         rows = conn.execute("""
             SELECT id, name, warning_type, severity, notes, polygon_geojson, created_at, updated_at
             FROM warning_zones
             ORDER BY name COLLATE NOCASE
         """).fetchall()
+        features = [feature for row in rows if (feature := _warning_zone_feature(row))]
+        from mangrovision_db.site_mortality import mortality_warning_zones
+        return features + mortality_warning_zones(list_project_sites(_connection=conn, _include_counts=False))
     finally:
-        conn.close()
-
-    features = []
-    for row in rows:
-        feature = _warning_zone_feature(row)
-        if feature:
-            features.append(feature)
-    return features
+        if _connection is None:
+            conn.close()
 
 
 def get_warning_zone(zone_id: int) -> Optional[dict]:
     """Return a single warning zone with parsed geometry."""
+    if int(zone_id) < 0:
+        from mangrovision_db.site_mortality import mortality_warning_zones
+        site = get_project_site(-int(zone_id))
+        zones = mortality_warning_zones([site]) if site else []
+        return zones[0] if zones else None
     conn = _get_connection()
     try:
         row = conn.execute("""
@@ -6476,6 +6497,7 @@ def record_organization_monitoring_visit(*, organization_id, monitored_at, new_d
                                        unlocated_dead_count=None, death_reason_category=None,
                                        death_reason_notes=''):
     from mangrovision_db.monitoring_locations import clean_event_ids, reconcile_on_connection, _record
+    from mangrovision_db.lgu_sites import is_lgu
     event_ids = clean_event_ids(dead_planting_event_ids)
     new_dead = _clean_monitoring_count(new_dead_count, 'Newly dead seedlings')
     unknown = new_dead - len(event_ids) if unlocated_dead_count is None else _clean_monitoring_count(unlocated_dead_count, 'Unlocated deaths')
@@ -6500,6 +6522,8 @@ def record_organization_monitoring_visit(*, organization_id, monitored_at, new_d
         # the same alive baseline or overwrite a newer visit.
         if not conn.execute('SELECT id FROM organizations WHERE id = ? FOR UPDATE', (organization_id,)).fetchone():
             raise ValueError('Selected organization was not found.')
+        if is_lgu(conn, organization_id):
+            raise ValueError('Record LGU monitoring separately for each site in LGU Sites.')
         context = _organization_visit_context(conn, organization_id, observed)
         if context['latest_record']:
             observed = max(observed, _parse_dashboard_datetime(context['latest_record']['monitored_at']))
@@ -6644,6 +6668,7 @@ def list_organization_monitoring_summaries() -> List[dict]:
                 FROM organization_monitoring_records records
                 GROUP BY records.organization_id
             ) history ON history.organization_id = o.id
+            WHERE COALESCE(to_jsonb(o)->>'system_key', '') <> 'lgu'
             ORDER BY o.name COLLATE NOCASE, o.id
         """).fetchall()
         latest_records = _organization_monitoring_record_rows(
@@ -6755,7 +6780,8 @@ def create_organization_monitoring_record(
         conn.close()
 
 
-def _project_site_feature(row: Any, counts: Optional[dict] = None, wave_risk: Optional[dict] = None) -> dict:
+def _project_site_feature(row: Any, counts: Optional[dict] = None,
+                          planting_history: Optional[dict] = None) -> dict:
     try:
         geometry = json.loads(row["polygon_geojson"])
     except (TypeError, json.JSONDecodeError):
@@ -6784,8 +6810,10 @@ def _project_site_feature(row: Any, counts: Optional[dict] = None, wave_risk: Op
         "area_released_at": row.get("area_released_at"),
     }
     props.update(counts or {})
-    if wave_risk is not None:
-        props['big_wave_risk'] = wave_risk
+    from mangrovision_db.site_mortality import mortality_warning
+    props['mortality_warning'] = mortality_warning(planting_history)
+    if planting_history is not None:
+        props['planting_history'] = planting_history
     return {
         "type": "Feature",
         "id": int(row["id"]),
@@ -6834,8 +6862,32 @@ def _project_site_counts(conn: Any) -> dict[int, dict]:
     return counts
 
 
-def list_project_sites() -> List[dict]:
-    conn = _get_connection()
+def _project_site_planting_history(conn: Any) -> dict[int, dict]:
+    """Site outcomes follow immutable planting attribution, including released land."""
+    rows = conn.execute('''SELECT pe.project_site_id AS site_id, COUNT(*) AS total,
+        COUNT(*) FILTER (WHERE d.death_at <= CURRENT_TIMESTAMP) AS dead,
+        COUNT(*) FILTER (WHERE (d.death_at IS NULL OR d.death_at > CURRENT_TIMESTAMP) AND (
+            pe.closed_at <= CURRENT_TIMESTAMP OR pp.deleted_at IS NOT NULL OR EXISTS (
+                SELECT 1 FROM planting_events newer WHERE newer.planting_point_id = pe.planting_point_id
+                  AND (newer.planted_at, newer.id) > (pe.planted_at, pe.id)
+                  AND newer.planted_at <= CURRENT_TIMESTAMP
+                  AND COALESCE(newer.closure_reason, '') <> 'completion_reversed'))) AS unknown
+        FROM planting_events pe LEFT JOIN planting_points pp ON pp.id = pe.planting_point_id
+        LEFT JOIN point_death_records d ON d.planting_event_id = pe.id
+        WHERE pe.project_site_id IS NOT NULL AND pe.planted_at <= CURRENT_TIMESTAMP
+          AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
+        GROUP BY pe.project_site_id''').fetchall()
+    result = {}
+    for row in rows:
+        total, dead, unknown = (int(row[key] or 0) for key in ('total', 'dead', 'unknown'))
+        planted = total - dead - unknown
+        result[int(row['site_id'])] = {'total': total, 'planted': planted, 'dead': dead, 'unknown': unknown,
+            'survival_rate_pct': round(planted / total * 100, 2) if total and not unknown else None}
+    return result
+
+
+def list_project_sites(*, _connection: Any = None, _include_counts: bool = True) -> List[dict]:
+    conn = _connection if _connection is not None else _get_connection()
     try:
         rows = conn.execute("""
             SELECT sz.id, sz.name, sz.notes, sz.polygon_geojson,
@@ -6847,12 +6899,13 @@ def list_project_sites() -> List[dict]:
             WHERE sz.deleted_at IS NULL
             ORDER BY sz.name COLLATE NOCASE, sz.id
         """).fetchall()
-        counts = _project_site_counts(conn)
-        from mangrovision_db.site_wave_risk import project_site_wave_risks, wave_risk
-        risks = project_site_wave_risks(conn) if rows else {}
-        return [_project_site_feature(row, counts.get(int(row["id"])), risks.get(int(row['id']), wave_risk())) for row in rows]
+        counts = _project_site_counts(conn) if _include_counts else {}
+        history = _project_site_planting_history(conn) if rows else {}
+        return [_project_site_feature(row, counts.get(int(row["id"])),
+                                      history.get(int(row['id']), {})) for row in rows]
     finally:
-        conn.close()
+        if _connection is None:
+            conn.close()
 
 
 def get_project_site(site_id: int) -> Optional[dict]:
@@ -6869,9 +6922,8 @@ def get_project_site(site_id: int) -> Optional[dict]:
         """, (int(site_id),)).fetchone()
         if not row:
             return None
-        from mangrovision_db.site_wave_risk import project_site_wave_risks, wave_risk
         return _project_site_feature(row, _project_site_counts(conn).get(int(site_id)),
-                                     project_site_wave_risks(conn).get(int(site_id), wave_risk()))
+                                     _project_site_planting_history(conn).get(int(site_id), {}))
     finally:
         conn.close()
 
@@ -7014,6 +7066,9 @@ def create_project_site(
         raise ValueError("organization_id is required and must be a whole number.") from error
     conn = _get_connection()
     try:
+        from mangrovision_db.site_point_selection import lock_site_boundaries, check_other_owners
+        lock_site_boundaries(conn)
+        check_other_owners(conn, json.loads(polygon_text), clean_organization_id)
         organization = conn.execute(
             "SELECT * FROM organizations WHERE id = ? FOR SHARE", (clean_organization_id,),
         ).fetchone()
@@ -7053,6 +7108,9 @@ def update_project_site(
 ) -> Optional[dict]:
     conn = _get_connection()
     try:
+        from mangrovision_db.site_point_selection import lock_site_boundaries, check_other_owners
+        if geometry is not None:
+            lock_site_boundaries(conn)
         existing = conn.execute(
             "SELECT * FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR UPDATE", (int(site_id),)
         ).fetchone()
@@ -7065,6 +7123,7 @@ def update_project_site(
                 raise ValueError("Project site name cannot be empty.")
             updates.append(("name", clean_name[:120]))
         if geometry is not None:
+            check_other_owners(conn, geometry, existing['organization_id'], int(site_id))
             updates.append(("polygon_geojson", _validate_site_polygon_payload(geometry)))
             # A measurement must be reviewed again after the site's area changes.
             conn.execute("UPDATE project_sites SET tide_calibration = NULL WHERE id = ?", (int(site_id),))
@@ -8029,6 +8088,9 @@ def upsert_monitoring_observation(
         """, (event_id,)).fetchone()
         if not event:
             raise ValueError("Planting event was not found.")
+        from mangrovision_db.lgu_sites import owns_death
+        if clean_status != 'dead' and owns_death(conn, event_id):
+            raise ValueError('This death belongs to an LGU site monitoring visit. Its history must be preserved.')
         planted_dt = _parse_dashboard_datetime(event["planted_at"])
         if not planted_dt:
             raise ValueError("Planting event has an invalid planting timestamp.")
@@ -8377,6 +8439,7 @@ def get_due_monitoring_inspections(
                    pp.status AS current_point_status,
                    pa.title AS assignment_title, sz.name AS site_name,
                    sz.organization_id, o.name AS organization_name,
+                   COALESCE(to_jsonb(o)->>'system_key', '') = 'lgu' AS is_lgu,
                    latest.status AS latest_status,
                    death_obs.interval_days AS death_interval,
                    EXISTS(
@@ -8410,6 +8473,9 @@ def get_due_monitoring_inspections(
             {where}
             ORDER BY pe.planted_at, pe.id
         """, params).fetchall()
+        from mangrovision_db.lgu_sites import latest_coverage
+        lgu_event_ids = {int(event['id']) for event in events if event.get('is_lgu')}
+        lgu_coverage = latest_coverage(conn, lgu_event_ids, as_of_dt) if lgu_event_ids else {}
         observed = {
             (int(row["planting_event_id"]), int(row["interval_days"]))
             for row in conn.execute(
@@ -8445,6 +8511,9 @@ def get_due_monitoring_inspections(
             timing = _round_timing(planted_dt, interval, inspection_weekdays)
             target_due_at = timing["target_due_at"]
             scheduled_for = timing["scheduled_for"]
+            covered_at = lgu_coverage.get(int(event['id']))
+            if covered_at and scheduled_for.date() <= covered_at.date():
+                continue
             overdue_days = max(0, (as_of_dt.date() - scheduled_for.date()).days)
             pending.append({
                 "planting_event_id": int(event["id"]),
@@ -9413,7 +9482,7 @@ def _blank_bucket_series(start: datetime, end: datetime, bucket: str) -> list[di
 
 
 def _load_current_dashboard_points(conn: Any) -> List[dict]:
-    rows = [dict(row) for row in conn.execute("""
+    rows = [dict(row) for row in conn.execute(f"""
         WITH ranked_assignment AS (
             SELECT DISTINCT ON (pap.planting_point_id)
                 pap.id AS assignment_point_id,
@@ -9452,7 +9521,7 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
             pp.deleted_at,
             a.analyzed_at,
             a.image_name,
-            COALESCE(ra.site_zone_id, current_planting.project_site_id, a.site_zone_id) AS site_id,
+            COALESCE(ra.site_zone_id, owner.site_id) AS site_id,
             ra.assignment_id,
             ra.planter_id,
             COALESCE(NULLIF(TRIM(ra.assignment_species), ''), NULLIF(TRIM(current_planting.species), ''), NULLIF(TRIM(a.species), '')) AS species,
@@ -9469,14 +9538,17 @@ def _load_current_dashboard_points(conn: Any) -> List[dict]:
             ) AS eroded_unavailable
         FROM planting_points pp
         JOIN analyses a ON a.id = pp.analysis_id
+        LEFT JOIN LATERAL (
+            SELECT {_point_project_site_owner_sql('a.site_zone_id')} AS site_id
+            FROM project_sites ps WHERE extensions.ST_Covers(ps.geometry, pp.location)
+        ) owner ON TRUE
         LEFT JOIN ranked_assignment ra
                ON ra.planting_point_id = pp.id
         LEFT JOIN LATERAL (SELECT pe.project_site_id, pe.species FROM planting_events pe
             WHERE pe.planting_point_id = pp.id AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
             ORDER BY pe.planted_at DESC, pe.id DESC LIMIT 1) current_planting ON TRUE
     """).fetchall()]
-    from mangrovision_db.lgu_replanting import annotate_lgu_replanting
-    return annotate_lgu_replanting(conn, rows)
+    return rows
 
 
 def _warning_counts_by_site(points: List[dict], conn: Any) -> tuple[dict, set[int]]:
@@ -9485,8 +9557,8 @@ def _warning_counts_by_site(points: List[dict], conn: Any) -> tuple[dict, set[in
     if Point is None:
         return counts, exposed_ids
     zones = []
-    for row in conn.execute("SELECT polygon_geojson FROM warning_zones").fetchall():
-        geometry = _parse_site_zone_geometry(row["polygon_geojson"])
+    for feature in list_warning_zones(_connection=conn):
+        geometry = _parse_site_zone_geometry(json.dumps(feature['geometry']))
         if geometry is not None:
             zones.append(geometry)
     if not zones:
@@ -10033,19 +10105,6 @@ def get_dashboard_operations(
             else:
                 aging["over_30"] += 1
 
-        from mangrovision_db.lgu_replanting import lgu_work_history
-        lgu_points = {point['id']: point for point in _load_current_dashboard_points(conn)
-                      if point.get('lgu_replanting_pending') and current_point_status(point) == 'assigned'}
-        lgu_work = []
-        for row in lgu_work_history(conn):
-            if not _matches_dashboard_dimensions(row, site_id, assignment_id, species, planter_id):
-                continue
-            completed_at = _parse_dashboard_datetime(row.get('completed_at'))
-            pending = row['planting_point_id'] in lgu_points and row['replacement_event_id'] is None
-            lgu_work.append({**row, 'status': 'completed' if row['replacement_event_id'] else 'pending',
-                             'current_pending': pending,
-                             'completed_in_period': bool(completed_at and start <= completed_at <= end)})
-
         # Work is planned and reviewed by partner organization/project site.
         # Keep individual planter names in assignment detail, but group this
         # dashboard comparison by the organization responsible for the site.
@@ -10073,13 +10132,6 @@ def get_dashboard_operations(
                 row["organization_name"].casefold(),
             ),
         )
-        lgu_pending = sum(row['current_pending'] for row in lgu_work)
-        lgu_completed = sum(row['completed_in_period'] for row in lgu_work)
-        if lgu_pending or lgu_completed:
-            workload.append({'owner_type': 'lgu', 'organization_id': None, 'organization_name': 'LGU replanting',
-                             'pending': lgu_pending, 'completed': lgu_completed, 'skipped': 0,
-                             'total': lgu_pending + lgu_completed})
-
         throughput_base = [
             {
                 "period_start": row["period_start"],
@@ -10090,7 +10142,7 @@ def get_dashboard_operations(
             for row in _blank_bucket_series(start, end, clean_bucket)
         ]
         throughput_map = {row["period_start"]: row for row in throughput_base}
-        for row in point_rows + lgu_work:
+        for row in point_rows:
             assigned_at = _parse_dashboard_datetime(row.get("assigned_at"))
             if assigned_at and start <= assigned_at <= end:
                 key = _bucket_start(assigned_at, clean_bucket).isoformat()
@@ -10110,14 +10162,14 @@ def get_dashboard_operations(
                         throughput_map[key]["skipped"] += 1
 
         assigned_in_period = sum(
-            1 for row in point_rows + lgu_work
+            1 for row in point_rows
             if (
                 _parse_dashboard_datetime(row.get("assigned_at"))
                 and start <= _parse_dashboard_datetime(row.get("assigned_at")) <= end
             )
         )
-        total_pending = sum(row["pending"] for row in assignments) + lgu_pending
-        total_completed = sum(row["completed"] for row in assignments) + lgu_completed
+        total_pending = sum(row["pending"] for row in assignments)
+        total_completed = sum(row["completed"] for row in assignments)
         total_skipped = sum(row["skipped"] for row in assignments)
         total_overdue = sum(row["overdue"] for row in assignments)
         envelope.update({
@@ -10514,11 +10566,8 @@ def get_dashboard_sites(
         ]
         warning_buckets: dict[tuple[str, str], dict] = {}
         warning_exposed_ids: set[int] = set()
-        warning_rows = conn.execute("""
-            SELECT warning_type, severity, polygon_geojson
-            FROM warning_zones
-            ORDER BY warning_type, severity
-        """).fetchall()
+        warning_rows = [{**feature['properties'], 'polygon_geojson': json.dumps(feature['geometry'])}
+                        for feature in list_warning_zones(_connection=conn)]
         if Point is not None:
             for warning in warning_rows:
                 geometry = _parse_site_zone_geometry(warning["polygon_geojson"])

@@ -1,12 +1,50 @@
 # Project-site area actions
 
+## Assign points to form the site
+
+Approve the organization's tree-planting activity in Scheduling, then open
+**Assign Points**. Choose the organization and confirmed activity, click or
+brush available points on the map, and choose **Assign points**. The server
+creates the owned project site around exactly those selected locations, links
+the activity, and allocates planting work in one transaction. A failed request
+leaves no empty site, partial species allocation, or activity-area link.
+
+There is no separate project-site creation form, site-name input, or choice
+between a new and existing site. Zone Editor retains the project-site list,
+release/delete actions, and eroded/warning zone tools. The old manual creation
+API responds with 410 and directs staff to Assign Points.
+
+Only unclaimed, unassigned planned locations inside the drone map are available
+for a new activity. The boundary excludes unselected points and protects other
+sites, erosion and forbidden areas, including released holes between living
+seedlings. Multiple recorded species receive separate work batches under one
+site. Points stay awaiting planting; assignment creates no planting events and
+does not start survival or monitoring calculations.
+
+LGU uses the same point-selection flow with its permanent account, without a
+timed booking. Each allocation creates its site automatically. Existing
+activities that already have a linked site retain that area and historical
+identity; their remaining available points can be allocated without a site
+chooser. No previously saved sites or planting records are converted or moved.
+
+The server rechecks availability under transaction locks. Original planting,
+death and monitoring history stays with the original site after locations are
+released and later assigned to another organization. Selection boundaries are
+clipped to map coverage and excluded areas, with numerical clearance at shared
+edges to prevent projection slivers from claiming another owner's land.
+
+Image-processing locks apply while a real job is running. Page-load recovery
+checks for old or completed jobs do not lock editing or assignment.
+
+## Release and delete
+
 The Zone Editor's three-dot menu opens **Release area** and **Delete site**.
 Both actions require a server-generated preview version and are rechecked in
 one transaction when the LGU confirms.
 
 - Recording a death keeps the point's site membership and the current boundary.
   All planting-map tools show these locations as dark red dead points. Release
-  and approved replanting are separate actions; a death report cannot perform
+  and selected-location release are separate actions; a death report cannot perform
   either automatically.
 - Release returns unplanted and confirmed-dead locations to planned, releases
   their assignment membership, and retains the boundary around living planting
@@ -17,19 +55,13 @@ one transaction when the LGU confirms.
   This sets `project_sites.deleted_at`; it never deletes the site's history row.
 - Events, death records, observations and their original site attribution remain
   intact. Resetting a physical location cannot increase the original cohort's
-  survival rate. Confirmed deaths enter the existing approved replacement
-  workflow, so later assignment can link the next planting cycle correctly.
+  survival rate. Confirmed deaths retain release metadata, so a normal later assignment can
+  link the next planting cycle correctly. There is no LGU reservation.
 - If the entire area is released, `area_released_at` removes it from spatial
   ownership. The site stays in the list until it qualifies for Delete.
 - Released land is available to other registered organizations after excluding
   boundaries that have already claimed it. Existing project sites take priority
   over assignment hulls when checking organization areas.
-- An organization without an active project-site boundary can draw its first
-  site on unclaimed land inside the drone map. It does not need an assignment
-  outline or a prior land release. Other organizations' project sites and
-  legacy assignment areas still block overlaps. Once saved, its boundary and
-  available released land constrain subsequent sites. The drawing count includes
-  unclaimed points for a first site.
 
 Migration `20261014_0018` adds the site lifecycle columns and the private
 `project_site_area_releases` audit table. The latter records before/after

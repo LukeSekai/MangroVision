@@ -60,6 +60,43 @@ def guidance_within_area(start, destination, polygon, tolerance_m=3):
     ) for step in range(steps + 1))
 
 
+def guidance_path_within_area(start, destination, polygon, tolerance_m=3):
+    """Keep local direction guidance inside a concave planting footprint.
+
+    When the direct line leaves the foreshore, find a short connection through
+    visible boundary vertices. This is a direction overlay, not a surveyed lane.
+    Endpoints outside the footprint still have no local guide.
+    """
+    if not polygon or guidance_within_area(start, destination, polygon, tolerance_m):
+        return [start, destination]
+    if not all(inside_or_near_area(point, polygon, tolerance_m) for point in (start, destination)):
+        return None
+    vertices = polygon[:-1] if polygon[0] == polygon[-1] else polygon
+    nodes = [start, destination, *vertices]
+    costs = [float('inf')] * len(nodes)
+    previous = [None] * len(nodes)
+    pending = set(range(len(nodes)))
+    costs[0] = 0
+    while pending:
+        current = min(pending, key=lambda index: (costs[index], index))
+        if not math.isfinite(costs[current]):
+            return None
+        if current == 1:
+            path = []
+            while current is not None:
+                path.append(nodes[current])
+                current = previous[current]
+            return path[::-1]
+        pending.remove(current)
+        for neighbor in sorted(pending):
+            cost = costs[current] + distance_m(nodes[current], nodes[neighbor])
+            if cost < costs[neighbor] and guidance_within_area(
+                    nodes[current], nodes[neighbor], polygon, tolerance_m):
+                costs[neighbor] = cost
+                previous[neighbor] = current
+    return None
+
+
 @lru_cache(maxsize=1)
 def access_routes():
     return json.loads((Path(__file__).parent / 'data/site_access_routes.json').read_text(encoding='utf-8'))

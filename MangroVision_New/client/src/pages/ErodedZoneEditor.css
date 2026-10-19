@@ -353,3 +353,11 @@
   border-radius: var(--radius-md);
   padding: 12px;
 }
+
+.project-site-point-selector { display: grid; gap: 10px; }
+.project-site-point-selector p { margin: 0; line-height: 1.5; color: var(--text-secondary); }
+.project-site-selection-tools { display: flex; gap: 5px; }
+.project-site-selection-tools button { flex: 1; padding: 8px 5px; border: 1px solid var(--border-medium); border-radius: 7px; background: white; color: var(--green-900); font: inherit; font-size: 11px; cursor: pointer; }
+.project-site-selection-tools button[aria-pressed="true"] { background: var(--green-800); border-color: var(--green-800); color: white; }
+.project-site-selection-tools button:disabled { opacity: .5; cursor: default; }
+.project-site-selection-count { display: flex; align-items: center; justify-content: space-between; color: var(--green-900); font-size: 13px; }

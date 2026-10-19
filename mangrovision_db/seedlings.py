@@ -93,7 +93,7 @@ def record_lgu_planting(*, point_ids: list[int], project_site_id: int, planted_d
             WHERE pe.planting_point_id IN ({marks}) LIMIT 1
         """, ids).fetchone()
         if historical:
-            raise ValueError(f"Point #{historical['point_num']} has planting history; use the reviewed replanting workflow.")
+            raise ValueError(f"Point #{historical['point_num']} has planting history; use organization assignment and planting under its new project site.")
         for point in points:
             conn.execute("""
                 UPDATE planting_points SET status = 'planted', planted_at = ?, planted_date = ?,

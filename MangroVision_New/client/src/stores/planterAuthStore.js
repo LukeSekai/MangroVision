@@ -50,6 +50,9 @@ async function accessResponse(res) {
       error.message = payload.detail.message;
       error.switchToken = payload.detail.switch_token;
       error.participantUsername = payload.detail.participant_username;
+      if (res.status < 500 && ['access_code', 'username', 'browser_key'].includes(payload.detail.field)) {
+        error.detail = [{ loc: ['body', payload.detail.field], type: 'credential_error', msg: payload.detail.message }];
+      }
     }
     if (credentialIssue && res.status < 500 && res.status !== 429) error.message = credentialIssue.msg;
     if (res.status === 429) {
@@ -57,7 +60,11 @@ async function accessResponse(res) {
       error.message = seconds > 0 && Number.isFinite(seconds)
         ? `Too many sign-in attempts. Try again in ${Math.ceil(seconds / 60)} ${seconds <= 60 ? 'minute' : 'minutes'}.`
         : 'Too many sign-in attempts. Wait a few minutes and try again.';
-    } else if (res.status >= 500) error.message = 'The sign-in service is temporarily unavailable. Try again shortly, or contact LGU staff.';
+    } else if (res.status >= 500 && ![
+      'shared_access_setup_required', 'sign_in_setup_required', 'sign_in_database_unavailable', 'sign_in_unavailable',
+    ].includes(payload.detail?.kind)) {
+      error.message = 'The sign-in service is temporarily unavailable. Try again shortly, or contact LGU staff.';
+    }
     throw error;
   }
   const data = await res.json().catch(() => null);
@@ -107,7 +114,8 @@ export const usePlanterAuthStore = create((set, get) => ({
         }),
       });
       const data = await accessResponse(res);
-      if (!data?.planter?.id || !data?.planter?.participant_slot || !data?.planter?.participant_username || !data?.planter?.planting_schedule_id) {
+      if (!data?.planter?.id || !data?.planter?.participant_slot || !data?.planter?.participant_username
+          || (!data?.planter?.planting_schedule_id && !data?.planter?.permanent_access)) {
         throw new Error('Could not verify your sign-in. Please try again, or contact LGU staff.');
       }
       storePlanter(data.planter);

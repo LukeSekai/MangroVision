@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import Modal from './Modal';
 import SiteMapPreview from './SiteMapPreview';
+import SiteMortalityWarning from './SiteMortalityWarning';
 import OrganizationHistory from './OrganizationHistory';
 import { countMapPointStatuses } from '../utils/mapPointStats';
 import { POINT_STATUS_COLORS } from '../utils/pointStatus';
@@ -68,10 +69,7 @@ export default function MonitoringSiteDetails({ site, organization, points, poin
     </header>
 
     <div className="monitoring-site-detail-content" hidden={view !== 'details'} inert={view !== 'details'}>
-      {props.big_wave_risk?.active === true && <div className="monitoring-site-wave-warning" role="note">
-        <strong>Danger: This area is prone to big waves.</strong>
-        <span>{count(props.big_wave_risk.wave_death_points)} of {count(props.big_wave_risk.planted_points)} planted locations ({props.big_wave_risk.percentage}%) have recorded big-wave deaths. This uses site history, including past plantings.</span>
-      </div>}
+      <SiteMortalityWarning warning={props.mortality_warning} />
       <section className="monitoring-site-detail-map" aria-label={`Location of ${name}`}>
         <div className="monitoring-site-detail-map-heading"><h4>Site map</h4>
           <span>{pointsAvailable ? `${count(stats.mapped)} mapped points` : 'Planting points unavailable'}</span></div>

@@ -50,9 +50,11 @@ the public-road junction; these snap tolerances have not been enlarged.
 
 The map shows the mapped approach in blue and the exact target as a labelled
 marker. A local orange direction line starts at the shoreline exit, or at the
-latest GPS position once in the planting area. It is omitted when samples at
-intervals of at most 3 m leave the traced foreshore, so it does not suggest a
-shortcut through trees. Participants still follow marked planting lanes; the
+latest GPS position once in the planting area. If a straight connection leaves
+the concave foreshore, the guide bends through visible boundary vertices to
+reach the point. Each leg is checked at intervals of at most 3 m against the
+same traced area and boundary tolerance. Destinations outside that area still
+have no local connection through the trees. Participants follow marked planting lanes; the
 image traces and direction lines are not a ground survey of walkable lanes.
 The actual origin and target coordinates are never moved.
 
@@ -113,9 +115,21 @@ Navigation requires a fresh phone location and never substitutes an organization
 base or road start when permission is denied. If Google is unavailable or has
 no route, `partial_route` retains the full known road/bridge approach and target
 without inventing a remote GPS connection. The hint reports that road directions
-to the site are unavailable; no total journey estimate is shown. Unmapped sites
+to the site are unavailable; no total journey estimate is shown. The specific
+road failure reason stays visible after the optional path hint closes. **Retry
+road route** requests a fresh GPS fix and road route for the same point, preserving
+the remaining planting order. **Next point** also retries incomplete road routes
+instead of caching a failed provider result for the whole session. Missing
+configuration, rejected provider access, request limits, connection failures and
+no walking route have separate reasons. Unmapped sites
 retain their own provider route or point marker and are never forced through
 Leganes. Invalid requests still fail.
+
+The private root `.env` must contain `GOOGLE_ROUTES_API_KEY` to obtain the road
+leg from a remote phone location. Satellite map tiles and the fixed site approach
+can display without this key. A missing key therefore does not mean a full road
+route is available. The backend reads a newly saved key on the next request;
+use **Retry road route** after saving it. Never store this key in client code.
 
 To support another physical site, add its traced access path and footprint to
 the JSON file, add routing regressions, and restart the API. Restart the API

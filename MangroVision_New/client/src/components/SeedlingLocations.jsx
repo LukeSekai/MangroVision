@@ -12,7 +12,7 @@ import './SeedlingLocations.css';
 const API = import.meta.env.VITE_API_BASE || '';
 const date = (value) => new Date(value).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' });
 const reference = (p) => p.reference || `${p.analysis_name} · Point ${p.point_num}`;
-const REPLACEMENT_COLORS = { awaiting_review: '#7f1d1d', approved: '#2563eb', ready_lgu: '#2563eb', assigned: '#2563eb', completed: '#eab308' };
+const REPLACEMENT_COLORS = { awaiting_review: '#7f1d1d', approved: '#16a34a', assigned: '#2563eb', completed: '#eab308' };
 
 function FieldSheet({ snapshot, onDone }) {
   useEffect(() => {
@@ -162,9 +162,11 @@ export function SeedlingMap({ points, selected = [], onToggle, onBounds, selecti
   return <div ref={container} className="seedling-location-map" aria-label="Mapped seedling locations" />;
 }
 
-export default function SeedlingLocations({ organizationId, monitoredAt, recordId, selected = [], onChange, readOnly = false, disabled = false, maxSelected = Infinity }) {
-  const [points, setPoints] = useState([]);
-  const [loading, setLoading] = useState(true);
+export default function SeedlingLocations({ organizationId, monitoredAt, recordId, providedPoints = null, selected = [], onChange, readOnly = false, disabled = false, maxSelected = Infinity }) {
+  const [loadedPoints, setPoints] = useState([]);
+  const [isLoading, setLoading] = useState(true);
+  const points = providedPoints ?? loadedPoints;
+  const loading = providedPoints == null && isLoading;
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
   const loadedLocations = useRef(null);
@@ -178,6 +180,7 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
   const [printSnapshot, setPrintSnapshot] = useState(null);
   const closePrint = useCallback(() => setPrintSnapshot(null), []);
   useEffect(() => {
+    if (providedPoints != null) return undefined;
     const key = `${organizationId}:${monitoredAt}:${recordId}:${retry}`;
     if (loadedLocations.current === key) return undefined;
     const controller = new AbortController();
@@ -196,7 +199,7 @@ export default function SeedlingLocations({ organizationId, monitoredAt, recordI
     }
     void load();
     return () => controller.abort();
-  }, [organizationId, monitoredAt, recordId, retry]);
+  }, [organizationId, monitoredAt, recordId, retry, providedPoints]);
   const filtered = useMemo(() => filterSeedlings(points, filters), [points, filters]);
   const visible = visibleSeedlings(filtered, bounds);
   const toggle = useCallback((id) => {

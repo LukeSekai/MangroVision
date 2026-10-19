@@ -1,5 +1,6 @@
 import test, { before, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { JSDOM } from 'jsdom';
 import { createServer } from 'vite';
 import { readFile } from 'node:fs/promises';

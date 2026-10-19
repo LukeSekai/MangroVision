@@ -1,4 +1,4 @@
-"""Visit-to-seedling reconciliation and reviewed replacement planting."""
+"""Visit-to-seedling reconciliation and release of dead locations."""
 import json
 from datetime import datetime, timedelta, time
 
@@ -138,7 +138,7 @@ def reconcile_on_connection(conn, record, event_ids, user_id, correction_note=''
     for event_id in removed:
         link = existing[event_id]
         if conn.execute('SELECT 1 FROM replanting_requests WHERE planting_event_id = ?', (event_id,)).fetchone():
-            raise ValueError('An approved or assigned replacement prevents changing this location.')
+            raise ValueError('A released location prevents changing this death record.')
         if conn.execute('SELECT 1 FROM planting_events WHERE replaces_event_id = ?', (event_id,)).fetchone():
             raise ValueError('A completed replacement prevents changing this location.')
         if link['created_death']:
@@ -209,7 +209,7 @@ def reconcile_locations(record_id, event_ids, expected_version, user_id, correct
         conn.close()
 
 
-def list_replanting(organization_id=None):
+def list_release_candidates(organization_id=None):
     conn = _db()._get_connection()
     try:
         rows = conn.execute('''SELECT pe.id AS planting_event_id, pe.planting_point_id,
@@ -229,7 +229,7 @@ def list_replanting(organization_id=None):
                 WHERE n.planting_point_id = pe.planting_point_id AND (n.planted_at, n.id) > (pe.planted_at, pe.id)
                 AND COALESCE(n.closure_reason, '') <> 'completion_reversed') THEN 'completed'
                 WHEN r.assignment_id IS NOT NULL THEN 'assigned'
-                WHEN r.id IS NOT NULL THEN 'ready_lgu' ELSE 'awaiting_review' END AS replanting_status
+                WHEN r.id IS NOT NULL THEN 'released' ELSE 'awaiting_release' END AS release_status
             FROM point_death_records pdr JOIN planting_events pe ON pe.id = pdr.planting_event_id
             JOIN planting_points pp ON pp.id = pe.planting_point_id JOIN analyses a ON a.id = pp.analysis_id
             LEFT JOIN planters pl ON pl.id = pe.planter_id LEFT JOIN organizations o ON o.id = pl.organization_id
@@ -246,10 +246,8 @@ def list_replanting(organization_id=None):
             item = dict(row)
             blocked = ('Location was removed' if item['point_deleted_at'] else
                        'Currently unavailable because of erosion' if item['eroded_unavailable'] else '')
-            item['can_approve'] = (not blocked and item['replanting_status'] == 'awaiting_review'
+            item['can_release'] = (not blocked and item['release_status'] == 'awaiting_release'
                                    and bool(item['point_death_at']))
-            item['can_record_replanting'] = (not blocked and item['replanting_status'] == 'ready_lgu'
-                                             and item['point_status'] == 'planned' and not item['point_death_at'])
             item['unavailable_reason'] = blocked
             result.append(item)
         return result
@@ -257,130 +255,6 @@ def list_replanting(organization_id=None):
         conn.close()
 
 
-def _safe_point(conn, point_id):
-    db = _db()
-    if db._first_deleted_point(conn, [point_id]):
-        raise ValueError('This planting location was removed and cannot be replanted.')
-    if db._first_eroded_unavailable_point(conn, [point_id]):
-        raise ValueError('This location is currently unavailable because of erosion.')
-
-
-def approve_replanting(event_id, expected_version, user_id, connection=None):
-    db = _db()
-    conn = connection or db._get_connection()
-    try:
-        conn.execute('''SELECT id FROM planting_points WHERE id =
-            (SELECT planting_point_id FROM planting_events WHERE id = ?) FOR UPDATE''', (event_id,)).fetchone()
-        event = conn.execute('SELECT * FROM planting_events WHERE id = ? FOR UPDATE', (event_id,)).fetchone()
-        if not event:
-            raise ValueError('Planting event was not found.')
-        request = conn.execute('SELECT * FROM replanting_requests WHERE planting_event_id = ? FOR UPDATE', (event_id,)).fetchone()
-        if expected_version != (request['version'] if request else 0):
-            raise ValueError('Replacement work changed. Reload before approving.')
-        if request:
-            return dict(request)
-        point_id = event['planting_point_id']
-        point = conn.execute('SELECT * FROM planting_points WHERE id = ? FOR UPDATE', (point_id,)).fetchone()
-        if not point or not point['death_at'] or not conn.execute(
-            'SELECT 1 FROM point_death_records WHERE planting_event_id = ?', (event_id,)).fetchone():
-            raise ValueError('Only a confirmed dead seedling can be prepared for replanting.')
-        if conn.execute('''SELECT 1 FROM planting_events WHERE planting_point_id = ?
-            AND (planted_at, id) > (?, ?) AND COALESCE(closure_reason, '') <> 'completion_reversed' ''',
-            (point_id, event['planted_at'], event_id)).fetchone():
-            raise ValueError('A newer planting cycle already exists at this location.')
-        _safe_point(conn, point_id)
-        conn.execute('INSERT INTO replanting_requests (planting_event_id, approved_by) VALUES (?, ?)', (event_id, user_id))
-        conn.execute('UPDATE planter_assignment_points SET released_at = ?, released_by = ? WHERE planting_point_id = ? AND released_at IS NULL',
-                     (db._manila_now().isoformat(), user_id, point_id))
-        conn.execute("""UPDATE planting_points SET status = 'planned', planted_at = NULL, planted_date = NULL,
-            death_at = NULL, death_reason = NULL, death_reason_category = NULL, death_notes = NULL WHERE id = ?""", (point_id,))
-        conn.commit()
-        return {'planting_event_id': event_id, 'status': 'ready_lgu', 'version': 1}
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-class _BorrowedConnection:
-    def __init__(self, conn):
-        self.conn = conn
-
-    def __getattr__(self, name):
-        return getattr(self.conn, name)
-
-    def commit(self):
-        pass
-
-    def close(self):
-        pass
-
-
-def approve_replanting_batch(event_ids, versions, user_id):
-    """Release the selected locations atomically, keeping every death in history."""
-    ids = clean_event_ids(event_ids)
-    if not ids or len(ids) > 500:
-        raise ValueError('Select between 1 and 500 dead seedlings for approval.')
-    if any(str(event_id) not in versions for event_id in ids):
-        raise ValueError('Reload the selected locations before approving.')
-    conn = _db()._get_connection()
-    try:
-        marks = ','.join('?' for _ in ids)
-        # All approval paths lock physical locations before their planting events.
-        conn.execute(f'''SELECT id FROM planting_points WHERE id IN
-            (SELECT planting_point_id FROM planting_events WHERE id IN ({marks}))
-            ORDER BY id FOR UPDATE''', ids).fetchall()
-        results = [approve_replanting(event_id, versions[str(event_id)], user_id,
-                                     connection=_BorrowedConnection(conn)) for event_id in ids]
-        conn.commit()
-        return {'approved_count': len(results), 'planting_event_ids': ids}
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-
-
-def assign_replanting(event_ids, versions, organization_id, assignment_date, user_id):
-    db = _db()
-    ids = clean_event_ids(event_ids)
-    if not ids or not organization_id:
-        raise ValueError('Select replacement locations and an organization.')
-    try:
-        datetime.strptime(assignment_date, '%Y-%m-%d')
-    except (TypeError, ValueError) as error:
-        raise ValueError('Choose a valid planting work date.') from error
-    conn = db._get_connection()
-    try:
-        planter = conn.execute("""SELECT * FROM planters WHERE organization_id = ? AND status = 'active'
-            AND merged_into_planter_id IS NULL ORDER BY id LIMIT 1 FOR UPDATE""", (organization_id,)).fetchone()
-        if not planter:
-            raise ValueError('Choose an organization with an active field account.')
-        marks = ','.join('?' for _ in ids)
-        conn.execute(f'''SELECT id FROM planting_points WHERE id IN
-            (SELECT planting_point_id FROM planting_events WHERE id IN ({marks})) ORDER BY id FOR UPDATE''', ids).fetchall()
-        groups = {}
-        for event_id in ids:
-            request = conn.execute('''SELECT r.*, pe.planting_point_id, pe.site_zone_id, pe.species
-                FROM replanting_requests r JOIN planting_events pe ON pe.id = r.planting_event_id
-                WHERE r.planting_event_id = ? FOR UPDATE OF r''', (event_id,)).fetchone()
-            if not request or request['assignment_id'] or request['replacement_event_id']:
-                raise ValueError('Only approved, unassigned locations can be assigned.')
-            if request['version'] != versions.get(str(event_id)):
-                raise ValueError('Replacement work changed. Reload before assigning.')
-            _safe_point(conn, request['planting_point_id'])
-            groups.setdefault((request['site_zone_id'], request['species']), []).append(dict(request))
-        assignments = []
-        for (site_id, species), requests in groups.items():
-            assignment_id = db.create_planter_assignment(planter['id'], [r['planting_point_id'] for r in requests],
-                assigned_by_user_id=user_id, title='Replacement planting', assignment_date=assignment_date,
-                species=species or '', site_zone_id=site_id, connection=_BorrowedConnection(conn))
-            assignments.append(assignment_id)
-        conn.commit()
-        return {'assignment_ids': assignments}
-    except BaseException:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
+def release_dead_locations_batch(event_ids, versions, user_id):
+    from .site_actions import release_dead_locations
+    return release_dead_locations(event_ids, versions, user_id)

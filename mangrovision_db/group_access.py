@@ -10,6 +10,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from cryptography.fernet import InvalidToken
 
@@ -86,6 +87,9 @@ def ensure_activity_code(conn, schedule):
         return None
     if schedule['status'] not in {'confirmed', 'in_progress'}:
         return None
+    from .lgu_sites import is_lgu
+    if is_lgu(conn, schedule['organization_id']):
+        return None
     require_shared_access_schema(conn)
     # Same lock order as appointment approval: organization, owner, access row.
     org_id = int(schedule['organization_id'])
@@ -138,21 +142,47 @@ def activity_code(conn, schedule_id):
         'code': value, 'revoked': row['revoked_at'] is not None}
 
 
+def _activity_time(value):
+    moment = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    return moment.astimezone(ZoneInfo('Asia/Manila')).strftime('%b %d, %Y at %I:%M %p') + ' (Philippine time)'
+
+
 def _open_activity(conn, digest):
     row = conn.execute('''SELECT ac.*, s.organization_id, s.title, s.start_at, s.end_at,
         s.status, s.expected_planters, s.appointment_type,
         s.start_at <= clock_timestamp() AS started, s.end_at > clock_timestamp() AS open
         FROM activity_access_codes ac JOIN planting_schedules s ON s.id = ac.schedule_id
         WHERE ac.code_digest = ? FOR SHARE OF s, ac''', (digest,)).fetchone()
-    if not row or row['revoked_at'] is not None:
-        raise GroupAccessError('This organization code is incorrect or no longer valid.', 401, field='access_code')
-    if row['status'] not in {'confirmed', 'in_progress'} or row['appointment_type'] != 'tree_planting':
-        raise GroupAccessError('This planting activity has ended or is unavailable. Your saved progress is kept.', 403)
+    if not row:
+        from .lgu_sites import permanent_activity
+        permanent = permanent_activity(conn, digest)
+        if permanent:
+            return permanent
+    if not row:
+        raise GroupAccessError('Organization code not found. Please check the code and try again.',
+            401, field='access_code', kind='code_not_found')
+    if row['revoked_at'] is not None:
+        raise GroupAccessError('This organization code is no longer active. Ask your group leader or LGU staff for the current code.',
+            403, field='access_code', kind='code_revoked')
+    if row['status'] == 'cancelled':
+        raise GroupAccessError('This planting activity was cancelled. Contact LGU staff before signing in. Your saved progress is kept.',
+            403, field='access_code', kind='activity_cancelled')
+    if row['status'] == 'completed':
+        raise GroupAccessError('This planting activity is completed, so its code can no longer be used to sign in. Your saved progress is kept.',
+            403, field='access_code', kind='activity_completed')
+    if row['status'] not in {'confirmed', 'in_progress'}:
+        raise GroupAccessError('LGU has not confirmed this planting activity yet. You can sign in after it is approved.',
+            403, field='access_code', kind='activity_not_confirmed')
+    if row['appointment_type'] != 'tree_planting':
+        raise GroupAccessError('This code is not for an active tree-planting activity. Ask LGU staff for the correct code.',
+            403, field='access_code', kind='activity_unavailable')
     if BOOKING_POLICY['enforceActivityAccessWindow']:
         if not row['open']:
-            raise GroupAccessError('This planting activity has ended or is unavailable. Your saved progress is kept.', 403)
+            raise GroupAccessError(f"This organization code expired when your planting activity ended on {_activity_time(row['end_at'])}. Contact LGU staff. Your saved progress is kept.",
+                403, field='access_code', kind='code_expired')
         if not row['started']:
-            raise GroupAccessError('This code opens at the activity’s scheduled start time.', 403)
+            raise GroupAccessError(f"It is not your planting schedule yet. Sign-in opens on {_activity_time(row['start_at'])}.",
+                403, field='access_code', kind='activity_not_started')
     return dict(row)
 
 
@@ -204,7 +234,12 @@ def check_group_code(access_code, *, address='unknown'):
         account = _account(conn, activity['planter_id'])
         if account['organization_id'] != activity['organization_id']:
             raise GroupAccessError('This activity’s organization access needs to be corrected.', 409)
-        return {'title': activity['title'], 'organization_name': account['full_name']}
+        result = {'title': activity['title'], 'organization_name': account['full_name']}
+        if activity.get('permanent_access'):
+            slot = conn.execute('SELECT participant_username FROM organization_participants WHERE planter_id = ? AND slot = 1',
+                                (account['id'],)).fetchone()
+            result.update(permanent_access=True, username=slot['participant_username'])
+        return result
     finally:
         conn.rollback()
         conn.close()
@@ -262,7 +297,8 @@ def authenticate_group(access_code, name, browser_key, *, mode='return', switch_
         elif mode != 'return':
             raise GroupAccessError('Choose First time or Returning planter.')
         elif not participant:
-            raise GroupAccessError('Username not found in this organization. Check its spelling. Returning sign-in never creates a participant.', 401, field='username')
+            raise GroupAccessError('Username not found for this organization. Check your username and organization code. If you have not chosen a username here yet, choose First time.',
+                401, field='username', kind='username_not_found')
         slot = participant['slot']
         enrolled = conn.execute('''SELECT 1 FROM auth_sessions WHERE subject_type = 'planter'
             AND subject_id = ? AND participant_slot = ? AND planting_schedule_id = ? LIMIT 1''',
@@ -307,7 +343,8 @@ def authenticate_group(access_code, name, browser_key, *, mode='return', switch_
         if not session_details(conn, session_hash):
             raise GroupAccessError('This planting activity has ended. Your saved progress is kept.', 403)
         conn.commit()
-        account.update(participant_slot=slot, participant_username=display if mode == 'first' else participant['participant_username'],
+        account.update(permanent_access=bool(activity.get('permanent_access')),
+                       participant_slot=slot, participant_username=display if mode == 'first' else participant['participant_username'],
                        planting_schedule_id=activity['schedule_id'], activity_end_at=activity['end_at'], activity_title=activity['title'])
         return account, token
     except Exception:
@@ -331,7 +368,10 @@ def session_details(conn, token_hash):
             AND s.status IN ('confirmed', 'in_progress') AND p.status = 'active'
             AND (NOT ? OR (s.start_at <= clock_timestamp() AND s.end_at > clock_timestamp()))''',
         (token_hash, BOOKING_POLICY['enforceActivityAccessWindow'])).fetchone()
-    return dict(row) if row else None
+    if row:
+        return dict(row)
+    from .lgu_sites import permanent_session
+    return permanent_session(conn, token_hash)
 
 
 def guard_point_write(conn, planter_id, slot, point_ids):
@@ -339,10 +379,18 @@ def guard_point_write(conn, planter_id, slot, point_ids):
     import planting_database as planting
     token_hash = planting._hash_session_token(planter_session_token.get())
     session = conn.execute('SELECT planting_schedule_id FROM auth_sessions WHERE token_hash = ?', (token_hash,)).fetchone()
-    if not session or session['planting_schedule_id'] is None:
+    if not session:
         raise GroupAccessError('Sign in with the organization code and your username.', 401)
-    conn.execute('SELECT id FROM planting_schedules WHERE id = ? FOR SHARE', (session['planting_schedule_id'],)).fetchone()
-    conn.execute('SELECT schedule_id FROM activity_access_codes WHERE schedule_id = ? FOR SHARE', (session['planting_schedule_id'],)).fetchone()
+    if session['planting_schedule_id'] is not None:
+        # Point completion may also complete the activity. Take its write lock
+        # up front so simultaneous participants do not upgrade shared locks.
+        conn.execute('SELECT id FROM planting_schedules WHERE id = ? FOR UPDATE', (session['planting_schedule_id'],)).fetchone()
+        conn.execute('SELECT schedule_id FROM activity_access_codes WHERE schedule_id = ? FOR SHARE', (session['planting_schedule_id'],)).fetchone()
+    else:
+        from .lgu_sites import permanent_session
+        if not permanent_session(conn, token_hash):
+            raise GroupAccessError('Sign in with the organization code and your username.', 401)
+        conn.execute('SELECT planter_id FROM permanent_planting_access WHERE planter_id = ? FOR SHARE', (planter_id,)).fetchone()
     conn.execute('SELECT slot FROM organization_participants WHERE planter_id = ? AND slot = ? FOR UPDATE', (planter_id, slot)).fetchone()
     details = session_details(conn, token_hash)
     owner = conn.execute('SELECT subject_id, participant_slot FROM auth_sessions WHERE token_hash = ?', (token_hash,)).fetchone()
@@ -352,8 +400,8 @@ def guard_point_write(conn, planter_id, slot, point_ids):
     rows = conn.execute(f'''SELECT pap.id FROM planter_assignment_points pap
         JOIN planter_assignments pa ON pa.id = pap.assignment_id
         WHERE pap.id IN ({marks}) AND pap.released_at IS NULL AND pa.planter_id = ?
-            AND pap.participant_slot = ? AND pa.planting_schedule_id = ?''',
-        (*point_ids, planter_id, slot, details['planting_schedule_id'])).fetchall()
+            AND pap.participant_slot = ? AND (? OR pa.planting_schedule_id = ?)''',
+        (*point_ids, planter_id, slot, bool(details.get('permanent_access')), details['planting_schedule_id'])).fetchall()
     if {row['id'] for row in rows} != set(point_ids):
         raise GroupAccessError('Only points assigned to this participant and planting activity can be updated.', 403)
 
@@ -367,6 +415,9 @@ def manage_activity_code(schedule_id, *, action=None, owner_id=None, organizatio
         schedule = conn.execute('SELECT * FROM planting_schedules WHERE id = ? FOR UPDATE', (schedule_id,)).fetchone()
         if not schedule:
             raise GroupAccessError('Planting activity not found.', 404)
+        from .lgu_sites import is_lgu
+        if is_lgu(conn, schedule['organization_id']):
+            raise GroupAccessError('LGU uses permanent planter access. View its credentials in LGU Sites.', 409)
         schedule = dict(schedule)
         if organization_id is not None and schedule['organization_id'] != organization_id:
             raise GroupAccessError('This activity belongs to another organization.', 403)

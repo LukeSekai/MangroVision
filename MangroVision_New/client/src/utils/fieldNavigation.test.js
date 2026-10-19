@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { googleMapsDirectionsUrl, navigableFieldPoint, navigationPointQueue, navigationSegments, navigationStartPoint, pointGuidance, retargetSiteRoute, upcomingNavigationPoints } from './fieldNavigation.js';
+import { googleMapsDirectionsUrl, localGuidancePath, navigableFieldPoint, navigationPointQueue, navigationSegments, navigationStartPoint, pointGuidance, retargetSiteRoute, upcomingNavigationPoints } from './fieldNavigation.js';
 
 test('field direction follows geographic compass bearings in every quadrant', () => {
   for (const [destination, direction, bearing] of [
@@ -157,6 +157,44 @@ test('a straight direction through the trees is omitted while the fixed bridge r
   assert.deepEqual(segments, bridgeRoute.segments);
 });
 
+test('saved shoreline point #3 keeps an orange guide that bends inside the planting area', () => {
+  const target = [10.7802641034854, 122.627143274877];
+  const guide = localGuidancePath(bridgeRoute.entrance, target, bridgeSite.planting_area);
+  assert.ok(guide.length > 2, 'The direct connection leaves the concave foreshore');
+  assert.deepEqual(guide[0], bridgeRoute.entrance);
+  assert.deepEqual(guide.at(-1), target);
+  for (let index = 1; index < guide.length; index++) {
+    assert.deepEqual(localGuidancePath(guide[index - 1], guide[index], bridgeSite.planting_area),
+      [guide[index - 1], guide[index]], 'Every leg stays within the same boundary tolerance');
+  }
+  for (const current of [bridgeSite.bridge_start, [10.70, 122.55]]) {
+    const segments = navigationSegments({ ...bridgeRoute, target }, current, 5);
+    assert.equal(segments[0].kind, 'road');
+    assert.deepEqual(segments.at(-1), { kind: 'guidance', polyline: guide });
+  }
+  const current = [10.78005, 122.6261];
+  const onsite = navigationSegments({ ...bridgeRoute, target }, current, 3);
+  assert.equal(onsite.length, 1);
+  assert.equal(onsite[0].kind, 'guidance');
+  assert.deepEqual(onsite[0].polyline[0], current);
+  assert.deepEqual(onsite[0].polyline.at(-1), target);
+  assert.ok(onsite[0].polyline.length > 2);
+});
+
+test('point-to-point continuation bends around shoreline indents without moving assignments', () => {
+  const target = [10.78005, 122.6261];
+  const upcoming = { latitude: 10.7802641034854, longitude: 122.627143274877 };
+  const before = structuredClone(upcoming);
+  const segments = navigationSegments({ ...bridgeRoute, target, upcomingPoints: [upcoming] }, target, 3);
+  assert.equal(segments.length, 1);
+  assert.equal(segments[0].kind, 'guidance');
+  assert.deepEqual(segments[0].polyline[0], target);
+  assert.deepEqual(segments[0].polyline.at(-1), [upcoming.latitude, upcoming.longitude]);
+  assert.ok(segments[0].polyline.length > 2);
+  assert.deepEqual(upcoming, before);
+  assert.equal(localGuidancePath(bridgeRoute.entrance, [10.7805, 122.626], bridgeSite.planting_area), null);
+});
+
 const assigned = [100, 99, 98, 97].map((point_num, index) => ({
   assignment_point_id: index + 1, point_num, assignment_status: 'pending',
   latitude: 10.78012, longitude: 122.62707 + index * 0.00003,
@@ -274,4 +312,11 @@ test('future point connections keep the bridge and do not invent connections thr
   assert.equal(retargetSiteRoute(bridgeRoute, { latitude: 11, longitude: 122 }), null);
   assert.equal(retargetSiteRoute({ ...bridgeRoute, route_source: 'within_site', segments: [] }, assigned[1], bridgeSite.bridge_start), null,
     'Leaving the foreshore requires a new bridge route instead of reusing onsite-only guidance');
+});
+
+test('Next and retry request fresh road directions after a failed or unconfigured route', () => {
+  for (const route_source of ['partial_route', 'point_guidance']) {
+    assert.equal(retargetSiteRoute({ ...bridgeRoute, route_source }, assigned[1]), null);
+  }
+  assert.equal(retargetSiteRoute({ ...bridgeRoute, road_route_error: { kind: 'routing_not_configured' } }, assigned[1]), null);
 });

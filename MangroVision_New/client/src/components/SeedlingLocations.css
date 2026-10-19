@@ -1,14 +1,13 @@
 .seedling-locations { margin: 12px 0; }
 .seedling-location-fieldset { min-width: 0; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; }
 .seedling-location-fieldset legend { font-weight: 700; padding: 0 6px; }
-.replanting-assignment { padding: 14px; background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; }
 .seedling-location-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .seedling-location-filters label { display: grid; gap: 5px; font-size: 12px; }
 .seedling-location-filters input, .seedling-location-filters select { min-width: 0; padding: 9px; border: 1px solid #cbd5e1; border-radius: 6px; background: white; color: #0f172a; }
 .seedling-location-map { height: 340px; width: 100%; border: 1px solid #cbd5e1; margin-top: 12px; border-radius: 8px; }
 .seedling-location-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; margin: 10px 0; font-size: 12px; }
-.seedling-locations button, .replanting-panel button { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; background: white; color: #166534; cursor: pointer; }
-.seedling-locations button:disabled, .replanting-panel button:disabled { opacity: .5; cursor: default; }
+.seedling-locations button { border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 12px; background: white; color: #166534; cursor: pointer; }
+.seedling-locations button:disabled { opacity: .5; cursor: default; }
 .seedling-selection-tools { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
 .seedling-selection-tools button { min-height: 36px; font: inherit; font-size: 13px; }
 .seedling-selection-tools button.is-active { background: #166534; border-color: #166534; color: #fff; }
@@ -26,13 +25,6 @@
 .seedling-field-sheet table { border-collapse: collapse; width: 100%; font-size: 10px; }
 .seedling-field-sheet td, .seedling-field-sheet th { padding: 8px; border: 1px solid #94a3b8; text-align: left; }
 .seedling-field-sheet tr { break-inside: avoid; }
-.replanting-panel { display: grid; gap: 12px; }
-.replanting-list { max-height: 360px; overflow: auto; }
-.replanting-row { display: flex; gap: 10px; align-items: center; justify-content: space-between; border-bottom: 1px solid #e2e8f0; padding: 10px 0; }
-.replanting-row small { display: block; }
-.replanting-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-.replanting-controls label { display: grid; gap: 6px; }
-.replanting-controls select, .replanting-controls input { padding: 8px; max-width: 100%; }
 @media (max-width: 650px) { .seedling-location-filters { grid-template-columns: 1fr; } .seedling-location-map { height: 280px; } }
 @media print {
   body:has(.seedling-field-sheet) > * { display: none !important; }

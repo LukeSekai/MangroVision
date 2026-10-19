@@ -349,9 +349,7 @@
   margin-bottom: 16px;
 }
 
-.dash-replanting-kpis {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
+
 
 .dash-kpi {
   position: relative;

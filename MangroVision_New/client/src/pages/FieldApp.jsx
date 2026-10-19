@@ -466,7 +466,6 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
     && !isSkipped;
   const displayStatus = isUnavailable ? 'eroded_unavailable' : status;
   const hasPlannerWarning = Boolean(point?.survival_warning);
-  const warningSeverity = point?.warning_severity || 'medium';
   const warningSummary = point?.warning_summary || 'Planner warning';
   const isFinal = isPlanted || isSkipped;
   const badgeStatus = isUnavailable ? 'eroded' : isSkipped ? 'skipped' : isPlanted ? 'planted' : 'pending';
@@ -527,7 +526,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
             )}
             {hasPlannerWarning && (
               <div className="field-warning">
-                Planner warning ({warningSeverity}): {warningSummary}
+                Warning: {warningSummary}
               </div>
             )}
             {actionError && <div className="field-error">{actionError}</div>}
@@ -593,7 +592,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
               {hasPlannerWarning && (
                 <div className="field-overlay-detail-row">
                   <span>Warning</span>
-                  <span>{warningSeverity}: {warningSummary}</span>
+                  <span>{warningSummary}</span>
                 </div>
               )}
             </div>
@@ -645,6 +644,7 @@ export default function FieldApp() {
   const [pendingSkipReason, setPendingSkipReason] = useState('');
   const skipFeedback = useFormFeedback({ skip_reason: { label: 'Reason for skipping', serverTerms: ['skip reason', 'skip_reason'] } });
   const [completedMarkPoint, setCompletedMarkPoint] = useState(null);
+  const [activityCompleted, setActivityCompleted] = useState(false);
   const [completedMarkStatus, setCompletedMarkStatus] = useState('completed');
   const [markAllChooseMode, setMarkAllChooseMode] = useState(false);
   const [selectedMarkAllPointIds, setSelectedMarkAllPointIds] = useState([]);
@@ -722,8 +722,9 @@ export default function FieldApp() {
       return;
     }
     const request = ++navigationRequest.current;
+    const retryCurrentPoint = continueNavigation && String(point.assignment_point_id) === String(route?.assignmentPointId);
     const remainingPoints = continueNavigation && route ? upcomingNavigationPoints(points, route) : points;
-    const pointIds = (continueNavigation ? remainingPoints
+    const pointIds = retryCurrentPoint ? route.pointIds : (continueNavigation ? remainingPoints
       : navigationPointQueue(remainingPoints, point.assignment_point_id, recommendedStart?.entrance))
       .map(candidate => candidate.assignment_point_id);
     setRouteBusy(true);
@@ -745,10 +746,10 @@ export default function FieldApp() {
       if (request !== navigationRequest.current) return;
       setNavigationLocationError('');
       setRoute({ ...data, origin, pointNum: point.point_num, assignmentPointId: point.assignment_point_id,
-        pointIds, navigationId: continueNavigation ? route.navigationId : request });
+        pointIds, navigationId: continueNavigation && !retryCurrentPoint ? route.navigationId : request });
       setPointListOpen(false);
       setSelectedId(null);
-      if (continueNavigation) setFocusRequest({ kind: 'point', coordinates: [latitude, longitude] });
+      if (continueNavigation && !retryCurrentPoint) setFocusRequest({ kind: 'point', coordinates: [latitude, longitude] });
     } catch (error) {
       if (request !== navigationRequest.current) return;
       // Never silently replace denied/unavailable GPS with an organization
@@ -912,6 +913,18 @@ export default function FieldApp() {
     setPendingSkipReason('');
   };
 
+  const finishPlantingActivity = (result) => {
+    if (!result?.completed_activity_ids?.some((id) => Number(id) === Number(planter?.planting_schedule_id))) return false;
+    reloadSequence.current += 1;
+    navigationRequest.current += 1;
+    setRoute(null);
+    setPendingMarkPoint(null);
+    setPendingMarkAllOpen(false);
+    setSelectedId(null);
+    setActivityCompleted(true);
+    return true;
+  };
+
   const confirmMark = async () => {
     const point = pendingMarkPoint;
     if (!point) return;
@@ -922,11 +935,12 @@ export default function FieldApp() {
     setMarkBusy(true);
     setMarkError('');
     try {
-      await markPointStatus(
+      const result = await markPointStatus(
         point.assignment_point_id,
         pendingMarkStatus,
         pendingMarkStatus === 'skipped' ? pendingSkipReason.trim() : null,
       );
+      if (finishPlantingActivity(result)) return;
       await reload();
       setRouteError('');
       // Close the confirmation modal AND the action sheet, then open the
@@ -978,6 +992,7 @@ export default function FieldApp() {
     setMarkAllError('');
     try {
       const result = await markAllPointsCompleted(selectedIds);
+      if (finishPlantingActivity(result)) return;
       await reload();
       setRoute(null);
       setRouteError('');
@@ -1012,6 +1027,16 @@ export default function FieldApp() {
     setPendingMarkAllOpen(false);
     setMarkAllError('');
   };
+
+  if (activityCompleted) {
+    const finish = async () => {
+      try { await logout(); } finally { setActivityCompleted(false); }
+    };
+    return <main className="field-shell"><Modal open variant="success" title="Planting activity completed"
+      confirmLabel="Return to sign in" cancelLabel={null} onConfirm={finish} onCancel={finish}>
+      <p>All assigned points have been recorded as planted. Your planting activity is complete, and your progress is saved.</p>
+    </Modal></main>;
+  }
 
   if (!isAuthenticated) {
     return <AuthScreen />;
@@ -1136,6 +1161,11 @@ export default function FieldApp() {
           route={navigationRoute}
           onStop={handleClearRoute}
           gpsError={navigationLocationError}
+          retryBusy={routeBusy}
+          onRetry={() => {
+            const point = points.find(candidate => String(candidate.assignment_point_id) === String(route.assignmentPointId));
+            if (point) void handleStartNavigation(point, true);
+          }}
         />}
 
         {routeError && !selected && (

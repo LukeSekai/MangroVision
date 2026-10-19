@@ -42,6 +42,7 @@ class Organization(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     name: Mapped[str] = mapped_column(Text)
     normalized_name: Mapped[str] = mapped_column(Text, unique=True)
+    system_key: Mapped[str | None] = mapped_column(Text, unique=True)
     inspection_interval_days: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
