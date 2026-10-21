@@ -583,94 +583,46 @@
   font-size: 0.7rem !important;
 }
 
-.dash-analysis-selector {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  gap: 16px;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
-}
+/* Project sites compare current locations, separately from reporting history. */
+.dash-kpis.dash-site-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dash-filters.dash-site-filter { grid-template-columns: minmax(180px, 360px); }
+.dash-site-comparison .dash-table { table-layout: fixed; min-width: 850px; }
+.dash-site-comparison th:nth-child(1) { width: 16%; }
+.dash-site-comparison th:nth-child(2) { width: 14%; }
+.dash-site-comparison th:nth-child(3) { width: 9%; }
+.dash-site-comparison th:nth-child(4) { width: 25%; }
+.dash-site-comparison th:nth-child(5) { width: 23%; }
+.dash-site-comparison th:nth-child(6) { width: 13%; }
+.dash-site-comparison .dash-table td { overflow-wrap: anywhere; vertical-align: top; }
+.dash-site-name, .dash-site-actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.dash-site-statuses { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px 14px; margin: 0; }
+.dash-site-statuses > div { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.dash-site-statuses dt { display: flex; align-items: center; gap: 5px; font-size: 0.67rem; }
+.dash-site-statuses i { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; }
+.dash-site-statuses dd { margin: 0; font-weight: 700; color: var(--text-primary); }
+.dash-site-warnings ul { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+.dash-site-warnings small, .dash-site-no-boundary { color: var(--text-muted); font-size: 0.65rem; }
+.dash-site-actions .dash-table-map-link { min-height: 36px; width: 100%; padding: 6px 8px; }
+.dash-site-scope, .dash-site-analysis-link { margin: 12px 0 0; color: var(--text-secondary); font-size: 0.72rem; line-height: 1.6; }
+.dash-site-analysis-link a { color: var(--green-700); font-weight: 700; }
 
-.dash-analysis-selector label {
-  display: grid;
-  gap: 6px;
-  width: 220px;
-  max-width: 100%;
-  font-weight: 600;
+@media (max-width: 1100px) {
+  .dash-site-comparison .dash-table-wrap { border: 0; overflow: visible; }
+  .dash-site-comparison .dash-table, .dash-site-comparison tbody,
+  .dash-site-comparison tr, .dash-site-comparison td { display: block; width: 100%; min-width: 0; }
+  .dash-site-comparison thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .dash-site-comparison tr { margin-bottom: 12px; border: 1px solid var(--border-light); border-radius: var(--radius-md); }
+  .dash-site-comparison .dash-table td { display: grid; grid-template-columns: minmax(90px, 27%) minmax(0, 1fr); gap: 12px; text-align: left; }
+  .dash-site-comparison td::before { content: attr(data-label); font-size: 0.62rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; text-align: left; }
+  .dash-site-actions { flex-direction: row; flex-wrap: wrap; }
+  .dash-site-actions .dash-table-map-link { width: auto; }
 }
-
-.dash-analysis-selector select {
-  padding: 10px 12px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  background: #fff;
-  color: var(--text-primary);
-  font: inherit;
-}
-
-.dash-analysis-selector p {
-  flex: 1 1 220px;
-  padding-bottom: 10px;
-  overflow-wrap: anywhere;
-}
-
-.dash-area-pie {
-  height: 230px;
-  width: 100%;
-}
-
-.dash-area-pie-legend {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 8px;
-}
-
-.dash-area-pie-legend li {
-  display: grid;
-  grid-template-columns: 10px minmax(0, 1fr) auto;
-  gap: 9px;
-  align-items: center;
-  color: var(--text-secondary);
-  font-size: 0.75rem;
-}
-
-.dash-area-pie-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
-.dash-area-pie-legend strong {
-  text-align: right;
-  color: var(--text-primary);
-}
-
-.dash-area-pie-legend small {
-  margin-left: 10px;
-  font-weight: 400;
-  color: var(--text-secondary);
-}
-
-.dash-area-pie-note {
-  margin-top: 14px;
-  font-size: 0.69rem;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.dash-analysis-data {
-  grid-column: 1 / -1;
-  margin: 0;
-}
-
-.dash-suitability-card .recharts-default-tooltip {
-  max-width: 280px;
-  white-space: normal;
-  overflow-wrap: anywhere;
+@media (max-width: 620px) {
+  .dash-site-kpis .dash-kpi { min-height: 118px; padding: 12px 9px; }
+  .dash-site-kpis .dash-kpi-label { font-size: 0.6rem; }
+  .dash-site-kpis .dash-kpi-hint { font-size: 0.63rem; }
+  .dash-site-statuses { grid-template-columns: 1fr; }
+  .dash-site-comparison .dash-card-head { flex-direction: column; }
 }
 
 .dash-chart .recharts-legend-item-text {
@@ -681,66 +633,6 @@
 .dash-chart .recharts-cartesian-axis-tick-value {
   fill: var(--text-muted);
   font-size: 0.68rem;
-}
-
-.dash-risk-site-list {
-  margin-top: 12px;
-  padding-top: 13px;
-  border-top: 1px solid var(--border-light);
-}
-
-.dash-risk-site-list-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 9px;
-}
-
-.dash-risk-site-list-head strong {
-  color: var(--text-primary);
-  font-size: 0.75rem;
-}
-
-.dash-risk-site-list-head span {
-  color: var(--text-muted);
-  font-size: 0.66rem;
-}
-
-.dash-risk-site-actions {
-  display: grid;
-  gap: 7px;
-}
-
-.dash-risk-site-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-light);
-  border-radius: var(--radius-md);
-  background: var(--gray-50);
-}
-
-.dash-risk-site-action > div {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.dash-risk-site-action strong {
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 0.7rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dash-risk-site-action span {
-  color: var(--text-muted);
-  font-size: 0.63rem;
 }
 
 .dash-lifecycle-visual {
@@ -1360,15 +1252,7 @@
     min-width: 0;
   }
 
-  .dash-risk-site-list-head,
-  .dash-risk-site-action {
-    align-items: stretch;
-    flex-direction: column;
-  }
 
-  .dash-risk-site-action strong {
-    white-space: normal;
-  }
 
   .dash-filters {
     grid-template-columns: 1fr 1fr;

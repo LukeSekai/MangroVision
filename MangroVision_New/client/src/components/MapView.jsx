@@ -10,6 +10,8 @@ import { getPlanterColor, getPlanterTint } from '../utils/planterColors';
 import { hasEstimatedAlignment } from '../utils/analysisMapContext';
 import { filterMapPoints } from '../utils/mapPointFilters';
 import { getMapPointStatus } from '../utils/mapPointStats';
+import { getPointRadius, getPointWeight } from '../utils/pointMarkerStyle';
+import { createPointCanvas } from '../utils/pointCanvas';
 import { bindProjectSiteInfo, emptyProjectSiteCounts, projectSiteId, projectSitePointCounts, projectSiteStyle } from '../utils/projectSiteInfo';
 import { POINT_STATUS_COLORS as STATUS_COLORS, PLANNED_SPECIES_COLORS as SPECIES_COLORS, pointStatusLabel } from '../utils/pointStatus';
 import { filterMonitoringFeatures, filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
@@ -81,32 +83,6 @@ function orderZoneLayers(layers) {
     layers[key]?.eachLayer((layer) => layer.bringToBack());
   }
 }
-
-const getPointRadius = (zoom, selected = false) => {
-  const base = zoom >= 22
-    ? 3.5
-    : zoom >= 21
-      ? 2.4
-      : zoom >= 20
-        ? 1.6
-        : zoom >= 19
-          ? 1.05
-          : zoom >= 18
-            ? 0.8
-            : zoom >= 17
-              ? 0.65
-              : 0.55;
-  return selected ? Math.max(base + 1.2, base * 1.8) : base;
-};
-
-const getPointWeight = (zoom, selected = false) => {
-  if (selected) return zoom >= 20 ? 1.8 : 1.2;
-  if (zoom >= 22) return 1.1;
-  if (zoom >= 21) return 0.75;
-  if (zoom >= 20) return 0.45;
-  if (zoom >= 19) return 0.2;
-  return 0;
-};
 
 const getPreviewFilteredRadius = (zoom) => Math.max(0.6, getPointRadius(zoom) - 0.35);
 const getAnalysisPointRadius = (zoom) => Math.max(0.45, getPointRadius(zoom) * 0.45);
@@ -234,6 +210,7 @@ export default function MapView() {
       zoomControl: false,
       attributionControl: true,
       preferCanvas: true,
+      renderer: createPointCanvas(),
     });
 
     map.attributionControl.setPosition('bottomleft');

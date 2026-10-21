@@ -1,0 +1,63 @@
+.point-export-intro,
+.point-export-hint { margin: 0 0 12px; font-size: 0.8125rem; line-height: 1.5; color: var(--text-secondary); }
+.point-export-formats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.point-export-format { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; min-width: 0; padding: 12px; text-align: left; border: 1px solid var(--border-medium); border-radius: var(--radius-md); background: var(--surface-base, white); color: var(--text-primary); cursor: pointer; }
+.point-export-format strong { font-size: 0.8125rem; }
+.point-export-format span { grid-row: 2; font-size: 0.6875rem; color: var(--text-secondary); }
+.point-export-format svg { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--green-700); }
+.point-export-format:hover:not(:disabled) { border-color: var(--green-600); background: var(--green-50); }
+.point-export-format:disabled { opacity: 0.5; cursor: not-allowed; }
+.point-export-format:focus-visible,
+.point-export-choice select:focus-visible,
+.point-export-fit:focus-visible { outline: 2px solid var(--green-600); outline-offset: 2px; }
+
+.modal-card.point-export-dialog { display: flex; flex-direction: column; width: min(1040px, 100%); max-height: calc(100dvh - 40px); overflow: hidden; }
+.point-export-dialog .modal-content { min-height: 0; overflow-y: auto; padding: 26px 24px 20px; text-align: left; }
+.point-export-dialog .modal-icon { display: none; }
+.point-export-dialog .modal-title { padding-right: 32px; }
+.point-export-dialog .modal-body { max-width: none; }
+.point-export-dialog .modal-actions { flex-shrink: 0; justify-content: flex-end; padding: 14px 24px; }
+.point-export-dialog .modal-action-btn { flex: 0 1 auto; min-width: 130px; }
+.point-export-dialog-intro { margin-bottom: 20px !important; }
+.point-export-layout { display: grid; grid-template-columns: minmax(220px, 0.85fr) minmax(0, 1.65fr); gap: 24px; align-items: start; }
+.point-export-controls { display: grid; gap: 18px; min-width: 0; }
+.point-export-scopes { min-width: 0; border: 0; padding: 0; margin: 0; }
+.point-export-scopes legend { margin-bottom: 10px; font-size: 0.8125rem; font-weight: 700; color: var(--text-primary); }
+.point-export-scope-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.point-export-scope-grid label { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 44px; padding: 10px; border: 1px solid var(--border-medium); border-radius: var(--radius-md); cursor: pointer; font-size: 0.8125rem; color: var(--text-primary); }
+.point-export-scope-grid label.is-selected { background: var(--green-50); border-color: var(--green-600); }
+.point-export-scope-grid input { accent-color: var(--green-700); flex-shrink: 0; }
+.point-export-scope-grid label:focus-within { outline: 2px solid var(--green-600); outline-offset: 2px; }
+.point-export-choice { display: grid; gap: 6px; min-width: 0; font-size: 0.8125rem; font-weight: 600; color: var(--text-primary); }
+.point-export-choice select { width: 100%; min-width: 0; min-height: 42px; padding: 8px; border: 1px solid var(--border-medium); border-radius: var(--radius-md); background: var(--surface-base, white); color: var(--text-primary); font: inherit; }
+.point-export-selection { display: grid; gap: 4px; padding: 16px; background: var(--surface-raised); border: 1px solid var(--border-light); border-radius: var(--radius-md); }
+.point-export-selection > strong { font-size: 1.5rem; line-height: 1.2; color: var(--green-800); font-variant-numeric: tabular-nums; }
+.point-export-selection > strong span { font-size: 0.8125rem; font-weight: 500; }
+.point-export-selection > span { font-size: 0.8125rem; overflow-wrap: anywhere; }
+.point-export-file { display: grid; gap: 4px; font-size: 0.75rem; }
+.point-export-file > span { color: var(--text-muted); }
+.point-export-file > strong { color: var(--text-primary); overflow-wrap: anywhere; font-weight: 500; }
+.point-export-dialog .analytics-error { margin: 16px 0 0; }
+.point-export-preview { min-width: 0; }
+.point-export-preview > header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.point-export-preview h3 { margin: 0; font-size: 0.875rem; color: var(--text-primary); }
+.point-export-preview > header span { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+.point-export-preview > p { margin-top: 10px; font-size: 0.75rem; }
+.point-export-map-frame { position: relative; isolation: isolate; overflow: hidden; border: 1px solid var(--border-medium); border-radius: 10px; background: var(--surface-raised); }
+.point-export-map { height: 360px; width: 100%; background: #e7eee9; }
+.point-export-fit { position: absolute; top: 10px; right: 10px; z-index: 500; padding: 8px 10px; border: 1px solid #c8d5cc; border-radius: 6px; background: white; color: #14532d; box-shadow: 0 1px 4px #17251b20; font-size: 0.75rem; font-weight: 600; cursor: pointer; }
+.point-export-map-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 500; width: min(85%, 320px); padding: 14px; border-radius: 8px; background: rgba(255,255,255,.96); text-align: center; color: #33483a; box-shadow: 0 2px 10px #17251b20; pointer-events: none; }
+.point-export-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 10px 0 0; padding: 0; }
+.point-export-legend li { display: flex; align-items: center; gap: 5px; font-size: 0.6875rem; }
+.point-export-legend li > span { width: 8px; height: 8px; border-radius: 50%; border: 1px solid #173421; }
+.point-export-filename { overflow-wrap: anywhere; }
+
+@media (max-width: 700px) {
+  .modal-card.point-export-dialog { max-height: calc(100dvh - 20px); }
+  .point-export-dialog .modal-content { padding: 24px 16px 16px; }
+  .point-export-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .point-export-controls { gap: 14px; }
+  .point-export-map { height: 280px; }
+  .point-export-dialog .modal-actions { padding: 12px 16px; }
+  .point-export-dialog .modal-action-btn { flex: 1; min-width: 0; }
+}

@@ -1,0 +1,13 @@
+{
+  "species": {
+    "bungalon": { "label": "Bungalon", "color": "#16a34a", "gpx_symbol": "Flag, Green" },
+    "rhizophora": { "label": "Rhizophora", "color": "#db2777", "gpx_symbol": "Flag, Pink" }
+  },
+  "statuses": {
+    "dead": { "label": "Dead", "color": "#7f1d1d", "gpx_symbol": "Flag, Red" },
+    "eroded": { "label": "Inside eroded zone", "color": "#f97316", "gpx_symbol": "Flag, Orange" },
+    "planted": { "label": "Planted", "color": "#eab308", "gpx_symbol": "Flag, Yellow" }
+  },
+  "unknown": { "label": "Other / unrecorded species", "color": "#64748b", "gpx_symbol": "Flag" },
+  "outline_color": "#173421"
+}

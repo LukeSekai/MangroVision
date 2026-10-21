@@ -10557,14 +10557,18 @@ def get_dashboard_sites(
         canopy_area = sum(row["canopy_area_m2"] for row in suitability)
         footprint = _unique_footprint_metrics(analyses)
 
-        points = [
-            row for row in dimension_points
-            if not row.get("deleted_at")
-            and row.get("point_status") in {"planned", "planted"}
-            and row.get("latitude") is not None
-            and row.get("longitude") is not None
-        ]
+        # Current ownership and the shared map classification are independent
+        # of image links and the reporting dates used by the other tabs.
+        points = list({int(row["id"]): row for row in dimension_points
+                       if current_point_status(row) is not None}.values())
+        statuses = ("planned", "assigned", "planted", "dead", "skipped", "unavailable")
+        site_points: dict[int, list[dict]] = {}
+        for point in points:
+            if point.get("site_id") is not None:
+                site_points.setdefault(int(point["site_id"]), []).append(point)
         warning_buckets: dict[tuple[str, str], dict] = {}
+        warning_bucket_ids: dict[tuple[str, str], set[int]] = {}
+        site_warning_ids: dict[int, dict[tuple[str, str], set[int]]] = {}
         warning_exposed_ids: set[int] = set()
         warning_rows = [{**feature['properties'], 'polygon_geojson': json.dumps(feature['geometry'])}
                         for feature in list_warning_zones(_connection=conn)]
@@ -10581,14 +10585,21 @@ def get_dashboard_sites(
                     "label": _warning_type_label(warning_type),
                     "severity": severity,
                     "count": 0,
-                    "planned": 0,
-                    "planted": 0,
+                    **dict.fromkeys(statuses, 0),
                 })
+                bucket_ids = warning_bucket_ids.setdefault(key, set())
                 for point in points:
+                    if point.get("latitude") is None or point.get("longitude") is None:
+                        continue
                     if geometry.covers(Point(float(point["longitude"]), float(point["latitude"]))):
-                        output["count"] += 1
-                        output["planted" if point["point_status"] == "planted" else "planned"] += 1
-                        warning_exposed_ids.add(int(point["id"]))
+                        point_id = int(point["id"])
+                        if point_id not in bucket_ids:
+                            bucket_ids.add(point_id)
+                            output["count"] += 1
+                            output[current_point_status(point)] += 1
+                        warning_exposed_ids.add(point_id)
+                        if point.get("site_id") is not None:
+                            site_warning_ids.setdefault(int(point["site_id"]), {}).setdefault(key, set()).add(point_id)
         warning_exposure = sorted(
             warning_buckets.values(),
             key=lambda row: (-_WARNING_SEVERITY_RANK.get(row["severity"], 0), -row["count"], row["label"]),
@@ -10601,16 +10612,10 @@ def get_dashboard_sites(
                 continue
             site_warning = warning_points_by_site.setdefault(int(point_site_id), {
                 "warning_point_count": 0,
-                "warning_planned_points": 0,
-                "warning_planted_points": 0,
+                **{f"warning_{status}_points": 0 for status in statuses},
             })
             site_warning["warning_point_count"] += 1
-            status_key = (
-                "warning_planted_points"
-                if point.get("point_status") == "planted"
-                else "warning_planned_points"
-            )
-            site_warning[status_key] += 1
+            site_warning[f"warning_{current_point_status(point)}_points"] += 1
 
         represented_site_ids = {
             int(row["site_id"])
@@ -10623,7 +10628,7 @@ def get_dashboard_sites(
             if row.get("site_zone_id") is not None
         )
         project_sites = []
-        for feature in list_project_sites():
+        for feature in list_project_sites(_connection=conn):
             if site_id is not None and int(feature["id"]) != int(site_id):
                 continue
             if (
@@ -10636,20 +10641,35 @@ def get_dashboard_sites(
                 json.dumps(feature.get("geometry"))
             ) if feature.get("geometry") else None
             centroid = site_geometry.centroid if site_geometry is not None else None
+            current_points = site_points.get(int(feature["id"]), [])
+            status_counts = dict.fromkeys(statuses, 0)
+            for point in current_points:
+                status_counts[current_point_status(point)] += 1
+            warnings = [{
+                "warning_type": key[0], "label": _warning_type_label(key[0]),
+                "severity": key[1], "count": len(ids),
+            } for key, ids in site_warning_ids.get(int(feature["id"]), {}).items()]
+            warnings.sort(key=lambda row: (-_WARNING_SEVERITY_RANK.get(row["severity"], 0), row["label"]))
             project_sites.append({
                 "id": int(feature["id"]),
                 "name": properties["name"],
                 "notes": properties.get("notes"),
+                "organization_id": properties.get("organization_id"),
+                "organization_name": properties.get("organization_name"),
+                "area_released_at": properties.get("area_released_at"),
                 "geometry": feature.get("geometry"),
                 "centroid_lat": float(centroid.y) if centroid is not None else None,
                 "centroid_lon": float(centroid.x) if centroid is not None else None,
                 "assignment_count": int(properties.get("assignment_count") or 0),
                 "analysis_count": int(properties.get("analysis_count") or 0),
-                "point_count": int(properties.get("point_count") or 0),
+                "point_count": len(current_points),
+                "point_status_counts": status_counts,
+                "eroded_point_count": sum(bool(point.get("eroded_unavailable") or point.get("inside_eroded_zone"))
+                                          for point in current_points),
+                "warnings": warnings,
                 **warning_points_by_site.get(int(feature["id"]), {
                     "warning_point_count": 0,
-                    "warning_planned_points": 0,
-                    "warning_planted_points": 0,
+                    **{f"warning_{status}_points": 0 for status in statuses},
                 }),
             })
         allowed_assignments = set()
@@ -10677,6 +10697,9 @@ def get_dashboard_sites(
             "summary": {
                 "project_sites": len(project_sites),
                 "project_sites_scope": "current_state",
+                "mapped_points": sum(site["point_count"] for site in project_sites),
+                "sites_with_warnings": sum(bool(site["warnings"] or site["eroded_point_count"])
+                                           for site in project_sites),
                 "analyses": len(analyses),
                 "total_area_m2": round(total_area, 2),
                 "unique_footprint_area_m2": footprint["unique_footprint_area_m2"],

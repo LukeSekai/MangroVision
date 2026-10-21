@@ -2,7 +2,8 @@ import { visibleSeedlings } from './monitoringLocations';
 import { pointsAlongBrush, REPLANTING_BRUSH_RADIUS } from './replantingBrush';
 
 // Keep screen-space painting independent of React renders and marker updates.
-export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPaintingChange) {
+// Assign Points opts into held strokes; monitoring dialogs keep click-toggle.
+export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPaintingChange, { holdToPaint = false } = {}) {
   const container = map.getContainer();
   const brush = document.createElement('div');
   brush.className = 'seedling-selection-brush is-' + mode;
@@ -19,7 +20,7 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
   let projected = [];
   let previous = null;
   let moving = false;
-  let activeTouch = null;
+  let activePointer = null;
   let painting = false;
   let touchClick = false;
   const reset = () => { previous = null; brush.style.display = 'none'; };
@@ -33,15 +34,27 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
       ...map.latLngToContainerPoint([point.latitude, point.longitude]) }));
     reset();
   };
+  const endStroke = () => {
+    const pointerId = activePointer;
+    activePointer = null;
+    setPainting(false);
+    if (pointerId !== null && container.hasPointerCapture?.(pointerId)) container.releasePointerCapture(pointerId);
+  };
+  const rejectSweep = () => { if (holdToPaint) endStroke(); else reset(); };
   const sweep = (event) => {
-    if (moving || (event.pointerType === 'touch' && event.pointerId !== activeTouch)
-        || event.target.closest?.('.leaflet-control') || event.buttons > 1) {
-      reset(); return;
+    if (activePointer !== null && event.pointerId !== activePointer) return;
+    const target = holdToPaint ? document.elementFromPoint?.(event.clientX, event.clientY) || event.target : event.target;
+    if (moving || (event.pointerType === 'touch' && event.pointerId !== activePointer)
+        || !container.contains(target) || target.closest?.('.leaflet-control') || event.buttons > 1) {
+      rejectSweep(); return;
+    }
+    if (holdToPaint && painting && event.pointerType !== 'touch' && (event.buttons & 1) === 0) {
+      endStroke(); return;
     }
     const position = map.mouseEventToContainerPoint(event);
     const size = map.getSize();
     if (position.x < 0 || position.y < 0 || position.x > size.x || position.y > size.y) {
-      reset(); return;
+      rejectSweep(); return;
     }
     brush.style.display = 'block';
     brush.style.left = position.x + 'px';
@@ -52,20 +65,27 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
     if (ids.length) onPaint(ids, mode);
   };
   const down = (event) => {
-    if (moving || event.target.closest?.('.leaflet-control') || event.button !== 0) return;
+    if (moving || event.isPrimary === false || event.target.closest?.('.leaflet-control') || event.button !== 0) return;
     touchClick = event.pointerType === 'touch';
-    if (event.pointerType === 'touch') {
-      if (activeTouch !== null) return;
-      activeTouch = event.pointerId;
-      container.setPointerCapture(event.pointerId);
+    if (holdToPaint || event.pointerType === 'touch') {
+      if (activePointer !== null) return;
+      activePointer = event.pointerId;
+      container.setPointerCapture?.(event.pointerId);
       event.preventDefault();
       setPainting(true);
       sweep(event);
     }
   };
   const click = (event) => {
+    if (holdToPaint) {
+      if (!event.target.closest?.('.leaflet-control') && event.button === 0) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
     // Touch drags have their own start/stop and may emit a compatibility click.
-    if (moving || touchClick || event.pointerType === 'touch' || activeTouch !== null
+    if (moving || touchClick || event.pointerType === 'touch' || activePointer !== null
         || event.target.closest?.('.leaflet-control') || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
@@ -73,18 +93,11 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
     if (painting) sweep(event);
   };
   const up = (event) => {
-    if (activeTouch === null || activeTouch !== event.pointerId) return;
-    if (container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
-    activeTouch = null;
-    setPainting(false);
+    if (activePointer !== null && activePointer === event.pointerId) endStroke();
   };
-  const blur = () => {
-    if (activeTouch !== null && container.hasPointerCapture(activeTouch)) container.releasePointerCapture(activeTouch);
-    activeTouch = null;
-    setPainting(false);
-  };
+  const blur = endStroke;
   const cancel = (event) => {
-    if (event.pointerType === 'touch' && event.pointerId !== activeTouch) return;
+    if ((holdToPaint || event.pointerType === 'touch') && event.pointerId !== activePointer) return;
     blur();
   };
   const escape = (event) => {
@@ -106,7 +119,13 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
   container.addEventListener('click', click, true);
   container.addEventListener('pointerup', up);
   container.addEventListener('pointercancel', cancel);
-  container.addEventListener('pointerleave', reset);
+  const leave = holdToPaint ? endStroke : reset;
+  container.addEventListener('pointerleave', leave);
+  if (holdToPaint) {
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', cancel);
+    container.addEventListener('lostpointercapture', up);
+  }
   document.addEventListener('keydown', escape, true);
   window.addEventListener('blur', blur);
   let cleaned = false;
@@ -121,7 +140,12 @@ export function attachSeedlingBrush(map, points, mode, onPaint, onStop, onPainti
     container.removeEventListener('click', click, true);
     container.removeEventListener('pointerup', up);
     container.removeEventListener('pointercancel', cancel);
-    container.removeEventListener('pointerleave', reset);
+    container.removeEventListener('pointerleave', leave);
+    if (holdToPaint) {
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', cancel);
+      container.removeEventListener('lostpointercapture', up);
+    }
     document.removeEventListener('keydown', escape, true);
     window.removeEventListener('blur', blur);
     handlers.forEach((handler) => handler.enable());

@@ -52,11 +52,44 @@ End the guide before using the highlighted controls to perform the task.
    database IDs. Analyses with assigned points or field records are protected
    from deletion. Only eligible unused analyses offer Delete with confirmation.
    Use map layers and Legend to inspect points and zones. Export Saved Points
-   supports CSV, GPX, KML and GeoJSON. KML uses small dots with hidden labels;
+   supports CSV, GPX, KMZ and GeoJSON. Choose a format first. In the dialog,
+   select **All points**, **Project site**, **Species** or **Saved analysis**.
+   The last three reveal a dropdown; choose its value to show those points on
+   the map preview. Review the locations, count and filename, then use
+   **Download [format]**. Pan/zoom or **Fit selected points** helps inspect the
+   locations and does not change the exported points. Switching scope clears
+   the earlier choice; downloading stays disabled until points are previewed.
+   Preview and export dots use red for dead, orange for eroded, yellow for
+   planted, green for Bungalon and magenta for Rhizophora. Color priority is
+   **Dead → Eroded → Planted → Species**: dead points inside erosion stay red;
+   planted points inside erosion become orange. Other/unrecorded species use
+   gray when no status color applies. Saved species and erosion fields remain.
+   Hover a point for species, status and erosion details; check the legend.
+   Site scope uses
+   current ownership, so released locations leave the former site's export.
+   **No current project site** and **Not recorded** species let staff select
+   unowned or legacy points without guessing. **Other recorded species** groups
+   other saved species values, preserving them in files. Unavailable points stay included
+   and marked. Map layer switches do not change the export selection. Files
+   include current site, source analysis, species and availability fields.
+   **KMZ** bundles these solid dot colors in one file for Google Earth.
+   GPX is intended for GPS navigation, using short stable IDs and full point/site
+   details in comments and descriptions; flag colors depend on the receiving app.
+   GeoJSON includes color fields; CSV includes marker color and category as data.
+   Filenames use the selected site, analysis or species name and Philippine date.
+   Point names include analysis display number, point number and stable point ID.
+   KMZ uses small dots with hidden labels;
    selecting a dot shows its name and details in Google Earth.
 6. **Scheduling and Assign Points - allocate approved work.** Approve the
    tree-planting activity and open **Assign points**. Choose its organization
-   and activity, then click or brush available locations. Assigning the selected
+   and activity, then click or brush available locations. **Move / click** selects
+   individual points. For **Brush select** or **Brush erase**, hold the left
+   mouse button and drag (press and drag on touch). Release to stop brushing;
+   hovering never changes the selection. Escape returns to **Move / click**.
+   Leaving the map, losing focus or switching tools ends the active stroke.
+   Markers use the same
+   zoom-based sizes as the main map: Bungalon green and Rhizophora magenta,
+   with selected points purple. Assigning the selected
    points forms the project site and links the activity automatically. There
    is no site creation step or new/existing-site choice. Planters receive the
    selected work, while survival and monitoring begin from actual planting.
@@ -109,7 +142,18 @@ End the guide before using the highlighted controls to perform the task.
    visits use the sidebar for navigation.
 10. **Dashboard — interpret progress and download reports.** Set From, To and
     Project site, then use Overview, Planting Work, Seedling Health or Project
-    Sites. Read the scope on each chart: period-based activity/history and current
+    Sites. Project Sites compares the responsible organization, current mapped
+    locations by status, and mapped warnings for each site. It uses only the
+    Project site filter and shows a **Current snapshot**, across all planting
+    dates. Released locations leave the old site's counts; released sites retain
+    a Monitoring link without a map link when their boundary is gone. Unclaimed
+    locations remain on Planting Map. Warning categories can overlap, but each
+    category counts a location once. Eroded locations appear separately from
+    warning zones; mortality warnings still use recorded planting history.
+    **View planting history** opens Seedling Health with your site and reporting
+    dates retained. **View map** and **Monitoring** open the site's existing
+    workspaces. Image area and canopy measurements are in **Analyze Image**.
+    Read the scope on each chart: period-based activity/history and current
     location status are different. Current location status covers all dates for
     the selected site. Current Planted and historical planting can differ after
     deaths or releases for replanting. Follow-up sites link to their map location
