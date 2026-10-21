@@ -72,6 +72,7 @@ _ACTIVITIES = {
     ("POST", "/api/export/csv"): ("export.csv", "Exported planting points as CSV."),
     ("POST", "/api/export/gpx"): ("export.gpx", "Exported planting points as GPX."),
     ("POST", "/api/export/kml"): ("export.kml", "Exported planting points as KML."),
+    ("POST", "/api/export/kmz"): ("export.kmz", "Exported planting points as KMZ with marker styling."),
     ("POST", "/api/export/geojson"): ("export.geojson", "Exported planting points as GeoJSON."),
     ("POST", "/api/share/field-link/cloudflare"): ("field_link.started", "Generated a field sharing link."),
     ("POST", "/api/share/field-link/stop"): ("field_link.stopped", "Stopped the field sharing link."),

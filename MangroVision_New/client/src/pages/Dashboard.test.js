@@ -1,8 +1,9 @@
 // Server rendering verifies content and fixed heights, not browser appearance.
 import test, { before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createElement } from 'react';
+import { act, createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createRoot } from 'react-dom/client';
 import { MemoryRouter } from 'react-router-dom';
 import { JSDOM } from 'jsdom';
 import { build } from 'vite';
@@ -84,24 +85,40 @@ test('zero and full canopy coverage remain valid measurements', () => {
   assert.deepEqual(analysisPieData({ ...rows[0], total_area_m2: 800 }).areaSlices.map((row) => row.value), [600, 200]);
 });
 
-test('site charts stay compact and removed sections are absent', () => {
-  const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(SitesTab, {
-    data: { suitability: rows },
-  })));
-  assert.equal((html.match(/class="dash-area-pie"/g) || []).length, 2);
-  assert.match(html, /Choose an analysis/);
-  assert.match(html, /60%/);
-  assert.match(html, /Image area \(m²\)/);
-  assert.doesNotMatch(html, /Unique footprint|Footprint union|Analysis chart pages/);
-  assert.match(html, /Analysis 10/); // All analyses remain available in the tables.
-  assert.doesNotMatch(html, /Analysis 130|Analysis 148/);
-  assert.doesNotMatch(html, /Map drill-down|Next high and low tide|Expected tide height/);
+test('Project Sites compares ownership and all current statuses without analysis charts', () => {
+  const html = render(SitesTab, { data: {
+    summary: { project_sites: 1, mapped_points: 21, sites_with_warnings: 1 },
+    suitability: rows,
+    project_sites: [{ id: 7, name: 'Coastal site', organization_name: 'Coastal guardians', point_count: 21,
+      geometry: { type: 'Polygon', coordinates: [] },
+      point_status_counts: { planned: 1, assigned: 2, planted: 3, dead: 4, skipped: 5, unavailable: 6 },
+      eroded_point_count: 6,
+      warnings: [{ warning_type: 'deep_mud', label: 'Deep mud', severity: 'high', count: 8 }],
+    }],
+  }, onViewHistory: () => {} });
+  assert.match(html, /Compare project sites/);
+  assert.match(html, /Coastal guardians/);
+  assert.match(html, /Current locations across all planting dates/);
+  assert.match(html, /In eroded zones: <strong>6/);
+  assert.match(html, /Deep mud: <strong>8/);
+  assert.match(html, /View planting history/);
+  assert.doesNotMatch(html, /Choose an analysis|Canopy coverage|Plantable area|Risk area|Assignments<|Analyses</);
+  const dom = new JSDOM(html);
+  const document = dom.window.document;
+  assert.equal(document.querySelectorAll('table').length, 1);
+  assert.deepEqual([...document.querySelectorAll('.dash-site-statuses > div')].map((entry) => entry.textContent),
+    ['Planned1', 'Assigned2', 'Planted3', 'Dead4', 'Skipped5', 'Unavailable6']);
+  assert.ok(document.querySelector('a[href="/map?project_site_id=7&focus=site_points"]'));
+  assert.ok(document.querySelector('a[href="/monitoring?project_site_id=7"]'));
+  assert.ok(document.querySelector('a[href="/processing?action=review"]'));
+  dom.window.close();
 });
 
-test('empty site data renders without an analysis selector', () => {
-  const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(SitesTab, { data: {} })));
-  assert.doesNotMatch(html, /Choose an analysis/);
-  assert.match(html, /Save an image analysis/);
+test('empty Project Sites directs users to the current assignment workflow', () => {
+  const html = render(SitesTab, { data: {} });
+  assert.match(html, /No project sites in this view/);
+  assert.match(html, /Assign Points/);
+  assert.doesNotMatch(html, /Save an image analysis|Add a project site in the Zone Editor/);
 });
 
 const render = (Component, props = {}) => renderToStaticMarkup(createElement(MemoryRouter, null, createElement(Component, props)));
@@ -155,15 +172,20 @@ test('donut status labels and total match Map Analytics including deaths and ero
   assert.match(html, /Choose all project sites to compare with Planting Map/);
 });
 
-test('analysis dates and boundary information share the existing sites table', () => {
-  const html = render(SitesTab, { data: { suitability: [
-    { ...rows[0], footprint_quality: 'approximate_coverage_rectangle' },
-    { ...rows[1], footprint_quality: 'projected' },
+test('released sites keep Monitoring access without a misleading map link or invented counts', () => {
+  const html = render(SitesTab, { data: { project_sites: [
+    { id: 9, name: 'Released site', area_released_at: '2026-10-01', geometry: null,
+      point_count: 0, point_status_counts: {}, eroded_point_count: 0, warnings: [] },
   ] } });
-  assert.match(html, /Map boundary source/);
-  assert.match(html, /Estimated boundary/);
-  assert.match(html, /Boundary saved with the analysis/);
-  assert.doesNotMatch(html, /approximate_coverage_rectangle|Analysis freshness/);
+  assert.match(html, /Area released/);
+  assert.match(html, /No current boundary/);
+  assert.match(html, /No organization recorded/);
+  assert.match(html, /No mapped warnings/);
+  assert.match(html, /href="\/monitoring\?project_site_id=9"/);
+  assert.doesNotMatch(html, /href="\/map\?/);
+  const dom = new JSDOM(html);
+  assert.equal(dom.window.document.querySelector('.dash-site-statuses dd').textContent, '—');
+  dom.window.close();
 });
 
 test('planting goals retain saved targets without the unused inspection weekday controls', () => {
@@ -271,4 +293,70 @@ test('Seedling Health shows non-cumulative monthly death counts and zero-death m
   ]);
   dom.window.close();
   assert.match(render(EcologyTab, { data: {} }), /No recorded death history yet/);
+});
+
+test('Project Sites requests a current snapshot and restores the site and dates in planting history', async () => {
+  const dom = new JSDOM('<div id="root"></div>', { url: 'http://dashboard.example', pretendToBeVisual: true });
+  const requests = [];
+  const previous = new Map();
+  const globals = {
+    window: dom.window, document: dom.window.document, IS_REACT_ACT_ENVIRONMENT: true,
+    ResizeObserver: class { observe() {} disconnect() {} },
+    fetch: async (input, options = {}) => {
+      assert.equal(options.method || 'GET', 'GET');
+      const url = new URL(input, dom.window.location.origin);
+      requests.push(url);
+      if (url.pathname === '/api/dashboard/settings') return Response.json({ year: 2026 });
+      assert.match(url.pathname, /^\/api\/dashboard\/(overview|sites|ecology)$/);
+      return Response.json({ filter_options: { sites: [{ id: 7, name: 'Coastal site' }] },
+        summary: { project_sites: 0, mapped_points: 0, sites_with_warnings: 0 }, project_sites: [] });
+    },
+  };
+  for (const [key, value] of Object.entries(globals)) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  }
+  let root;
+  try {
+    root = createRoot(dom.window.document.querySelector('#root'));
+    await act(async () => root.render(createElement(MemoryRouter, null, createElement(Dashboard))));
+    const document = dom.window.document;
+    const dates = [...document.querySelectorAll('input[type="date"]')].map((input) => input.value);
+    assert.equal(dates.length, 2);
+    const chooseSite = document.querySelector('.dash-filters select');
+    await act(async () => {
+      chooseSite.value = '7';
+      chooseSite.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+    });
+    await act(async () => document.querySelector('#dash-tab-sites').click());
+    assert.equal(document.querySelectorAll('input[type="date"]').length, 0);
+    assert.equal(document.querySelector('.dash-report-button'), null);
+    assert.match(document.querySelector('.dash-filter-count').textContent, /Current snapshot/);
+    const snapshot = requests.filter((url) => url.pathname.endsWith('/sites')).at(-1);
+    assert.equal(snapshot.searchParams.get('site_id'), '7');
+    assert.equal(snapshot.searchParams.has('date_from'), false);
+    assert.equal(snapshot.searchParams.has('date_to'), false);
+    await act(async () => [...document.querySelectorAll('.dash-site-comparison button')]
+      .find((button) => button.textContent === 'View planting history').click());
+    assert.equal(document.querySelector('#dash-tab-ecology').getAttribute('aria-selected'), 'true');
+    assert.deepEqual([...document.querySelectorAll('input[type="date"]')].map((input) => input.value), dates);
+    assert.equal(document.querySelector('.dash-filters select').value, '7');
+    assert.ok(document.querySelector('.dash-report-button'));
+    const history = requests.filter((url) => url.pathname.endsWith('/ecology')).at(-1);
+    assert.equal(history.searchParams.get('site_id'), '7');
+    assert.equal(history.searchParams.get('date_from'), dates[0]);
+    assert.equal(history.searchParams.get('date_to'), dates[1]);
+    await act(async () => document.querySelector('#dash-tab-sites').click());
+    await act(async () => [...document.querySelectorAll('.dash-filter-actions button')]
+      .find((button) => button.textContent === 'Show all sites').click());
+    assert.equal(document.querySelector('.dash-filters select').value, '');
+    assert.equal(requests.filter((url) => url.pathname.endsWith('/sites')).at(-1).searchParams.has('site_id'), false);
+  } finally {
+    if (root) await act(async () => root.unmount());
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete globalThis[key];
+    }
+    dom.window.close();
+  }
 });

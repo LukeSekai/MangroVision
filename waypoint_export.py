@@ -4,13 +4,19 @@ MangroVision — GPS Waypoint Export Module
 Generate GPX, KML, and GeoJSON files from planting-point data
 so field workers can navigate to exact planting locations.
 
-No external dependencies — uses Python standard library only.
+The KMZ packager uses the existing Pillow dependency for embedded marker icons.
 """
 
 import json
+import re
+import unicodedata
 import xml.etree.ElementTree as ET
+from html import escape
+from io import BytesIO
+from zipfile import ZipFile, ZIP_DEFLATED
 from datetime import datetime
 from typing import List, Dict, Optional
+from waypoint_styles import gpx_symbol, is_eroded, marker_icon_png, marker_style_id, point_export_style
 
 
 # ====================================================================
@@ -20,6 +26,15 @@ from typing import List, Dict, Optional
 _GPX_NS = "http://www.topografix.com/GPX/1/1"
 _XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
 _MV_NS = "http://mangrovision.local/gpx/ext/1"
+
+# Optional current-location attribution supplied by saved-point exports.
+# Keep processing previews' existing GeoJSON contract when these are absent.
+_POINT_CONTEXT = ("point_id", "analysis_id", "image_name", "project_site_id", "project_site_name", "species", "navigation_name")
+
+
+def safe_export_stem(value):
+    text = unicodedata.normalize('NFKD', str(value or '')).encode('ascii', 'ignore').decode()
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', text).strip('-_')[:160] or 'planting_points'
 
 def generate_gpx(
     waypoints: List[Dict],
@@ -66,7 +81,7 @@ def generate_gpx(
 
     # <metadata>
     meta_el = ET.SubElement(gpx, _g("metadata"))
-    ET.SubElement(meta_el, _g("name")).text = "MangroVision Planting Waypoints"
+    ET.SubElement(meta_el, _g("name")).text = metadata.get('export_name') or "MangroVision Planting Waypoints"
     desc_parts = []
     if metadata.get("image_name"):
         desc_parts.append(f"Image: {metadata['image_name']}")
@@ -95,8 +110,10 @@ def generate_gpx(
             "lon": f"{lon:.8f}",
         })
 
-        wpt_name = wp.get("name", f"MV-{i:03d}")
+        wpt_name = wp.get('navigation_name') or wp.get("name") or f"MV-{i:03d}"
         ET.SubElement(wpt, _g("name")).text = wpt_name
+        if wp.get('navigation_name') and wp.get('name'):
+            ET.SubElement(wpt, _g('cmt')).text = wp['name']
 
         # Description
         desc_lines = [f"Planting Point #{wp.get('point_num', i)}"]
@@ -106,9 +123,17 @@ def generate_gpx(
             desc_lines.append(f"Area: {wp['area_m2']:.2f} m\u00b2")
         if wp.get("status"):
             desc_lines.append(f"Status: {wp['status']}")
+        if wp.get("species"):
+            desc_lines.append(f"Species: {wp['species']}")
+        if wp.get('name'):
+            desc_lines.append(wp['name'])
+        if wp.get('project_site_name'):
+            desc_lines.append(f"Project site: {wp['project_site_name']}")
+        if is_eroded(wp):
+            desc_lines.append(wp.get('availability_reason') or 'Inside an eroded zone')
         ET.SubElement(wpt, _g("desc")).text = " | ".join(desc_lines)
 
-        ET.SubElement(wpt, _g("sym")).text = "Flag, Green"
+        ET.SubElement(wpt, _g("sym")).text = gpx_symbol(wp)
         ET.SubElement(wpt, _g("type")).text = "Planting Point"
 
         # MangroVision extensions
@@ -121,6 +146,13 @@ def generate_gpx(
         ET.SubElement(mv, f"{{{_MV_NS}}}point_num").text = str(wp.get("point_num", i))
         if wp.get("status"):
             ET.SubElement(mv, f"{{{_MV_NS}}}status").text = wp["status"]
+        for key in (*_POINT_CONTEXT, "eroded_unavailable", "availability_reason"):
+            if wp.get(key) is not None:
+                value = wp[key]
+                ET.SubElement(mv, f"{{{_MV_NS}}}{key}").text = str(value).lower() if isinstance(value, bool) else str(value)
+        for key, value in point_export_style(wp).items():
+            if value is not None:
+                ET.SubElement(mv, f"{{{_MV_NS}}}{key}").text = value
 
     tree = ET.ElementTree(gpx)
     ET.indent(tree, space="  ")
@@ -140,6 +172,7 @@ _KML_NS = "http://www.opengis.net/kml/2.2"
 def generate_kml(
     waypoints: List[Dict],
     metadata: Optional[Dict] = None,
+    *, icon_paths: Optional[Dict] = None,
 ) -> str:
     """
     Build a KML 2.2 XML string from a list of planting-point dicts.
@@ -164,8 +197,8 @@ def generate_kml(
     doc = ET.SubElement(kml, "Document")
 
     # Document metadata
-    doc_name = "MangroVision Planting Waypoints"
-    if metadata.get("image_name"):
+    doc_name = metadata.get('export_name') or "MangroVision Planting Waypoints"
+    if not metadata.get('export_name') and metadata.get("image_name"):
         doc_name += f" — {metadata['image_name']}"
     ET.SubElement(doc, "name").text = doc_name
 
@@ -175,26 +208,33 @@ def generate_kml(
     if metadata.get("detection_mode"):
         desc_parts.append(f"Detection mode: {metadata['detection_mode']}")
     desc_parts.append(f"Total points: {len(waypoints)}")
+    desc_parts.append('Point colors: dead red; eroded orange; planted yellow; Bungalon green; '
+                      'Rhizophora magenta; other/unrecorded gray. '
+                      'Color priority: dead > eroded > planted > species. Species and erosion details remain recorded.')
     ET.SubElement(doc, "description").text = " | ".join(desc_parts)
 
     # Small, centered dots keep dense planting grids readable in Google Earth.
-    style = ET.SubElement(doc, "Style", {"id": "plantingPoint"})
-    icon_style = ET.SubElement(style, "IconStyle")
-    ET.SubElement(icon_style, "color").text = "ff00aa00"  # Green (aaBBGGRR)
-    ET.SubElement(icon_style, "scale").text = "0.35"
-    icon = ET.SubElement(icon_style, "Icon")
-    ET.SubElement(icon, "href").text = (
-        "https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png"
-    )
-    ET.SubElement(icon_style, "hotSpot", {
-        "x": "0.5", "y": "0.5", "xunits": "fraction", "yunits": "fraction",
-    })
-    label_style = ET.SubElement(style, "LabelStyle")
-    ET.SubElement(label_style, "scale").text = "0"
+    styled_points = {marker_style_id(point): point for point in waypoints}
+    for style_id, waypoint in styled_points.items():
+        appearance = point_export_style(waypoint)
+        style = ET.SubElement(doc, "Style", {"id": style_id})
+        icon_style = ET.SubElement(style, "IconStyle")
+        red, green, blue = (appearance['marker_color'][index:index+2] for index in (1, 3, 5))
+        # Packaged icons already contain their color; leave them untinted.
+        ET.SubElement(icon_style, "color").text = 'ffffffff' if icon_paths else f'ff{blue}{green}{red}'
+        ET.SubElement(icon_style, "scale").text = '0.35'
+        icon = ET.SubElement(icon_style, "Icon")
+        ET.SubElement(icon, "href").text = (icon_paths[style_id] if icon_paths else
+            'https://maps.google.com/mapfiles/kml/shapes/placemark_circle.png')
+        ET.SubElement(icon_style, "hotSpot", {
+            "x": "0.5", "y": "0.5", "xunits": "fraction", "yunits": "fraction",
+        })
+        label_style = ET.SubElement(style, "LabelStyle")
+        ET.SubElement(label_style, "scale").text = "0"
 
     # Folder for planting points
     folder = ET.SubElement(doc, "Folder")
-    ET.SubElement(folder, "name").text = "MangroVision Planting Points"
+    ET.SubElement(folder, "name").text = metadata.get('export_name') or "MangroVision Planting Points"
     ET.SubElement(folder, "open").text = "1"
 
     for i, wp in enumerate(waypoints, 1):
@@ -206,11 +246,10 @@ def generate_kml(
         pm = ET.SubElement(folder, "Placemark")
         pm_name = wp.get("name", f"MV-{i:03d}")
         ET.SubElement(pm, "name").text = pm_name
-        ET.SubElement(pm, "styleUrl").text = "#plantingPoint"
+        ET.SubElement(pm, "styleUrl").text = f'#{marker_style_id(wp)}'
 
         # Rich HTML description
         html = (
-            "<![CDATA["
             "<table style='font-family:Arial;font-size:12px'>"
             f"<tr><td><b>Point</b></td><td>#{wp.get('point_num', i)}</td></tr>"
             f"<tr><td><b>Latitude</b></td><td>{lat:.7f}°</td></tr>"
@@ -221,9 +260,23 @@ def generate_kml(
         if wp.get("area_m2") is not None:
             html += f"<tr><td><b>Area</b></td><td>{wp['area_m2']:.2f} m²</td></tr>"
         if wp.get("status"):
-            html += f"<tr><td><b>Status</b></td><td>{wp['status']}</td></tr>"
-        html += "</table>]]>"
+            html += f"<tr><td><b>Status</b></td><td>{escape(str(wp['status']))}</td></tr>"
+        for key, label in (('species', 'Species'), ('project_site_name', 'Project site'), ('image_name', 'Analysis')):
+            if wp.get(key):
+                html += f'<tr><td><b>{label}</b></td><td>{escape(str(wp[key]))}</td></tr>'
+        if is_eroded(wp):
+            html += f'<tr><td><b>Erosion</b></td><td>{escape(str(wp.get("availability_reason") or "Inside an eroded zone"))}</td></tr>'
+        html += "</table>"
         ET.SubElement(pm, "description").text = html
+
+        context = {key: wp[key] for key in (*_POINT_CONTEXT, "eroded_unavailable", "availability_reason")
+                   if wp.get(key) is not None}
+        context.update({key: value for key, value in point_export_style(wp).items() if value is not None})
+        if context:
+            data = ET.SubElement(pm, "ExtendedData")
+            for key, value in context.items():
+                item = ET.SubElement(data, "Data", {"name": key})
+                ET.SubElement(item, "value").text = str(value).lower() if isinstance(value, bool) else str(value)
 
         point = ET.SubElement(pm, "Point")
         ET.SubElement(point, "coordinates").text = f"{lon:.8f},{lat:.8f},0"
@@ -237,6 +290,18 @@ def generate_kml(
     return buf.getvalue().decode("utf-8")
 
 
+def generate_kmz(waypoints: List[Dict], metadata: Optional[Dict] = None) -> bytes:
+    """Package one KML and its generated icons, with no remote icon references."""
+    variants = {marker_style_id(point): point_export_style(point) for point in waypoints}
+    paths = {style_id: f'icons/{style_id}.png' for style_id in variants}
+    output = BytesIO()
+    with ZipFile(output, 'w', compression=ZIP_DEFLATED) as archive:
+        archive.writestr('doc.kml', generate_kml(waypoints, metadata, icon_paths=paths))
+        for style_id, appearance in variants.items():
+            archive.writestr(paths[style_id], marker_icon_png(appearance['marker_color']))
+    return output.getvalue()
+
+
 # ====================================================================
 #  GeoJSON
 # ====================================================================
@@ -244,6 +309,7 @@ def generate_kml(
 def generate_geojson(
     waypoints: List[Dict],
     metadata: Optional[Dict] = None,
+    *, include_style: bool = False,
 ) -> str:
     """
     Build a GeoJSON FeatureCollection string from planting-point dicts.
@@ -283,19 +349,29 @@ def generate_geojson(
                 "status": wp.get("status", "planned"),
                 "eroded_unavailable": bool(wp.get("eroded_unavailable", False)),
                 "availability_reason": wp.get("availability_reason"),
+                **{key: wp[key] for key in _POINT_CONTEXT if key in wp},
             },
         }
+        if include_style:
+            appearance = point_export_style(wp)
+            feature['properties'].update({
+                'marker-color': appearance['marker_color'], 'marker-size': 'small',
+                'marker-symbol': '',
+                **appearance,
+                'mangrovision_style': appearance,
+            })
         features.append(feature)
 
     collection = {
         "type": "FeatureCollection",
-        "name": "MangroVision Planting Points",
+        "name": metadata.get('export_name') or "MangroVision Planting Points",
         "metadata": {
             "generator": "MangroVision",
             "image_name": metadata.get("image_name"),
             "analyzed_at": metadata.get("analyzed_at"),
             "detection_mode": metadata.get("detection_mode"),
             "total_points": len(features),
+            **{key: metadata[key] for key in ('export_name', 'exported_at') if metadata.get(key)},
         },
         "features": features,
     }

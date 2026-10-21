@@ -83,6 +83,8 @@ htmlcov/
 !MangroVision_New/client/src/utils/apiReadCache.test.js
 !MangroVision_New/client/src/utils/mapPointStats.test.js
 !MangroVision_New/client/src/utils/mapPointFilters.test.js
+!MangroVision_New/client/src/utils/pointExports.test.js
+!MangroVision_New/client/src/components/SavedPointExports.test.js
 !MangroVision_New/client/src/utils/mapLayerVisibility.test.js
 !MangroVision_New/client/src/utils/cachedTileLayer.test.js
 !MangroVision_New/client/dev/localOrthophotoTiles.test.js

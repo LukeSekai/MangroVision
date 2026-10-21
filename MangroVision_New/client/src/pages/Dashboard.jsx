@@ -6,7 +6,6 @@ import GrowthGuide from '../components/GrowthGuide';
 import AppointmentNotice from '../components/AppointmentNotice';
 import RestorationReportDialog from '../components/RestorationReportDialog';
 import Modal from '../components/Modal';
-import { selectAnalysis, analysisPieData } from '../utils/dashboardAnalyses';
 import { DASHBOARD_ENDPOINTS, dashboardSectionsForTab } from '../utils/dashboardLoading';
 import {
   Bar,
@@ -162,25 +161,9 @@ function formatCount(value) {
   return parsed === null ? '—' : COUNT_FORMAT.format(parsed);
 }
 
-function formatDecimal(value) {
-  const parsed = numberOrNull(value);
-  return parsed === null ? '—' : DECIMAL_FORMAT.format(parsed);
-}
-
 function formatPercent(value) {
   const parsed = numberOrNull(value);
   return parsed === null ? '—' : `${DECIMAL_FORMAT.format(parsed)}%`;
-}
-
-function formatArea(value) {
-  const parsed = numberOrNull(value);
-  if (parsed === null) return '—';
-  if (Math.abs(parsed) >= 10000) return `${DECIMAL_FORMAT.format(parsed / 10000)} ha`;
-  return `${COUNT_FORMAT.format(parsed)} m²`;
-}
-
-function formatSquareMetres(value) {
-  return numberOrNull(value) === null ? '—' : `${formatDecimal(value)} m²`;
 }
 
 function formatDate(value, includeTime = false) {
@@ -457,14 +440,6 @@ function LifecycleChart({ rows }) {
       </div>
     </div>
   );
-}
-
-function boundarySourceLabel(value) {
-  const source = String(value || '').toLowerCase();
-  if (source.includes('approximate') || source.includes('estimated')) return 'Estimated boundary';
-  if (['projected', 'authoritative'].includes(source)) return 'Boundary saved with the analysis';
-  if (!source || source === 'unavailable') return 'Boundary not recorded';
-  return 'Boundary source not specified';
 }
 
 function OverviewTab({ data }) {
@@ -1036,193 +1011,55 @@ function EcologyTab({ data }) {
   );
 }
 
-function AnalysisPieCard({ title, subtitle, slices, formatValue, percentagesOnly = false, emptyHint, note }) {
-  const total = slices.reduce((sum, row) => sum + row.value, 0);
-  return (
-    <Card title={title} subtitle={subtitle} className="dash-suitability-card">
-      {total > 0 ? (
-        <>
-          <div className="dash-area-pie" role="img" aria-label={`${title}: ${slices.map((row) => `${row.name} ${formatValue(row.value)}`).join(', ')}`}>
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={slices.filter((row) => row.value > 0)} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={96} stroke="#fff" strokeWidth={2}>
-                  {slices.filter((row) => row.value > 0).map((row) => <Cell key={row.key} fill={COLORS[row.key]} />)}
-                </Pie>
-                <Tooltip formatter={(value, name) => [percentagesOnly ? formatValue(value) : `${formatValue(value)} (${formatPercent(value / total * 100)})`, name]} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-          <ul className="dash-area-pie-legend">
-            {slices.map((row) => (
-              <li key={row.key}>
-                <span className="dash-area-pie-swatch" style={{ backgroundColor: COLORS[row.key] }} aria-hidden="true" />
-                <span>{row.name}</span>
-                <strong>{formatValue(row.value)}{!percentagesOnly ? <small>{formatPercent(row.value / total * 100)}</small> : null}</strong>
-              </li>
-            ))}
-          </ul>
-          <p className="dash-area-pie-note">{note}</p>
-        </>
-      ) : <EmptyState title="No measurement available">{emptyHint}</EmptyState>}
-    </Card>
-  );
-}
+const SITE_STATUSES = ['planned', 'assigned', 'planted', 'dead', 'skipped', 'unavailable'];
 
-function SitesTab({ data }) {
-  const [selectedAnalysisId, setSelectedAnalysisId] = useState('');
+function SitesTab({ data, onViewHistory }) {
   const summary = data?.summary || {};
-  const { analyses: suitability, selected } = selectAnalysis(arrayOf(data?.suitability), selectedAnalysisId);
-  const { areaSlices, canopySlices, areaMessage } = analysisPieData(selected);
-  const warnings = arrayOf(data?.warning_exposure).map((row) => ({ ...row, name: row.label || row.warning_type || 'Warning' }));
-  const projectSites = arrayOf(data?.project_sites);
-  const projectSitesHaveRiskCounts = projectSites.some(
-    (site) => numberOrNull(site.warning_point_count) !== null,
-  );
-  const projectSitesWithRisk = projectSitesHaveRiskCounts
-    ? projectSites.filter((site) => firstNumber(site.warning_point_count, 0) > 0)
-    : projectSites;
-
-
+  const sites = arrayOf(data?.project_sites);
   return (
     <div className="dash-tab-panel">
-      <KpiStrip>
-        <KpiCard label="Project sites" value={formatCount(summary.project_sites)} hint="Registered project sites in this view" />
-        <KpiCard label="Analyses" value={formatCount(summary.analyses)} hint="Analyses in the selected period" tone="blue" />
-        <KpiCard label="Plantable area" value={formatArea(summary.plantable_area_m2)} hint="Sum across analyses; overlaps may repeat" tone="emerald" />
-        <KpiCard label="Risk area" value={formatArea(summary.danger_area_m2)} hint="Mapped exclusion areas; overlaps may repeat" tone="red" />
-        <KpiCard label="Points inside risk areas" value={formatCount(summary.warning_exposed_points)} hint="Current planting locations within mapped risk areas" tone="amber" />
+      <KpiStrip className="dash-site-kpis">
+        <KpiCard label="Project sites" value={formatCount(summary.project_sites)} hint="Sites in this view, including released sites" />
+        <KpiCard label="Mapped locations" value={formatCount(summary.mapped_points)} hint="Currently owned by these sites" tone="blue" />
+        <KpiCard label="Sites with warnings" value={formatCount(summary.sites_with_warnings)} hint="Mapped warnings or locations in eroded zones" tone="amber" />
       </KpiStrip>
-
-      <div className="dash-grid">
-        {selected ? (
-          <div className="dash-analysis-selector">
-            <label htmlFor="site-analysis-select">
-              <span>Choose an analysis</span>
-              <select id="site-analysis-select" value={String(selected.analysis_id)} onChange={(event) => setSelectedAnalysisId(event.target.value)}>
-                {suitability.map((row) => <option key={row.analysis_id} value={String(row.analysis_id)}>{row.label}</option>)}
-              </select>
-            </label>
-            <p><strong>{selected.label}</strong> · {selected.site_name || 'Not linked to a project site'} · {formatDate(selected.analyzed_at)}</p>
-          </div>
-        ) : null}
-        <AnalysisPieCard
-          title="Plantable area and risk area"
-          subtitle="Parts of the selected image, measured in square metres."
-          slices={areaSlices}
-          formatValue={formatSquareMetres}
-          emptyHint={selected ? areaMessage : 'Save an image analysis to see its area breakdown.'}
-          note={areaSlices.some((row) => row.key === 'missing') ? 'Other area is the remaining image area outside the recorded plantable and risk areas.' : 'Green: suitable for planting. Red: excluded from planting.'}
-        />
-        <AnalysisPieCard
-          title="Canopy coverage"
-          subtitle="Share of the selected image covered by tree canopy."
-          slices={canopySlices}
-          formatValue={formatPercent}
-          percentagesOnly
-          emptyHint={selected ? 'Canopy coverage was not recorded for this analysis.' : 'Save an image analysis to see its canopy coverage.'}
-          note="Canopy coverage is shown separately because canopy can also be inside risk areas."
-        />
-        {suitability.length > 0 ? (
-          <details className="dash-analysis-data dash-table-disclosure">
-            <summary>View area measurements for all {suitability.length} analyses</summary>
-            <DataTable caption="Saved analysis area measurements" rows={suitability} columns={[
-              { key: 'label', label: 'Analysis' },
-              { key: 'site_name', label: 'Project site', render: (row) => row.site_name || 'Not linked to a site' },
-              { key: 'analyzed_at', label: 'Analyzed', render: (row) => formatDate(row.analyzed_at) },
-              { key: 'footprint_quality', label: 'Map boundary source', render: (row) => boundarySourceLabel(row.footprint_quality) },
-              { key: 'total_area_m2', label: 'Image area (m²)', render: (row) => formatSquareMetres(row.total_area_m2) },
-              { key: 'plantable_area_m2', label: 'Plantable area (m²)', render: (row) => formatSquareMetres(row.plantable_area_m2) },
-              { key: 'danger_area_m2', label: 'Risk area (m²)', render: (row) => formatSquareMetres(row.danger_area_m2) },
-              { key: 'canopy_coverage_pct', label: 'Canopy coverage', render: (row) => formatPercent(row.canopy_coverage_pct) },
-            ]} />
-          </details>
-        ) : null}
-
-        <ChartCard
-          title="Planting points inside risk areas"
-          subtitle="Planting locations grouped by the type of risk. The table also shows the risk level."
-          data={warnings}
-          className="dash-card-full dash-risk-card"
-          footer={projectSitesWithRisk.length ? (
-            <div className="dash-risk-site-list" aria-label="Project sites with planting points inside risk areas">
-              <div className="dash-risk-site-list-head">
-                <strong>View risk areas by project site</strong>
-                <span>Choose a site to open its planting points on the map.</span>
-              </div>
-              <div className="dash-risk-site-actions">
-                {projectSitesWithRisk.map((site) => (
-                  <div className="dash-risk-site-action" key={site.id}>
-                    <div>
-                      <strong>{site.name || `Site ${site.id}`}</strong>
-                      {numberOrNull(site.warning_point_count) !== null ? (
-                        <span>{formatCount(site.warning_point_count)} planting points inside risk areas</span>
-                      ) : null}
-                    </div>
-                    <MapLink
-                      className="dash-table-map-link"
-                      to={`/map?project_site_id=${encodeURIComponent(site.id)}&focus=risk_areas`}
-                      state={{ mapFocusSite: site }}
-                      aria-label={`View ${site.name || `Site ${site.id}`} risk areas on the map`}
-                    >
-                      View on map
-                    </MapLink>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-          chartLabel="Stacked bars of planned and planted points exposed to mapped warning types"
-          xLabel="Risk area type"
-          yLabel="Number of planting points"
-          height={320}
-          columns={[
-            { key: 'name', label: 'Warning' },
-            { key: 'severity', label: 'Risk level', render: (row) => <span className={`dash-status is-${String(row.severity || 'neutral').toLowerCase()}`}>{row.severity || 'Not set'}</span> },
-            { key: 'planned', label: 'Planned', render: (row) => formatCount(row.planned) },
-            { key: 'planted', label: 'Planted', render: (row) => formatCount(row.planted) },
-            { key: 'count', label: 'Locations at risk', render: (row) => formatCount(row.count) },
-          ]}
-          emptyHint="Create warning zones or link warning exposure to planting points to populate this view."
-        >
-          <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={warnings} margin={{ top: 12, right: 12, bottom: 28, left: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="name" interval={0} angle={-18} textAnchor="end" height={54} tick={{ fontSize: 11 }} />
-              <YAxis allowDecimals={false} width={44} />
-              <Tooltip formatter={(value, name) => [formatCount(value), name]} />
-              <Legend verticalAlign="top" height={34} />
-              <Bar dataKey="planned" name="Planned points" stackId="warning" fill={COLORS.assigned} maxBarSize={120} />
-              <Bar dataKey="planted" name="Planted points" stackId="warning" fill={COLORS.planted} maxBarSize={120} radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <Card title="Project site records" subtitle="Planting assignments, saved image analyses, and map locations for each project site." className="dash-card-full">
-          {projectSites.length ? (
-            <DataTable caption="Project site summary" rows={projectSites} columns={[
-              { key: 'name', label: 'Project site', render: (row) => <strong>{row.name || `Site ${row.id}`}</strong> },
-              { key: 'assignment_count', label: 'Assignments', render: (row) => formatCount(row.assignment_count) },
-              { key: 'analysis_count', label: 'Analyses', render: (row) => formatCount(row.analysis_count) },
-              { key: 'point_count', label: 'Planting points', render: (row) => formatCount(row.point_count) },
-              {
-                key: 'map_action',
-                label: 'Map',
-                render: (row) => (
-                  <MapLink
-                    className="dash-table-map-link"
-                    to={`/map?project_site_id=${encodeURIComponent(row.id)}&focus=site_points`}
-                    state={{ mapFocusSite: row }}
-                    aria-label={`View planting points for ${row.name || `Site ${row.id}`} on the map`}
-                  >
-                    View points
-                  </MapLink>
-                ),
-              },
-              { key: 'notes', label: 'Notes', render: (row) => row.notes || '—' },
-            ]} />
-          ) : <EmptyState title="No project sites recorded yet">Add a project site in the Zone Editor to organize its planting assignments and image analyses.</EmptyState>}
-        </Card>
-      </div>
+      <Card title="Compare project sites" className="dash-site-comparison"
+        subtitle="Current locations across all planting dates. Each location counts once; released locations leave their former site's totals."
+        actions={onViewHistory ? <button type="button" className="dash-link-button" onClick={onViewHistory}>View planting history</button> : null}>
+        {sites.length ? <DataTable caption="Current project site comparison" rows={sites} columns={[
+          { key: 'name', label: 'Project site', render: (site) => <div className="dash-site-name">
+            <strong>{site.name || `Site ${site.id}`}</strong>
+            {site.area_released_at ? <span className="dash-status">Area released</span> : null}
+          </div> },
+          { key: 'organization_name', label: 'Organization', render: (site) => site.organization_name || 'No organization recorded' },
+          { key: 'point_count', label: 'Locations', render: (site) => <strong>{formatCount(site.point_count)}</strong> },
+          { key: 'point_status_counts', label: 'Current status', render: (site) => <dl className="dash-site-statuses">
+            {SITE_STATUSES.map((status) => <div key={status}>
+              <dt><i aria-hidden="true" style={{ backgroundColor: POINT_STATUS_COLORS[status] }} />{POINT_STATUS_LABELS[status]}</dt>
+              <dd>{formatCount(site.point_status_counts?.[status])}</dd>
+            </div>)}
+          </dl> },
+          { key: 'warnings', label: 'Warnings', render: (site) => <div className="dash-site-warnings">
+            {site.eroded_point_count > 0 || arrayOf(site.warnings).length ? <ul>
+              {site.eroded_point_count > 0 ? <li>In eroded zones: <strong>{formatCount(site.eroded_point_count)}</strong> locations</li> : null}
+              {arrayOf(site.warnings).map((warning) => <li key={`${warning.warning_type}-${warning.severity}`}>
+                {warning.warning_type === 'high_mortality' ? 'High recorded mortality' : warning.label}
+                : <strong>{formatCount(warning.count)}</strong> locations<small> · {warning.severity}</small>
+              </li>)}
+            </ul> : <span>No mapped warnings</span>}
+          </div> },
+          { key: 'actions', label: 'Open', render: (site) => <div className="dash-site-actions">
+            {site.geometry ? <MapLink className="dash-table-map-link"
+              to={`/map?project_site_id=${encodeURIComponent(site.id)}&focus=site_points`}
+              state={{ mapFocusSite: site }} aria-label={`View ${site.name || `Site ${site.id}`} on the map`}>View map</MapLink>
+              : <span className="dash-site-no-boundary">No current boundary</span>}
+            <Link className="dash-table-map-link" to={`/monitoring?project_site_id=${encodeURIComponent(site.id)}`}
+              aria-label={`Open Monitoring for ${site.name || `Site ${site.id}`}`}>Monitoring</Link>
+          </div> },
+        ]} /> : <EmptyState title="No project sites in this view">Choose another project site, or use Assign Points to create a site when assigning available locations.</EmptyState>}
+        <p className="dash-site-scope">Unclaimed locations appear on Planting Map. Warning categories can overlap; each category counts a location once. Mortality warnings use recorded planting history.</p>
+        <p className="dash-site-analysis-link">Image area and canopy measurements are available in <Link to="/processing?action=review">Analyze Image</Link>.</p>
+      </Card>
     </div>
   );
 }
@@ -1343,7 +1180,8 @@ export default function Dashboard() {
   const [annualGoals, setAnnualGoals] = useState({});
   const [todayManila] = useState(dateInManila);
 
-  const invalidPeriod = Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
+  const currentSitesView = activeTab === 'sites';
+  const invalidPeriod = !currentSitesView && Boolean(filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo);
   const settingsYear = useMemo(() => {
     const toYear = Number(String(filters.dateTo || '').slice(0, 4));
     if (Number.isInteger(toYear) && toYear >= 2000) return toYear;
@@ -1355,12 +1193,12 @@ export default function Dashboard() {
 
   const queryString = useMemo(() => {
     const query = new URLSearchParams();
-    if (filters.dateFrom) query.set('date_from', filters.dateFrom);
-    if (filters.dateTo) query.set('date_to', filters.dateTo);
+    if (!currentSitesView && filters.dateFrom) query.set('date_from', filters.dateFrom);
+    if (!currentSitesView && filters.dateTo) query.set('date_to', filters.dateTo);
     if (filters.siteId) query.set('site_id', filters.siteId);
     query.set('bucket', 'week');
     return query.toString();
-  }, [filters]);
+  }, [filters, currentSitesView]);
 
 
   useEffect(() => {
@@ -1507,19 +1345,20 @@ export default function Dashboard() {
       <section className="dash-filter-shell" aria-labelledby="dashboard-filters-title">
         <div className="dash-filter-head">
           <div>
-            <h2 id="dashboard-filters-title">Choose what to view</h2>
-            <p>Select a date range and, if needed, one project site.</p>
+            <h2 id="dashboard-filters-title">{currentSitesView ? 'Choose a project site' : 'Choose what to view'}</h2>
+            <p>{currentSitesView ? 'Current locations and warnings across all planting dates.' : 'Select a date range and, if needed, one project site.'}</p>
           </div>
           <div className="dash-filter-actions">
-            <span className="dash-filter-count">{activeFilterCount ? 'Custom view' : 'This year so far'}</span>
-            <button type="button" onClick={() => setFilters(makeYtdFilters())}>Show this year</button>
-            <button type="button" className="dash-report-button" aria-haspopup="dialog" disabled={invalidPeriod} onClick={() => setReportSelection({
+            <span className="dash-filter-count">{currentSitesView ? 'Current snapshot' : activeFilterCount ? 'Custom view' : 'This year so far'}</span>
+            {currentSitesView ? <button type="button" onClick={() => changeFilter('siteId', '')}>Show all sites</button> : <button type="button" onClick={() => setFilters(makeYtdFilters())}>Show this year</button>}
+            {!currentSitesView && <button type="button" className="dash-report-button" aria-haspopup="dialog" disabled={invalidPeriod} onClick={() => setReportSelection({
               ...filters, dateFrom: filters.dateFrom || defaultFilters.dateFrom, dateTo: filters.dateTo || defaultFilters.dateTo,
               type: activeTab === 'operations' ? 'organizations' : activeTab === 'ecology' ? 'monitoring' : 'planting',
-            })}>Download Report</button>
+            })}>Download Report</button>}
           </div>
         </div>
-        <div className="dash-filters">
+        <div className={`dash-filters${currentSitesView ? ' dash-site-filter' : ''}`}>
+          {!currentSitesView && <>
           <label>
             <span>From</span>
             <input type="date" value={filters.dateFrom} max={filters.dateTo && filters.dateTo < todayManila ? filters.dateTo : todayManila} onChange={(event) => changeFilter('dateFrom', event.target.value)} />
@@ -1529,6 +1368,7 @@ export default function Dashboard() {
             <input type="date" value={filters.dateTo} min={filters.dateFrom || undefined} max={todayManila} aria-invalid={invalidPeriod} aria-describedby={invalidPeriod ? 'dashboard-period-error' : undefined} onChange={(event) => changeFilter('dateTo', event.target.value)} />
             {invalidPeriod && <span id="dashboard-period-error" className="form-field-error" role="alert">Choose an end date on or after the start date.</span>}
           </label>
+          </>}
           <label>
             <span>Project site</span>
             <select value={filters.siteId} onChange={(event) => changeFilter('siteId', event.target.value)}>
@@ -1578,7 +1418,10 @@ export default function Dashboard() {
         ) : null}
         {tab === 'sites' ? (
           <DatasetBoundary loading={loading.sites} error={errors.sites} data={datasets.sites}>
-            <SitesTab data={datasets.sites || {}} />
+            <SitesTab data={datasets.sites || {}} onViewHistory={() => {
+              setVisitedTabs((current) => current.includes('ecology') ? current : [...current, 'ecology']);
+              setActiveTab('ecology');
+            }} />
           </DatasetBoundary>
         ) : null}
       </section>

@@ -11,10 +11,12 @@ let server, dom, root, createRoot, RetainedRoutes, Panel, PanelCard, useMapStore
 let PlantingMapWorkspace, Sidebar, MapView, Modal;
 const pages = new Map();
 const originalGlobals = new Map();
+const windowErrors = [];
 let requests, responses, mutations;
 
 before(async () => {
   dom = new JSDOM('<div id="root"></div>', { url: 'http://workspace.example', pretendToBeVisual: true });
+  dom.window.addEventListener('error', (event) => { windowErrors.push(event.error); event.preventDefault(); });
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
     Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true,
@@ -88,6 +90,7 @@ after(async () => {
 });
 
 beforeEach(() => {
+  windowErrors.length = 0;
   requests = [];
   responses = new Map([['/api/analyses/', []], ['/api/project-sites', { features: [] }], ['/api/planters/map-points', []]]);
   mutations = [];
@@ -97,7 +100,11 @@ beforeEach(() => {
   useProcessingStore.setState({ startProcess: originalStartProcess });
   root = createRoot(document.getElementById('root'));
 });
-afterEach(async () => { await act(async () => root.unmount()); });
+afterEach(async () => {
+  await act(async () => root.unmount());
+  await new Promise((resolve) => dom.window.requestAnimationFrame(resolve));
+  assert.deepEqual(windowErrors, [], 'map teardown must not leave callbacks drawing on a removed canvas');
+});
 
 function Navigation() {
   const navigate = useNavigate();
@@ -987,6 +994,39 @@ test('Assign Points starts empty and only selected map points become planting wo
   assert.deepEqual(mutations[0],{ path:'/api/planters/organizations/22/assignments',body:{ planting_point_ids:[2],planting_schedule_id:31 } });
 });
 
+test('Assign Points matches main-map point sizes through zoom and restores species colors after selection', async () => {
+  assignmentFixture(undefined, [1, 2].map((id) => ({ id, point_num: id, analysis_id: 1,
+    latitude: 10.780, longitude: 122.625 + id * .0001, planting_status: 'planned',
+    species: id === 1 ? 'bungalon' : 'rhizophora' })));
+  await renderPlantingWorkspace('/planters?organization_id=22');
+  const map = useMapStore.getState().mapInstance;
+  const layers = () => {
+    const overlay = new Map(), base = new Map();
+    map.eachLayer((layer) => {
+      if (layer.options?.sitePointId) overlay.set(layer.options.sitePointId, layer);
+      if (layer.options?.mgPointId) base.set(layer.options.mgPointId, layer);
+    });
+    return { overlay, base };
+  };
+  for (const zoom of [17, 19, 21, 22]) {
+    await act(async () => map.setZoom(zoom, { animate: false }));
+    const { overlay, base } = layers();
+    for (const id of [1, 2]) {
+      assert.equal(overlay.get(id).getRadius(), base.get(id).getRadius());
+      assert.equal(overlay.get(id).options.weight, base.get(id).options.weight);
+      assert.equal(overlay.get(id).options.fillColor, id === 1 ? '#16a34a' : '#db2777');
+    }
+  }
+  await pickAssignmentPoint(2);
+  await act(async () => map.setZoom(18, { animate: false }));
+  const { overlay, base } = layers();
+  assert.equal(overlay.get(2).options.fillColor, '#7c3aed');
+  assert.equal(overlay.get(2).getRadius(), base.get(2).getRadius());
+  await pickAssignmentPoint(2);
+  assert.equal(layers().overlay.get(2).options.fillColor, '#db2777');
+  assert.equal(mutations.length, 0);
+});
+
 test('the Planting Map starts with its overview and has no Next steps cards', async () => {
   await render(pages.get('MapAnalytics'));
   assert.equal(document.querySelector('.next-actions'), null);
@@ -999,6 +1039,93 @@ test('selected mixed species are submitted together without a site or species ov
   await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 2 points'));
   assert.deepEqual(mutations[0].body,{ planting_point_ids:[1,2],planting_schedule_id:31 });
 });
+
+for (const pointerType of ['mouse', 'touch']) {
+test(`Assign Points brushes only during a held primary stroke (${pointerType})`, async () => {
+  const locations = [
+    { id: 1, point_num: 1, analysis_id: 1, latitude: 10.78, longitude: 122.625, planting_status: 'planned', species: 'bungalon' },
+    { id: 2, point_num: 2, analysis_id: 1, latitude: 10.78, longitude: 122.6257, planting_status: 'planned', species: 'rhizophora' },
+  ];
+  assignmentFixture(undefined, locations);
+  await renderPlantingWorkspace('/planters?organization_id=22');
+  const map = useMapStore.getState().mapInstance;
+  await act(async () => map.setView([10.78, 122.62535], 20, { animate: false }));
+  const container = map.getContainer();
+  const captures = new Set();
+  container.setPointerCapture = (id) => captures.add(id);
+  container.hasPointerCapture = (id) => captures.has(id);
+  container.releasePointerCapture = (id) => captures.delete(id);
+  const selected = () => useMapStore.getState().assignmentSelectedPointIds;
+  const tool = (label) => [...document.querySelectorAll('.planting-point-selector button')].find((item) => item.textContent === label);
+  const pointer = async (type, longitude, buttons = 0, target = container, button = 0, pointerId = 1) => {
+    const point = map.latLngToContainerPoint([10.78, longitude]);
+    const event = new window.MouseEvent(type, { bubbles: true, cancelable: true,
+      clientX: point.x, clientY: point.y, buttons, button });
+    Object.defineProperties(event, { pointerType: { value: pointerType }, pointerId: { value: pointerId } });
+    await act(async () => target.dispatchEvent(event));
+    return event;
+  };
+  await click(tool('Brush select'));
+  assert.match(document.querySelector('.planting-point-selector').textContent, /Hold the left mouse button and drag/);
+  assert.equal(map.dragging.enabled(), false);
+  await pointer('pointermove', locations[0].longitude);
+  await pointer('pointermove', locations[1].longitude, 1);
+  assert.deepEqual(selected(), [], 'hovering or entering with the button already held must not begin a stroke');
+  await pointer('pointerdown', locations[0].longitude, 2, container, 2);
+  await pointer('pointermove', locations[0].longitude, 2);
+  assert.deepEqual(selected(), [], 'the secondary button must not paint');
+  await pointer('pointerdown', locations[0].longitude, 1);
+  assert.deepEqual(selected(), [1]);
+  assert.ok(captures.has(1));
+  assert.match(document.querySelector('.planting-point-selector').textContent, /Release to stop brushing/);
+  await pointer('pointerup', locations[0].longitude, 0, window);
+  await pointer('click', locations[0].longitude);
+  await pointer('pointermove', locations[1].longitude);
+  assert.deepEqual(selected(), [1], 'release outside the map and the compatibility click must not latch painting');
+  assert.equal(captures.size, 0);
+  await pointer('pointerdown', locations[1].longitude, 1);
+  await pointer('pointermove', locations[0].longitude, 1);
+  await pointer('pointerup', locations[0].longitude);
+  assert.deepEqual(new Set(selected()), new Set([1, 2]), 'a new held drag may add more points');
+  await click(tool('Brush erase'));
+  await pointer('pointermove', locations[0].longitude);
+  assert.deepEqual(new Set(selected()), new Set([1, 2]), 'hovering must not erase');
+  await pointer('pointerdown', locations[0].longitude, 1);
+  await pointer('pointerup', locations[0].longitude);
+  await pointer('pointermove', locations[1].longitude);
+  assert.deepEqual(selected(), [2], 'erasing stops on release');
+  await click(tool('Clear'));
+  await click(tool('Brush select'));
+  for (const reason of ['blur', 'pointercancel', 'pointerleave', 'lostpointercapture', 'zoom', 'control']) {
+    await pointer('pointerdown', 122.62535, 1);
+    if (reason === 'blur') await act(async () => window.dispatchEvent(new window.Event('blur')));
+    else if (reason === 'zoom') await act(async () => { map.fire('zoomstart'); map.fire('zoomend'); });
+    else if (reason === 'control') await pointer('pointermove', locations[0].longitude, 1, container.querySelector('.leaflet-control-zoom-in'));
+    else await pointer(reason, 122.62535, 0, reason === 'pointercancel' ? window : container);
+    await pointer('pointermove', locations[0].longitude, 1);
+    assert.deepEqual(selected(), [], `${reason} must end the stroke until a fresh press`);
+    assert.equal(captures.size, 0);
+  }
+  if (pointerType === 'mouse') {
+    await pointer('pointerdown', 122.62535, 1);
+    await pointer('pointermove', locations[0].longitude, 0);
+    await pointer('pointermove', locations[0].longitude, 1);
+    assert.deepEqual(selected(), [], 'missing pointerup is recovered from the released-button state');
+  }
+  await pointer('pointerdown', 122.62535, 1);
+  await pointer('pointerup', 122.62535, 0, window, 0, 2);
+  await pointer('pointermove', locations[1].longitude, 1);
+  assert.deepEqual(selected(), [2], 'a different pointer must not end the active stroke');
+  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
+  assert.equal(tool('Move / click').getAttribute('aria-pressed'), 'true');
+  assert.equal(map.dragging.enabled(), true);
+  assert.equal(captures.size, 0);
+  assert.equal(document.querySelector('.seedling-selection-brush'), null);
+  await pointer('pointermove', locations[0].longitude, 1);
+  assert.deepEqual(selected(), [2]);
+  assert.equal(mutations.length, 0, 'brushing selects points without assigning them');
+});
+}
 
 test('point assignment requires a choice between multiple confirmed activities', async () => {
   assignmentFixture([{ id:31,project_site_id:null },{ id:32,project_site_id:null }]);
@@ -1020,14 +1147,27 @@ test('leaving Assign Points removes its brush and returning retains the organiza
   await pickAssignmentPoint(1);
   await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Brush select'));
   assert.equal(map.dragging.enabled(),false);
+  const container = map.getContainer(), captures = new Set();
+  container.setPointerCapture = (id) => captures.add(id);
+  container.hasPointerCapture = (id) => captures.has(id);
+  container.releasePointerCapture = (id) => captures.delete(id);
+  const bounds = container.getBoundingClientRect();
+  const down = new window.MouseEvent('pointerdown', { bubbles: true, cancelable: true,
+    button: 0, buttons: 1, clientX: bounds.left + 10, clientY: bounds.top + 10 });
+  Object.defineProperties(down, { pointerType: { value: 'mouse' }, pointerId: { value: 7 } });
+  await act(async () => container.dispatchEvent(down));
+  assert.ok(captures.has(7), 'start a held stroke before leaving the retained tool');
   await click(toolLink('/map'));
   assert.equal(map.dragging.enabled(),true);
+  assert.equal(captures.size,0);
   assert.equal(document.querySelector('.seedling-selection-brush'),null);
   let overlays=0;map.eachLayer((layer) => { if(layer.options?.sitePointId) overlays+=1; });
   assert.equal(overlays,0);
   await click(toolLink('/planters'));
   assert.equal(document.getElementById('assign-organization').value,'22');
   assert.equal(map.dragging.enabled(),true);
+  assert.equal([...document.querySelectorAll('.planting-point-selector button')]
+    .find((item) => item.textContent === 'Move / click').getAttribute('aria-pressed'), 'true');
   assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds,[1]);
   assert.equal(mutations.length,0);
 });

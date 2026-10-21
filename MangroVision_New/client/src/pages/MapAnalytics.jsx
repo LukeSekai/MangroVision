@@ -1,97 +1,29 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Panel, PanelCard } from '../components/Panel';
 import { useMapStore } from '../stores/mapStore';
 import { countMapPointStatuses } from '../utils/mapPointStats';
-import Modal from '../components/Modal';
+import SavedPointExports from '../components/SavedPointExports';
 import { POINT_STATUS_COLORS } from '../utils/pointStatus';
 import './ImageProcessing.css';
 import './MapAnalytics.css';
-
-const API = import.meta.env.VITE_API_BASE || '';
-
-function downloadBlob(blob, fileName) {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.URL.revokeObjectURL(url);
-}
 
 export default function MapAnalytics() {
   const stats = useMapStore((s) => s.stats);
   const fetchStats = useMapStore((s) => s.fetchStats);
   const points = useMapStore((s) => s.points);
   const fetchPoints = useMapStore((s) => s.fetchPoints);
-
-  const [busyExport, setBusyExport] = useState('');
-  const [exportError, setExportError] = useState('');
-  const [pendingExportFormat, setPendingExportFormat] = useState(null);
-  const [completedExportFormat, setCompletedExportFormat] = useState(null);
+  const pointsLoaded = useMapStore((s) => s.pointsLoaded);
+  const loadingPoints = useMapStore((s) => s.loadingPoints);
 
   useEffect(() => {
     fetchStats();
     fetchPoints();
   }, [fetchPoints, fetchStats]);
 
-  const allSavedPoints = stats?.points || [];
   const { mapped, planned, assigned, planted, dead, skipped, unavailable } = useMemo(
     () => countMapPointStatuses(points),
     [points],
   );
-
-  const requestSavedPointsExport = (format) => {
-    if (!allSavedPoints.length || busyExport) return;
-    setExportError('');
-    setPendingExportFormat(format);
-  };
-
-  const cancelSavedPointsExport = () => {
-    if (busyExport) return;
-    setPendingExportFormat(null);
-  };
-
-  const performSavedPointsExport = async () => {
-    const format = pendingExportFormat;
-    if (!format || !allSavedPoints.length) return;
-
-    setBusyExport(format);
-    setExportError('');
-    try {
-      const response = await fetch(`${API}/api/export/${format}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          waypoints: allSavedPoints.map((point) => ({
-            lat: point.latitude,
-            lon: point.longitude,
-            point_num: point.point_num,
-            buffer_m: point.buffer_m,
-            area_m2: point.area_m2,
-            status: point.status,
-            name: point.image_name ? `${point.image_name}-${String(point.point_num).padStart(3, '0')}` : undefined,
-          })),
-          image_name: 'all_analyses',
-        }),
-      });
-
-      if (!response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        throw new Error(payload.detail || `Export failed (${format})`);
-      }
-
-      const blob = await response.blob();
-      downloadBlob(blob, `mangrovision_all_points.${format}`);
-      setPendingExportFormat(null);
-      setCompletedExportFormat(format);
-    } catch (error) {
-      setExportError(error.message || 'Export failed');
-    } finally {
-      setBusyExport('');
-    }
-  };
 
   return (
     <Panel plantingTool title="Planting Map" subtitle={`${mapped} saved planting points`} initialOpenKey="overview">
@@ -171,7 +103,7 @@ export default function MapAnalytics() {
 
       <PanelCard
         title="Export Saved Points"
-        badge={allSavedPoints.length}
+        badge={mapped}
         panelKey="export"
         icon={
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -182,56 +114,9 @@ export default function MapAnalytics() {
         }
         defaultOpen={false}
       >
-        {exportError && <div className="analytics-error">{exportError}</div>}
-        <div className="export-grid">
-          {['csv', 'gpx', 'kml', 'geojson'].map((fmt) => (
-            <button
-              key={fmt}
-              className="btn btn-secondary btn-sm"
-              onClick={() => requestSavedPointsExport(fmt)}
-              disabled={!allSavedPoints.length || Boolean(busyExport)}
-            >
-              {busyExport === fmt ? 'Exporting...' : fmt.toUpperCase()}
-            </button>
-          ))}
-        </div>
+        <SavedPointExports points={points} analyses={stats?.analyses} loaded={pointsLoaded} loading={loadingPoints}
+          onRetry={() => fetchPoints({ force: true })} />
       </PanelCard>
-
-      <Modal
-        open={Boolean(pendingExportFormat)}
-        title={`Export all saved points as ${pendingExportFormat?.toUpperCase() || ''}?`}
-        variant="info"
-        confirmLabel={`Download ${pendingExportFormat?.toUpperCase() || ''}`.trim()}
-        cancelLabel="Cancel"
-        busy={Boolean(busyExport)}
-        onConfirm={performSavedPointsExport}
-        onCancel={cancelSavedPointsExport}
-      >
-        <p>
-          {allSavedPoints.length} saved planting point{allSavedPoints.length === 1 ? '' : 's'}
-          {' '}across all analyses will be bundled into a single
-          {' '}<strong>.{pendingExportFormat || 'file'}</strong> download.
-        </p>
-        <p>The file will be saved to your browser downloads folder.</p>
-        {exportError && (
-          <p style={{ color: '#dc2626', marginTop: 8 }}>{exportError}</p>
-        )}
-      </Modal>
-
-      <Modal
-        open={Boolean(completedExportFormat)}
-        title={`${completedExportFormat?.toUpperCase() || 'File'} downloaded`}
-        variant="success"
-        confirmLabel="Got it"
-        cancelLabel=""
-        onConfirm={() => setCompletedExportFormat(null)}
-      >
-        <p>
-          {allSavedPoints.length} planting point{allSavedPoints.length === 1 ? '' : 's'} exported as
-          {' '}<strong>mangrovision_all_points.{completedExportFormat}</strong>.
-          {' '}Check your downloads folder.
-        </p>
-      </Modal>
     </Panel>
   );
 }
