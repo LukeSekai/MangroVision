@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import Modal from './Modal';
 import { FormMessage } from './FormFeedback';
 import { formRequest } from '../utils/formValidation';
 import bookingPolicy from '../like/bookingPolicy.json' with { type: 'json' };
@@ -13,9 +15,11 @@ export default function OrganizationAccess({ organization, activity, onCreated }
   const [access, setAccess] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+  const inFlight = useRef(false);
   const url = activity ? `${API}/api/planters/organizations/${organization.organization_id}/activities/${activity.id}/access` : '';
   const request = async (action) => {
-    if (busy || !activity) return;
+    if (inFlight.current || !activity) return;
+    inFlight.current = true;
     setBusy(true); setError(''); setSuccess('');
     try {
       const result = await formRequest(url, action ? { method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -30,7 +34,7 @@ export default function OrganizationAccess({ organization, activity, onCreated }
     } catch (failure) {
       setError(failure.uncertain ? 'The result could not be verified. Load the current code before trying again.' : failure.message);
       setConfirmation(null);
-    } finally { setBusy(false); }
+    } finally { inFlight.current = false; setBusy(false); }
   };
   const handover = () => `${organization.organization_name} — ${activity.title}\nOpen: ${window.location.origin}/field\n`
     + `Organization code: ${access.code}\n`
@@ -65,11 +69,12 @@ export default function OrganizationAccess({ organization, activity, onCreated }
         {!access.revoked && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setConfirmation('revoke')}>Revoke</button>}
       </div>
     </>}
-    {confirmation && <div role="alert" style={{ marginTop: 12, padding: 12, border: '1px solid #dce5df', borderRadius: 8 }}>
-      <p className="text-sm">{confirmation === 'revoke' ? 'Revoke' : 'Replace'} this activity’s organization code? Its current logins will end. All participant usernames, assigned points and planting records will remain saved.</p>
-      <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => void request(confirmation)}>Confirm</button>{' '}
-      <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => setConfirmation(null)}>Cancel</button>
-    </div>}
+    {confirmation && createPortal(<Modal open title={confirmation === 'revoke' ? 'Revoke organization code?' : 'Replace organization code?'}
+      variant="warning" initialFocus="cancel" busy={busy} confirmLabel={confirmation === 'revoke' ? 'Revoke code' : 'Replace code'}
+      onConfirm={() => void request(confirmation)} onCancel={() => { if (!busy) setConfirmation(null); }}>
+      <p>{organization.organization_name} · {activity.title}</p>
+      <p>Current logins for this activity will end. Participant usernames, assigned points and planting records will be kept.</p>
+    </Modal>, document.body)}
     <FormMessage error={error} loading={busy ? 'Checking planting access…' : ''} success={success} />
   </div>;
 }

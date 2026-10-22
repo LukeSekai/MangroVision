@@ -19,7 +19,7 @@ before(async () => {
   dom.window.addEventListener('error', (event) => { windowErrors.push(event.error); event.preventDefault(); });
   const globals = {
     window: dom.window, document: dom.window.document, localStorage: dom.window.localStorage,
-    Event: dom.window.Event, IS_REACT_ACT_ENVIRONMENT: true,
+    Event: dom.window.Event, Element: dom.window.Element, IS_REACT_ACT_ENVIRONMENT: true,
     FileReader: dom.window.FileReader, File: dom.window.File, FormData: dom.window.FormData,
     requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
     cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
@@ -661,6 +661,82 @@ test('failed map-boundary checks keep Save disabled and offer a retry', async ()
   assert.equal(mutations.length, 0);
 });
 
+test('eroded overlap confirmation cancels without a write, then saves the reviewed draft once', async () => {
+  zoneFixtures();
+  responses.set('/api/zones/validate-boundary', { valid: true });
+  const saves = [];
+  responses.set('/api/zones/eroded', (options) => {
+    saves.push(options);
+    return options.headers['X-Confirm-Seedling-Overlap'] === 'true'
+      ? Response.json({ id: 8 })
+      : Response.json({ detail: { code: 'seedling_overlap' } }, { status: 409 });
+  });
+  await renderPlantingWorkspace('/zones');
+  await drawZone('eroded');
+  await click(namedButton('Save Zone'));
+  assert.equal(saves.length, 1);
+  assert.equal(document.querySelector('.modal-title').textContent, 'Save eroded zone?');
+  assert.equal(document.querySelector('.modal-body p').textContent,
+    'This area contains recorded seedlings. Their records will be kept, but new planting and replanting here will be blocked.');
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Cancel'));
+  assert.equal(saves.length, 1, 'Cancel makes no save request');
+  assert.ok(document.querySelector('.save-form'), 'keep the unsaved draft for review');
+  await click(namedButton('Save Zone'));
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Save zone'));
+  assert.equal(saves.length, 3);
+  assert.deepEqual(JSON.parse(saves[2].body), JSON.parse(saves[1].body));
+  assert.equal(saves[2].headers['X-Confirm-Seedling-Overlap'], 'true');
+  assert.equal(document.querySelector('.modal-title'), null);
+  assert.equal(document.querySelector('.save-form'), null);
+});
+
+test('eroded vertex editing stays a draft, preserves holes, and patches only the chosen zone', async () => {
+  const zones = zoneFixtures();
+  const geometry = { type: 'MultiPolygon', coordinates: [zones.eroded.geometry.coordinates,
+    [[[122.6253,10.78],[122.6254,10.78],[122.6254,10.7801],[122.6253,10.7801],[122.6253,10.78]],
+      [[122.62532,10.78002],[122.62538,10.78002],[122.62538,10.78008],[122.62532,10.78008],[122.62532,10.78002]]]] };
+  zones.eroded.geometry = geometry;
+  responses.set('/api/zones/validate-boundary', { valid: true });
+  const saves = [];
+  responses.set('/api/zones/eroded/1', (options) => { saves.push(options); return Response.json({ id: 1 }); });
+  await renderPlantingWorkspace('/zones');
+  const openList = async () => click(document.querySelector('[data-guide-card="Eroded Zones"] .panel-card-header'));
+  await openList();
+  await click(document.querySelector('[aria-label="Edit Eroded zone 1"]'));
+  assert.equal(document.querySelector('[data-guide-card="Draw Zone"] .panel-card-header').getAttribute('aria-expanded'), 'true');
+  assert.equal(document.querySelectorAll('.zone-vertex-handle').length, 12);
+  const handle = document.querySelector('.zone-vertex-handle');
+  await act(async () => handle.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true })));
+  await settle();
+  assert.deepEqual(zones.eroded.geometry, geometry, 'the saved feature must remain unchanged');
+  await click(namedButton('Cancel'));
+  assert.equal(saves.length, 0);
+  assert.equal(document.querySelectorAll('.zone-vertex-handle').length, 0);
+  await openList();
+  await click(document.querySelector('[aria-label="Edit Eroded zone 1"]'));
+  await settle();
+  await click(namedButton('Save Zone'));
+  assert.equal(saves.length, 1);
+  assert.equal(saves[0].method, 'PATCH');
+  assert.deepEqual(JSON.parse(saves[0].body).geometry, geometry, 'preserve all parts and holes');
+});
+
+test('a failed confirmed erosion save keeps the draft and exposes its error', async () => {
+  zoneFixtures();
+  responses.set('/api/zones/validate-boundary', { valid: true });
+  responses.set('/api/zones/eroded', (options) => options.headers['X-Confirm-Seedling-Overlap'] === 'true'
+    ? Response.json({ detail: 'Could not save the zone. Please try again.' }, { status: 503 })
+    : Response.json({ detail: { code: 'seedling_overlap' } }, { status: 409 }));
+  await renderPlantingWorkspace('/zones');
+  await drawZone('eroded');
+  await click(namedButton('Save Zone'));
+  await click([...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Save zone'));
+  assert.equal(document.querySelector('.modal-title'), null);
+  assert.ok(document.querySelector('.save-form'));
+  assert.match(document.querySelector('.save-form [role="alert"]').textContent, /entries are kept; please retry/i);
+  assert.equal(namedButton('Save Zone').disabled, false);
+});
+
 test('cancelling a pending map-boundary check ignores its late response', async () => {
   zoneFixtures();
   let finishCheck;
@@ -991,6 +1067,13 @@ test('Assign Points starts empty and only selected map points become planting wo
   await pickAssignmentPoint(2);
   assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds,[2]);
   await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 1 point'));
+  assert.equal(mutations.length, 0);
+  assert.match(document.querySelector('.modal-body').textContent, /1 point.*CICT.*Planting 31/);
+  assert.equal(document.activeElement.textContent, 'Cancel');
+  await click(document.querySelector('.modal-actions .btn-secondary'));
+  assert.deepEqual(useMapStore.getState().assignmentSelectedPointIds, [2]);
+  await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 1 point'));
+  await click(document.querySelector('.modal-actions .btn-primary'));
   assert.deepEqual(mutations[0],{ path:'/api/planters/organizations/22/assignments',body:{ planting_point_ids:[2],planting_schedule_id:31 } });
 });
 
@@ -1037,6 +1120,8 @@ test('selected mixed species are submitted together without a site or species ov
   assignmentFixture(); await renderPlantingWorkspace('/planters?organization_id=22');
   await pickAssignmentPoint(1); await pickAssignmentPoint(2);
   await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 2 points'));
+  assert.equal(mutations.length, 0);
+  await click(document.querySelector('.modal-actions .btn-primary'));
   assert.deepEqual(mutations[0].body,{ planting_point_ids:[1,2],planting_schedule_id:31 });
 });
 
@@ -1137,6 +1222,7 @@ test('point assignment requires a choice between multiple confirmed activities',
   });
   await settle(); await pickAssignmentPoint(1);
   await click([...document.querySelectorAll('button')].find((item) => item.textContent==='Assign 1 point'));
+  await click(document.querySelector('.modal-actions .btn-primary'));
   assert.equal(mutations[0].body.planting_schedule_id,32);
   assert.equal(mutations[0].body.site_zone_id,undefined);
 });
@@ -1599,7 +1685,7 @@ test('history shows an empty filtered state, resets filters and handles a broken
   assert.equal(document.querySelector('.analysis-history-open').disabled, false);
 });
 
-test('saving a monitoring visit uses one busy button without a duplicate pale status box', async () => {
+test('monitoring review keeps the draft on Back and confirms with one busy button', async () => {
   responses.set('/api/monitoring/organizations', { organizations: [
     { id: 1, name: 'Due organization', total_planted: 100, monitoring_available: true, next_monitoring_date: manilaDateKey() },
   ] });
@@ -1612,18 +1698,61 @@ test('saving a monitoring visit uses one busy button without a duplicate pale st
   await render(pages.get('OrganizationMonitoring'));
   await click(document.querySelector('.org-monitoring-organization-card'));
   await settle();
-  const submit = document.querySelector('.org-monitoring-submit');
-  assert.equal(submit.disabled, false);
+  assert.equal(document.querySelector('.org-monitoring-submit').disabled, false);
   await act(async () => document.querySelector('.org-monitoring-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
-  assert.equal(submit.getAttribute('aria-busy'), 'true');
-  assert.equal(submit.disabled, true);
-  assert.ok(submit.querySelector('.org-monitoring-save-spinner'));
-  assert.equal(document.querySelector('.org-monitoring-form .form-message.is-loading'), null);
-  assert.equal(document.querySelectorAll('.org-monitoring-submit').length, 1);
+  assert.equal(mutations.length, 0);
+  assert.equal(document.querySelector('.modal-title').textContent, 'Save monitoring visit?');
+  assert.match(document.querySelector('.monitoring-save-review').textContent, /Due organization.*0 newly dead/);
+  assert.equal(document.activeElement.textContent, 'Back');
+  await click(document.querySelector('.modal-actions .btn-secondary'));
+  assert.equal(document.querySelector('#actions-taken').value, 'Checked living seedlings and cleared debris.');
+  await act(async () => document.querySelector('.org-monitoring-form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+  const confirm = document.querySelector('.modal-actions .btn-primary');
+  await click(confirm);
+  assert.equal(confirm.disabled, true);
+  assert.equal(document.querySelectorAll('.modal-spinner').length, 1);
+  assert.equal(document.querySelector('.org-monitoring-form'), null);
+  assert.equal(mutations.length, 1);
+  await click(confirm);
   assert.equal(mutations.length, 1);
   await act(async () => finishSave(Response.json({ organization_name: 'Due organization' })));
   await settle();
-  assert.equal(document.querySelector('.org-monitoring-save-spinner'), null);
+  assert.equal(document.querySelector('.modal-spinner'), null);
+});
+
+test('death-location review keeps notes on Back and preserves the draft after a failed save', async () => {
+  const { default: Editor } = await server.ssrLoadModule('/src/components/DeathLocationEditor.jsx');
+  responses.set('/api/monitoring/organizations/1/planting-locations', { points: [] });
+  const writes = [];
+  let saved = 0;
+  responses.set('/api/monitoring/organization-records/7/death-locations', (options) => {
+    writes.push(JSON.parse(options.body));
+    return Response.json({ detail: 'Unable to save' }, { status: 503 });
+  });
+  await act(async () => root.render(createElement(Editor, { record: { id: 7, organization_id: 1,
+    monitored_at: '2026-10-01', reported_dead_count: 2, dead_planting_event_ids: [10], location_version: 4 },
+    onClose: () => {}, onSaved: () => { saved++; } })));
+  await settle();
+  const note = document.querySelector('[name="correction_note"]');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(note, 'Checked the mapped location with field notes.');
+    note.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  const review = async () => act(async () => document.querySelector('form').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+  await review();
+  assert.equal(writes.length, 0);
+  assert.equal(document.querySelector('.modal-title').textContent, 'Save death locations?');
+  assert.match(document.querySelector('.modal-body').textContent, /2 reported dead.*1 located.*1 still to locate/);
+  await click(document.querySelector('.modal-actions .btn-secondary'));
+  assert.equal(document.querySelector('[name="correction_note"]').value, 'Checked the mapped location with field notes.');
+  await review(); await click(document.querySelector('.modal-actions .btn-primary'));
+  assert.equal(writes.length, 1);
+  assert.equal(saved, 0);
+  assert.deepEqual(writes[0], { dead_planting_event_ids: [10], expected_version: 4,
+    correction_note: 'Checked the mapped location with field notes.' });
+  assert.equal(document.querySelector('.modal-title').textContent, 'Identify or correct death locations');
+  assert.match(document.querySelector('[role="alert"]').textContent, /entries are kept; please retry/);
+  assert.equal(document.querySelector('[name="correction_note"]').value, writes[0].correction_note);
 });
 
 test('monitoring tabs separate today and overdue visits, hide locked organizations and support keyboard navigation', async () => {

@@ -200,6 +200,47 @@ test('editing a legacy schedule keeps its title and untouched contact summary', 
   assert.equal(Object.hasOwn(writes[0].body, 'expected_seedlings'), false, 'Editing must leave historical seedling counts untouched');
 });
 
+for (const progress of ['cancelled', 'completed']) {
+  test(`${progress} activity changes require review and Back keeps the edited status`, async () => {
+    schedules = [{ id: 7, organization_name: 'Demo organization', organization: 'Demo organization',
+      title: 'Prepared field visit', appointment_type: 'field_visit', status: 'confirmed',
+      start_at: `${date}T08:00:00+08:00`, end_at: `${date}T09:30:00+08:00` }];
+    await render(); await click('List'); await click('Edit');
+    await change('status', progress); await submit();
+    assert.equal(writes.length, 0);
+    assert.equal(document.querySelector('.modal-title').textContent,
+      progress === 'cancelled' ? 'Cancel activity?' : 'Mark activity completed?');
+    assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+    assert.equal(document.activeElement.textContent, 'Back');
+    await click('Back');
+    assert.equal(document.querySelector('[name="status"]').value, progress);
+    assert.equal(writes.length, 0);
+    await submit(); await click(progress === 'cancelled' ? 'Cancel activity' : 'Mark completed');
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].body.status, progress);
+    assert.equal(writes[0].method, 'PUT');
+  });
+}
+
+test('deleting an unused appointment uses a cancellable shared modal and sends one DELETE', async () => {
+  schedules = [{ id: 7, organization_name: 'Demo organization', title: 'Unused appointment',
+    status: 'requested', appointment_type: 'field_visit', start_at: `${date}T08:00:00+08:00`, end_at: `${date}T09:30:00+08:00` }];
+  const deletes = [];
+  const read = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    if (options.method === 'DELETE') { deletes.push(url); return Response.json({ status: 'deleted' }); }
+    return read(url, options);
+  };
+  await render(); await click('List'); await click('Delete');
+  assert.equal(document.querySelector('.modal-title').textContent, 'Delete appointment?');
+  assert.match(document.querySelector('.modal-body').textContent, /Unused appointment.*Demo organization/);
+  assert.equal(deletes.length, 0);
+  await click('Cancel');
+  assert.equal(deletes.length, 0);
+  await click('Delete'); await click('Delete appointment');
+  assert.deepEqual(deletes, ['/api/planting-schedules/7']);
+});
+
 test('website schedule contacts remain read-only and their original summary is preserved', async () => {
   const contact = 'Coordinator, 09123456789, head@example.org';
   schedules = [{ id: 8, source: 'website', appointment_type: 'field_visit', organization: 'School', title: 'Original visit name',

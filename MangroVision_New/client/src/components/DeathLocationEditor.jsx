@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import Modal from './Modal';
 import useFormFeedback from '../utils/useFormFeedback';
 import { formRequest } from '../utils/formValidation';
@@ -12,6 +12,8 @@ export default function DeathLocationEditor({ record, onClose, onSaved }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [review, setReview] = useState(null);
+  const inFlight = useRef(false);
   const reported = record.reported_dead_count;
   const removed = (record.dead_planting_event_ids || []).some((id) => !selected.includes(id));
   const feedback = useFormFeedback({ correction_note: { label: 'Location notes' } });
@@ -20,18 +22,31 @@ export default function DeathLocationEditor({ record, onClose, onSaved }) {
     if (busy) return;
     if (!feedback.validate()) return;
     if (selected.length > reported) { setError(`Select no more than ${reported} seedlings.`); return; }
+    setError('');
+    setReview({ dead_planting_event_ids: [...selected], expected_version: record.location_version, correction_note: note.trim() });
+  }
+  async function confirmSave() {
+    if (!review || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true); setError('');
     try {
       const payload = await formRequest(`${API}/api/monitoring/organization-records/${record.id}/death-locations`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dead_planting_event_ids: selected, expected_version: record.location_version, correction_note: note.trim() }),
+        body: JSON.stringify(review),
       });
       onSaved(payload);
     } catch (failure) { if (!feedback.fromServer(failure)) setError(failure.status === 409 ? `${failure.message} Close and reopen this visit to load its latest locations.` : failure.message); }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); setReview(null); }
   }
-  return <Modal open title="Identify or correct death locations" className="modal-card-wide" variant="info" busy={busy} cancelLabel="Back to history" onCancel={onClose}>
-    <form noValidate onChangeCapture={feedback.onChange} aria-busy={busy} onSubmit={save}>
+  return <Modal key={review ? 'locations-review' : 'locations-form'} open title={review ? 'Save death locations?' : 'Identify or correct death locations'}
+    className={review ? '' : 'modal-card-wide'} variant={review ? 'warning' : 'info'} busy={busy} cancelLabel={review ? 'Back' : 'Back to history'} initialFocus={review ? 'cancel' : 'confirm'}
+    confirmLabel="Save locations" onConfirm={review ? confirmSave : undefined}
+    onCancel={() => { if (!busy) { if (review) setReview(null); else onClose(); } }}>
+    {review && <>
+      <p>{reported} reported dead · {review.dead_planting_event_ids.length} located · {Math.max(0, reported - review.dead_planting_event_ids.length)} still to locate</p>
+      <p>{removed ? 'Previously linked death locations will be corrected.' : 'Selected seedlings will be linked to this visit’s recorded deaths.'} Visit totals and dates will stay unchanged.</p>
+    </>}
+    {!review && <form noValidate onChangeCapture={feedback.onChange} aria-busy={busy} onSubmit={save}>
       <p>Visit: {new Date(record.monitored_at).toLocaleDateString('en-PH', { timeZone: 'Asia/Manila' })}. Saving locations keeps this visit’s death count, survival rate, and next visit date unchanged.</p>
       <p aria-live="polite"><strong>{reported} reported dead · {selected.length} located · {Math.max(0, reported - selected.length)} still to locate</strong></p>
       <Suspense fallback={<p>Loading locations…</p>}><SeedlingLocations organizationId={record.organization_id} recordId={record.id} selected={selected} onChange={setSelected} disabled={busy} maxSelected={reported} /></Suspense>
@@ -39,6 +54,6 @@ export default function DeathLocationEditor({ record, onClose, onSaved }) {
       {selected.length > reported ? <p role="alert">Select no more than {reported} seedlings, the number reported in this visit.</p> : null}
       <FormMessage error={error} loading={busy ? 'Saving locations…' : ''} />
       <button className="org-monitoring-submit" type="submit" disabled={busy || selected.length > reported}>{busy ? 'Saving…' : error ? 'Retry save locations' : 'Save locations'}</button>
-    </form>
+    </form>}
   </Modal>;
 }

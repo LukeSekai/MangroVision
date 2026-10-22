@@ -96,7 +96,8 @@ export default function MapAnalytics() {
       >
         <div className="info-rows">
           <div className="info-row"><span className="info-label">Total area analyzed</span><span className="info-value">{stats?.total_coverage_m2 ? `${(stats.total_coverage_m2 / 10000).toFixed(2)} ha` : '-'}</span></div>
-          <div className="info-row"><span className="info-label">Plantable area</span><span className="info-value">{stats?.total_plantable_m2 ? `${stats.total_plantable_m2.toFixed(1)} m2` : '-'}</span></div>
+          <div className="info-row"><span className="info-label">Analyzed plantable area</span><span className="info-value">{stats?.total_plantable_m2 ? `${stats.total_plantable_m2.toFixed(1)} m2` : '-'}</span></div>
+          <div className="info-row"><span className="info-label">Available planting locations</span><span className="info-value">{(planned + assigned).toLocaleString()}</span></div>
           <div className="info-row"><span className="info-label">Danger area</span><span className="info-value">{stats?.total_danger_m2 ? `${stats.total_danger_m2.toFixed(1)} m2` : '-'}</span></div>
         </div>
       </PanelCard>

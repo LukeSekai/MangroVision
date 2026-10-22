@@ -111,6 +111,8 @@ export default function OrganizationMonitoring() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [visitReview, setVisitReview] = useState(null);
+  const submittingVisit = useRef(false);
   const [formError, setFormError] = useState('');
   const [notice, setNotice] = useState('');
   const [reportOpen, setReportOpen] = useState(false);
@@ -324,6 +326,20 @@ export default function OrganizationMonitoring() {
       return;
     }
 
+    setVisitReview({ organizationName: selectedOrganization.name, payload: {
+      organization_id: Number(selectedOrganizationId), monitored_at: form.monitored_at,
+      new_dead_count: counts.newlyDead, dead_planting_event_ids: [...selectedDeaths],
+      unlocated_dead_count: locationCounts.unlocated,
+      death_reason_category: counts.newlyDead > 0 ? form.death_reason_category : null,
+      death_reason_notes: counts.newlyDead > 0 ? form.death_reason_notes.trim() : '',
+      baseline_record_id: visitContext.baseline_record_id, expected_alive_count: visitContext.alive_before_count,
+      health_status: form.health_status, actions_taken: form.actions_taken.trim(),
+    } });
+  };
+
+  const confirmRecord = async () => {
+    if (!visitReview || submittingVisit.current) return;
+    submittingVisit.current = true;
     setSaving(true);
     try {
       const payload = await formRequest(
@@ -331,19 +347,7 @@ export default function OrganizationMonitoring() {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            organization_id: Number(selectedOrganizationId),
-            monitored_at: form.monitored_at,
-            new_dead_count: counts.newlyDead,
-            dead_planting_event_ids: selectedDeaths,
-            unlocated_dead_count: locationCounts.unlocated,
-            death_reason_category: counts.newlyDead > 0 ? form.death_reason_category : null,
-            death_reason_notes: counts.newlyDead > 0 ? form.death_reason_notes.trim() : '',
-            baseline_record_id: visitContext.baseline_record_id,
-            expected_alive_count: visitContext.alive_before_count,
-            health_status: form.health_status,
-            actions_taken: form.actions_taken.trim(),
-          }),
+          body: JSON.stringify(visitReview.payload),
         },
       );
       setNotice(`${payload.organization_name} monitoring was recorded as one organization visit.`);
@@ -361,11 +365,14 @@ export default function OrganizationMonitoring() {
     } catch (error) {
       if (!feedback.fromServer(error)) setFormError(error.message || 'Could not save monitoring record. Please try again.');
     } finally {
+      submittingVisit.current = false;
+      setVisitReview(null);
       setSaving(false);
     }
   };
 
   const openVisitModal = (organizationId) => {
+    setVisitReview(null);
     feedback.clear();
     setSelectedDeaths([]);
     setForm(visitFormFromLatest(null, manilaDateInputValue()));
@@ -380,6 +387,7 @@ export default function OrganizationMonitoring() {
 
   const closeVisitModal = () => {
     if (saving) return;
+    setVisitReview(null);
     setSelectedOrganizationId('');
     setFormError('');
   };
@@ -483,16 +491,26 @@ export default function OrganizationMonitoring() {
       </PanelCard>
 
       <Modal
+        key={visitReview ? 'visit-review' : 'visit-form'}
         open={Boolean(selectedOrganization) && (!requestedSiteId || String(selectedOrganization.id) === String(followUpOrganizationId))}
-        title="Record monitoring visit"
-        icon={<VisitIcon />}
-        variant="info"
-        cancelLabel="Cancel"
+        title={visitReview ? 'Save monitoring visit?' : 'Record monitoring visit'}
+        icon={visitReview ? undefined : <VisitIcon />}
+        variant={visitReview ? 'warning' : 'info'}
+        cancelLabel={visitReview ? 'Back' : 'Cancel'}
+        confirmLabel="Save visit"
+        initialFocus={visitReview ? 'cancel' : 'confirm'}
+        onConfirm={visitReview ? confirmRecord : undefined}
         busy={saving}
-        onCancel={closeVisitModal}
-        className="modal-card-wide org-monitoring-visit-modal"
+        onCancel={() => { if (!saving) { if (visitReview) setVisitReview(null); else closeVisitModal(); } }}
+        className={visitReview ? '' : 'modal-card-wide org-monitoring-visit-modal'}
       >
-        <form className="org-monitoring-form" noValidate onChangeCapture={feedback.onChange} onSubmit={submitRecord}>
+        {visitReview && <div className="monitoring-save-review">
+          <p><strong>{visitReview.organizationName}</strong> · {visitReview.payload.monitored_at}</p>
+          <p>{visitReview.payload.new_dead_count} newly dead · {visitReview.payload.dead_planting_event_ids.length} located · {visitReview.payload.unlocated_dead_count} still to locate</p>
+          <p>Overall health: {visitReview.payload.health_status}{visitReview.payload.death_reason_category ? ` · Cause: ${deathReasons.find((reason) => reason.value === visitReview.payload.death_reason_category)?.label || visitReview.payload.death_reason_category}` : ''}</p>
+          <p>Save this visit and its recorded seedling conditions?</p>
+        </div>}
+        {!visitReview && <form className="org-monitoring-form" noValidate onChangeCapture={feedback.onChange} onSubmit={submitRecord}>
           <FormErrorSummary feedback={feedback} />
           {visitLoading ? <p role="status">Loading the latest saved visit...</p> : null}
           {visitError ? <p className="org-monitoring-message is-error" role="alert">{visitError} Close and reopen this organization to retry.</p> : null}
@@ -625,7 +643,7 @@ export default function OrganizationMonitoring() {
             {saving && <span className="org-monitoring-save-spinner" aria-hidden="true" />}
             <span>{saving ? 'Saving monitoring visit...' : 'Save monitoring visit'}</span>
           </button>
-        </form>
+        </form>}
       </Modal>
 
       <SitesToMonitor key={requestedSiteId || 'all-sites'} organizations={organizations} requestedSiteId={requestedSiteId}

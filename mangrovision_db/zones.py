@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from typing import Any
 
 from shapely.geometry import MultiPolygon, mapping, shape
 from shapely.validation import make_valid
 
 from .compat import get_connection
+from .erosion import lock_erosion_boundaries, recorded_seedling_count, SeedlingOverlap, ZONE_OVERLAP_MESSAGE
 
 ZONE_TYPES = {"gis_coverage", "eroded", "forbidden", "warning"}
 
@@ -218,10 +220,29 @@ def zone_revision_fingerprint() -> str:
         conn.close()
 
 
+@contextmanager
+def _write_connection(zone_type, existing=None):
+    if existing is not None:
+        yield existing
+        return
+    conn = get_connection()
+    try:
+        if zone_type == 'eroded':
+            lock_erosion_boundaries(conn, editing=True)
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def create_zone(
     zone_type: str,
     feature: dict,
     created_by_user_id: int | None = None,
+    *, _conn=None, confirm_overlap=False,
 ) -> dict:
     if zone_type not in ZONE_TYPES:
         raise ValueError("Unknown map-zone type.")
@@ -233,8 +254,8 @@ def create_zone(
     notes = properties.pop("notes", None)
     properties.pop("id", None)
     properties.pop("zone_type", None)
-    conn = get_connection()
-    try:
+    with _write_connection(zone_type, _conn) as conn:
+        _check_seedling_overlap(conn, zone_type, geometry, confirm_overlap)
         cursor = conn.execute("""
             INSERT INTO map_zones (
                 zone_type, name, warning_type, severity, notes,
@@ -251,14 +272,11 @@ def create_zone(
             created_by_user_id,
         ))
         zone_id = int(cursor.lastrowid)
-        conn.commit()
-    finally:
-        conn.close()
-    return get_zone(zone_type, zone_id)
+        return get_zone(zone_type, zone_id, _conn=conn)
 
 
-def get_zone(zone_type: str, zone_id: int) -> dict | None:
-    conn = get_connection()
+def get_zone(zone_type: str, zone_id: int, *, _conn=None) -> dict | None:
+    conn = _conn if _conn is not None else get_connection()
     try:
         row = conn.execute("""
             SELECT id, zone_type, name, warning_type, severity, notes,
@@ -268,14 +286,29 @@ def get_zone(zone_type: str, zone_id: int) -> dict | None:
         """, (int(zone_id), zone_type)).fetchone()
         return _feature(dict(row)) if row else None
     finally:
-        conn.close()
+        if _conn is None:
+            conn.close()
 
 
-def update_zone(zone_type: str, zone_id: int, feature: dict) -> dict:
-    existing = get_zone(zone_type, zone_id)
+def _check_seedling_overlap(conn, zone_type, geometry, confirmed):
+    if zone_type == 'eroded' and not confirmed and recorded_seedling_count(conn, json.dumps(geometry)):
+        raise SeedlingOverlap(ZONE_OVERLAP_MESSAGE)
+
+
+def update_zone(zone_type: str, zone_id: int, feature: dict, *, _conn=None, confirm_overlap=False) -> dict:
+    with _write_connection(zone_type, _conn) as conn:
+        return _update_zone(conn, zone_type, zone_id, feature, confirm_overlap)
+
+
+def _update_zone(conn, zone_type, zone_id, feature, confirm_overlap):
+    existing = get_zone(zone_type, zone_id, _conn=conn)
     if not existing:
         raise KeyError(zone_id)
+    version = (feature.get('properties') or {}).get('updated_at')
+    if zone_type == 'eroded' and version and str(version) != str(existing['properties'].get('updated_at')):
+        raise ValueError('This zone changed. Reload the map before editing it.')
     geometry = normalize_polygon(feature.get("geometry") or existing["geometry"])
+    _check_seedling_overlap(conn, zone_type, geometry, confirm_overlap)
     properties = {**existing["properties"], **dict(feature.get("properties") or {})}
     name = str(properties.pop("name", existing["properties"].get("name", "Zone"))).strip()[:160]
     warning_type = properties.pop("warning_type", existing["properties"].get("warning_type"))
@@ -283,9 +316,7 @@ def update_zone(zone_type: str, zone_id: int, feature: dict) -> dict:
     notes = properties.pop("notes", existing["properties"].get("notes"))
     for key in ("id", "zone_type", "created_at", "updated_at"):
         properties.pop(key, None)
-    conn = get_connection()
-    try:
-        conn.execute("""
+    conn.execute("""
             UPDATE map_zones
             SET name = ?, warning_type = ?, severity = ?, notes = ?,
                 properties = ?, polygon_geojson = ?, updated_at = CURRENT_TIMESTAMP
@@ -300,44 +331,36 @@ def update_zone(zone_type: str, zone_id: int, feature: dict) -> dict:
             int(zone_id),
             zone_type,
         ))
-        conn.commit()
-    finally:
-        conn.close()
-    return get_zone(zone_type, zone_id)
+    return get_zone(zone_type, zone_id, _conn=conn)
 
 
 def soft_delete_zone(zone_type: str, zone_id: int) -> bool:
-    conn = get_connection()
-    try:
+    with _write_connection(zone_type) as conn:
         result = conn.execute("""
             UPDATE map_zones
             SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND zone_type = ? AND deleted_at IS NULL
         """, (int(zone_id), zone_type))
-        conn.commit()
         return result.rowcount > 0
-    finally:
-        conn.close()
 
 
 def replace_zone_collection(
     zone_type: str,
     features: list[dict],
     user_id: int | None = None,
+    *, confirm_overlap=False,
 ) -> dict:
-    retained: set[int] = set()
-    output: list[dict] = []
-    for feature in features:
-        raw_id = feature.get("id") or (feature.get("properties") or {}).get("id")
-        if raw_id and get_zone(zone_type, int(raw_id)):
-            saved = update_zone(zone_type, int(raw_id), feature)
-        else:
-            saved = create_zone(zone_type, feature, user_id)
-        retained.add(int(saved["id"]))
-        output.append(saved)
-
-    conn = get_connection()
-    try:
+    with _write_connection(zone_type) as conn:
+        retained: set[int] = set()
+        output: list[dict] = []
+        for feature in features:
+            raw_id = feature.get("id") or (feature.get("properties") or {}).get("id")
+            if raw_id and get_zone(zone_type, int(raw_id), _conn=conn):
+                saved = update_zone(zone_type, int(raw_id), feature, _conn=conn, confirm_overlap=confirm_overlap)
+            else:
+                saved = create_zone(zone_type, feature, user_id, _conn=conn, confirm_overlap=confirm_overlap)
+            retained.add(int(saved["id"]))
+            output.append(saved)
         if retained:
             placeholders = ",".join("?" for _ in retained)
             conn.execute(
@@ -355,7 +378,4 @@ def replace_zone_collection(
                 SET deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
                 WHERE zone_type = ? AND deleted_at IS NULL
             """, (zone_type,))
-        conn.commit()
-    finally:
-        conn.close()
     return {"type": "FeatureCollection", "name": f"{zone_type}_zones", "features": output}

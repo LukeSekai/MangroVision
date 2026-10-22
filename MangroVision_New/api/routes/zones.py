@@ -1,6 +1,6 @@
 """Zone data endpoints — forbidden, eroded, and site zones."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 from typing import Any, Optional
 import logging
@@ -27,7 +27,9 @@ from mangrovision_db.zones import (
     feature_collection,
     replace_zone_collection,
     soft_delete_zone,
+    update_zone,
 )
+from mangrovision_db.erosion import SeedlingOverlap
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,7 +126,7 @@ class SaveErodedBody(BaseModel):
 
 
 @router.put("/eroded")
-def save_eroded_zones(body: SaveErodedBody):
+def save_eroded_zones(body: SaveErodedBody, x_confirm_seedling_overlap: str = Header(default='')):
     _raise_if_processing_active()
     user = _require_lgu_user()
     # Check the entire replacement before the repository can save any feature.
@@ -135,7 +137,10 @@ def save_eroded_zones(body: SaveErodedBody):
             feature.get("geometry") if isinstance(feature, dict) else None, coverage,
         )
     try:
-        collection = replace_zone_collection("eroded", body.features, int(user["id"]))
+        options = {'confirm_overlap': True} if x_confirm_seedling_overlap == 'true' else {}
+        collection = replace_zone_collection("eroded", body.features, int(user["id"]), **options)
+    except SeedlingOverlap as error:
+        raise HTTPException(409, detail={'code': 'seedling_overlap', 'message': str(error)}) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     invalidate_eroded_zone_cache()
@@ -154,17 +159,38 @@ def delete_eroded_zone(zone_id: int):
 
 
 @router.post("/eroded")
-def add_eroded_zone(feature: dict):
+def add_eroded_zone(feature: dict, x_confirm_seedling_overlap: str = Header(default='')):
     """Create one erosion zone with a stable database ID."""
     _raise_if_processing_active()
     user = _require_lgu_user()
     _require_zone_inside_map(feature.get("geometry"))
     try:
-        saved = create_zone("eroded", feature, int(user["id"]))
+        options = {'confirm_overlap': True} if x_confirm_seedling_overlap == 'true' else {}
+        saved = create_zone("eroded", feature, int(user["id"]), **options)
+    except SeedlingOverlap as error:
+        raise HTTPException(409, detail={'code': 'seedling_overlap', 'message': str(error)}) from error
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     invalidate_eroded_zone_cache()
     return {"status": "added", "zone": saved, "id": saved["id"]}
+
+
+@router.patch('/eroded/{zone_id}')
+def edit_eroded_zone(zone_id: int, feature: dict, x_confirm_seedling_overlap: str = Header(default='')):
+    _raise_if_processing_active()
+    _require_lgu_user()
+    _require_zone_inside_map(feature.get('geometry'))
+    try:
+        saved = update_zone('eroded', zone_id, feature,
+                            confirm_overlap=x_confirm_seedling_overlap == 'true')
+    except KeyError as error:
+        raise HTTPException(404, detail='Eroded zone not found') from error
+    except SeedlingOverlap as error:
+        raise HTTPException(409, detail={'code': 'seedling_overlap', 'message': str(error)}) from error
+    except ValueError as error:
+        raise HTTPException(400, detail=str(error)) from error
+    invalidate_eroded_zone_cache()
+    return {'status': 'saved', 'zone': saved, 'id': saved['id']}
 
 
 # ── Site zones (auto-derived from planter assignments) ──────────────

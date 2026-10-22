@@ -602,6 +602,10 @@ export default function Scheduling() {
   const saveInFlight = useRef(false);
   const [notice, setNotice] = useState('');
   const [deletingId, setDeletingId] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleteError, setDeleteError] = useState('');
+  const deleteInFlight = useRef(false);
+  const [progressReview, setProgressReview] = useState(null);
   const [confirmingSchedule, setConfirmingSchedule] = useState(null);
   const [confirmationError, setConfirmationError] = useState('');
   const [confirmationSaving, setConfirmationSaving] = useState(false);
@@ -826,6 +830,7 @@ export default function Scheduling() {
         setFormError('Could not verify whether the new activity was saved. Check List before submitting it again to avoid a duplicate. Your entries are kept.');
       } else if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save the planting schedule.');
     } finally {
+      setProgressReview(null);
       setTimeCaution(null);
       setSaving(false);
       saveInFlight.current = false;
@@ -905,6 +910,11 @@ export default function Scheduling() {
       ? `/api/planting-schedules/${encodeURIComponent(editingSchedule.id)}`
       : '/api/planting-schedules';
     const request = { path, method: editingSchedule ? 'PUT' : 'POST', body };
+    if (editingSchedule && ['completed', 'cancelled'].includes(form.status)
+        && form.status !== scheduleProgressStatus(editingSchedule.status)) {
+      setProgressReview({ ...request, title: editingSchedule.title, progress: form.status });
+      return;
+    }
     await persistSchedule(request);
   };
 
@@ -940,21 +950,25 @@ export default function Scheduling() {
     }
   };
 
-  const deleteSchedule = async (schedule) => {
+  const deleteSchedule = async () => {
+    if (!pendingDelete || deleteInFlight.current) return;
+    const schedule = pendingDelete;
     if (!token) {
-      setError('Sign in as LGU staff to delete planting schedules.');
+      setDeleteError('Sign in as LGU staff to delete planting schedules.');
       return;
     }
-    if (!window.confirm(`Delete â€œ${schedule.title}â€ from the planting schedule?`)) return;
     setDeletingId(schedule.id);
-    setError('');
+    deleteInFlight.current = true;
+    setDeleteError('');
     try {
       await fetchJson(`/api/planting-schedules/${encodeURIComponent(schedule.id)}`, { method: 'DELETE' });
       setNotice('Planting schedule deleted.');
+      setPendingDelete(null);
       setReloadKey((value) => value + 1);
     } catch (deleteError) {
-      setError(deleteError.message || 'Could not delete the planting schedule.');
+      setDeleteError(deleteError.message || 'Could not delete the planting schedule.');
     } finally {
+      deleteInFlight.current = false;
       setDeletingId(null);
     }
   };
@@ -1081,7 +1095,7 @@ export default function Scheduling() {
                         {tracking.needs_confirmation && !schedule.planting_started ? <button type="button" className="is-primary" onClick={() => openConfirmation(schedule)}>Approve</button> : null}
                         {canAssign ? <MapLink className="is-primary" to={`/planters?section=assign&organization_id=${encodeURIComponent(schedule.organization_id)}&activity_id=${encodeURIComponent(schedule.id)}`}>Assign points</MapLink> : null}
                         <button type="button" onClick={() => openEdit(schedule)}>{schedule.planting_started ? 'Update notes / status' : 'Edit'}</button>
-                        <button type="button" className="is-danger" onClick={() => deleteSchedule(schedule)} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel approved activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
+                        <button type="button" className="is-danger" onClick={() => { setDeleteError(''); setPendingDelete(schedule); }} disabled={String(deletingId) === String(schedule.id) || schedule.planting_started || schedule.source === 'website' || schedule.status !== 'requested' || schedule.linked_assignment_count > 0} title={schedule.planting_started ? schedule.edit_lock_reason : schedule.status !== 'requested' ? 'Cancel approved activities to notify the organization and keep their history.' : schedule.source === 'website' ? 'Cancel this booking to notify the requester and preserve its history.' : schedule.linked_assignment_count > 0 ? 'Remove unplanted assignments before deleting this activity.' : undefined}>{String(deletingId) === String(schedule.id) ? 'Deleting...' : 'Delete'}</button>
                       </>}
                     </div></td>
                   </tr>
@@ -1112,7 +1126,7 @@ export default function Scheduling() {
         onBack={() => setTimeCaution(null)} />
 
       {formOpen && createPortal(<Modal
-        open={!timeCaution}
+        open={!timeCaution && !progressReview}
         title={editingSchedule ? 'Edit appointment' : 'Add appointment'}
         confirmLabel={editingSchedule ? 'Save changes' : 'Create schedule'}
         cancelLabel="Close"
@@ -1236,6 +1250,23 @@ export default function Scheduling() {
           <p className="schedule-form-footnote">{formPlanting ? 'After approval, use Assign Points to form the project site. ' : ''}All times are Philippine time.</p>
         </form>
       </Modal>, document.body)}
+
+      <Modal open={Boolean(pendingDelete)} title="Delete appointment?" variant="danger" initialFocus="cancel"
+        confirmLabel="Delete appointment" busy={deletingId !== null} onConfirm={deleteSchedule}
+        onCancel={() => { if (deletingId === null) { setPendingDelete(null); setDeleteError(''); } }}>
+        <p>Delete <strong>{pendingDelete?.title}</strong> for {pendingDelete?.organization_name}? This cannot be undone.</p>
+        <FormMessage error={deleteError} />
+      </Modal>
+
+      <Modal open={Boolean(progressReview)} title={progressReview?.progress === 'cancelled' ? 'Cancel activity?' : 'Mark activity completed?'}
+        variant="warning" initialFocus="cancel" busy={saving}
+        confirmLabel={progressReview?.progress === 'cancelled' ? 'Cancel activity' : 'Mark completed'} cancelLabel="Back"
+        onConfirm={() => void persistSchedule(progressReview)} onCancel={() => { if (!saving) setProgressReview(null); }}>
+        <p><strong>{progressReview?.title}</strong></p>
+        <p>{progressReview?.progress === 'cancelled'
+          ? 'This cancels the activity. A cancellation notice will be queued when a contact email is available.'
+          : 'This makes the activity read-only. Assigned points are not marked as planted by this action.'}</p>
+      </Modal>
 
       <Modal open={Boolean(confirmingSchedule)} title="Approve schedule" confirmLabel="Approve schedule" cancelLabel="Close"
         busy={confirmationSaving} onConfirm={confirmSchedule} onCancel={() => { if (!confirmationSaving) setConfirmingSchedule(null); }} variant="success">

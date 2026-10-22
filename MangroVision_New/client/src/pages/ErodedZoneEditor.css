@@ -361,3 +361,9 @@
 .project-site-selection-tools button[aria-pressed="true"] { background: var(--green-800); border-color: var(--green-800); color: white; }
 .project-site-selection-tools button:disabled { opacity: .5; cursor: default; }
 .project-site-selection-count { display: flex; align-items: center; justify-content: space-between; color: var(--green-900); font-size: 13px; }
+.zone-vertex-handle {
+  border: 2px solid #ea580c;
+  border-radius: 3px;
+  background: white;
+}
+.zone-vertex-handle:focus-visible { outline: 3px solid #166534; outline-offset: 3px; }

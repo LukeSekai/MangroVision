@@ -116,6 +116,20 @@ test('ineligible deaths cannot submit a release', async () => {
   assert.equal(document.querySelector('[role="dialog"]'), null);
 });
 
+test('an eroded release candidate shows the short replanting modal and cannot submit', async () => {
+  candidates[0].can_release = false;
+  candidates[0].eroded_unavailable = true;
+  await act(async () => root.render(createElement(MemoryRouter, null, createElement(Workspace))));
+  await click('Release from project site');
+  assert.equal(document.querySelector('.modal-title').textContent, 'Replanting blocked');
+  assert.equal(document.querySelector('.modal-body p').textContent,
+    'Replanting is unavailable because this location is inside an eroded zone.');
+  assert.deepEqual([...document.querySelectorAll('.modal-actions button')].map((button) => button.textContent), ['OK']);
+  assert.equal(requests.some((request) => request.body), false);
+  await click('OK');
+  assert.equal(document.querySelector('.modal-title'), null);
+});
+
 test('LGU Sites keeps Monitoring navigation and provides permanent credentials without replacement controls', async () => {
   await mount(LGUSites);
   await act(settle);

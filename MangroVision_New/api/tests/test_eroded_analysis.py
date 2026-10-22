@@ -216,7 +216,7 @@ class ErodedAnalysisTests(unittest.TestCase):
         point_ids = [row['id'] for row in rows]
         active = {'filter': self.zones(self.area(-1, -1, 161, 161))}
         with patch.object(database, '_is_point_inside_eroded_zone',
-                side_effect=lambda lat,lon: not active['filter'].is_safe_location(lat,lon)):
+                side_effect=lambda lat,lon,**_: not active['filter'].is_safe_location(lat,lon)):
             self.assertIsNotNone(database._first_eroded_unavailable_point(conn, point_ids))
             active['filter'] = self.zones()
             self.assertIsNone(database._first_eroded_unavailable_point(conn, point_ids))
@@ -233,7 +233,7 @@ class ErodedAnalysisTests(unittest.TestCase):
         with patch.object(database, '_get_connection', return_value=conn), \
              patch.object(database, '_is_point_inside_eroded_zone', return_value=True), \
              patch.object(database, 'lock_assignment_activity'):
-            with self.assertRaisesRegex(ValueError, 'eroded zone.*not available for planting'):
+            with self.assertRaisesRegex(ValueError, 'inside an eroded zone. Choose a location outside'):
                 database.update_assignment_point_status(1, 'completed')
         self.assertTrue(all(not call.args[0].strip().upper().startswith(('UPDATE', 'INSERT'))
                             for call in conn.execute.call_args_list))
