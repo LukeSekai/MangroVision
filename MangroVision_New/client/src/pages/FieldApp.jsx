@@ -6,6 +6,7 @@ import L from 'leaflet';
 import { cachedTileLayer } from '../utils/cachedTileLayer';
 import 'leaflet/dist/leaflet.css';
 import Modal from '../components/Modal';
+import { PLANTING_BLOCKED } from '../utils/erosionMessages';
 import LogoutConfirmation from '../components/LogoutConfirmation';
 import Logo from '../components/Logo';
 import ActivityFeed from '../components/ActivityFeed';
@@ -521,7 +522,7 @@ function PointActionSheet({ point, open, onClose, onNavigate, onMark, busy, acti
             </div>
             {isUnavailable && (
               <div className="field-warning">
-                This point is inside an eroded zone and is currently Unavailable for planting. It will return to Planned when the LGU/Admin removes the zone.
+                New planting is blocked inside this eroded zone.
               </div>
             )}
             {hasPlannerWarning && (
@@ -620,6 +621,7 @@ export default function FieldApp() {
   const [selectedId, setSelectedId] = useState(null);
   const [markBusy, setMarkBusy] = useState(false);
   const [markError, setMarkError] = useState('');
+  const [plantingBlocked, setPlantingBlocked] = useState(false);
   const [route, setRoute] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [locationAccuracy, setLocationAccuracy] = useState(null);
@@ -897,8 +899,9 @@ export default function FieldApp() {
   const handleMark = (point, status) => {
     skipFeedback.clear();
     setMarkError('');
-    if (point?.eroded_unavailable || point?.inside_eroded_zone) {
-      setMarkError('This point is Unavailable for planting while it remains inside an eroded zone.');
+    if (status !== 'skipped' && (point?.eroded_unavailable || point?.inside_eroded_zone)) {
+      setSelectedId(null);
+      setPlantingBlocked(true);
       return;
     }
     setSelectedId(null);
@@ -951,6 +954,11 @@ export default function FieldApp() {
       setCompletedMarkStatus(pendingMarkStatus);
       setCompletedMarkPoint(point);
     } catch (error) {
+      if (error.message === PLANTING_BLOCKED) {
+        setPendingMarkPoint(null); setPlantingBlocked(true);
+        await reload();
+        return;
+      }
       setMarkError(error.message || 'Could not update point status');
     } finally {
       setMarkBusy(false);
@@ -1001,6 +1009,11 @@ export default function FieldApp() {
       setSelectedMarkAllPointIds([]);
       setCompletedMarkAllResult(result);
     } catch (error) {
+      if (error.message === PLANTING_BLOCKED) {
+        setPendingMarkAllOpen(false); setPlantingBlocked(true);
+        await reload();
+        return;
+      }
       setMarkAllError(error.message || 'Could not mark all points completed');
     } finally {
       setMarkAllBusy(false);
@@ -1281,6 +1294,11 @@ export default function FieldApp() {
             ? `You joined as ${planter?.participant_username}, Participant ${planter?.participant_slot}. Use the same username to return to your assigned points and planting progress.`
             : `Welcome back, ${planter?.participant_username}. Your assigned points and saved planting progress are ready.`}
         </p>
+      </Modal>
+
+      <Modal open={plantingBlocked} title="Planting blocked" variant="warning" confirmLabel="OK"
+        cancelLabel={null} onConfirm={() => setPlantingBlocked(false)} onCancel={() => setPlantingBlocked(false)}>
+        <p>{PLANTING_BLOCKED}</p>
       </Modal>
 
       <Modal

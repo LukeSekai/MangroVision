@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import Logo from './Logo';
+import Modal from './Modal';
+import { createPortal } from 'react-dom';
 import GuideButton from './GuideButton';
 import { FieldError } from './FormFeedback';
 import { SIGN_IN_GUIDES_ENABLED } from '../guides/config';
@@ -55,7 +57,11 @@ export default function PlanterAuthScreen() {
         await login(form.access_code, form.username, { mode, switchToken });
       }
     } catch (error) {
-      if (error.kind === 'session_in_use') { setSwitchPrompt(error.switchToken); return; }
+      if (error.kind === 'session_in_use') {
+        usePlanterAuthStore.setState({ error: '' });
+        setSwitchPrompt(error.switchToken); return;
+      }
+      setSwitchPrompt(null);
       if (error.kind === 'already_joined') {
         setActivity(null); setMode('return'); feedback.clear();
         setForm((current) => ({ ...current, username: error.participantUsername }));
@@ -98,13 +104,15 @@ export default function PlanterAuthScreen() {
       </>}
     </fieldset>
     {(localError || storeError) && <div className="field-error" role="alert">{localError || storeError}</div>}
-    {switchPrompt ? <div className="field-switch-prompt" role="alert">
-      <p>This participant is already signed in. Switch access to this browser? The other login will end. Your points and progress stay the same.</p>
-      <button className="field-submit" type="button" disabled={submitting} onClick={() => void submit(switchPrompt)}>{submitting ? 'Switching...' : 'Switch here'}</button>
-      <button className="field-btn field-btn-outline" type="button" disabled={submitting} onClick={() => setSwitchPrompt(null)}>Cancel</button>
-    </div> : <button className="field-submit" type="submit" disabled={submitting}>{submitting
+    {switchPrompt && createPortal(<Modal open title="Switch access to this browser?" variant="warning" initialFocus="cancel"
+      busy={submitting} confirmLabel="Switch here" onConfirm={() => void submit(switchPrompt)}
+      onCancel={() => { if (!submitting) setSwitchPrompt(null); }}>
+      <p>The other login for this participant will end. Your assigned points and saved progress will be kept.</p>
+      {(localError || storeError) && <p role="alert">{localError || storeError}</p>}
+    </Modal>, document.body)}
+    <button className="field-submit" type="submit" disabled={submitting || Boolean(switchPrompt)}>{submitting
       ? activity ? 'Saving username...' : mode === 'first' ? 'Checking code...' : 'Signing in...'
-      : activity ? 'Save username and start' : mode === 'first' ? 'Continue' : 'Sign in'}</button>}
+      : activity ? 'Save username and start' : mode === 'first' ? 'Continue' : 'Sign in'}</button>
     {activity && <button className="field-btn field-btn-outline" type="button" disabled={submitting} onClick={() => { setActivity(null); clearErrors(); }}>Back to sign in</button>}
   </form>;
 

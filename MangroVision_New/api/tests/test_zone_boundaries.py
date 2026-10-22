@@ -33,6 +33,7 @@ class ZoneBoundaryTests(unittest.TestCase):
             "is_processing_active": False,
             "_load_zone_coverage": self.coverage,
             "create_zone": {"id": 7},
+            "update_zone": {"id": 7},
             "create_warning_zone": 7,
             "get_warning_zone": {"id": 7},
             "update_warning_zone": {"id": 7},
@@ -150,6 +151,34 @@ class ZoneBoundaryTests(unittest.TestCase):
                     self.assertEqual(self.create(kind, inside).status_code, 200)
                     self.assertEqual(self.create(kind, outside).status_code, 400)
                     self.assertEqual(self.create(kind, partial).status_code, 400)
+
+    def test_eroded_overlap_is_confirmed_once_for_create_and_edit(self):
+        from mangrovision_db.erosion import SeedlingOverlap, ZONE_OVERLAP_MESSAGE
+        feature = {'geometry': mapping(box(1, 1, 2, 2)), 'properties': {'name': 'Erosion'}}
+        for method, path, name in [('POST', '/api/zones/eroded', 'create_zone'),
+                                   ('PATCH', '/api/zones/eroded/7', 'update_zone')]:
+            self.mocks[name].side_effect = SeedlingOverlap(ZONE_OVERLAP_MESSAGE)
+            response = self.client.request(method, path, json=feature)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json()['detail']['code'], 'seedling_overlap')
+            self.mocks[name].side_effect = None
+            response = self.client.request(method, path, json=feature,
+                headers={'X-Confirm-Seedling-Overlap': 'true'})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(self.mocks[name].call_args.kwargs['confirm_overlap'])
+
+    def test_eroded_edit_checks_map_processing_lock_and_missing_zone(self):
+        response = self.client.patch('/api/zones/eroded/7', json={'geometry': mapping(box(9, 9, 10, 10))})
+        self.assertEqual(response.status_code, 400)
+        self.mocks['update_zone'].assert_not_called()
+        self.mocks['is_processing_active'].return_value = True
+        response = self.client.patch('/api/zones/eroded/7', json={'geometry': mapping(box(1, 1, 2, 2))})
+        self.assertEqual(response.status_code, 409)
+        self.mocks['update_zone'].assert_not_called()
+        self.mocks['is_processing_active'].return_value = False
+        self.mocks['update_zone'].side_effect = KeyError(7)
+        response = self.client.patch('/api/zones/eroded/7', json={'geometry': mapping(box(1, 1, 2, 2))})
+        self.assertEqual(response.status_code, 404)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from uuid import uuid4
 
 from .activity import append_activity
 from .compat import get_connection
+from .erosion import lock_erosion_boundaries, PLANTING_BLOCKED
 
 CONDITIONS = frozenset({"healthy", "fair", "stressed", "unknown"})
 
@@ -59,6 +60,7 @@ def record_lgu_planting(*, point_ids: list[int], project_site_id: int, planted_d
     marks = ",".join("?" for _ in ids)
     conn = get_connection()
     try:
+        lock_erosion_boundaries(conn)
         site = conn.execute("SELECT id, name FROM project_sites WHERE id = ? AND deleted_at IS NULL AND area_released_at IS NULL FOR SHARE", (site_id,)).fetchone()
         if not site:
             raise ValueError("Selected project site was not found.")
@@ -76,8 +78,8 @@ def record_lgu_planting(*, point_ids: list[int], project_site_id: int, planted_d
                 raise ValueError(f"Point #{point['point_num']} is not inside the selected project site.")
             if point["deleted_at"] is not None or point["status"] != "planned" or point["death_at"] is not None:
                 raise ValueError(f"Point #{point['point_num']} is not an unplanted available point.")
-            if _is_point_inside_eroded_zone(point["latitude"], point["longitude"]):
-                raise ValueError(f"Point #{point['point_num']} is unavailable inside an eroded zone.")
+            if _is_point_inside_eroded_zone(point["latitude"], point["longitude"], conn=conn):
+                raise ValueError(PLANTING_BLOCKED)
         blocked = conn.execute(f"""
             SELECT pp.point_num FROM planter_assignment_points pap
             JOIN planting_points pp ON pp.id = pap.planting_point_id

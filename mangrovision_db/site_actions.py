@@ -9,6 +9,7 @@ from shapely.geometry import MultiPolygon, Point, box, mapping, shape
 from shapely.ops import transform, unary_union
 
 from .activity import append_activity
+from .erosion import lock_erosion_boundaries, REPLANTING_BLOCKED
 
 
 def _db():
@@ -204,6 +205,7 @@ def release_dead_locations(event_ids, versions, user_id, *, prepared=False):
     conn = db._get_connection()
     marks = ','.join('?' for _ in ids)
     try:
+        lock_erosion_boundaries(conn)
         conn.execute("SET LOCAL lock_timeout = '5s'")
         initial = [dict(row) for row in conn.execute(f'''SELECT pe.id AS planting_event_id,
             pe.planting_point_id AS id, pp.latitude, pp.longitude, pe.project_site_id AS source_site_id
@@ -253,7 +255,7 @@ def release_dead_locations(event_ids, versions, user_id, *, prepared=False):
             if db._first_deleted_point(conn, [point['id']]):
                 raise ValueError('Removed locations cannot be released.')
             if db._first_eroded_unavailable_point(conn, [point['id']]):
-                raise ValueError('This location is currently unavailable because of erosion.')
+                raise ValueError(REPLANTING_BLOCKED)
             groups.setdefault(site_id, []).append(point)
 
         # Validate every boundary before applying any release.

@@ -257,6 +257,47 @@ test('recording planting keeps navigation active so the next point needs only on
   assert.equal(watches.size, 1);
 });
 
+test('planting rejected by changed erosion shows one short modal without a success message', async () => {
+  const message = 'This location is inside an eroded zone. Choose a location outside the zone.';
+  store.setState({ markPointStatus: async () => {
+    rows[0].inside_eroded_zone = true;
+    throw new Error(message);
+  } });
+  await render();
+  await selectPoint(100);
+  await click(button('Mark as Planted'));
+  await click(button('Yes, mark as planted'));
+  assert.equal(document.querySelector('.modal-title').textContent, 'Planting blocked');
+  assert.equal(document.querySelector('.modal-body p').textContent, message);
+  assert.deepEqual([...document.querySelectorAll('.modal-actions button')].map((item) => item.textContent), ['OK']);
+  assert.deepEqual(marks, []);
+  assert.ok(rows.every((point) => point.assignment_status === 'pending'));
+  await click(button('OK'));
+  assert.equal(document.querySelector('.modal-title'), null);
+});
+
+test('a batch rejected by changed erosion keeps all earlier planting progress and shows Planting blocked', async () => {
+  rows[3].assignment_status = 'completed';
+  let submitted;
+  store.setState({ markAllPointsCompleted: async (ids) => {
+    submitted = ids;
+    rows[1].eroded_unavailable = true;
+    throw new Error('This location is inside an eroded zone. Choose a location outside the zone.');
+  } });
+  await render();
+  await click(button('Choose points to mark'));
+  await click(document.querySelectorAll('.field-point-row')[0]);
+  await click(document.querySelectorAll('.field-point-row')[1]);
+  await click(button('Review 2 points'));
+  await click(button('Yes, mark selected completed'));
+  assert.deepEqual(submitted, [1, 2]);
+  assert.equal(document.querySelector('.modal-title').textContent, 'Planting blocked');
+  assert.equal(rows[0].assignment_status, 'pending');
+  assert.equal(rows[1].assignment_status, 'pending');
+  assert.equal(rows[3].assignment_status, 'completed');
+  assert.equal(document.querySelectorAll('.modal-title').length, 1);
+});
+
 test('the final planted point acknowledges activity completion before its session ends', async () => {
   rows = [rows[0]];
   store.setState({ planter: { ...store.getState().planter, planting_schedule_id: 72 },

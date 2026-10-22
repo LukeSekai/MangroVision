@@ -1,6 +1,6 @@
 # MangroVision system guide
 
-Reviewed against the current FastAPI and React application on **October 17, 2026**.
+Reviewed against the current FastAPI and React application on **October 22, 2026**.
 
 Select **Help / Guide** in the workspace header. Choose the recommended guide for
 the current screen, a task guide, or **Full system workflow**. Use **Next**,
@@ -31,9 +31,15 @@ End the guide before using the highlighted controls to perform the task.
    failed requests retain **Retry**.
 3. **Planting Map -> Zone Editor - review sites and hazards.** Project sites
    are formed automatically from assigned planting points. Use Zone Editor to
-   draw eroded and warning areas inside the drone map. Eroded zones retain
-   locations but block assignment and planting; removing one restores eligible
-   locations. Warnings record hazards without blocking assignment. Site
+   draw eroded and warning areas inside the drone map. Eroded zones can cover
+   planted or dead seedlings. In Eroded Zones, **Edit** opens the saved boundary
+   as a draft: drag its handles, or focus a handle and use arrow keys. Save asks
+   **Save eroded zone?** when recorded seedlings overlap. Cancel keeps the saved
+   state unchanged. Records, conditions, causes of death and historical totals
+   are preserved; monitoring and condition updates remain available. Erosion
+   blocks assignment, new planting and replanting. Current boundaries determine
+   restrictions; a location covered by another eroded zone stays blocked.
+   Warnings record hazards without blocking assignment. Site
    **Release area** and **Delete site** show eligibility before confirmation.
    Release preserves living seedlings and all earlier planting/death history.
 4. **Analyze Image — create and review potential planting locations.** Upload an
@@ -125,8 +131,8 @@ End the guide before using the highlighted controls to perform the task.
    and confirm up to 500 locations. Their planting cells leave the old boundary
    and the locations return to green Planned. The original site's planting
    counts, deaths, visits, and survival results remain in history. Another
-   organization can draw its own site on the released land and use the normal
-   assignment and planting process. Erosion restrictions still apply.
+   organization can use Assign Points on the released land to form its site and
+   continue the normal planting process. Erosion restrictions still apply.
    Changing the organization clears the selection. Shared risk-zone layers are
    hidden in a single-organization view. Mortality warning zones mark sites with at least 30% recorded deaths
    across all causes. Review field conditions before planning more planting.
@@ -175,6 +181,29 @@ End the guide before using the highlighted controls to perform the task.
     password and email-code verification. The new password needs at least 12
     characters. A successful change ends the account's staff sessions.
 
+## Review before submitting changes
+
+Important actions use the shared confirmation dialog. **Cancel** or **Back**
+returns without submitting; the current selection or form stays available.
+
+| Action | Review and final button |
+| --- | --- |
+| Assign Points | Check organization, activity and point count; **Assign points**. |
+| Organization monitoring | Check organization, date, located/unlocated deaths, cause and health; **Save visit**. |
+| LGU site monitoring | Check site, date, selected deaths, cause and health; **Save monitoring**. |
+| Identify/correct death locations | Check reported/located totals and correction effect; **Save locations**. |
+| Annual goals | Check year and both targets, including any unset values; **Save goals**. |
+| Change activity to Completed/Cancelled | Review the consequence, then **Mark completed** or **Cancel activity**. |
+| Delete an eligible unused appointment | Check the appointment and organization; **Delete appointment**. |
+| Replace/revoke an activity code | Check activity and the effect on current logins; **Replace code** or **Revoke code**. |
+| Switch a participant's active browser | Confirm ending its other login; **Switch here**. |
+
+Monitoring reviews use the existing dialog and **Back** keeps observations and
+selected deaths. Failed saves return to the form with entries retained. Existing
+confirmations for erosion, analysis deletion, release/site deletion, planting,
+skipping, schedule approval and sign-out remain in place. Ordinary filters,
+map navigation and report previews keep their current direct controls.
+
 ## Public booking and field users
 
 **LIKE website** is available at `/landing-page`, also linked by **Open LIKE
@@ -200,7 +229,12 @@ No participant password, PIN or staff device-reset workflow is required.
 The field Help / Guide covers assignment checks, Refresh assignments, My points,
 My location and GPS accuracy, navigation, point details, **Mark as planted**,
 **Skip Point**, and **Choose points to mark** for a reviewed batch of physically
-planted locations. Unavailable eroded locations cannot be marked planted. Check
+planted locations. Unavailable eroded locations cannot be marked planted. If a
+selected batch contains an eroded location at submission, the whole planting
+submission is blocked; remove unavailable locations and review the selection
+before trying again. Existing saved plantings stay unchanged. Planting Map's
+available-location count excludes erosion; analyzed plantable area remains the
+saved image measurement. Check
 progress before signing out. Access ends when the approved activity window ends
 or its code is revoked/replaced; saved work stays. Staff and field sign-in guide
 definitions are retained, but their guide buttons remain hidden.

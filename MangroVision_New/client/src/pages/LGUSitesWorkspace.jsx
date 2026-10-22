@@ -41,6 +41,7 @@ export default function LGUSites() {
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
+  const [visitReview, setVisitReview] = useState(null);
   const requestGeneration = useRef(0);
   const contextGeneration = useRef(0);
   const activeRef = useRef(null);
@@ -68,10 +69,12 @@ export default function LGUSites() {
 
   function close() {
     if (busyRef.current) return;
+    setVisitReview(null);
     ++contextGeneration.current; activeRef.current = null; setActive(null); setFormError('');
   }
 
   async function open(site, view, day = manilaDay()) {
+    setVisitReview(null);
     const generation = ++contextGeneration.current;
     activeRef.current = { id: site.project_site_id, view };
     setActive({ site, view, loading: true }); setFormError('');
@@ -86,18 +89,25 @@ export default function LGUSites() {
   async function save(event) {
     event.preventDefault();
     if (busyRef.current || active.loading || active.failed) return;
+    setVisitReview({ siteId: active.site.project_site_id, siteName: active.site.site_name,
+      payload: { ...form, dead_planting_event_ids: [...form.dead_planting_event_ids], version: active.site.version,
+        average_height_cm: form.average_height_cm === '' ? null : Number(form.average_height_cm) } });
+  }
+
+  async function confirmSave() {
+    if (!visitReview || busyRef.current) return;
+    const reviewed = visitReview;
     busyRef.current = true; setBusy(true); setFormError('');
     try {
-      await read(`/api/monitoring/lgu-sites/${active.site.project_site_id}/monitoring`, { method: 'POST',
-        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...form, version: active.site.version,
-          average_height_cm: form.average_height_cm === '' ? null : Number(form.average_height_cm) }) });
-      setNotice(`Monitoring saved for ${active.site.site_name}. Other sites keep their own schedules.`);
+      await read(`/api/monitoring/lgu-sites/${reviewed.siteId}/monitoring`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(reviewed.payload) });
+      setNotice(`Monitoring saved for ${reviewed.siteName}. Other sites keep their own schedules.`);
       activeRef.current = null; setActive(null);
       await load();
       const map = useMapStore.getState();
       void map.fetchPoints({ force: true }); void map.fetchStats({ force: true }); void map.fetchZones({ force: true });
     } catch (failure) { setFormError(failure.message); }
-    finally { busyRef.current = false; setBusy(false); }
+    finally { busyRef.current = false; setBusy(false); setVisitReview(null); }
   }
 
   function viewMap(site) {
@@ -145,13 +155,22 @@ export default function LGUSites() {
 </div>
       </article>)}</div>
     </section>
-    {active && <Modal open title={`${active.view === 'record' ? 'Record monitoring' : 'Monitoring history'} · ${active.site.site_name}`}
-      className="modal-card-wide" busy={busy} onCancel={close} cancelLabel="Close">
+    {active && <Modal key={visitReview ? 'site-review' : 'site-form'} open title={visitReview ? 'Save site monitoring?' : `${active.view === 'record' ? 'Record monitoring' : 'Monitoring history'} · ${active.site.site_name}`}
+      variant={visitReview ? 'warning' : 'default'}
+      className={visitReview ? '' : 'modal-card-wide'} busy={busy} onCancel={() => { if (!busy) { if (visitReview) setVisitReview(null); else close(); } }}
+      cancelLabel={visitReview ? 'Back' : 'Close'} initialFocus={visitReview ? 'cancel' : 'confirm'}
+      confirmLabel="Save monitoring" onConfirm={visitReview ? confirmSave : undefined}>
+      {visitReview && <div className="monitoring-save-review">
+        <p><strong>{visitReview.siteName}</strong> · {visitReview.payload.monitored_at}</p>
+        <p>{visitReview.payload.dead_planting_event_ids.length} newly dead · Overall health: {visitReview.payload.health_status}</p>
+        {visitReview.payload.dead_planting_event_ids.length > 0 && <p>Cause: {CAUSES.find(([value]) => value === visitReview.payload.death_reason_category)?.[1]}</p>}
+        <p>Save this visit for this LGU site?</p>
+      </div>}
       {active.loading ? <p role="status">Loading site monitoring…</p> : active.view === 'history' ? <div className="lgu-site-history">
         {!active.site.history?.length && <p>No monitoring visits recorded for this site.</p>}
         {active.site.history?.map((visit) => <article key={visit.id}><h3>{date(visit.monitored_at)}</h3><p>{count(visit.alive_count)} without recorded death · {count(visit.dead_count)} recorded dead · {count(visit.new_dead_count)} newly dead</p>
           <p>Overall health: {visit.health_status}{visit.average_height_cm != null ? ` · Measured height: ${visit.average_height_cm} cm` : ''}</p><p>{visit.actions_taken}</p><small>Recorded by {visit.inspector_name}</small></article>)}
-      </div> : <form onSubmit={save} className="lgu-site-form">
+      </div> : visitReview ? null : <form onSubmit={save} className="lgu-site-form">
         <p>This visit covers <strong>{active.site.site_name}</strong>. Select every newly dead seedling on its map; enter zero deaths by leaving the selection empty.</p>
         <fieldset disabled={busy || active.failed}><label>Monitoring date<input type="date" required max={manilaDay()} value={form.monitored_at} onChange={(event) => void open(active.site, 'record', event.target.value)} /></label>
           <p>{count(active.site.alive_count)} seedlings without recorded death before this visit · {form.dead_planting_event_ids.length} newly dead selected</p>

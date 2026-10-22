@@ -112,6 +112,13 @@ test('a visit sends only the chosen site and updates its card without changing a
   await act(async () => document.querySelector('[role="dialog"] input[type="checkbox"]').click());
   await fillActions();
   await click('Save site monitoring', document.querySelector('[role="dialog"]'));
+  assert.equal(requests.some((request) => request.body), false);
+  assert.equal(document.querySelector('.modal-title').textContent, 'Save site monitoring?');
+  await click('Back');
+  assert.equal(document.querySelector('.lgu-site-form textarea[required]').value, 'Checked seedlings and removed debris.');
+  assert.equal(document.querySelector('[role="dialog"] input[type="checkbox"]').checked, true);
+  await click('Save site monitoring');
+  await click('Save monitoring');
   const write = requests.find((request) => request.body);
   assert.equal(write.path, '/api/monitoring/lgu-sites/1/monitoring');
   assert.deepEqual(write.body.dead_planting_event_ids, [100]);
@@ -129,6 +136,7 @@ test('a stale visit keeps entered actions and selected deaths for review', async
   await act(async () => document.querySelector('[role="dialog"] input[type="checkbox"]').click());
   await fillActions();
   await click('Save site monitoring', document.querySelector('[role="dialog"]'));
+  await click('Save monitoring');
   assert.match(document.querySelector('[role="alert"]').textContent, /Reload/);
   assert.equal(document.querySelector('.lgu-site-form textarea[required]').value, 'Checked seedlings and removed debris.');
   assert.equal(document.querySelector('[role="dialog"] input[type="checkbox"]').checked, true);

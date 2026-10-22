@@ -343,13 +343,18 @@ test('existing codes are read without issuance and replacement requires confirma
   assert.match(document.body.textContent, /Opens .*Closes/);
   await click('Replace code');
   assert.equal(calls.length, 1);
-  await click('Confirm'); await settle();
+  assert.equal(document.querySelector('.modal-title').textContent, 'Replace organization code?');
+  assert.equal(document.activeElement.textContent, 'Cancel');
+  await click('Cancel');
+  assert.equal(calls.length, 1);
+  await click('Replace code');
+  await act(async () => document.querySelector('.modal-actions .btn-primary').click()); await settle();
   assert.match(calls[1].url, /\/organizations\/7\/activities\/3\/access$/);
   assert.deepEqual(calls[1].body, { action: 'replace' });
   assert.match(document.body.textContent, /G6FR-3VD8/);
 });
 
-test('switch here requires an explicit click and editing credentials cancels the prompt', async () => {
+test('switch here requires modal confirmation and Cancel keeps the existing login', async () => {
   const calls = [];
   globalThis.fetch = async (_url, options) => {
     const body = JSON.parse(options.body); calls.push(body);
@@ -360,13 +365,32 @@ test('switch here requires an explicit click and editing credentials cancels the
   await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Returning planter').click());
   await change('access_code', 'K7MP-4R9X'); await change('username', 'Ana'); await submit();
   assert.equal(calls.length, 1); assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
-  assert.match(document.body.textContent, /other login will end/);
-  await change('username', 'Ben'); assert.equal(document.querySelector('.field-switch-prompt'), null);
+  assert.match(document.querySelector('[role="dialog"]').textContent, /other login.*will end/);
+  await act(async () => document.querySelector('.modal-actions .btn-secondary').click());
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(calls.length, 1);
+  assert.equal(document.querySelector('[name="username"]').value, 'Ana');
+  await change('username', 'Ben');
   await change('username', 'Ana'); await submit();
   await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Switch here').click());
   await settle();
   assert.equal(calls.at(-1).switch_token, 'fictional-ticket');
   assert.equal(usePlanterAuthStore.getState().isAuthenticated, true);
+});
+
+test('a failed browser switch closes the review and keeps the credentials for retry', async () => {
+  globalThis.fetch = async (_url, options) => JSON.parse(options.body).switch_token
+    ? Response.json({ detail: 'This switch request expired. Sign in again.' }, { status: 409 })
+    : Response.json({ detail: { kind: 'session_in_use', message: 'Switch access?', switch_token: 'fictional-ticket' } }, { status: 409 });
+  await act(async () => root.render(createElement(AuthScreen)));
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Returning planter').click());
+  await change('access_code', 'K7MP-4R9X'); await change('username', 'Ana'); await submit();
+  await act(async () => document.querySelector('.modal-actions .btn-primary').click()); await settle();
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.match(document.querySelector('[role="alert"]').textContent, /expired/);
+  assert.equal(document.querySelector('[name="username"]').value, 'Ana');
+  assert.equal(document.querySelector('[name="access_code"]').value, 'K7MP-4R9X');
+  assert.equal(usePlanterAuthStore.getState().isAuthenticated, false);
 });
 
 test('first-time signup on a remembered browser redirects to its existing username', async () => {

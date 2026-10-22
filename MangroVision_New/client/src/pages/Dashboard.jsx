@@ -1073,6 +1073,8 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   const appliedSettings = useRef(JSON.stringify(settings));
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  const [review, setReview] = useState(null);
+  const submitting = useRef(false);
 
   useEffect(() => {
     // Cached API reads create fresh objects even when saved values are unchanged.
@@ -1086,6 +1088,7 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
 
   const save = async (event) => {
     event.preventDefault();
+    if (submitting.current || loading) return;
     setFormError('');
     if (!feedback.validate()) return;
     const annualTarget = form.annualTarget === '' ? null : Number(form.annualTarget);
@@ -1098,21 +1101,25 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
       feedback.reject({ survivalTarget: 'Enter a target percentage from 0 to 100, or leave it blank.' });
       return;
     }
+    setReview({ year, annual_planting_target: annualTarget, min_survival_target_pct: survivalTarget });
+  };
+
+  const confirmSave = async () => {
+    if (!review || submitting.current || loading) return;
+    submitting.current = true;
     setSaving(true);
     try {
       const result = await fetchJson('/api/dashboard/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          year,
-          annual_planting_target: annualTarget,
-          min_survival_target_pct: survivalTarget,
-        }),
+        body: JSON.stringify(review),
       });
       onSaved(result);
     } catch (saveError) {
       if (!feedback.fromServer(saveError)) setFormError(saveError.message || 'Could not save planting goals.');
     } finally {
+      submitting.current = false;
+      setReview(null);
       setSaving(false);
     }
   };
@@ -1120,7 +1127,7 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
   if (!settings && !error) return <LoadingState />;
   if (error && !settings) return <ErrorBanner compact title="Planting goals could not be loaded" message="Reload the page to try again before editing goals for this reporting year." />;
   return (
-    <form className="dash-goals" noValidate onChangeCapture={feedback.onChange} onSubmit={save}>
+    <><form className="dash-goals" noValidate onChangeCapture={feedback.onChange} onSubmit={save}>
       <FormErrorSummary feedback={feedback} />
       {error ? <ErrorBanner compact message={error} /> : null}
       {formError ? <ErrorBanner compact title="Planting goals not saved." message={formError} /> : null}
@@ -1141,6 +1148,13 @@ function PlantingGoalsForm({ settings, year, loading, error, onSaved }) {
         <button className="dash-primary-button" type="submit" disabled={saving || loading}>{saving ? 'Saving…' : 'Save planting goals'}</button>
       </div>
     </form>
+    {review && createPortal(<Modal open title="Save planting goals?" variant="warning" busy={saving}
+      initialFocus="cancel" confirmLabel="Save goals" cancelLabel="Cancel" confirmDisabled={loading}
+      onConfirm={confirmSave} onCancel={() => { if (!saving) setReview(null); }}>
+      <p>Update the goals for <strong>{review.year}</strong> across all project sites?</p>
+      <p>Seedlings to plant: <strong>{review.annual_planting_target ?? 'Not set'}</strong><br />
+        Target alive: <strong>{review.min_survival_target_pct == null ? 'Not set' : `${review.min_survival_target_pct}%`}</strong></p>
+    </Modal>, document.body)}</>
   );
 }
 

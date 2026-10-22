@@ -268,6 +268,47 @@ test('Planting Work omits assignment waiting ages and keeps its other charts', (
   assert.doesNotMatch(html, /How long assigned points have been waiting|Days since assignment|Time waiting/);
 });
 
+test('planting goals require review, Cancel preserves values, and repeated confirmation submits once', async () => {
+  const dom = new JSDOM('<body><div id="root"></div></body>', { url: 'http://dashboard.example', pretendToBeVisual: true });
+  const previous = new Map(), writes = [], saved = [];
+  let finish;
+  for (const [key, value] of Object.entries({ window: dom.window, document: dom.window.document,
+    IS_REACT_ACT_ENVIRONMENT: true, fetch: async (_url, options) => {
+      writes.push(JSON.parse(options.body));
+      return new Promise((resolve) => { finish = resolve; });
+    } })) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  }
+  const root = createRoot(document.getElementById('root'));
+  try {
+    await act(async () => root.render(createElement(PlantingGoalsForm, { year: 2026,
+      settings: { year: 2026, annual_planting_target: 2000, min_survival_target_pct: 85 }, onSaved: (value) => saved.push(value) })));
+    const submit = async () => act(async () => document.querySelector('.dash-goals').dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true })));
+    await submit();
+    assert.equal(writes.length, 0);
+    assert.match(document.querySelector('.modal-body').textContent, /2026.*2000.*85%/);
+    assert.equal(document.activeElement.textContent, 'Cancel');
+    await act(async () => document.querySelector('.modal-actions .btn-secondary').click());
+    assert.equal(document.querySelector('[name="annualTarget"]').value, '2000');
+    assert.equal(writes.length, 0);
+    await submit();
+    const confirm = document.querySelector('.modal-actions .btn-primary');
+    await act(async () => { confirm.click(); confirm.click(); });
+    assert.equal(confirm.disabled, true);
+    assert.deepEqual(writes, [{ year: 2026, annual_planting_target: 2000, min_survival_target_pct: 85 }]);
+    await act(async () => finish(Response.json(writes[0])));
+    assert.equal(saved.length, 1);
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+  } finally {
+    await act(async () => root.unmount());
+    for (const [key, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key];
+    }
+    dom.window.close();
+  }
+});
+
 test('Seedling Health shows non-cumulative monthly death counts and zero-death months', () => {
   const html = render(EcologyTab, { data: {
     summary: { total: 100, planted: 50, dead: 50, survival_rate_pct: 50 },

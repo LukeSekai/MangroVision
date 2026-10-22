@@ -27,6 +27,7 @@ from mangrovision_db.config import get_settings
 from mangrovision_db.monitoring_progress import age_snapshot, carried_counts
 from mangrovision_db.passwords import hash_password, verify_password
 from mangrovision_db.point_status import current_point_status
+from mangrovision_db.erosion import lock_erosion_boundaries, point_is_eroded, PLANTING_BLOCKED
 from mangrovision_db.health_summary import summarize_current_health
 from mangrovision_db.request_context import planter_session_token, staff_session_token
 from mangrovision_db.storage import (
@@ -3062,13 +3063,15 @@ def invalidate_eroded_zone_cache() -> None:
     _ERODED_ZONE_CACHE["polygons"] = []
 
 
-def _is_point_inside_eroded_zone(latitude, longitude) -> bool:
+def _is_point_inside_eroded_zone(latitude, longitude, *, conn=None) -> bool:
     """Return whether PostGIS says the point is covered by active erosion."""
     try:
         lat = float(latitude)
         lon = float(longitude)
     except (TypeError, ValueError):
         return False
+    if conn is not None:
+        return point_is_eroded(conn, lat, lon)
     conn = _get_connection()
     try:
         row = conn.execute("""
@@ -3320,11 +3323,7 @@ def _first_deleted_point(
 
 
 def _eroded_unavailable_message(point: dict) -> str:
-    return (
-        f"Point #{point['point_num']} from {point['image_name']} is inside an "
-        "eroded zone and is not available for planting. Remove the eroded zone "
-        "to return this point to Planned."
-    )
+    return PLANTING_BLOCKED
 
 
 def _first_eroded_unavailable_point(
@@ -3351,7 +3350,7 @@ def _first_eroded_unavailable_point(
     """, tuple(point_ids)).fetchall()
     for row in rows:
         point = dict(row)
-        if _is_point_inside_eroded_zone(point["latitude"], point["longitude"]):
+        if _is_point_inside_eroded_zone(point["latitude"], point["longitude"], conn=conn):
             return point
     return None
 
@@ -3385,7 +3384,7 @@ def get_all_stats() -> dict:
     # All planting points for map rendering
     points = conn.execute("""
         SELECT pp.id, pp.point_num, pp.latitude, pp.longitude, pp.buffer_m, pp.area_m2,
-               pp.status, pp.planted_at, pp.planted_date,
+               pp.status, pp.planted_at, pp.planted_date, pp.death_at,
                pp.deleted_at, pp.deletion_reason, pp.deletion_batch_id,
                pp.deletion_color,
                a.image_name, a.analyzed_at
@@ -3395,6 +3394,9 @@ def get_all_stats() -> dict:
         ORDER BY a.analyzed_at DESC
     """).fetchall()
     stats['points'] = _annotate_point_advisories(points)
+    # Live planting capacity is distinct from stored image measurements and
+    # historical planting totals. Completed/dead/eroded locations are excluded.
+    stats['total_planting_points'] = _current_planting_capacity(conn)
 
     # Per-analysis breakdown (with planner name)
     analyses = conn.execute(f"""
@@ -3419,6 +3421,19 @@ def get_all_stats() -> dict:
 
     conn.close()
     return stats
+
+
+def _current_planting_capacity(conn):
+    return int(conn.execute("""
+        SELECT COUNT(*) AS count FROM planting_points pp
+        WHERE pp.deleted_at IS NULL AND pp.status = 'planned' AND pp.death_at IS NULL
+          AND NOT EXISTS (SELECT 1 FROM map_zones mz
+              WHERE mz.zone_type = 'eroded' AND mz.deleted_at IS NULL
+                AND extensions.ST_Covers(mz.geometry, pp.location))
+          AND NOT EXISTS (SELECT 1 FROM planter_assignment_points pap
+              WHERE pap.planting_point_id = pp.id AND pap.released_at IS NULL
+                AND pap.status = 'completed')
+    """).fetchone()['count'])
 
 
 def delete_analysis(analysis_id: int):
@@ -4410,6 +4425,7 @@ def _create_planter_assignment(
 
     conn = connection or _get_connection()
     # Serialize batches for this organization before calculating each slot's share.
+    lock_erosion_boundaries(conn)
     row = conn.execute("SELECT * FROM planters WHERE id = ? FOR UPDATE", (planter_id,)).fetchone()
     if not row:
         raise ValueError("Selected planter was not found.")
@@ -4858,6 +4874,7 @@ def assign_planting_point_to_planter(
         raise ValueError("Invalid travel mode.")
 
     conn = _get_connection()
+    lock_erosion_boundaries(conn)
     point_row = conn.execute("""
         SELECT
             pp.id,
@@ -4889,7 +4906,7 @@ def assign_planting_point_to_planter(
     if point.get("deleted_at"):
         conn.close()
         raise ValueError(_deleted_point_message(point))
-    if _is_point_inside_eroded_zone(point.get("latitude"), point.get("longitude")):
+    if _is_point_inside_eroded_zone(point.get("latitude"), point.get("longitude"), conn=conn):
         conn.close()
         raise ValueError(_eroded_unavailable_message(point))
     if point.get("planting_status") == "planted":
@@ -5261,6 +5278,7 @@ def update_assignment_point_status(
         except Exception:
             conn.close()
             raise
+    lock_erosion_boundaries(conn)
     conn.execute('SELECT id FROM planting_points WHERE id = (SELECT planting_point_id FROM planter_assignment_points WHERE id = ?) FOR UPDATE', (assignment_point_id,)).fetchone()
     row = conn.execute("""
         SELECT
@@ -5300,9 +5318,10 @@ def update_assignment_point_status(
     if point.get("deleted_at"):
         conn.close()
         raise ValueError(_deleted_point_message(point))
-    if status in {"completed", "skipped"} and _is_point_inside_eroded_zone(
+    if status == "completed" and _is_point_inside_eroded_zone(
         point.get("latitude"),
         point.get("longitude"),
+        conn=conn,
     ):
         conn.close()
         raise ValueError(_eroded_unavailable_message(point))
@@ -5388,6 +5407,7 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
             conn.close()
             raise
     placeholders = ",".join("?" for _ in selected_ids)
+    lock_erosion_boundaries(conn)
     conn.execute(f"""SELECT id FROM planting_points WHERE id IN
         (SELECT planting_point_id FROM planter_assignment_points WHERE id IN ({placeholders})) ORDER BY id FOR UPDATE""", selected_ids).fetchall()
     rows = conn.execute("""
@@ -5425,9 +5445,10 @@ def mark_planter_points_completed(planter_id: int, assignment_point_ids: List[in
         if point.get("deleted_at"):
             deleted_count += 1
             continue
-        if _is_point_inside_eroded_zone(point.get("latitude"), point.get("longitude")):
-            unavailable_count += 1
-            continue
+        if _is_point_inside_eroded_zone(point.get("latitude"), point.get("longitude"), conn=conn):
+            conn.rollback()
+            conn.close()
+            raise ValueError(PLANTING_BLOCKED)
         actionable.append(point)
 
     if not actionable:

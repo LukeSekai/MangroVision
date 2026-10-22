@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import Modal from './Modal';
+import { REPLANTING_BLOCKED } from '../utils/erosionMessages';
 import './ReleaseDeadLocations.css';
 
 const API = import.meta.env.VITE_API_BASE || '';
@@ -20,8 +21,9 @@ export default function ReleaseDeadLocations({ points, onClose, onReleased }) {
         const payload = await response.json();
         if (!response.ok) throw new Error(payload.detail || 'Could not load the death record.');
         const ids = JSON.parse(selectedKey);
-        const current = (payload.points || []).filter((item) => ids.includes(Number(item.planting_point_id))
-          && item.can_release);
+        const selected = (payload.points || []).filter((item) => ids.includes(Number(item.planting_point_id)));
+        if (selected.some((item) => item.eroded_unavailable || item.inside_eroded_zone)) throw new Error(REPLANTING_BLOCKED);
+        const current = selected.filter((item) => item.can_release);
         if (current.length !== ids.length) throw new Error('Some selected points are no longer available for release. Close this window and refresh the map.');
         if (!controller.signal.aborted) setCandidates(current);
       } catch (failure) {
@@ -54,6 +56,9 @@ export default function ReleaseDeadLocations({ points, onClose, onReleased }) {
       setBusy(false);
     }
   }
+
+  if (error === REPLANTING_BLOCKED) return <Modal open title="Replanting blocked" variant="warning"
+    confirmLabel="OK" cancelLabel={null} onConfirm={onClose} onCancel={onClose}><p>{REPLANTING_BLOCKED}</p></Modal>;
 
   return <Modal open title={`Release ${points.length} dead location${points.length === 1 ? '' : 's'}?`}
     variant="info" busy={busy} className="release-locations-modal" initialFocus="cancel"

@@ -12,6 +12,7 @@ from shapely.validation import make_valid
 
 from .activity import append_activity
 from .zones import normalize_polygon
+from .erosion import lock_erosion_boundaries
 
 
 def _polygonal(geometry):
@@ -120,6 +121,7 @@ def prepare_drawn_site_boundary(geometry, coverage, allowed=None):
 
 def lock_site_boundaries(conn):
     """Serialize ownership checks with the manual project-site boundary writers."""
+    lock_erosion_boundaries(conn)
     conn.execute("SET LOCAL lock_timeout = '5s'")
     conn.execute("SELECT pg_advisory_xact_lock(hashtext('mangrovision.project_site_boundaries'))")
 
