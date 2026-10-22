@@ -54,7 +54,7 @@ def test_no_zone_is_drawn_on_released_land_and_unknown_outcomes_are_not_deaths()
 
 
 @pytest.mark.parametrize('status,death_at', [('planted', None), ('planted', '2026-10-20')])
-def test_point_warning_is_brief_without_repeating_the_site_name_or_counts(monkeypatch, status, death_at):
+def test_site_mortality_does_not_flag_each_planting_location(monkeypatch, status, death_at):
     import planting_database as db
     from shapely.geometry import shape
     warning = mortality_warning_zones([site()])[0]
@@ -63,11 +63,30 @@ def test_point_warning_is_brief_without_repeating_the_site_name_or_counts(monkey
     }])
     point = {'id': 1, 'planting_status': status, 'death_at': death_at, 'latitude': .5, 'longitude': .5}
     result = db._annotate_point_advisories([point], eroded_point_ids=set())[0]
-    assert result['warning_summary'] == 'High mortality (39.16% dead). Check before planting.'
-    assert result['warning_severity'] == 'high'
-    assert result['survival_warning'] is True
+    assert result['warning_summary'] is None
+    assert result['warning_severity'] is None
+    assert result['survival_warning'] is False
     assert result['death_at'] == death_at
     assert result['planting_status'] == status
+
+
+def test_wave_warnings_match_recorded_point_ids_not_neighboring_coordinates(monkeypatch):
+    import planting_database as db
+    monkeypatch.setattr(db, '_load_warning_zone_geometries', lambda: [{
+        'id': None, 'name': 'Wave-damaged locations', 'warning_type': 'wave_exposure',
+        'severity': 'medium', 'notes': 'Wave-caused death recorded here.', 'point_ids': {1},
+    }])
+    points = [
+        {'id': 1, 'planting_status': 'planned', 'death_at': None, 'latitude': .5, 'longitude': .5},
+        {'id': 2, 'planting_status': 'planted', 'death_at': None, 'latitude': .5, 'longitude': .5},
+        {'id': 3, 'planting_status': 'planted', 'death_at': '2026-10-20', 'latitude': .5, 'longitude': .5},
+    ]
+    released, living, other_death = db._annotate_point_advisories(points, eroded_point_ids=set())
+    assert released['survival_warning'] is True
+    assert released['warning_summary'] == 'Wave exposure: Wave-caused death recorded here.'
+    assert released['map_status'] == 'planned' and released['death_at'] is None
+    assert living['survival_warning'] is False and living['warning_summary'] is None
+    assert other_death['survival_warning'] is False and other_death['warning_summary'] is None
 
 
 def test_warning_repository_combines_manual_and_automatic_zones_without_writing(monkeypatch):

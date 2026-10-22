@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Panel, PanelCard } from '../components/Panel';
 import ReleaseDeadLocations from '../components/ReleaseDeadLocations';
-import SiteMortalityWarning from '../components/SiteMortalityWarning';
+import { projectSiteId } from '../utils/projectSiteInfo';
 import { useMapStore } from '../stores/mapStore';
 import { filterMonitoringFeatures, filterMonitoringPoints, monitoringOrganizations } from '../utils/monitoringOrganizationFilter';
 import './MonitoringMapWorkspace.css';
@@ -24,10 +24,13 @@ const LAYERS = [
 ];
 
 export default function MonitoringMapWorkspace() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const points = useMapStore((state) => state.points);
   const projectSites = useMapStore((state) => state.projectSites);
   const monitoringOrganizationId = useMapStore((state) => state.monitoringOrganizationId);
   const setMonitoringOrganizationId = useMapStore((state) => state.setMonitoringOrganizationId);
+  const setMonitoringProjectSiteId = useMapStore((state) => state.setMonitoringProjectSiteId);
   const loadingPoints = useMapStore((state) => state.loadingPoints);
   const layerVisibility = useMapStore((state) => state.layerVisibility);
   const toggleLayer = useMapStore((state) => state.toggleLayer);
@@ -50,18 +53,46 @@ export default function MonitoringMapWorkspace() {
     setMonitoringOrganizationId(null);
   }, [clearSelection, setSelectionMode, setShowDeadPointsOnly, setMonitoringOrganizationId]);
 
-  const visiblePoints = filterMonitoringPoints(points, monitoringOrganizationId);
+  const sites = filterMonitoringFeatures(projectSites, monitoringOrganizationId)?.features || [];
+  const requestedSiteId = new URLSearchParams(location.search).get('project_site_id');
+  const selectedSite = sites.find((site) => String(projectSiteId(site)) === requestedSiteId);
+  const selectedSiteId = selectedSite ? projectSiteId(selectedSite) : null;
+  const [releaseSiteId, setReleaseSiteId] = useState(selectedSiteId);
+  if (releaseSiteId !== selectedSiteId) {
+    setReleaseSiteId(selectedSiteId);
+    setReviewing(false);
+    setNotice('');
+  }
+  useEffect(() => {
+    setMonitoringProjectSiteId(selectedSiteId);
+  }, [selectedSiteId, setMonitoringProjectSiteId]);
+
+  const visiblePoints = filterMonitoringPoints(points, monitoringOrganizationId, selectedSiteId);
   const organizations = monitoringOrganizations(projectSites);
-  const mortalityWarnings = filterMonitoringFeatures(projectSites, monitoringOrganizationId)?.features
-    ?.filter((site) => site.properties?.mortality_warning?.active === true) || [];
+  const mortalityWarnings = sites.filter((site) => site.properties?.mortality_warning?.active === true);
   const deadPoints = visiblePoints.filter((point) => Boolean(point.death_at));
-  const selected = deadPoints.filter((point) => selectedIds.includes(point.id));
+  const selected = selectedSite ? deadPoints.filter((point) => selectedIds.includes(point.id)) : [];
   const plantedCount = visiblePoints.filter((point) => !point.death_at && (
     point.planting_status === 'planted' || point.assignment_status === 'completed'
   )).length;
 
   function revealPoints() {
     if (!layerVisibility.points) toggleLayer('points');
+  }
+
+  function chooseSite(value) {
+    setReviewing(false);
+    setNotice('');
+    setMonitoringProjectSiteId(value);
+    const params = new URLSearchParams(location.search);
+    if (value == null || value === '') {
+      params.delete('project_site_id');
+      params.delete('focus');
+    } else {
+      params.set('project_site_id', value);
+      params.set('focus', 'site_points');
+    }
+    navigate({ pathname: location.pathname, search: params.toString() });
   }
 
   function handleRelease(count) {
@@ -82,20 +113,28 @@ export default function MonitoringMapWorkspace() {
             setReviewing(false);
             setSelectionMode('click');
             setMonitoringOrganizationId(event.target.value);
+            chooseSite(null);
           }}>
           <option value="">All organizations</option>
           {organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}
         </select>
       </div>
       {mortalityWarnings.length > 0 && <PanelCard panelKey="monitoring-mortality-warnings" title="Mortality warning zones" badge={mortalityWarnings.length} defaultOpen>
-        {mortalityWarnings.map((site) => <div className="monitoring-map-help" key={site.id ?? site.properties.id}>
-          <strong>{site.properties.name}</strong>
-          <SiteMortalityWarning warning={site.properties.mortality_warning} />
-        </div>)}
+        <ul className="monitoring-map-site-list">{mortalityWarnings.map((site) => <li key={projectSiteId(site)}>
+          <button type="button" aria-pressed={String(projectSiteId(site)) === String(selectedSiteId)}
+            onClick={() => chooseSite(projectSiteId(site))}>{site.properties.name}</button>
+        </li>)}</ul>
       </PanelCard>}
-      <PanelCard panelKey="monitoring-map-review" title="Dead plants & site release" badge={deadPoints.length} className="monitoring-map-review-card" defaultOpen>
+      <PanelCard panelKey="monitoring-map-review" title="Dead plants & site release" badge={selectedSite ? deadPoints.length : 0} className="monitoring-map-review-card" defaultOpen>
+        <div className="monitoring-map-organization monitoring-map-site-picker">
+          <label htmlFor="monitoring-map-project-site">Project site</label>
+          <select id="monitoring-map-project-site" value={selectedSiteId ?? ''} onChange={(event) => chooseSite(event.target.value)}>
+            <option value="">Choose a project site</option>
+            {sites.map((site) => <option key={projectSiteId(site)} value={projectSiteId(site)}>{site.properties.name}</option>)}
+          </select>
+        </div>
         <label className="monitoring-map-check">
-          <input type="checkbox" checked={showDeadPointsOnly} onChange={(event) => {
+          <input type="checkbox" disabled={!selectedSite} checked={showDeadPointsOnly} onChange={(event) => {
             setShowDeadPointsOnly(event.target.checked);
             if (event.target.checked) revealPoints();
           }} />
@@ -104,17 +143,18 @@ export default function MonitoringMapWorkspace() {
         <div className="monitoring-map-tool-label">Selection tool</div>
         <div className="monitoring-map-tools" role="group" aria-label="Dead plant selection tool">
           {SELECTION_MODES.map(([mode, label]) => <button key={mode} type="button"
+            disabled={!selectedSite}
             className={selectionMode === mode ? 'is-active' : ''} aria-pressed={selectionMode === mode}
             onClick={() => {
               setSelectionMode(mode);
               revealPoints();
             }}>{label}</button>)}
         </div>
-        <p className="monitoring-map-instruction">{selectionMode === 'click'
+        <p className="monitoring-map-instruction">{!selectedSite ? 'Choose a project site to select and release its dead plants.' : selectionMode === 'click'
           ? 'Click a dead point to select it. Use a brush for several points; selected points turn purple.'
           : `Hold the left mouse button and drag to ${selectionMode === 'select' ? 'select' : 'deselect'} dead points. Release to stop; Esc exits.`}</p>
         {loadingPoints && !points.length ? <p className="monitoring-map-help" role="status">Loading planting points…</p> : null}
-        {!loadingPoints && !deadPoints.length ? <p className="monitoring-map-help">No dead plants are currently mapped.</p> : null}
+        {!loadingPoints && selectedSite && !deadPoints.length ? <p className="monitoring-map-help">No dead plants are currently mapped in this project site.</p> : null}
         {selected.length >= 500 ? <p className="monitoring-map-help" role="status">500 points selected. Release this batch before selecting more.</p> : null}
         {selected.length > 0 ? <div className="monitoring-map-actions">
           <strong>{selected.length} selected</strong>
@@ -138,7 +178,7 @@ export default function MonitoringMapWorkspace() {
       <PanelCard panelKey="monitoring-map-legend" title="Legend" defaultOpen={false}>
         <div className="monitoring-map-legend">
           <div><i style={{ background: '#7f1d1d' }} />Dead</div>
-          <div><i style={{ background: '#f59e0b', border: '1px dashed #d97706' }} />Mortality warning zone (at least 30%)</div>
+          <div><i style={{ background: '#16a34a', border: '2px solid #f59e0b' }} />Recorded wave-damage warning</div>
           <div><i style={{ background: '#7c3aed' }} />Selected for release</div>
           <div><i style={{ background: '#eab308' }} />Planted</div>
           <div><i style={{ background: '#2563eb' }} />Assigned</div>
@@ -160,7 +200,8 @@ export default function MonitoringMapWorkspace() {
       </PanelCard>
     </Panel>
     {reviewing && selected.length > 0 ? <ReleaseDeadLocations
-      key={selected.map((point) => point.id).join(',')} points={selected}
+      key={`${selectedSiteId}:${selected.map((point) => point.id).join(',')}`} points={selected}
+      projectSite={{ id: selectedSiteId, name: selectedSite.properties.name }}
       onClose={() => setReviewing(false)} onReleased={handleRelease} /> : null}
   </div>;
 }

@@ -1,8 +1,10 @@
-export function filterMonitoringPoints(points, organizationId) {
-  if (organizationId == null) return points;
+export function filterMonitoringPoints(points, organizationId, projectSiteId = null) {
+  if (organizationId == null && projectSiteId == null) return points;
   return points.filter((point) => {
     const ownerId = point.source_organization_id ?? point.assigned_organization_id;
-    return ownerId != null && Number(ownerId) === Number(organizationId);
+    const siteId = point.source_project_site_id ?? point.source_site_id;
+    return (organizationId == null || (ownerId != null && Number(ownerId) === Number(organizationId)))
+      && (projectSiteId == null || (siteId != null && Number(siteId) === Number(projectSiteId)));
   });
 }
 

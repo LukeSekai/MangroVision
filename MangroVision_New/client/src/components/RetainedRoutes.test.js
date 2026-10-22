@@ -12,7 +12,7 @@ import process from 'node:process';
 let dom, root, createRoot, RetainedRoutes, Dashboard, ActivityFeed, Scheduling, MapAnalytics, MapReturnNavigation, useMapStore;
 let requests, scheduleRows, mapPoints, appointmentRows, approvals, useAuthStore;
 let goalSaves, goalSaveFailure, savedGoalSettings;
-let followUpRows;
+let totalOrganizations;
 let scheduleSaves, scheduleSaveFailure;
 const bundlePath = resolve(`node_modules/.retained-routes-${process.pid}.mjs`);
 const originalGlobals = new Map();
@@ -54,6 +54,7 @@ before(async () => {
       return Response.json({ ok: true });
     }
     if (url.pathname === '/api/planters/map-points') return Response.json(mapPoints);
+    if (url.pathname === '/api/project-sites') return Response.json({ type: 'FeatureCollection', features: [] });
     if (url.pathname === '/api/analyses/stats') return Response.json({ total_analyses: 1, points: mapPoints });
     if (url.pathname === '/api/dashboard/settings') {
       if (options.method === 'PUT') {
@@ -68,8 +69,7 @@ before(async () => {
     }
     if (url.pathname.startsWith('/api/dashboard/')) return Response.json({
       as_of: '2026-10-06T01:00:00Z', filter_options: { sites: [{ id: 1, name: 'Test Site' }] }, suitability: rows,
-      kpis: { sites_requiring_attention: { value: followUpRows.filter((site) => site.reasons.length).length } },
-      site_attention: followUpRows,
+      kpis: { total_organizations: { value: totalOrganizations, scope: 'global' } },
       lifecycle: mapPoints.map((point) => ({
         key: { planned: 'available', planted: 'planted_unverified' }[point.map_status] || point.map_status,
         value: 1,
@@ -151,7 +151,7 @@ beforeEach(() => {
   goalSaves = [];
   goalSaveFailure = false;
   savedGoalSettings = new Map();
-  followUpRows = [];
+  totalOrganizations = 3;
   scheduleSaves = [];
   scheduleSaveFailure = false;
   useAuthStore.setState({ user: null });
@@ -195,49 +195,30 @@ async function click(selector) {
 
 const count = (path) => requests.filter((url) => url.split('?')[0] === path).length;
 
-test('follow-up card lists affected sites and links to their exact map and monitoring context', async () => {
-  followUpRows = [
-    { site_id: 1, site_name: 'North planting site', reasons: ['overdue_inspections', 'survival_below_target'], overdue_inspections: 4, survival_rate_pct: 55 },
-    { site_id: 2, site_name: 'Warning site', reasons: ['warning_exposure'], warning_points: 12 },
-    { site_id: 3, site_name: 'Healthy site', reasons: [] },
-  ];
+test('total organizations is a summary and clicking it cannot open a dialog or navigate', async () => {
   await render();
   const requestCount = requests.length;
-  await click('.dash-kpi-action');
-  const dialog = document.querySelector('.dash-follow-up-dialog');
-  assert.ok(dialog);
-  assert.equal(dialog.closest('.modal-backdrop').parentElement, document.body,
-    'Follow-up details must open above the workspace content and header');
-  for (const text of [/North planting site/, /Monitoring overdue.*4 pending inspections/s, /Survival below target.*55%/s]) {
-    assert.match(dialog.textContent, text);
-  }
-  assert.match(dialog.textContent, /Warning zone exposure.*12 planting points/s);
-  assert.doesNotMatch(dialog.textContent, /Healthy site/);
-  assert.equal(dialog.querySelectorAll('.dash-follow-up-site').length, 2);
-  assert.equal(requests.length, requestCount, 'Opening the list uses the already loaded reporting scope');
-  await click(dialog.querySelector('[aria-label="View Warning site on the map"]'));
-  assert.equal(document.querySelector('[data-location]').textContent, '/map?project_site_id=2&focus=risk_areas');
-  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
-  assert.equal(document.querySelector('.map-return-navigation').textContent.trim(), 'Back to Dashboard');
-  await click('.map-return-navigation a');
-  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
-  await click('.dash-kpi-action');
-  await click('[aria-label="Open Monitoring for North planting site"]');
-  assert.equal(document.querySelector('[data-location]').textContent, '/monitoring?project_site_id=1');
-  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
+  const card = [...document.querySelectorAll('.dash-kpi')]
+    .find((element) => element.querySelector('.dash-kpi-label').textContent === 'Total organizations');
+  assert.equal(card.tagName, 'ARTICLE');
+  assert.equal(card.querySelector('.dash-kpi-value').textContent, '3');
+  assert.equal(card.querySelector('button, a, [role="button"]'), null);
+  await click(card);
+  assert.equal(document.querySelector('[data-location]').textContent, '/dashboard');
+  assert.equal(document.querySelector('[role="dialog"]'), null);
+  assert.equal(document.querySelector('.dash-kpi-action'), null);
+  assert.equal(requests.length, requestCount);
   assert.equal(goalSaves.length, 0);
 });
 
-test('zero follow-up sites has an honest empty state and Escape restores focus to the card', async () => {
+test('total organizations shows an actual zero without a clickable empty state', async () => {
+  totalOrganizations = 0;
   await render();
-  const button = document.querySelector('.dash-kpi-action');
-  button.focus();
-  await click(button);
-  assert.match(document.querySelector('.dash-follow-up-dialog').textContent, /No sites need follow-up for the selected filters/);
-  assert.equal(document.querySelector('.dash-follow-up-dialog a'), null);
-  await act(async () => document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })));
-  assert.equal(document.querySelector('.dash-follow-up-dialog'), null);
-  assert.equal(document.activeElement, button);
+  const card = [...document.querySelectorAll('.dash-kpi')]
+    .find((element) => element.querySelector('.dash-kpi-label').textContent === 'Total organizations');
+  assert.equal(card.querySelector('.dash-kpi-value').textContent, '0');
+  assert.equal(document.querySelector('.dash-kpis button, .dash-kpis a'), null);
+  assert.equal(document.querySelector('[role="dialog"]'), null);
 });
 
 test('map and donut pick up mutations made while their retained page is hidden', async () => {

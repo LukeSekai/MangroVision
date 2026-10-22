@@ -112,6 +112,8 @@ function websiteForecast() {
     datum: 'MSL', datum_reference: 'test', series_available: true, source: 'Open-Meteo Marine API',
     heights: Array.from({ length: 73 }, (_, hour) => ({ timestamp: base / 1000 + hour * 3600,
       height_m: hour >= 24 || hour === 8 || hour === 9 ? -1 : hour === 7 || hour === 10 ? 0 : 1 })),
+    extremes: [{ timestamp: base / 1000 + 8 * 3600, type: 'Low', height_m: -1 },
+      { timestamp: base / 1000 + 11 * 3600, type: 'High', height_m: 1 }],
   } };
 }
 
@@ -137,10 +139,41 @@ test('website uses a tide suggestion and blocks sending when the whole visit doe
   assert.equal(sent, 0);
   assert.equal(document.querySelector('[name="start_time"]').getAttribute('aria-invalid'), 'true');
   await change('date', '2039-01-01');
-  assert.match(document.body.textContent, /does not cover the full booking period/);
+  assert.match(document.body.textContent, /does not cover this date yet/);
   assert.equal(document.querySelector('.like-tide-windows'), null);
   assert.equal(document.querySelector('.like-tide-match'), null);
   assert.equal(document.querySelector('[name="start_time"]').value, '09:00');
+});
+
+test('website shows high and low tides and offers visits when the selected day is only partly covered', async () => {
+  const { date, payload } = websiteForecast();
+  payload.heights = payload.heights.slice(8);
+  globalThis.fetch = async () => Response.json(payload);
+  await openWebsiteSchedule();
+  await change('date', date); await settle();
+  const events = document.querySelector('[aria-label="High and low tides"]');
+  assert.match(events.textContent, /Low tide8:00 AM-1.00 m/);
+  assert.match(events.textContent, /High tide11:00 AM1.00 m/);
+  assert.match(document.body.textContent, /Philippine time/);
+  assert.match(document.body.textContent, /Forecast covers only part of this date/);
+  await act(async () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Use 8:00 AM').click());
+  assert.equal(document.querySelector('[name="start_time"]').value, '08:00');
+  assert.equal(document.querySelector('[name="end_time"]').value, '10:00');
+  assert.ok(document.querySelector('.like-tide-match'));
+  const nextDay = new Date(Date.parse(`${date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+  await change('date', nextDay);
+  assert.equal(document.querySelector('.like-tide-events'), null);
+});
+
+test('website keeps tide times visible when no complete two-hour planting suggestion fits', async () => {
+  const { date, payload } = websiteForecast();
+  payload.heights = payload.heights.slice(8, 10);
+  globalThis.fetch = async () => Response.json(payload);
+  await openWebsiteSchedule();
+  await change('date', date); await settle();
+  assert.match(document.querySelector('.like-tide-events').textContent, /Low tide8:00 AM/);
+  assert.equal(document.querySelector('.like-tide-windows'), null);
+  assert.match(document.body.textContent, /no complete two-hour planting slot/);
 });
 
 test('LIKE offers 6 AM to 5 PM during all-day low water and rejects an early or late visit', async () => {
@@ -204,14 +237,17 @@ test('failed refresh hides old tide suggestions and recovery restores them witho
   await openWebsiteSchedule();
   await change('date', date); await settle();
   await change('start_time', '07:00');
+  assert.ok(document.querySelector('.like-tide-events'));
   const refresh = () => [...document.querySelectorAll('button')].find((button) => button.textContent === 'Refresh tides');
   await act(async () => refresh().click()); await settle();
   assert.equal(document.querySelector('.like-tide-windows'), null);
+  assert.equal(document.querySelector('.like-tide-events'), null);
   assert.equal(document.querySelector('.like-tide-match'), null);
   assert.match(document.body.textContent, /could not load the tide forecast/);
   assert.equal(document.querySelector('[name="end_time"]').value, '09:00');
   await act(async () => refresh().click()); await settle();
   assert.notEqual(document.querySelector('.like-tide-windows'), null);
+  assert.ok(document.querySelector('.like-tide-events'));
   assert.equal(document.querySelector('[name="start_time"]').value, '07:00');
 });
 

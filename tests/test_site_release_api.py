@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
 from api.routes import monitoring
 
-BODY = {'planting_event_ids': [10], 'versions': {'10': 0}}
+BODY = {'project_site_id': 1, 'planting_event_ids': [10], 'versions': {'10': 0}}
 
 
 def client():
@@ -33,10 +33,23 @@ def test_release_uses_session_actor_and_rejects_unexpected_fields(monkeypatch):
                         lambda *args: received.append(args) or {'released_count': 1})
     with client() as api:
         assert api.post('/release-locations', json=BODY).json() == {'released_count': 1}
-        assert received == [([10], {'10': 0}, 17)]
+        assert received == [([10], {'10': 0}, 17, 1)]
         assert api.post('/release-locations', json={**BODY, 'user_id': 99}).status_code == 422
         assert api.post('/release-locations', json={**BODY, 'planting_event_ids': []}).status_code == 422
         assert len(received) == 1
+
+
+def test_release_requires_one_positive_project_site_and_filters_candidates(monkeypatch):
+    monkeypatch.setattr(monitoring, 'get_user_by_session_token', lambda _: {'id': 17, 'role': 'planner'})
+    received = []
+    monkeypatch.setattr(monitoring, 'list_release_candidates', lambda *args: received.append(args) or [])
+    with client() as api:
+        assert api.get('/release-candidates?project_site_id=7').json() == {'points': []}
+        assert received == [(None, 7)]
+        for value in [None, 0, -1, True]:
+            body = {**BODY, 'project_site_id': value}
+            assert api.post('/release-locations', json=body).status_code == 422
+        assert api.post('/release-locations', json={key: value for key, value in BODY.items() if key != 'project_site_id'}).status_code == 422
 
 
 def test_conflict_keeps_the_error_actionable_and_old_workflow_is_removed(monkeypatch):

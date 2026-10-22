@@ -38,6 +38,12 @@
   font: 700 0.8rem var(--font-sans);
   cursor: pointer;
 }
+.monitoring-map-site-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.monitoring-map-site-list button { width: 100%; padding: 10px; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: #fff; color: var(--green-900); font: 650 0.8rem var(--font-sans); text-align: left; cursor: pointer; }
+.monitoring-map-site-list button:hover,
+.monitoring-map-site-list button[aria-pressed="true"] { border-color: var(--green-600); background: var(--green-50); }
+.monitoring-map-site-picker { margin-bottom: 12px; padding: 0; border: 0; box-shadow: none; }
+.monitoring-map-tools button:disabled { opacity: 0.5; cursor: default; }
 
 .monitoring-map-check,
 .monitoring-map-layers label {

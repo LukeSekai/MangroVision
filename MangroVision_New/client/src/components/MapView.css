@@ -164,7 +164,9 @@
 }
 
 .map-zone-legend-swatch-mortality {
-  border: 2px dashed #d97706;
+  border: 2px solid #f59e0b;
+  border-radius: 50%;
+  background: #16a34a;
 }
 
 .map-zone-legend-label {

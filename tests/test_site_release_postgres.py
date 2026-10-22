@@ -15,6 +15,8 @@ from mangrovision_db.site_actions import available_released_areas, release_dead_
 from mangrovision_db.planting_performance import summarize_planting_performance
 from mangrovision_db.point_status import current_point_status
 
+REAL_WARNING_LOADER = db._load_warning_zone_geometries
+
 pytestmark = pytest.mark.skipif(os.getenv('MANGROVISION_RUN_TEMP_ACCOUNT_TESTS') != '1',
                                reason='Rollback-only PostgreSQL release checks are opt-in.')
 
@@ -23,7 +25,7 @@ pytestmark = pytest.mark.skipif(os.getenv('MANGROVISION_RUN_TEMP_ACCOUNT_TESTS')
 def workspace(monkeypatch):
     tables = ['users', 'organizations', 'planters', 'project_sites', 'analyses', 'planting_points',
               'planter_assignments', 'planter_assignment_points', 'planting_events', 'point_death_records',
-              'replanting_requests', 'map_zones', 'warning_zones', 'activity_logs', 'planting_schedules',
+              'replanting_requests', 'map_zones', 'activity_logs', 'planting_schedules',
               'project_site_area_releases', 'organization_participants', 'activity_schedule_emails',
               'like_appointment_emails', 'like_appointment_requests']
     try:
@@ -38,6 +40,7 @@ def workspace(monkeypatch):
                 connection.exec_driver_sql(f'CREATE TEMP TABLE {table} (LIKE mangrovision.{table} INCLUDING ALL)')
             connection.exec_driver_sql('SET LOCAL search_path = pg_temp, mangrovision, extensions, public')
             connection.exec_driver_sql('CREATE TEMP VIEW site_zones AS SELECT * FROM pg_temp.project_sites')
+            connection.exec_driver_sql("CREATE TEMP VIEW warning_zones AS SELECT * FROM pg_temp.map_zones WHERE zone_type='warning' AND deleted_at IS NULL")
             for table in tables:
                 namespace = connection.scalar(text('''SELECT n.nspname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
                     WHERE c.oid = to_regclass(:name)'''), {'name': table})
@@ -112,8 +115,53 @@ def snapshot():
         connection.close()
 
 
-def release(ids=(1, 2), versions=None):
-    return release_dead_locations_batch(list(ids), versions or {str(value): 0 for value in ids}, 1)
+def release(ids=(1, 2), versions=None, project_site_id=1):
+    return release_dead_locations_batch(list(ids), versions or {str(value): 0 for value in ids}, 1, project_site_id)
+
+
+def assert_wave_warning(point_id):
+    point = next(row for row in db.list_planter_assignment_map_points() if row['id'] == point_id)
+    assert point['survival_warning'] is True
+    assert point['warning_zone_ids'] == []
+    assert 'Wave exposure' in point['warning_summary']
+    return point
+
+
+def test_released_planned_points_keep_their_recorded_wave_death_warning(workspace, monkeypatch):
+    monkeypatch.setattr(db, '_load_warning_zone_geometries', REAL_WARNING_LOADER)
+    release((1,))
+    point = assert_wave_warning(1)
+    assert point['map_status'] == 'planned'
+    assert point['death_at'] is None
+    assert point['source_project_site_id'] is None
+    assert workspace.scalar(text("SELECT COUNT(*) FROM map_zones WHERE zone_type='warning'")) == 0
+
+
+def test_wave_flags_exclude_living_plants_other_causes_and_corrected_records(workspace, monkeypatch):
+    monkeypatch.setattr(db, '_load_warning_zone_geometries', REAL_WARNING_LOADER)
+    workspace.execute(text("UPDATE point_death_records SET reason_category='barnacles' WHERE planting_event_id=2"))
+    points = {row['id']: row for row in db.list_planter_assignment_map_points()}
+    assert points[1]['survival_warning'] is True
+    assert points[2]['survival_warning'] is False
+    assert points[3]['survival_warning'] is False
+    assert points[2]['warning_summary'] is None and points[3]['warning_summary'] is None
+    release((1,))
+    assert_wave_warning(1)
+    workspace.execute(text("UPDATE point_death_records SET reason_category='drying_out' WHERE planting_event_id=1"))
+    points = {row['id']: row for row in db.list_planter_assignment_map_points()}
+    assert points[1]['map_status'] == 'planned' and points[1]['survival_warning'] is False
+
+
+def test_release_cannot_change_a_different_project_site(workspace):
+    before = workspace.scalar(text('SELECT polygon_geojson FROM project_sites WHERE id=1'))
+    with pytest.raises(ValueError, match='chosen project site'):
+        release(project_site_id=2)
+    assert workspace.scalar(text('SELECT polygon_geojson FROM project_sites WHERE id=1')) == before
+    assert workspace.scalar(text('SELECT COUNT(*) FROM replanting_requests')) == 0
+    assert workspace.scalar(text('SELECT COUNT(*) FROM project_site_area_releases')) == 0
+    assert workspace.scalar(text('SELECT COUNT(*) FROM planter_assignment_points WHERE released_at IS NOT NULL')) == 0
+    assert len(list_release_candidates(project_site_id=1)) == 2
+    assert list_release_candidates(project_site_id=2) == []
 
 
 def test_selected_release_frees_land_and_keeps_every_original_outcome(workspace):
@@ -125,7 +173,10 @@ def test_selected_release_frees_land_and_keeps_every_original_outcome(workspace)
     assert {point['id']: point['site_id'] for point in points} == {1: None, 2: 1, 3: 1}
     assert performance['summary']['total'] == 3 and performance['summary']['dead'] == 2
     assert performance['summary']['survival_rate_pct'] == 33.33
-    assert db._project_site_planting_history(CompatConnection(workspace))[1]['survival_rate_pct'] == 33.33
+    history = {'total': 3, 'planted': 1, 'dead': 2, 'unknown': 0, 'survival_rate_pct': 33.33}
+    assert db._project_site_planting_history(CompatConnection(workspace))[1] == history
+    assert db.get_project_site(1)['properties']['planting_history'] == history
+    assert next(site for site in db.list_project_sites() if site['id'] == 1)['properties']['planting_history'] == history
     assert workspace.execute(text('SELECT * FROM planting_events ORDER BY id')).all() == before_events
     assert workspace.execute(text('SELECT * FROM point_death_records ORDER BY id')).all() == before_deaths
     public = {point['id']: point for point in db.list_planter_assignment_map_points()}
@@ -139,7 +190,8 @@ def test_selected_release_frees_land_and_keeps_every_original_outcome(workspace)
     assert next(row for row in list_release_candidates() if row['planting_event_id'] == 1)['release_status'] == 'released'
 
 
-def test_another_organization_can_claim_assign_and_plant_a_fresh_cycle(workspace):
+def test_another_organization_can_claim_assign_and_plant_a_fresh_cycle(workspace, monkeypatch):
+    monkeypatch.setattr(db, '_load_warning_zone_geometries', REAL_WARNING_LOADER)
     release()
     released_area = available_released_areas()['features'][0]['geometry']
     workspace.execute(text("""INSERT INTO organizations(id,name,normalized_name,inspection_interval_days)
@@ -173,6 +225,9 @@ def test_another_organization_can_claim_assign_and_plant_a_fresh_cycle(workspace
     assert replacement['project_site_id'] == 2 and replacement['planter_id'] == 2
     assert workspace.scalar(text('SELECT project_site_id FROM planting_events WHERE id=1')) == 1
     assert workspace.scalar(text('SELECT COUNT(*) FROM point_death_records')) == 2
+    assert db.get_project_site(1)['properties']['planting_history'] == {
+        'total': 3, 'planted': 1, 'dead': 2, 'unknown': 0, 'survival_rate_pct': 33.33}
+    assert_wave_warning(1)
 
 
 @pytest.mark.parametrize('case', ['stale', 'living', 'erosion', 'removed'])

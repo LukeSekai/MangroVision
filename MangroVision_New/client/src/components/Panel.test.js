@@ -237,6 +237,7 @@ function zoneFixtures() {
     { name: 'Community site', organization_name: 'Community', organization_id: 11 });
   const assignment = rectangle(6, 122.6248, 10.7797, 122.6258, 10.7807,
     { name: 'Assignment 6' });
+  responses.set('/api/project-sites', collection(site));
   useMapStore.setState({
     center: [122.6253, 10.7800], zoom: 18, pointsLoaded: true,
     points: [{ id: 101, point_num: 101, latitude: 10.7800, longitude: 122.6251,
@@ -276,7 +277,7 @@ test(`monitoring release brush requires a held primary pointer and ignores hidde
       createElement('button', { onClick: () => setOpen(true) }, 'Show test dialog'),
       createElement(Modal, { open, keepMounted: true, title: 'Site details', onCancel: () => setOpen(false) }));
   }
-  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: ['/monitoring/map'] },
+  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: ['/monitoring/map?project_site_id=5&focus=site_points'] },
     createElement(MapView), createElement(pages.get('MonitoringMapWorkspace')), createElement(RetainedDialog))));
   await settle();
   const map = useMapStore.getState().mapInstance;
@@ -342,6 +343,32 @@ test(`monitoring release brush requires a held primary pointer and ignores hidde
 });
 }
 
+test('clicking a mortality site focuses its map and excludes other sites from release selection', async () => {
+  const { site } = zoneFixtures();
+  site.properties.mortality_warning = { active: true, mortality_rate_pct: 50 };
+  const secondSite = { ...site, id: 7, properties: { ...site.properties, name: 'Second project site' },
+    geometry: { type: 'Polygon', coordinates: [[[122.626, 10.779], [122.627, 10.779], [122.627, 10.781], [122.626, 10.781], [122.626, 10.779]]] } };
+  const base = useMapStore.getState().points[0];
+  useMapStore.setState({ projectSites: { type: 'FeatureCollection', features: [site, secondSite] }, points: [
+    { ...base, death_at: '2026-10-20', planting_status: 'planted', source_organization_id: 11 },
+    { ...base, id: 102, longitude: 122.6265, death_at: '2026-10-20', planting_status: 'planted', source_organization_id: 11, source_project_site_id: 7 },
+  ] });
+  await act(async () => root.render(createElement(MemoryRouter, { initialEntries: ['/monitoring/map'] },
+    createElement(MapView), createElement(pages.get('MonitoringMapWorkspace')))));
+  await settle();
+  const siteButton = [...document.querySelectorAll('.monitoring-map-site-list button')].find((button) => button.textContent === 'Second project site');
+  await click(siteButton);
+  const map = useMapStore.getState().mapInstance;
+  assert.equal(document.querySelector('#monitoring-map-project-site').value, '7');
+  assert.ok(map.getBounds().contains([10.7800, 122.6265]));
+  const markers = [];
+  map.eachLayer((layer) => { if (layer.options?.mgPointId != null) markers.push(layer.options.mgPointId); });
+  assert.deepEqual(markers, [102]);
+  await act(async () => useMapStore.getState().paintReplantingPoints([101, 102], 'select'));
+  assert.deepEqual(useMapStore.getState().replantingSelectedPointIds, [102]);
+  assert.equal(mutations.length, 0);
+});
+
 test('recording a death keeps its marker and site membership across all planting tools until release', async () => {
   const zones = zoneFixtures();
   const planted = { ...useMapStore.getState().points[0], planting_status: 'planted',
@@ -358,7 +385,8 @@ test('recording a death keeps its marker and site membership across all planting
     return found;
   };
   const siteCount = (status) => {
-    const content = boundaryFor(map, zones.site).getPopup().getContent();
+    const feature = useMapStore.getState().projectSites.features.find((site) => site.id === zones.site.id);
+    const content = boundaryFor(map, feature).getPopup().getContent();
     return content().querySelector(`.project-site-info-stat.is-${status} dd`).textContent;
   };
   assert.equal(markerFor(101).options.mgDead, false);
@@ -415,7 +443,8 @@ test('project-site hover shows analytics above assignment zones while point hove
   const card = document.querySelector('.project-site-tooltip .project-site-info');
   assert.ok(card, 'the project site must receive hover ahead of its assignment zone');
   assert.equal(card.querySelector('.project-site-info-title').textContent, 'Community site');
-  assert.equal(card.querySelector('.project-site-info-total strong').textContent, '4');
+  assert.equal(card.querySelector('.project-site-info-total strong').textContent, '3');
+  assert.equal(card.querySelector('.project-site-info-current summary').textContent, 'Current site locations · 4');
   assert.equal(card.querySelector('.is-planted dd').textContent, '2');
   assert.equal(card.querySelector('.is-dead dd').textContent, '1');
   assert.equal(card.querySelector('.project-site-info-survival dd').textContent, '66.67%');
@@ -430,7 +459,67 @@ test('project-site hover shows analytics above assignment zones while point hove
   assert.equal(mutations.length, 0);
 });
 
-test('mortality warning outlines retain site hover analytics without permanent danger labels', async () => {
+test('site history in the map popup retains deaths after releasing and reassigning their locations', async () => {
+  const zones = zoneFixtures();
+  zones.site.properties.planting_history = { total: 3, planted: 2, dead: 1, survival_rate_pct: 66.67 };
+  const base = useMapStore.getState().points[0];
+  const living = { ...base, planting_status: 'planted' };
+  const dead = { ...base, id: 102, point_num: 102, longitude: 122.6253,
+    planting_status: 'planted', death_at: '2026-10-18' };
+  const otherLiving = { ...living, id: 103, point_num: 103, longitude: 122.6255 };
+  useMapStore.setState({ points: [living, dead, otherLiving] });
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  const assertHistory = (currentTotal, currentDead) => {
+    const card = boundaryFor(map, zones.site).getPopup().getContent()();
+    assert.equal(card.querySelector('.project-site-info-history .project-site-info-total strong').textContent, '3');
+    assert.equal(card.querySelector('.project-site-info-history .is-dead dd').textContent, '1');
+    assert.equal(card.querySelector('.project-site-info-survival dd').textContent, '66.67%');
+    assert.equal(card.querySelector('.project-site-info-current summary').textContent, `Current site locations · ${currentTotal}`);
+    assert.equal(card.querySelector('.project-site-info-current .is-dead dd').textContent, String(currentDead));
+  };
+  assertHistory(3, 1);
+  const released = { ...dead, death_at: null, planting_status: 'planned', source_project_site_id: null,
+    source_site_id: null, source_organization_id: null };
+  await act(async () => useMapStore.setState({ points: [living, released, otherLiving] }));
+  assertHistory(2, 0);
+  const replanted = { ...released, planting_status: 'planted', source_project_site_id: 7, source_organization_id: 12 };
+  await act(async () => useMapStore.setState({ points: [living, replanted, otherLiving] }));
+  assertHistory(2, 0);
+  assert.equal(mutations.length, 0);
+});
+
+test('recording and correcting a death refresh the site historical chart immediately', async () => {
+  const zones = zoneFixtures();
+  zones.site.properties.planting_history = { total: 2, planted: 2, dead: 0, survival_rate_pct: 100 };
+  const base = { ...useMapStore.getState().points[0], planting_status: 'planted' };
+  useMapStore.setState({ points: [base, { ...base, id: 102, longitude: 122.6253 }] });
+  await renderPlantingWorkspace();
+  const map = useMapStore.getState().mapInstance;
+  const siteCard = () => {
+    const feature = useMapStore.getState().projectSites.features.find((site) => site.id === zones.site.id);
+    return boundaryFor(map, feature).getPopup().getContent()();
+  };
+  assert.equal(siteCard().querySelector('.project-site-info-history .is-dead dd').textContent, '0');
+  const updated = { ...zones.site, properties: { ...zones.site.properties,
+    planting_history: { total: 2, planted: 1, dead: 1, survival_rate_pct: 50 } } };
+  responses.set('/api/planters/map-points/101/death', { death_at: '2026-10-18', death_reason_category: 'waves' });
+  responses.set('/api/project-sites', (options) => {
+    assert.equal(options.cache, 'reload');
+    return Response.json({ type: 'FeatureCollection', features: [updated] });
+  });
+  await act(async () => useMapStore.getState().markPointDead(101, 'waves', ''));
+  assert.equal(siteCard().querySelector('.project-site-info-history .is-dead dd').textContent, '1');
+  assert.equal(siteCard().querySelector('.project-site-info-survival dd').textContent, '50%');
+  responses.set('/api/planters/map-points/101/restore', { ok: true });
+  responses.set('/api/project-sites', { type: 'FeatureCollection', features: [zones.site] });
+  await act(async () => useMapStore.getState().restorePointToPlanted(101));
+  assert.equal(siteCard().querySelector('.project-site-info-history .is-dead dd').textContent, '0');
+  assert.equal(siteCard().querySelector('.project-site-info-survival dd').textContent, '100%');
+  assert.equal(requests.filter((path) => path === '/api/project-sites').length, 2);
+});
+
+test('site mortality retains site analytics without orange polygons or warnings on unaffected plants', async () => {
   const zones = zoneFixtures();
   zones.site.properties.mortality_warning = { active: true, total_planted: 100, dead_count: 30, mortality_rate_pct: 30 };
   const base = useMapStore.getState().points[0];
@@ -441,15 +530,17 @@ test('mortality warning outlines retain site hover analytics without permanent d
     { ...base, ...warning, id: 102, longitude: 122.6253, planting_status: 'planted' },
     { ...base, ...warning, id: 103, longitude: 122.6255, planting_status: 'planted', death_at: '2026-10-20' },
     { ...base, ...warning, id: 104, longitude: 122.6257, warning_zone_ids: [-5, 3] },
+    { ...base, id: 105, longitude: 122.6254, survival_warning: true, warning_zone_ids: [],
+      warning_summary: 'Wave exposure: Wave-caused death recorded here. Check conditions before planting.' },
   ] });
   await renderPlantingWorkspace();
   const map = useMapStore.getState().mapInstance;
   const site = boundaryFor(map, zones.site);
-  assert.equal(site.options.fillOpacity, 0);
+  assert.equal(site.options.color, '#0284c7');
   const checkPointColors = () => map.eachLayer((marker) => {
     if (marker.options.mgPointId == null) return;
     assert.equal(marker.options.fillColor, marker.options.mgBaseColor);
-    assert.equal(marker.options.color, marker.options.mgPointId === 104 ? '#f59e0b' : '#000000');
+    assert.equal(marker.options.color, [104, 105].includes(marker.options.mgPointId) ? '#f59e0b' : '#000000');
   });
   checkPointColors();
   await act(async () => map.setZoom(20, { animate: false }));
@@ -465,9 +556,15 @@ test('mortality warning outlines retain site hover analytics without permanent d
   assert.equal(document.querySelector('.project-site-danger-label'), null);
   await hoverMap(map, site, 10.7800, 122.6251);
   assert.ok(document.querySelector('.point-status-tooltip'));
-  assert.match(document.querySelector('.point-status-tooltip').textContent, /Warning: High mortality \(30% dead\)/);
+  assert.doesNotMatch(document.querySelector('.point-status-tooltip').textContent, /Warning:|High mortality/);
   assert.equal(document.querySelector('.project-site-tooltip'), null);
   assert.equal(document.querySelector('.project-site-danger-label'), null);
+  await hoverMap(map, site, 10.7800, 122.6254);
+  assert.match(document.querySelector('.point-status-tooltip').textContent, /Wave exposure: Wave-caused death recorded here/);
+  assert.doesNotMatch(document.querySelector('.point-status-tooltip').textContent, /High mortality/);
+  await hoverMap(map, site, 10.7800, 122.6253);
+  assert.match(document.querySelector('.point-status-tooltip').textContent, /Planted/i);
+  assert.doesNotMatch(document.querySelector('.point-status-tooltip').textContent, /Warning:|High mortality|Wave exposure/);
   await act(async () => useMapStore.setState({ projectSites: { type: 'FeatureCollection', features: [] } }));
   assert.equal(document.querySelector('.project-site-danger-label'), null);
   assert.equal(mutations.length, 0);
@@ -569,7 +666,8 @@ test('automatic mortality zones appear in Warning Zones and cannot be deleted ma
   assert.match(row.textContent, /Automatic.*High mortality/);
   assert.equal(row.querySelector('[aria-label^="Delete"]'), null);
   await click(row.querySelector('.zone-locate'));
-  const outline = boundaryFor(useMapStore.getState().mapInstance, zones.warning);
+  assert.equal(boundaryFor(useMapStore.getState().mapInstance, zones.warning), undefined);
+  const outline = boundaryFor(useMapStore.getState().mapInstance, zones.site);
   assert.equal(outline.isTooltipOpen(), true);
   assert.equal(outline.options.fillOpacity, 0, 'focusing the warning must not shade the points');
   const card = document.querySelector('.project-site-tooltip .project-site-info');
@@ -1058,6 +1156,56 @@ async function pickAssignmentPoint(id) {
   await act(async () => marker.fire('click',{ originalEvent:new window.MouseEvent('click') }));
   await settle();
 }
+
+  for (const scenario of ['none', 'requested', 'cancelled', 'completed', 'other organization', 'other activity type']) {
+    test(`Assign Points blocks ordinary organizations without an eligible activity (${scenario})`, async () => {
+      const activities = scenario === 'none' ? [] : [{ id: 31,
+        ...(scenario === 'other organization' ? { organization_id: 99 }
+          : scenario === 'other activity type' ? { appointment_type: 'clean_up_drive' }
+            : { status: scenario }) }];
+      assignmentFixture(activities);
+      responses.set('/api/planters/', [{ id: 24, organization_id: 22, status: 'active',
+        permanent_access: false, registration_pending: false }]);
+      await renderPlantingWorkspace('/planters?organization_id=22');
+      assert.ok(document.getElementById('assign-activity').disabled);
+      assert.match(document.body.textContent, /Schedule and confirm a tree-planting activity for this organization/);
+      assert.equal(document.querySelector('.planting-point-selector'), null);
+      await act(async () => useMapStore.setState({ assignmentSelectedPointIds: [1] }));
+      const assign = [...document.querySelectorAll('button')].find((button) => button.textContent === 'Assign 1 point');
+      assert.ok(assign.disabled, 'retained or injected selections cannot bypass the activity requirement');
+      await click(assign);
+      assert.equal(document.querySelector('.modal-body'), null);
+      assert.equal(mutations.length, 0);
+    });
+  }
+
+for (const status of ['none', 'confirmed', 'in_progress', 'requested', 'cancelled', 'completed']) {
+  test(`LGU assigns available points without a schedule link (${status})`, async () => {
+    assignmentFixture(status === 'none' ? [] : [{ id: 31, status }]);
+    responses.set('/api/planters/', [{ id: 24, organization_id: 22, status: 'active',
+      permanent_access: true, registration_pending: false }]);
+    await renderPlantingWorkspace('/planters?organization_id=22');
+    assert.equal(document.getElementById('assign-activity'), null);
+    assert.match(document.body.textContent, /LGU can assign available points without scheduling an activity/);
+    await pickAssignmentPoint(1);
+    await click([...document.querySelectorAll('button')].find((button) => button.textContent === 'Assign 1 point'));
+    await click(document.querySelector('.modal-actions .btn-primary'));
+    assert.deepEqual(mutations[0].body, { planting_point_ids: [1] });
+  });
+}
+
+test('cancelling the selected activity disables assignment even with points already selected', async () => {
+  assignmentFixture();
+  await renderPlantingWorkspace('/planters?organization_id=22');
+  await pickAssignmentPoint(1);
+  responses.set('/api/planting-schedules', { schedules: [{ id: 31, organization_id: 22,
+    appointment_type: 'tree_planting', status: 'cancelled', title: 'Cancelled planting' }] });
+  await act(async () => window.dispatchEvent(new window.Event('mv:data-changed')));
+  await settle();
+  assert.equal(document.querySelector('.planting-point-selector'), null);
+  assert.ok([...document.querySelectorAll('button')].find((button) => button.textContent === 'Assign 1 point').disabled);
+  assert.equal(mutations.length, 0);
+});
 
 test('Assign Points starts empty and only selected map points become planting work', async () => {
   assignmentFixture(); await renderPlantingWorkspace('/planters?organization_id=22');
@@ -2128,7 +2276,7 @@ test('mortality warnings align in monitoring cards and update after a death corr
   const row = document.querySelector('.monitoring-site-row');
   assert.match(row.textContent, /Warning: High mortality/);
   assert.match(row.textContent, /30 of 100 planted seedlings have recorded deaths \(30% mortality\)/);
-  assert.equal(row.querySelector('.monitoring-site-map-outline path[fill-rule="evenodd"]').getAttribute('stroke'), '#d97706');
+  assert.equal(row.querySelector('.monitoring-site-map-outline path[fill-rule="evenodd"]').getAttribute('stroke'), '#15803d');
   await click(row.querySelector('.monitoring-site-open'));
   assert.match(document.querySelector('.monitoring-site-details').textContent, /All recorded causes are included/);
   site.properties.mortality_warning = { active: false, total_planted: 100, dead_count: 29, mortality_rate_pct: 29 };

@@ -98,7 +98,7 @@ def resolve_assignment_activity(conn, organization_id, site_id, assignment_date,
                   AND status IN ('confirmed', 'in_progress') LIMIT 1""", (organization_id, site_id)).fetchone()
             if available:
                 raise ActivityConflict('Choose the planting activity receiving these points; its date differs from the assignment date.')
-            return None, assignment_date
+            raise ActivityConflict('Schedule and confirm a tree-planting activity for this organization before assigning points.')
         schedule_id = int(rows[0]['id'])
     row = conn.execute('SELECT * FROM planting_schedules WHERE id = ? FOR UPDATE', (int(schedule_id),)).fetchone()
     if not row or row['organization_id'] != organization_id:

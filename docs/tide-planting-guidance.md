@@ -37,6 +37,16 @@ the entire visit must remain at or below the same estimated planting limit used
 by the staff graph. A high-water interval within opening hours splits availability;
 neither a green start nor green start/end points alone are enough.
 
+The booking form also lists the selected Philippine date's high and low tide
+times and heights from the same coastal forecast. These events remain visible
+even when no two-hour planting suggestion fits. A forecast need not cover the
+entire date: suggestions are clipped to its actual samples, the booking hours
+and future times, and the whole visit is still checked. Partial first/last dates
+are labelled; missing hours are never extrapolated into planting availability.
+Both the calendar and booking form explain that low tide marks a minimum water
+level. A planting window can begin before that minimum and continue afterwards;
+an eligible booking start is not itself another low-tide event.
+
 The form and public API reject forecast high-water visits and visits outside
 opening hours. The API independently checks the cached coastal forecast before
 starting the storage transaction. Server and browser calculations have regression

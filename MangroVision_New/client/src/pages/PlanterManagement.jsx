@@ -180,9 +180,9 @@ export default function PlanterManagement() {
             <option value="">{activities.length ? 'Select a confirmed activity' : 'No confirmed tree-planting activity'}</option>
             {activities.map((item) => <option key={item.id} value={item.id}>{item.title} - {item.date || item.start_at?.slice(0, 10)}</option>)}
           </select><FieldError feedback={feedback} field="activity" />
-          {!activities.length && <p className="text-sm">Confirm the organization's tree-planting activity in Scheduling first.</p>}
+          {!activities.length && <p className="text-sm">Schedule and confirm a tree-planting activity for this organization in <Link to="/scheduling">Scheduling</Link> before assigning points.</p>}
         </div>}
-        {owner?.permanent_access && <p className="text-sm">LGU uses its permanent account. Select available points for planting.</p>}
+        {owner?.permanent_access && <p className="text-sm">LGU can assign available points without scheduling an activity.</p>}
         {ready && <>
           <p className="text-sm">{loadingPoints ? 'Checking available points...' : `${available.length} available points. Click a point or use the brush to select locations.`}</p>
           {active && <PlantingPointSelector key={`${organizationId}:${activity?.id || 'lgu'}`} map={map} points={available}

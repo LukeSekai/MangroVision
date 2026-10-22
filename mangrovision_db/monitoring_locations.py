@@ -209,7 +209,7 @@ def reconcile_locations(record_id, event_ids, expected_version, user_id, correct
         conn.close()
 
 
-def list_release_candidates(organization_id=None):
+def list_release_candidates(organization_id=None, project_site_id=None):
     conn = _db()._get_connection()
     try:
         rows = conn.execute('''SELECT pe.id AS planting_event_id, pe.planting_point_id,
@@ -239,8 +239,10 @@ def list_release_candidates(organization_id=None):
             LEFT JOIN users approver ON approver.id = r.approved_by
             LEFT JOIN planting_events replacement_event ON replacement_event.id = r.replacement_event_id
             LEFT JOIN users replacement_staff ON replacement_staff.id = replacement_event.planted_by_user_id
-            WHERE (CAST(? AS BIGINT) IS NULL OR pl.organization_id = ?) ORDER BY pdr.death_at DESC, pe.id''',
-            (organization_id, organization_id)).fetchall()
+            WHERE (CAST(? AS BIGINT) IS NULL OR pl.organization_id = ?)
+              AND (CAST(? AS BIGINT) IS NULL OR pe.site_zone_id = ?)
+            ORDER BY pdr.death_at DESC, pe.id''',
+            (organization_id, organization_id, project_site_id, project_site_id)).fetchall()
         result = []
         for row in rows:
             item = dict(row)
@@ -255,6 +257,8 @@ def list_release_candidates(organization_id=None):
         conn.close()
 
 
-def release_dead_locations_batch(event_ids, versions, user_id):
+def release_dead_locations_batch(event_ids, versions, user_id, project_site_id):
     from .site_actions import release_dead_locations
-    return release_dead_locations(event_ids, versions, user_id)
+    if isinstance(project_site_id, bool) or not isinstance(project_site_id, int) or project_site_id <= 0:
+        raise ValueError('Choose a project site before releasing locations.')
+    return release_dead_locations(event_ids, versions, user_id, project_site_id=project_site_id)

@@ -8,7 +8,7 @@ export default function SiteMortalityWarning({ warning }) {
     </svg>
     <div><strong>Warning: High mortality</strong>
       <span>{Number(warning.dead_count).toLocaleString()} of {Number(warning.total_planted).toLocaleString()} planted seedlings have recorded deaths ({warning.mortality_rate_pct}% mortality).</span>
-      <span>All recorded causes are included. This site is an automatic warning zone at 30% mortality.</span>
+      <span>All recorded causes are included. This is a site mortality summary; individual location warnings use their recorded causes.</span>
     </div>
   </aside>;
 }

@@ -724,7 +724,7 @@ def test_activity_selection_checks_ownership_status_and_ambiguity(workspace):
 
 @pytest.mark.parametrize('explicit_activity', [False, True])
 def test_activity_without_area_uses_selected_site(workspace, explicit_activity):
-    from mangrovision_db.activity_rules import resolve_assignment_activity
+    from mangrovision_db.activity_rules import ActivityConflict, resolve_assignment_activity
     reviewed = confirm(workspace)
     schedule = planting.get_planting_schedule(reviewed['schedule_id'])
     assert schedule['project_site_id'] is None
@@ -736,7 +736,8 @@ def test_activity_without_area_uses_selected_site(workspace, explicit_activity):
             '2000-01-01' if explicit_activity else schedule['date'],
             schedule['id'] if explicit_activity else None, actor_user_id=1) == (schedule['id'], schedule['date'])
         conn.commit()
-        assert resolve_assignment_activity(conn, schedule['organization_id'] + 1, 10, '2000-01-01') == (None, '2000-01-01')
+        with pytest.raises(ActivityConflict, match='Schedule and confirm a tree-planting activity'):
+            resolve_assignment_activity(conn, schedule['organization_id'] + 1, 10, '2000-01-01')
     finally:
         conn.close()
     result = planting.get_planting_schedule(schedule['id'])

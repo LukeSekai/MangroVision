@@ -62,7 +62,7 @@ function card(feature, options) {
   const text = result.textContent;
   const html = result.outerHTML;
   dom.window.close();
-  return { text, html };
+  return { text, html, element: result };
 }
 
 test('reference maps show supplied information without inventing status or survival counts', () => {
@@ -101,7 +101,7 @@ test('assigned totals retain completed and dead allocations without counting dir
   assert.equal(counts.mapped, 4);
   assert.equal(counts.assigned, 1);
   const { text } = card({ properties: { planting_history: { total: 3, planted: 2, dead: 1, survival_rate_pct: 66.67 } } }, { counts });
-  assert.match(text, /Assigned points3/);
+  assert.match(text, /Currently assigned points3/);
   assert.match(text, /Awaiting planting1/);
   assert.match(text, /Site survival \(planting history\)66\.67%/);
 });
@@ -110,10 +110,11 @@ test('unavailable site locations remain separate from assigned seedlings and the
   const counts = { mapped: 256, planned: 0, assigned: 0, planted: 126, dead: 123,
     skipped: 0, unavailable: 7, assignedTotal: 249 };
   const { text } = card({ properties: { name: 'Jaro Mangrove Protectors', planting_history: { total: 249, planted: 126, dead: 123, survival_rate_pct: 50.6 } } }, { counts });
-  assert.match(text, /Assigned points249/);
+  assert.match(text, /Currently assigned points249/);
   assert.match(text, /Site survival \(planting history\)50\.6%/);
   assert.match(text, /249 seedlings/);
-  assert.match(text, /256Mapped points/);
+  assert.match(text, /249Seedlings planted/);
+  assert.match(text, /Current site locations · 256/);
   assert.match(text, /Unavailable7/);
 });
 
@@ -131,8 +132,66 @@ test('site survival retains historical deaths after locations leave the boundary
   const { text } = card(feature, { counts });
   assert.match(text, /Site survival \(planting history\)80%/);
   assert.match(text, /100 seedlings planted.*80 without recorded death.*20 recorded dead/);
-  assert.match(text, /80Mapped points/);
+  assert.match(text, /100Seedlings plantedNo recorded death80Recorded dead20/);
+  assert.match(text, /Current site locations · 80/);
   assert.doesNotMatch(text, /100%/);
+});
+
+test('Cabatuan retains all 103 recorded deaths in its main chart after dead locations are released', () => {
+  const feature = { properties: { name: 'Cabatuan Green Roots Project Site',
+    planting_history: { total: 263, planted: 160, dead: 103, unknown: 0, survival_rate_pct: 60.84 } } };
+  for (const remainingDead of [103, 1, 0]) {
+    const counts = { ...emptyProjectSiteCounts(), mapped: 160 + remainingDead, planted: 160, dead: remainingDead };
+    const { element } = card(feature, { counts });
+    const history = element.querySelector('.project-site-info-history');
+    assert.equal(history.querySelector('.project-site-info-total strong').textContent, '263');
+    assert.equal(history.querySelector('.is-dead dd').textContent, '103');
+    assert.equal(history.querySelector('.is-planted dt').textContent, 'No recorded death');
+    assert.equal(history.querySelector('.is-planted dd').textContent, '160');
+    assert.match(history.querySelector('svg').getAttribute('aria-label'), /Recorded dead 103/);
+    assert.equal(history.querySelectorAll('circle').length, 3, 'the chart must show both outcome colors');
+    assert.equal(element.querySelector('.project-site-info-survival dd').textContent, '60.84%');
+    const current = element.querySelector('.project-site-info-current');
+    assert.equal(current.querySelector('summary').textContent, `Current site locations · ${160 + remainingDead}`);
+    assert.equal(current.querySelector('.is-dead dt').textContent, 'Dead points awaiting release');
+    assert.equal(current.querySelector('.is-dead dd').textContent, String(remainingDead));
+    assert.equal(current.open, false);
+  }
+});
+
+test('historical deaths remain when every location leaves the site and when current map counts are unavailable', () => {
+  const feature = { properties: { planting_history: { total: 10, planted: 0, dead: 10, survival_rate_pct: 0 } } };
+  for (const counts of [emptyProjectSiteCounts(), null]) {
+    const { element } = card(feature, { counts });
+    const history = element.querySelector('.project-site-info-history');
+    assert.equal(history.querySelector('.project-site-info-total strong').textContent, '10');
+    assert.equal(history.querySelector('.is-dead dd').textContent, '10');
+    assert.equal(element.querySelector('.project-site-info-survival dd').textContent, '0%');
+    assert.equal(Boolean(element.querySelector('.project-site-info-current')), counts !== null);
+  }
+});
+
+test('unknown historical outcomes stay separate and do not become surviving seedlings', () => {
+  const feature = { properties: { planting_history: { total: 10, planted: 6, dead: 3, unknown: 1, survival_rate_pct: null } } };
+  const { element, text } = card(feature, { counts: emptyProjectSiteCounts() });
+  const history = element.querySelector('.project-site-info-history');
+  assert.equal(history.querySelector('.is-planted dd').textContent, '6');
+  assert.equal(history.querySelector('.is-dead dd').textContent, '3');
+  assert.equal(history.querySelector('.is-unknown dd').textContent, '1');
+  assert.equal(history.querySelectorAll('circle').length, 4);
+  assert.equal(element.querySelector('.project-site-info-survival dd').textContent, 'Not available yet');
+  assert.match(text, /1 planting outcomes unknown/);
+});
+
+test('participant work counts remain distinct from the whole site planting history', () => {
+  const feature = { properties: { planting_history: { total: 263, planted: 160, dead: 103, survival_rate_pct: 60.84 } } };
+  const counts = { ...emptyProjectSiteCounts(), mapped: 4, assigned: 2, planted: 1, dead: 1 };
+  const { element } = card(feature, { counts, scope: 'participant' });
+  assert.equal(element.querySelector('.project-site-info-total').textContent, '4Your assigned points');
+  assert.equal(element.querySelector('.project-site-info-stats .is-dead dd').textContent, '1');
+  assert.equal(element.querySelector('.project-site-info-history'), null);
+  assert.equal(element.querySelector('.project-site-info-current'), null);
+  assert.match(element.querySelector('.project-site-info-survival').textContent, /103 recorded dead/);
 });
 
 test('survival is unavailable without history and zero when every original seedling died', () => {
@@ -151,8 +210,8 @@ test('the site card gives a brief mortality overview even on participant maps', 
   const { text } = card(feature, { counts: emptyProjectSiteCounts(), scope: 'participant' });
   assert.match(text, /High mortality · 30%/);
   assert.doesNotMatch(text, /30 of 100|Severity:|threshold|all recorded causes|whole project site/);
-  assert.equal(projectSiteStyle(feature, { weight: 2 }).color, '#d97706');
-  assert.equal(projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity, 0);
+  assert.deepEqual(projectSiteStyle(feature, { color: '#0284c7', weight: 2 }), { color: '#0284c7', weight: 2 });
+  assert.equal(projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity, 0.22);
   for (const risk of [undefined, { active: false, dead_count: 10, total_planted: 100, mortality_rate_pct: 10 }]) {
     const normal = { properties: { mortality_warning: risk } };
     assert.doesNotMatch(card(normal).text, /High mortality|prone to big waves/);
@@ -174,8 +233,7 @@ test('warning site boundaries have detailed hover and popup information without 
   assert.equal(calls.tooltip.className, 'project-site-tooltip');
   assert.equal(events.add, undefined);
   assert.equal(events.remove, undefined);
-  assert.equal(calls.style.color, '#d97706');
-  assert.equal(calls.style.fillOpacity, 0);
+  assert.equal(calls.style, undefined, 'site statistics must not repaint the boundary as a hazard');
   assert.equal(typeof calls.popup, 'function');
   dom.window.close();
 });

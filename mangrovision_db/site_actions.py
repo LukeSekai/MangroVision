@@ -188,7 +188,7 @@ def _selected_release_boundary(original, retained, released):
     return mapping(transform(backward, MultiPolygon([part for part in polygons if part.geom_type == 'Polygon'])))
 
 
-def release_dead_locations(event_ids, versions, user_id, *, prepared=False):
+def release_dead_locations(event_ids, versions, user_id, *, project_site_id=None, prepared=False):
     """Release selected dead planting cells and allocations in one transaction.
 
     The private prepared option converts old, unplanted LGU queue reservations.
@@ -217,6 +217,8 @@ def release_dead_locations(event_ids, versions, user_id, *, prepared=False):
         site_ids = sorted({row['source_site_id'] for row in resolved if row['source_site_id'] is not None})
         if len([row for row in resolved if row['source_site_id'] is not None]) != len(ids):
             raise ValueError('A selected location no longer belongs to an active project site. Reload the map.')
+        if project_site_id is not None and site_ids != [project_site_id]:
+            raise ValueError('Selected locations must all belong to the chosen project site. Reload the map and select its dead plants again.')
         sites = {site_id: dict(_site(conn, site_id, lock=True)) for site_id in site_ids}
         site_rows = {site_id: _rows(conn, site_id) for site_id in site_ids}
         point_ids = sorted({row['id'] for rows in site_rows.values() for row in rows})

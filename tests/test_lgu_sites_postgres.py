@@ -178,6 +178,7 @@ def test_permanent_planter_completes_only_its_own_assigned_points(workspace):
         VALUES(99999,1,99999,10.780,122.6309,'planned')'''))
     assignment = db.create_planter_assignment(account['planter_id'], [99999], site_zone_id=10,
         species='Bungalon', assigned_by_user_id=1)
+    assert workspace.scalar(text('SELECT planting_schedule_id FROM planter_assignments WHERE id=:id'), {'id': assignment}) is None
     pap = workspace.scalar(text('SELECT id FROM planter_assignment_points WHERE assignment_id=:assignment'), {'assignment': assignment})
     context_token = planter_session_token.set(token)
     try:

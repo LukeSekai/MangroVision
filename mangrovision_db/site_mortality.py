@@ -3,6 +3,18 @@
 MORTALITY_WARNING_PERCENT = 30
 
 
+def wave_damaged_locations(conn):
+    """Location warnings follow recorded wave deaths, including released cycles."""
+    rows = conn.execute('''SELECT DISTINCT pe.planting_point_id
+        FROM point_death_records death JOIN planting_events pe ON pe.id = death.planting_event_id
+        JOIN planting_points point ON point.id = pe.planting_point_id
+        WHERE death.reason_category = 'waves' AND death.death_at <= CURRENT_TIMESTAMP
+          AND pe.planted_at <= CURRENT_TIMESTAMP AND point.deleted_at IS NULL
+          AND COALESCE(pe.closure_reason, '') <> 'completion_reversed'
+        ORDER BY pe.planting_point_id''').fetchall()
+    return {int(row['planting_point_id']) for row in rows}
+
+
 def mortality_warning(history=None):
     history = history or {}
     total = int(history.get('total') or 0)
@@ -39,6 +51,7 @@ def mortality_warning_zones(sites):
                 'id': -site_id, 'zone_type': 'warning', 'name': props.get('name') or f'Site {site_id}',
                 'warning_type': 'high_mortality', 'warning_label': 'High mortality (at least 30%)',
                 'severity': 'high', 'notes': notes, 'automatic': True,
+                'point_advisory': False, 'render_mode': 'site_summary',
                 'project_site_id': site_id, 'organization_id': props.get('organization_id'),
                 'mortality_warning': warning,
             },

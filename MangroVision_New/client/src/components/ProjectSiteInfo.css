@@ -91,6 +91,11 @@
 .project-site-info-survival dd { margin-top: 0; color: #14532d; font-size: 16px; text-align: right; }
 .project-site-info-survival p { margin-top: 3px; color: #64748b; font-size: 10px; }
 .project-site-info-scope { color: #64748b; font-size: 10px; }
+.project-site-info-heading { margin: 10px 0 0; font-size: 11px; font-weight: 700; }
+.project-site-info-current { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e2e8f0; }
+.project-site-info-current summary { color: #475569; font-size: 11px; font-weight: 600; cursor: pointer; }
+.project-site-info-current summary:focus-visible { outline: 2px solid #0d9488; outline-offset: 3px; border-radius: 2px; }
+.project-site-info-current .project-site-info-stats { margin-top: 8px; }
 .project-site-info-notes {
   color: #475569;
   display: -webkit-box;

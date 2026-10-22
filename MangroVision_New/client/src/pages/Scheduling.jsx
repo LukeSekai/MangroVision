@@ -1042,9 +1042,10 @@ export default function Scheduling() {
             {activeTrackingGroup ? ` · ${activeTrackingGroup.description}` : ' · Includes completed and cancelled records'}</p>
         </div> : null}
 
+        {view === 'calendar' && <p className="schedule-tide-timing-note" id="schedule-calendar-tide-note">Calendar tide times mark the highest and lowest water levels. Planting can also fit before or after low tide when the full activity stays at or below the graph's planting limit.</p>}
         <div id="schedule-results">
         {loading && !apiData ? <Loading label="Loading organization schedulesâ€¦" /> : view === 'calendar' ? (
-          <div className="schedule-calendar" role="grid" aria-label={`Planting schedule for ${monthLabel(month)}`}>
+          <div className="schedule-calendar" role="grid" aria-label={`Planting schedule for ${monthLabel(month)}`} aria-describedby="schedule-calendar-tide-note">
             <div className="schedule-calendar-row is-header" role="row">
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => <div role="columnheader" key={day}>{day}</div>)}
             </div>

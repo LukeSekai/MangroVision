@@ -521,6 +521,13 @@
   text-align: center;
 }
 
+.schedule-tide-timing-note {
+  margin: 0 16px 12px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
 .schedule-calendar {
   max-width: calc(100% - 32px);
   margin: 0 16px 14px;

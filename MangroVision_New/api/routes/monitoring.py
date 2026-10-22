@@ -194,6 +194,7 @@ class DeathLocationsUpdate(BaseModel):
 
 class DeadLocationsRelease(BaseModel):
     model_config = ConfigDict(extra='forbid')
+    project_site_id: int = Field(gt=0, strict=True)
     planting_event_ids: list[int] = Field(min_length=1, max_length=500)
     versions: dict[str, int]
 
@@ -218,9 +219,9 @@ def update_death_locations(record_id: int, body: DeathLocationsUpdate):
 
 
 @router.get('/release-candidates')
-def dead_location_release_candidates(organization_id: Optional[int] = None):
+def dead_location_release_candidates(organization_id: Optional[int] = None, project_site_id: Optional[int] = Query(default=None, gt=0)):
     _require_lgu_user()
-    return {'points': list_release_candidates(organization_id)}
+    return {'points': list_release_candidates(organization_id, project_site_id)}
 
 
 @router.post('/release-locations')
@@ -229,7 +230,7 @@ def release_locations(body: DeadLocationsRelease):
     if is_processing_active():
         raise HTTPException(status_code=409, detail='Project-site editing is locked while image processing is running.')
     try:
-        return release_dead_locations_batch(body.planting_event_ids, body.versions, int(user['id']))
+        return release_dead_locations_batch(body.planting_event_ids, body.versions, int(user['id']), body.project_site_id)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 

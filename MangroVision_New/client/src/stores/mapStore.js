@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { savedAnalysisMapContext } from '../utils/analysisMapContext';
 import { paintReplantingSelection } from '../utils/replantingBrush';
+import { filterMonitoringPoints } from '../utils/monitoringOrganizationFilter';
 
 const API = import.meta.env.VITE_API_BASE || '';
 const MAP_VIEW_STORAGE_KEY = 'mv_admin_map_view';
@@ -56,7 +57,7 @@ export const useMapStore = create((set, get) => ({
     projectSites: null, siteZoneMortality: null, warningZones: null,
     selectedPointId: null, assignmentSelectedPointIds: [],
     assignmentOrganizationId: null, assignmentProjectSiteId: null,
-    monitoringOrganizationId: null,
+    monitoringOrganizationId: null, monitoringProjectSiteId: null,
     replantingSelectedPointIds: [], replantingSelectionMode: 'click',
     monitoringSelectedPointId: null, currentAnalysis: null,
   }),
@@ -102,6 +103,15 @@ export const useMapStore = create((set, get) => ({
   projectSites: null,
   siteZoneMortality: null,
   warningZones: null,
+  fetchProjectSites: async () => {
+    try {
+      const response = await fetch(`${API}/api/project-sites`, { cache: 'reload' });
+      if (!response.ok) throw new Error(`Could not load project sites (${response.status}).`);
+      set({ projectSites: await response.json() });
+    } catch (err) {
+      console.error('Failed to fetch project sites:', err);
+    }
+  },
   fetchZones: async ({ force = false } = {}) => {
     const paths = [
       '/api/zones/forbidden',
@@ -156,21 +166,32 @@ export const useMapStore = create((set, get) => ({
   monitoringOrganizationId: null,
   setMonitoringOrganizationId: (value) => set({
     monitoringOrganizationId: value == null || value === '' ? null : Number(value),
-    replantingSelectedPointIds: [],
+    monitoringProjectSiteId: null, showDeadPointsOnly: false,
+    replantingSelectedPointIds: [], replantingSelectionMode: 'click',
+  }),
+  monitoringProjectSiteId: null,
+  setMonitoringProjectSiteId: (value) => set((state) => {
+    const id = value == null || value === '' ? null : Number(value);
+    if (state.monitoringProjectSiteId === id) return state;
+    return { monitoringProjectSiteId: id, replantingSelectedPointIds: [], replantingSelectionMode: 'click' };
   }),
   replantingSelectedPointIds: [],
   replantingSelectionMode: 'click',
   setReplantingSelectionMode: (mode) => set({ replantingSelectionMode: mode }),
   paintReplantingPoints: (ids, mode) => set((state) => {
-    const eligible = new Set(state.points.filter((point) => point.death_at).map((point) => point.id));
+    if (state.monitoringProjectSiteId == null) return state;
+    const eligible = new Set(filterMonitoringPoints(state.points, state.monitoringOrganizationId, state.monitoringProjectSiteId)
+      .filter((point) => point.death_at).map((point) => point.id));
     const selection = paintReplantingSelection(state.replantingSelectedPointIds, ids.filter((id) => eligible.has(id)), mode);
     return selection === state.replantingSelectedPointIds ? state : { replantingSelectedPointIds: selection };
   }),
-  toggleReplantingPoint: (id) => set((state) => ({
-    replantingSelectedPointIds: state.replantingSelectedPointIds.includes(id)
+  toggleReplantingPoint: (id) => set((state) => {
+    if (state.monitoringProjectSiteId == null || !filterMonitoringPoints(state.points,
+      state.monitoringOrganizationId, state.monitoringProjectSiteId).some((point) => point.id === id && point.death_at)) return state;
+    return { replantingSelectedPointIds: state.replantingSelectedPointIds.includes(id)
       ? state.replantingSelectedPointIds.filter((pointId) => pointId !== id)
-      : state.replantingSelectedPointIds.length < 500 ? [...state.replantingSelectedPointIds, id] : state.replantingSelectedPointIds,
-  })),
+      : state.replantingSelectedPointIds.length < 500 ? [...state.replantingSelectedPointIds, id] : state.replantingSelectedPointIds };
+  }),
   clearReplantingSelection: () => set({ replantingSelectedPointIds: [] }),
 
   // Planter Management batch assignment selection. Lives in the shared map
@@ -232,6 +253,9 @@ export const useMapStore = create((set, get) => ({
         };
       }),
     }));
+    // The site's historical chart comes from planting events, not these current
+    // point fields. Refresh it after a death is saved so both stay in sync.
+    await get().fetchProjectSites();
     return payload;
   },
 
@@ -256,6 +280,7 @@ export const useMapStore = create((set, get) => ({
         };
       }),
     }));
+    await get().fetchProjectSites();
     return payload;
   },
 

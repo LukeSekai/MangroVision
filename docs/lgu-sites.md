@@ -9,8 +9,10 @@ Staff open **Monitoring -> LGU Sites** to see combined results and site cards.
 **Assign LGU points** opens Assign Points with LGU selected. Click or brush
 available planned locations and assign them; their project site is created
 automatically. There is no separate site creation step or site selector.
-LGU does not need a timed booking to plant. Recorded planting starts each
-seedling's history and monitoring cadence.
+LGU can assign available points without scheduling an activity. Other organizations
+need their own confirmed or ongoing tree-planting activity first. Pending requests,
+cancelled or completed activities, other activity types, and another organization's
+schedule do not qualify. Recorded planting starts each seedling's history and monitoring cadence.
 
 ## Permanent planter access
 

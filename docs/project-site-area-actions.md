@@ -21,8 +21,11 @@ seedlings. Multiple recorded species receive separate work batches under one
 site. Points stay awaiting planting; assignment creates no planting events and
 does not start survival or monitoring calculations.
 
-LGU uses the same point-selection flow with its permanent account, without a
-timed booking. Each allocation creates its site automatically. Existing
+Organizations must have their own confirmed or ongoing tree-planting activity
+before available points can be assigned. LGU uses its permanent account and is
+exempt: it can assign available points without scheduling an activity.
+The assignment form and server both enforce this distinction.
+Each allocation creates its site automatically. Existing
 activities that already have a linked site retain that area and historical
 identity; their remaining available points can be allocated without a site
 chooser. No previously saved sites or planting records are converted or moved.

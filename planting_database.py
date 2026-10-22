@@ -3140,18 +3140,30 @@ def _clean_warning_severity(severity: Optional[str]) -> str:
 
 
 def _load_warning_zone_geometries() -> List[dict]:
-    """Load manual and automatic warning polygons as shapely geometries."""
+    """Load geographic cautions and exact locations with recorded wave deaths.
+
+    Whole-site mortality remains a site statistic, not a point danger flag.
+    """
     if Point is None or shape is None:
         return []
 
     try:
-        features = list_warning_zones()
+        conn = _get_connection()
+        try:
+            features = list_warning_zones(_connection=conn)
+            from mangrovision_db.site_mortality import wave_damaged_locations
+            wave_point_ids = wave_damaged_locations(conn)
+        finally:
+            conn.close()
     except DatabaseError:
         features = []
+        wave_point_ids = set()
 
     zones = []
     for feature in features:
         row = feature['properties']
+        if row.get('point_advisory') is False or (row.get('automatic') and row.get('warning_type') == 'high_mortality'):
+            continue
         try:
             geom = shape(feature['geometry'])
             if geom.is_empty:
@@ -3170,10 +3182,16 @@ def _load_warning_zone_geometries() -> List[dict]:
             })
         except Exception:
             continue
+    if wave_point_ids:
+        zones.append({
+            'id': None, 'name': 'Wave-damaged locations', 'warning_type': 'wave_exposure',
+            'severity': 'medium', 'notes': 'Wave-caused death recorded here. Check conditions before planting.',
+            'point_ids': wave_point_ids,
+        })
     return zones
 
 
-def _matching_warning_zones(latitude, longitude, warning_zones: List[dict]) -> List[dict]:
+def _matching_warning_zones(latitude, longitude, warning_zones: List[dict], planting_point_id=None) -> List[dict]:
     if Point is None or not warning_zones:
         return []
     try:
@@ -3185,6 +3203,12 @@ def _matching_warning_zones(latitude, longitude, warning_zones: List[dict]) -> L
     point = Point(lon, lat)
     matches = []
     for zone in warning_zones:
+        if zone.get('warning_type') == 'high_mortality' and int(zone.get('id') or 0) < 0:
+            continue
+        if 'point_ids' in zone:
+            if planting_point_id is not None and int(planting_point_id) in zone['point_ids']:
+                matches.append(zone)
+            continue
         geom = zone.get("geometry")
         if geom is None:
             continue
@@ -3261,9 +3285,10 @@ def _annotate_point_advisories(rows, *, eroded_point_ids=None) -> List[dict]:
             item.get("latitude"),
             item.get("longitude"),
             warning_zones,
+            planting_point_id=item.get('id'),
         )
         item["survival_warning"] = bool(matches)
-        item["warning_zone_ids"] = [zone["id"] for zone in matches]
+        item["warning_zone_ids"] = [zone["id"] for zone in matches if zone.get('id') is not None]
         item["warning_zone_names"] = [zone["name"] for zone in matches]
         item["warning_reasons"] = [
             f"{_warning_type_label(zone['warning_type'])}: {zone['notes']}".strip(": ")
@@ -3276,7 +3301,9 @@ def _annotate_point_advisories(rows, *, eroded_point_ids=None) -> List[dict]:
             )
             primary_label = _warning_type_label(primary["warning_type"])
             item["warning_severity"] = primary["severity"]
-            if primary["warning_type"] == "high_mortality" and primary.get("notes"):
+            if 'point_ids' in primary:
+                item['warning_summary'] = f"Wave exposure: {primary['notes']}"
+            elif primary["warning_type"] == "high_mortality" and primary.get("notes"):
                 item["warning_summary"] = primary["notes"]
             else:
                 item["warning_summary"] = (
@@ -9772,6 +9799,7 @@ def get_dashboard_overview(
 
         quality = conn.execute("""
             SELECT
+                (SELECT COUNT(*) FROM organizations) AS total_organizations,
                 (SELECT COUNT(*) FROM planter_assignments pa WHERE NOT EXISTS (
                     SELECT 1 FROM planter_assignment_points pap WHERE pap.assignment_id = pa.id
                 )) AS stale_zero,
@@ -9875,6 +9903,7 @@ def get_dashboard_overview(
 
         envelope.update({
             "kpis": {
+                "total_organizations": {"value": int(quality['total_organizations']), "scope": "global"},
                 "seedlings_planted": {
                     "value": planted_count,
                     "target": target,

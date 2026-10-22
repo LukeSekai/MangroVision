@@ -1,7 +1,7 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { appointmentEndTime, bookingErrors, bookingPayload, bookingPolicy, manilaToday } from './booking.js';
-import { assessPlantingBooking, plantingBookingWindows } from './bookingTides.js';
+import { assessPlantingBooking, bookingTideEvents, plantingBookingWindows } from './bookingTides.js';
 import { assessGraphWindow } from '../utils/plantingTides.js';
 
 const defaultHoursPolicy = bookingPolicy.enforcePlantingHours;
@@ -86,6 +86,23 @@ test('suggested windows and the latest start cover a full two-hour visit using t
     endAt: window.end + 3600000, now: tideBase }).status, 'unsafe');
 });
 
+test('a 9:45 AM visit can fit below the planting limit before the 3 PM low tide', () => {
+  const payload = { ...tidePayload,
+    heights: tidePayload.heights.map((row, hour) => ({ ...row,
+      height_m: 0.8 + 0.7 * Math.cos((hour - 3) * Math.PI / 12) })),
+    extremes: [{ timestamp: tideBase / 1000 + 3 * 3600, type: 'High', height_m: 1.5 },
+      { timestamp: tideBase / 1000 + 15 * 3600, type: 'Low', height_m: 0.1 }],
+  };
+  const assessment = assessPlantingBooking({ payload, date: tideDay, startTime: '09:45', now: tideBase });
+  assert.equal(assessment.status, 'safe');
+  assert.ok(assessment.maximum_m < assessment.threshold_m);
+  const start = tideBase + (9 * 60 + 45) * 60000;
+  assert.ok(windows({ payload }).windows.some((window) => start >= window.start && start <= window.latestStart));
+  const events = bookingTideEvents({ payload, date: tideDay, now: tideBase });
+  assert.deepEqual(events.filter((event) => event.type === 'low').map((event) => event.at), [tideBase + 15 * 3600000]);
+  assert.equal(events.some((event) => event.at === start), false);
+});
+
 test('missing, stale, invalid, gapped and out-of-horizon forecasts cannot suggest a planting time', () => {
   for (const changes of [
     { payload: null }, { payload: { ...tidePayload, stale: true } }, { now: tideBase + 6 * 3600000 },
@@ -94,6 +111,52 @@ test('missing, stale, invalid, gapped and out-of-horizon forecasts cannot sugges
     { payload: { ...tidePayload, heights: tidePayload.heights.filter((_, i) => i !== 8) } },
     { payload: { ...tidePayload, heights: tidePayload.heights.map((row, i) => i === 8 ? { ...row, height_m: null } : row) } },
   ]) assert.deepEqual(windows(changes).windows, []);
+});
+
+test('a forecast starting at 8 AM still suggests fully covered visits on its first Philippine date', () => {
+  const payload = { ...tidePayload, heights: tidePayload.heights.slice(8).map((row) => ({ ...row, height_m: 0.2 })) };
+  for (const enforceHours of [false, true]) {
+    bookingPolicy.enforcePlantingHours = enforceHours;
+    const result = windows({ payload });
+    assert.equal(result.status, 'available');
+    assert.equal(result.partialCoverage, true);
+    assert.equal(result.windows[0].startTime, '08:00');
+    assert.equal(result.windows[0].end, tideBase + (enforceHours ? 17 * 60 : 23 * 60 + 45) * 60000);
+    for (const window of result.windows) {
+      for (const startAt of [window.start, window.latestStart]) {
+        assert.equal(assessGraphWindow({ payload, startAt, endAt: startAt + 2 * 3600000, now: tideBase }).status, 'safe');
+      }
+    }
+    assert.equal(assessPlantingBooking({ payload, date: tideDay, startTime: '07:00', now: tideBase }).status, 'unknown');
+  }
+});
+
+test('partial forecasts never extend suggestions past their last sample or fill a short window', () => {
+  const heights = tidePayload.heights.slice(8, 12).map((row) => ({ ...row, height_m: 0.2 }));
+  const result = windows({ payload: { ...tidePayload, heights } });
+  assert.equal(result.status, 'available');
+  assert.equal(result.partialCoverage, true);
+  assert.equal(result.windows[0].startTime, '08:00');
+  assert.equal(result.windows[0].end, tideBase + 11 * 3600000);
+  assert.equal(result.windows[0].latestStart, tideBase + 9 * 3600000);
+  const short = windows({ payload: { ...tidePayload, heights: heights.slice(0, 2) } });
+  assert.equal(short.status, 'unavailable');
+  assert.deepEqual(short.windows, []);
+  assert.match(short.reason, /only part of this date/);
+});
+
+test('booking high and low tides follow Philippine dates, sort chronologically and reject invalid events', () => {
+  const event = (hour, type, height_m = 0.2) => ({ timestamp: tideBase / 1000 + hour * 3600, type, height_m });
+  const payload = { ...tidePayload, extremes: [event(21, 'High', 1.2), event(15, 'Low'), event(0, 'Low', 0),
+    event(-1, 'High'), event(24, 'Low'), event(10, 'Other'), event(12, 'Low', null), { type: 'Low', height_m: 0.1 }] };
+  const events = bookingTideEvents({ payload, date: tideDay, now: tideBase });
+  assert.deepEqual(events.map(({ at, type }) => [at, type]), [[tideBase, 'low'],
+    [tideBase + 15 * 3600000, 'low'], [tideBase + 21 * 3600000, 'high']]);
+  assert.equal(events[0].height_m, 0);
+  for (const changes of [{ payload: null }, { payload: { ...payload, stale: true } },
+    { now: tideBase + 6 * 3600000 }, { date: '2030-01-12' }, { date: '2030-02-30' }]) {
+    assert.deepEqual(bookingTideEvents({ payload, date: tideDay, now: tideBase, ...changes }), []);
+  }
 });
 
 test('suggestions exclude past times, nighttime, and windows too short for two hours', () => {

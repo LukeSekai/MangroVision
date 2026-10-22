@@ -26,7 +26,8 @@ points and form a project site → field planting → monitoring → release eli
 dead locations → assign and plant a new cycle → dashboard and reports.**
 
 The permanent LGU organization also uses assignment and planting, with separate
-site monitoring and no timed public booking requirement.
+site monitoring. Other organizations need their own confirmed or ongoing
+tree-planting activity before available points can be assigned; LGU is exempt.
 
 ## 2. Roles and workspaces
 
@@ -358,9 +359,10 @@ planting a new seedling is a new cycle.
 1. Switch Monitoring navigation to **LGU Sites**. Show LGU as one permanent
    organization with multiple separate project sites.
 2. Show the permanent planter-access panel without revealing real credentials.
-   Explain Returning planter access and the absence of a timed booking for LGU.
-3. Use **Assign LGU points** to open Assign Points with LGU selected. Site
-   formation and planting follow the normal workflow.
+   Explain Returning planter access and the permanent credentials for LGU.
+3. Use **Assign LGU points** to open Assign Points with LGU selected. LGU can select
+   and assign available points without scheduling an activity. Site formation and
+   planting follow the normal workflow.
 4. Open a prepared due site's **Record monitoring**. Select newly dead
    locations and their cause, record health/actions and, when available, an
    actual measured average height. No selected deaths means zero newly dead.
@@ -373,7 +375,7 @@ planting a new seedling is a new cycle.
 
 1. Open Dashboard. Set a valid From/To range and optional Project site for the
    period-based tabs. Show loading, empty and retry states only if useful.
-2. **Overview:** inspect planting progress, follow-up and annual-goal context.
+2. **Overview:** inspect planting progress, total registered organizations and annual-goal context. The organization total is a summary card without a click action.
    **Planting Goals** has its own reporting year and existing planting/survival
    targets. Show a prepared goal rather than modifying shared targets.
 3. **Planting Work:** show organization activity, completed/skipped work and

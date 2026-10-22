@@ -249,6 +249,11 @@ def get_site_zones_detail():
 
 @router.get("/warnings")
 def get_warning_zones():
+    """List manual zones and site summaries, not per-location wave histories.
+
+    Wave-death warnings are supplied with planting points. Automatic mortality
+    summaries do not classify every point in their site's geometry as dangerous.
+    """
     return {
         "type": "FeatureCollection",
         "name": "warning_zones",

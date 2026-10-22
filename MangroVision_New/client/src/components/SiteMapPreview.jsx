@@ -25,9 +25,8 @@ export default function SiteMapPreview({ site, name, points = [], large = false,
       ))}
       <svg viewBox={`0 0 ${preview.width} ${preview.height}`} aria-hidden="true" className="monitoring-site-map-outline">
         <path d={preview.path} fill="none" stroke="white" strokeWidth="5" strokeLinejoin="round" />
-        <path d={preview.path} fill={mortalityWarning ? 'none' : '#22c55e'} fillOpacity="0.12" fillRule="evenodd"
-          stroke={mortalityWarning ? '#d97706' : '#15803d'} strokeWidth="2.5" strokeLinejoin="round"
-          strokeDasharray={mortalityWarning ? '8 5' : undefined} />
+        <path d={preview.path} fill="#22c55e" fillOpacity="0.12" fillRule="evenodd"
+          stroke="#15803d" strokeWidth="2.5" strokeLinejoin="round" />
         {preview.markers.map((point) => <circle key={point.id} className="monitoring-site-map-point"
           data-point-id={point.id} data-point-status={point.status} cx={point.x} cy={point.y} r={radius}
           fill={point.color} fillOpacity="0.95" stroke="#17251b" strokeWidth="0.65" />)}

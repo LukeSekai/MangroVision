@@ -7,10 +7,9 @@ export function projectSiteId(feature) {
 
 export function projectSiteStyle(feature, base = {}) {
   const props = feature?.properties;
-  const highMortality = props?.mortality_warning?.active === true
-    || (props?.automatic === true && props.warning_type === 'high_mortality');
-  return highMortality
-    ? { ...base, color: '#d97706', fillOpacity: 0, weight: Math.max(3, base.weight || 0), dashArray: '8 5' }
+  const siteSummary = props?.automatic === true && props.warning_type === 'high_mortality';
+  return siteSummary
+    ? { ...base, stroke: false, fill: false, fillOpacity: 0 }
     : base;
 }
 
@@ -99,7 +98,19 @@ function addText(parent, tag, className, value) {
   return element;
 }
 
-function addStatusDonut(parent, counts, statuses, scope) {
+const statusColor = (key) => POINT_STATUS_COLORS[key] || '#9ca3af';
+
+function addStatusStats(parent, counts, statuses) {
+  const grid = addText(parent, 'dl', 'project-site-info-stats', '');
+  for (const [key, label] of statuses) {
+    const stat = addText(grid, 'div', `project-site-info-stat is-${key}${counts[key] === 0 ? ' is-zero' : ''}`, '');
+    stat.style.setProperty('--site-status-color', statusColor(key));
+    addText(stat, 'dt', '', label);
+    addText(stat, 'dd', '', number(counts[key]));
+  }
+}
+
+function addStatusDonut(parent, counts, statuses, totalLabel) {
   const doc = parent.ownerDocument;
   const chart = addText(parent, 'div', 'project-site-info-chart', '');
   const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -124,7 +135,7 @@ function addStatusDonut(parent, counts, statuses, scope) {
     const share = counts[key] / counts.mapped * 100;
     // Keep tiny categories visible; a single category fills the entire ring.
     const gap = populated.length > 1 ? Math.min(0.8, share / 4) : 0;
-    const ring = circle(POINT_STATUS_COLORS[key]);
+    const ring = circle(statusColor(key));
     ring.setAttribute('stroke-dasharray', `${share - gap} ${100 - share + gap}`);
     ring.setAttribute('stroke-dashoffset', String(-offset - gap / 2));
     ring.setAttribute('transform', 'rotate(-90 60 60)');
@@ -133,7 +144,7 @@ function addStatusDonut(parent, counts, statuses, scope) {
   chart.append(svg);
   const total = addText(chart, 'div', 'project-site-info-total', '');
   addText(total, 'strong', '', number(counts.mapped));
-  addText(total, 'span', '', scope === 'participant' ? 'Your assigned points' : 'Mapped points');
+  addText(total, 'span', '', totalLabel);
 }
 
 // DOM text nodes keep user-entered site names and notes safe in Leaflet overlays.
@@ -171,35 +182,53 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
     if (props[key] != null && Number.isFinite(Number(props[key]))) detail(label, number(Number(props[key])));
   }
 
-  if (counts) {
-    if (counts.assignedTotal != null) {
-      detail(scope === 'participant' ? 'Assigned to you' : 'Assigned points', number(counts.assignedTotal), 'linked');
+  const history = props.planting_history;
+  const hasHistory = history?.total > 0;
+  if (counts || hasHistory) {
+    if (counts?.assignedTotal != null) {
+      detail(scope === 'participant' ? 'Assigned to you' : 'Currently assigned points', number(counts.assignedTotal), 'linked');
+    } else if (props.point_count != null && Number.isFinite(Number(props.point_count))) {
+      detail('Current site locations', number(Number(props.point_count)), 'linked');
     }
-    const history = props.planting_history;
     const survival = addText(card, 'div', 'project-site-info-survival', '');
     const metric = addText(survival, 'dl', '', '');
     addText(metric, 'dt', '', 'Site survival (planting history)');
     addText(metric, 'dd', '', history?.survival_rate_pct != null
       ? `${number(history.survival_rate_pct)}%` : 'Not available yet');
-    if (history?.total > 0) {
+    if (hasHistory) {
       addText(survival, 'p', '', `${number(history.total)} seedlings planted · ${number(history.planted)} without recorded death · ${number(history.dead)} recorded dead`);
+      if (history.unknown > 0) addText(survival, 'p', '', `${number(history.unknown)} planting outcomes unknown`);
       addText(survival, 'p', '', 'Includes this site’s earlier plantings after locations are released.');
     }
     const statuses = scope === 'participant'
       ? [['assigned', 'Pending'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']]
-      : [['planned', 'Available'], ['assigned', 'Awaiting planting'], ['planted', 'Planted'], ['dead', 'Recorded dead'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']];
-    const analytics = addText(card, 'div', 'project-site-info-analytics', '');
-    addStatusDonut(analytics, counts, statuses, scope);
-    const grid = addText(analytics, 'dl', 'project-site-info-stats', '');
-    for (const [key, label] of statuses) {
-      const stat = addText(grid, 'div', `project-site-info-stat is-${key}${counts[key] === 0 ? ' is-zero' : ''}`, '');
-      stat.style.setProperty('--site-status-color', POINT_STATUS_COLORS[key]);
-      addText(stat, 'dt', '', label);
-      addText(stat, 'dd', '', number(counts[key]));
+      : [['planned', 'Available'], ['assigned', 'Awaiting planting'], ['planted', 'Planted'], ['dead', 'Dead points awaiting release'], ['skipped', 'Skipped'], ['unavailable', 'Unavailable']];
+    if (scope !== 'participant' && hasHistory) {
+      // Historical outcomes belong to the original site, even after the physical
+      // location is released or planted again by another site. Never derive this
+      // chart from the current point ownership or current point status.
+      const outcomes = { mapped: history.total, planted: history.planted, dead: history.dead, unknown: history.unknown || 0 };
+      const outcomeStatuses = [['planted', 'No recorded death'], ['dead', 'Recorded dead']];
+      if (outcomes.unknown > 0) outcomeStatuses.push(['unknown', 'Outcome unknown']);
+      addText(card, 'h4', 'project-site-info-heading', 'Planting history');
+      const analytics = addText(card, 'div', 'project-site-info-analytics project-site-info-history', '');
+      addStatusDonut(analytics, outcomes, outcomeStatuses, 'Seedlings planted');
+      addStatusStats(analytics, outcomes, outcomeStatuses);
+      addText(card, 'p', 'project-site-info-scope', 'All recorded plantings in this site, including deaths at released locations.');
+      if (counts) {
+        const current = addText(card, 'details', 'project-site-info-current', '');
+        addText(current, 'summary', '', `Current site locations · ${number(counts.mapped)}`);
+        addText(current, 'p', 'project-site-info-scope', 'Only locations currently in this site. Released locations remain in the planting history above.');
+        addStatusStats(current, counts, statuses);
+      }
+    } else if (counts) {
+      const analytics = addText(card, 'div', 'project-site-info-analytics', '');
+      addStatusDonut(analytics, counts, statuses, scope === 'participant' ? 'Your assigned points' : 'Mapped points');
+      addStatusStats(analytics, counts, statuses);
+      addText(card, 'p', 'project-site-info-scope', scope === 'participant'
+        ? 'Counts cover your assigned work in this site.'
+        : 'Current mapped locations, across all planting dates.');
     }
-    addText(card, 'p', 'project-site-info-scope', scope === 'participant'
-      ? 'Counts cover your assigned work in this site.'
-      : 'Current mapped locations, across all planting dates.');
   } else if (props.point_count != null && Number.isFinite(Number(props.point_count))) {
     detail('Linked planting points', number(Number(props.point_count)), 'linked');
   }
@@ -210,7 +239,6 @@ export function createProjectSiteInfo(feature, { counts = null, scope = 'site', 
 
 export function bindProjectSiteInfo(layer, feature, options) {
   const content = () => createProjectSiteInfo(feature, options);
-  if (feature?.properties?.mortality_warning?.active === true) layer.setStyle?.(projectSiteStyle(feature));
   layer.bindTooltip(content, { className: 'project-site-tooltip', sticky: true, direction: 'auto', opacity: 1 });
   layer.bindPopup(content, {
     className: 'project-site-popup', maxWidth: 320, minWidth: 180,

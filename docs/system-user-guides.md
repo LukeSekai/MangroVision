@@ -99,7 +99,8 @@ End the guide before using the highlighted controls to perform the task.
    points forms the project site and links the activity automatically. There
    is no site creation step or new/existing-site choice. Planters receive the
    selected work, while survival and monitoring begin from actual planting.
-   LGU uses the same tool with its permanent account and no timed booking.
+   Organizations need their own confirmed or ongoing tree-planting activity first.
+   LGU is exempt and can select and assign points without scheduling an activity.
    Existing linked activities keep their saved area and history. Activity
    planning details are protected after planting starts; completed activities
    remain read-only.

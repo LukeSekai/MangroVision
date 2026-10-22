@@ -1,53 +1,57 @@
-# Automatic mortality warning zones
+# Site mortality alerts and wave-damaged locations
 
-A project site becomes an automatic warning zone when its recorded mortality
-is **at least 30%**, across every recorded cause:
+A project site has a mortality alert when recorded deaths are **at least 30%**
+of its original planted seedlings, across all recorded causes:
 
 `recorded dead seedlings / originally planted seedlings * 100 >= 30`
 
-The threshold uses integer counts before rounding. Cabatuan's saved example
-has 103 deaths among 263 plantings: 39.16% mortality and 60.84% survival. Its
-previous wave-only calculation used 79 wave deaths and incorrectly described
-the whole site as prone to big waves. The system no longer infers that cause.
+Counts use planting-event history. Planned and assigned points, reversed
+completions and future plantings are excluded. Deaths remain attributed to the
+original site after release or planting by another organization. Unknown
+outcomes remain separate. Correcting monitoring records updates these totals.
 
-Counts come from the site's planting-event history, using the same original
-outcomes as its survival summary. Planned and assigned points are excluded.
-Reversed completions and future plantings are excluded. Deaths remain attributed
-to their original planting event and site when locations are released or planted
-by another organization. A replacement is a new planting event in its own site.
-Unknown outcomes are reported separately and never assumed dead. Organization
-death totals without identified planting events cannot be assigned to a site.
+Cabatuan has 103 recorded deaths among 263 original plantings (39.16%), of
+which 79 locations have wave-caused death records. The 30% site mortality alert
+does **not** mark every plant or the whole site as dangerous. The Monitoring
+map lists clickable site names; clicking one focuses its map location and
+restricts release controls to that site. Detailed mortality counts remain in
+the site card and monitoring details.
 
-Project-site GeoJSON exposes `properties.mortality_warning`. The Warning Zones
-response combines manual warnings with one automatic feature for each qualifying
-site, using its current boundary. These features have `automatic: true`,
-`warning_type: high_mortality`, `project_site_id`, and a stable negative ID.
-They are calculated on read, so corrected monitoring records and changed site
-boundaries update the warning without a duplicate polygon, migration, or job.
-Warnings disappear below the threshold. Released land has no warning geometry;
-the original site's historical planting outcomes remain intact.
+## Point warnings
 
-Automatic warnings appear in the map's **Warning Zones** layer and Zone Editor
-list. They provide caution context on planting points and in warning-exposure
-reports. They do not block planting or assignment. Manual warnings remain
-editable; automatic warnings cannot be manually edited or deleted. Review and
-correct the underlying monitoring records to change their mortality rate.
+Wave warnings use the exact planting-point IDs in dated `point_death_records`
+whose cause is `waves`, joined to their planting events. They exclude future
+deaths, reversed completions and removed points. They do not use the site's
+whole boundary, a surrounding buffer, or a neighboring plant's coordinates.
+Other causes such as barnacles, drying out, animal damage and storms do not
+create a wave warning.
 
-Site cards, detail dialogs and previews use an amber warning with aligned icon
-and text. Map site cards show only a short mortality percentage summary.
-High-mortality sites use an amber dashed outline without a colored fill,
-including when focused. Their automatic warning no longer adds orange rings
-to individual points; planting-status colors and manual warning rings remain.
-The map legend identifies the outline, and the site card shows a compact
-warning badge with the mortality percentage. Site previews match the outline.
-Automatic mortality zones open that same project-site card instead of a separate
-warning popup. Point warnings show only the mortality percentage and a short
-planting caution, without repeating the site name, counts, or threshold.
-No permanent danger label covers the points. The Monitoring map lists the warning sites for
-the selected organization. Saving a visit uses a single green busy button with
-a spinner instead of a second pale loading box.
+An affected location keeps its warning after release makes it Planned, and
+after another organization assigns or replants that location. Changing the
+recorded cause or correcting the death updates the warning from its source
+records. Warning calculation never changes planting status or ownership.
 
-Regression checks cover exact 29%/30% thresholds, all causes, unchanged original
-outcomes after release/replanting, corrections, automatic/manual zone behavior,
-warning hover and preview updates, and the monitoring visit saving state.
-The database check uses temporary PostgreSQL tables and rolls back its changes.
+The map keeps ordinary point fills: green Planned, yellow Planted, and the
+existing colors for other statuses. An orange outline identifies only a
+location with its own wave warning or another applicable, explicitly drawn
+manual warning. Its tooltip describes that location's warning. Unaffected
+planted points have their normal black outlines and no mortality/wave warning
+in their individual tooltip.
+
+Automatic mortality features retain stable negative IDs for site-summary
+navigation and compatibility. They carry `point_advisory: false` and
+`render_mode: site_summary`: they are not drawn as orange polygons and are
+excluded from individual point advisories. Focusing one opens the actual
+project site and its summary. Ordinary project-site boundaries and previews
+retain their normal styling, including when focused. No orange mortality
+overlay or released-cell boxes are drawn.
+
+The former area-wide Cabatuan wave-exposure zone is retired; it must not be
+recreated over the original boundary. Its replacement is the dynamic set of
+recorded wave-death locations. Other manually drawn geographic Warning Zones
+remain independently editable in Zone Editor and keep their established rules.
+
+Regression checks cover exact 29%/30% site thresholds, point-specific warning
+scope, normal living-plant tooltips, orange outlines on affected Planned
+points, release/reassignment persistence and corrected causes. Database checks
+use isolated temporary PostgreSQL tables and roll back.

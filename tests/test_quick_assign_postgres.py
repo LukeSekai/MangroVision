@@ -62,7 +62,7 @@ def workspace(monkeypatch):
             monkeypatch.setattr(db, '_get_connection', TempConnection)
             # Advisories are independent of assignment ownership and are empty here.
             monkeypatch.setattr(db, '_load_warning_zone_geometries', lambda: [])
-            monkeypatch.setattr(db, '_is_point_inside_eroded_zone', lambda *_: False)
+            monkeypatch.setattr(db, '_is_point_inside_eroded_zone', lambda *_, **kwargs: False)
             connection.execute(text("""
                 INSERT INTO organizations(id,name,normalized_name,inspection_interval_days)
                     VALUES (1,'NASUGBAN test','nasugban test',14),(2,'Other test','other test',14);
@@ -81,6 +81,14 @@ def workspace(monkeypatch):
             transaction.rollback()
 
 
+def confirmed_activity(workspace, organization_id=1, site_id=1):
+    return workspace.execute(text('''INSERT INTO planting_schedules(organization_id,organization,title,
+        appointment_type,start_at,end_at,status,project_site_id)
+        SELECT id,name,'Scheduled test planting','tree_planting',CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP+INTERVAL '2 hours','confirmed',:site FROM organizations WHERE id=:org
+        RETURNING id'''), {'site': site_id, 'org': organization_id}).scalar_one()
+
+
 def test_linked_image_does_not_expand_saved_boundary(workspace):
     points = db.list_planter_assignment_map_points()
     inside = [p for p in points if p['source_project_site_id'] == 1]
@@ -95,8 +103,11 @@ def test_linked_image_does_not_expand_saved_boundary(workspace):
     ])
     conn.close()
     assert [p['source_site_id'] for p in resolved] == [1, None, 1]
+    workspace.execute(text('''INSERT INTO planting_schedules(id,organization_id,organization,title,appointment_type,start_at,end_at,status,project_site_id)
+        VALUES(1,1,'NASUGBAN test','Boundary check planting','tree_planting',CURRENT_TIMESTAMP,
+            CURRENT_TIMESTAMP+INTERVAL '2 hours','confirmed',1)'''))
     with pytest.raises(ValueError, match='not inside exactly one project site'):
-        db.create_organization_assignment(1, [96], species='Rhizophora', site_zone_id=1)
+        db.create_organization_assignment(1, [96], species='Rhizophora', site_zone_id=1, planting_schedule_id=1)
     # A failed batch must not leave a reservation account behind.
     assert db.list_planters() == []
 
@@ -217,6 +228,7 @@ def test_assignment_links_to_activity_then_field_planting_locks_it(workspace):
 
 
 def test_reservation_survives_retired_registration_endpoint(workspace, monkeypatch):
+    activity = confirmed_activity(workspace)
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
     auth = importlib.import_module('api.routes.planter_auth')
     planters = importlib.import_module('api.routes.planters')
@@ -227,7 +239,7 @@ def test_reservation_survives_retired_registration_endpoint(workspace, monkeypat
     client = TestClient(app)
     for ids in (list(range(1,51)), list(range(51,96))):
         response = client.post('/api/planters/organizations/1/assignments', json={
-            'planting_point_ids': ids, 'site_zone_id': 1, 'species': 'Rhizophora',
+            'planting_point_ids': ids, 'site_zone_id': 1, 'species': 'Rhizophora', 'planting_schedule_id': activity,
         })
         assert response.status_code == 200, response.text
     reserved = db.list_planters()[0]
@@ -248,7 +260,7 @@ def test_reservation_survives_retired_registration_endpoint(workspace, monkeypat
     points = db.get_planter_field_points(reserved['id'])
     assert {point['planting_point_id'] for point in points} == set(range(1, 96))
     with pytest.raises(ValueError, match='already assigned'):
-        db.create_organization_assignment(1, [1], species='Rhizophora', site_zone_id=1)
+        db.create_organization_assignment(1, [1], species='Rhizophora', site_zone_id=1, planting_schedule_id=activity)
 
 
 def test_unlinked_points_use_only_unambiguous_polygons(workspace):
@@ -300,6 +312,7 @@ def test_new_boundary_recognizes_points_from_image_linked_to_another_site(worksp
 
 def test_quick_assign_accepts_oton_points_and_rejects_other_organization(workspace, monkeypatch):
     oton = create_oton_boundary(workspace)
+    activity = confirmed_activity(workspace, organization_id=2, site_id=oton['id'])
     monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'MangroVision_New'))
     route = importlib.import_module('api.routes.planters')
     app = FastAPI()
@@ -307,11 +320,11 @@ def test_quick_assign_accepts_oton_points_and_rejects_other_organization(workspa
     app.dependency_overrides[route._require_lgu_user] = lambda: {'id': 1}
     with TestClient(app) as client:
         wrong = client.post('/api/planters/organizations/2/assignments', json={
-            'planting_point_ids': [1], 'site_zone_id': oton['id'], 'species': 'Rhizophora',
+            'planting_point_ids': [1], 'site_zone_id': oton['id'], 'species': 'Rhizophora', 'planting_schedule_id': activity,
         })
         assert wrong.status_code == 400
         assigned = client.post('/api/planters/organizations/2/assignments', json={
-            'planting_point_ids': list(range(96,196)), 'site_zone_id': oton['id'], 'species': 'Rhizophora',
+            'planting_point_ids': list(range(96,196)), 'site_zone_id': oton['id'], 'species': 'Rhizophora', 'planting_schedule_id': activity,
         })
         assert assigned.status_code == 200, assigned.text
     account_id = db.create_planter('OTON', 'oton_test', 'test', organization_id=2, participant_count=10)
@@ -351,6 +364,7 @@ def create_cict_species_selection(workspace):
         UPDATE planting_points SET longitude=122.5 + id * .00001 WHERE id<=103;
         UPDATE planting_points SET analysis_id=2 WHERE id BETWEEN 100 AND 103;
     """))
+    return confirmed_activity(workspace)
 
 
 def quick_assign_client(monkeypatch):
@@ -364,12 +378,12 @@ def quick_assign_client(monkeypatch):
 
 @pytest.mark.parametrize('count,registered', [(100, False), (103, True)])
 def test_cict_mixed_species_assigns_every_selected_point_and_balances_devices(workspace, monkeypatch, count, registered):
-    create_cict_species_selection(workspace)
+    activity = create_cict_species_selection(workspace)
     if registered:
         db.create_planter('CICT', 'cict_test', 'test', organization_id=1, participant_count=10)
     with quick_assign_client(monkeypatch) as client:
         assigned = client.post('/api/planters/organizations/1/assignments', json={
-            'planting_point_ids': list(range(1, count+1)), 'site_zone_id': 1,
+            'planting_point_ids': list(range(1, count+1)), 'site_zone_id': 1, 'planting_schedule_id': activity,
         })
     assert assigned.status_code == 200, assigned.text
     payload = assigned.json()
@@ -393,10 +407,10 @@ def test_cict_mixed_species_assigns_every_selected_point_and_balances_devices(wo
 
 
 def test_single_species_cict_assignment_still_accepts_recorded_bungalon(workspace, monkeypatch):
-    create_cict_species_selection(workspace)
+    activity = create_cict_species_selection(workspace)
     with quick_assign_client(monkeypatch) as client:
         response = client.post('/api/planters/organizations/1/assignments', json={
-            'planting_point_ids': list(range(1,100)), 'site_zone_id': 1, 'species': 'BUNGALON',
+            'planting_point_ids': list(range(1,100)), 'site_zone_id': 1, 'species': 'BUNGALON', 'planting_schedule_id': activity,
         })
     assert response.status_code == 200, response.text
     assert len(response.json()['assignment_ids']) == 1
@@ -432,9 +446,9 @@ def test_requested_species_cannot_relabel_recorded_points(workspace, monkeypatch
 
 @pytest.mark.parametrize('failure', ['already_assigned', 'outside_site'])
 def test_later_species_failure_rolls_back_earlier_species_batch(workspace, monkeypatch, failure):
-    create_cict_species_selection(workspace)
+    activity = create_cict_species_selection(workspace)
     if failure == 'already_assigned':
-        db.create_organization_assignment(1, [100], site_zone_id=1)
+        db.create_organization_assignment(1, [100], site_zone_id=1, planting_schedule_id=activity)
         expected_assignments = 1
         error = 'already assigned'
     else:
@@ -443,7 +457,7 @@ def test_later_species_failure_rolls_back_earlier_species_batch(workspace, monke
         error = 'not inside exactly one project site'
     with quick_assign_client(monkeypatch) as client:
         response = client.post('/api/planters/organizations/1/assignments', json={
-            'planting_point_ids': [1,100], 'site_zone_id': 1,
+            'planting_point_ids': [1,100], 'site_zone_id': 1, 'planting_schedule_id': activity,
         })
     assert response.status_code == 400
     assert error in response.json()['detail']

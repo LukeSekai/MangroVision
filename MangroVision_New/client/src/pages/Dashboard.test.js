@@ -143,12 +143,22 @@ test('dashboard report tabs no longer show Information to complete notices', () 
   }
 });
 
-test('overview keeps progress and follow-up totals without the follow-up table or health comparisons', () => {
+test('overview shows total organizations as a plain summary card', () => {
   const html = render(OverviewTab, { data: {
-    kpis: { sites_requiring_attention: { total: 5, value: 2 } },
+    kpis: { total_organizations: { value: 12, scope: 'global' }, sites_requiring_attention: { total: 5, value: 2 } },
     site_attention: [{ site_name: 'Site A', reasons: ['overdue_inspections'], overdue_inspections: 3 }],
   } });
-  assert.match(html, /Sites needing follow-up/);
+  assert.match(html, /Total organizations/);
+  assert.match(html, /Registered organizations, including LGU/);
+  const dom = new JSDOM(html);
+  const card = [...dom.window.document.querySelectorAll('.dash-kpi')]
+    .find((element) => element.querySelector('.dash-kpi-label').textContent === 'Total organizations');
+  assert.equal(card.tagName, 'ARTICLE');
+  assert.equal(card.querySelector('.dash-kpi-value').textContent, '12');
+  assert.equal(card.querySelector('button, a, [role="button"]'), null);
+  assert.equal(card.hasAttribute('tabindex'), false);
+  dom.window.close();
+  assert.doesNotMatch(html, /Sites needing follow-up|dash-kpi-action|View sites and next steps/);
   assert.doesNotMatch(html, /Project sites that need follow-up|Site A|Inspections are past due/);
   assert.doesNotMatch(html, /Seedlings alive after inspection by project site|Seedlings alive after \d+ days/);
   assert.doesNotMatch(render(OperationsTab, { data: {} }), /class="dash-kpis"/);

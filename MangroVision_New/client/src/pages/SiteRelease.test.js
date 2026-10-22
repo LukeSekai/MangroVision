@@ -29,7 +29,7 @@ beforeEach(() => {
     Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
   }
   requests = []; conflict = false; refreshed = [];
-  candidates = [{ planting_event_id: 10, planting_point_id: 1, version: 0, can_release: true }];
+  candidates = [{ planting_event_id: 10, planting_point_id: 1, project_site_id: 1, version: 0, can_release: true }];
   previous.set('fetch', Object.getOwnPropertyDescriptor(globalThis, 'fetch'));
   globalThis.fetch = async (url, options = {}) => {
     const path = String(url);
@@ -39,9 +39,13 @@ beforeEach(() => {
       ? { detail: 'Location changed. Reload the map before releasing it.' } : { released_count: 1 } };
     return { ok: true, json: async () => ({ points: candidates }) };
   };
-  store.setState({ points: [{ id: 1, planting_status: 'planted', death_at: '2026-10-01', source_project_site_id: 1 }],
-    projectSites: { type: 'FeatureCollection', features: [] }, monitoringOrganizationId: null,
-    replantingSelectedPointIds: [1], replantingSelectionMode: 'click', loadingPoints: false,
+  store.setState({ points: [{ id: 1, planting_status: 'planted', death_at: '2026-10-01', source_project_site_id: 1 },
+    { id: 2, planting_status: 'planted', death_at: '2026-10-02', source_project_site_id: 2 }],
+    projectSites: { type: 'FeatureCollection', features: [1, 2].map((id) => ({ id,
+      properties: { id, name: id === 1 ? 'First site' : 'Second site', organization_id: 9, organization_name: 'Same organization',
+        mortality_warning: { active: true, mortality_rate_pct: 50, total_planted: 10, dead_count: 5 } } })) },
+    monitoringOrganizationId: null, monitoringProjectSiteId: null, showDeadPointsOnly: false,
+    replantingSelectedPointIds: [], replantingSelectionMode: 'click', loadingPoints: false,
     fetchPoints: async () => {
       refreshed.push('points');
       store.setState({ points: [{ id: 1, planting_status: 'planned', death_at: null, source_project_site_id: null }] });
@@ -61,8 +65,9 @@ afterEach(async () => {
 });
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
-async function mount(Component = Workspace) {
-  await act(async () => { root.render(createElement(MemoryRouter, null, createElement(Component))); await settle(); });
+async function mount(Component = Workspace, { entry = '/monitoring/map?project_site_id=1&focus=site_points', select = true } = {}) {
+  await act(async () => { root.render(createElement(MemoryRouter, { initialEntries: [entry] }, createElement(Component))); await settle(); });
+  if (Component === Workspace && select) await act(async () => store.getState().toggleReplantingPoint(1));
 }
 async function click(label) {
   const scope = document.querySelector('[role="dialog"]') || document;
@@ -82,8 +87,9 @@ test('Monitoring releases selected event versions and refreshes points, counts, 
   await click('Release 1 location');
   const writes = requests.filter((request) => request.body);
   assert.deepEqual(writes, [{ path: '/api/monitoring/release-locations', body: {
-    planting_event_ids: [10], versions: { 10: 0 },
+    project_site_id: 1, planting_event_ids: [10], versions: { 10: 0 },
   } }]);
+  assert.equal(requests[0].path, '/api/monitoring/release-candidates?project_site_id=1');
   assert.equal(document.querySelector('[role="dialog"]'), null);
   assert.match(document.body.textContent, /released from the project site and now Planned/);
   assert.deepEqual(refreshed.sort(), ['points', 'stats', 'zones']);
@@ -100,6 +106,59 @@ test('a stale release displays the conflict and keeps the current points and sel
   assert.deepEqual(refreshed, []);
   assert.deepEqual(store.getState().replantingSelectedPointIds, [1]);
   assert.ok(store.getState().points[0].death_at);
+});
+
+test('mortality panel lists only clickable site names and requires a site before release selection', async () => {
+  await mount(Workspace, { entry: '/monitoring/map', select: false });
+  const list = document.querySelector('.monitoring-map-site-list');
+  assert.deepEqual([...list.querySelectorAll('button')].map((button) => button.textContent), ['First site', 'Second site']);
+  assert.doesNotMatch(list.textContent, /High mortality|recorded deaths|50%/);
+  assert.ok([...document.querySelectorAll('.monitoring-map-tools button')].every((button) => button.disabled));
+  await act(async () => {
+    store.getState().toggleReplantingPoint(1);
+    store.getState().paintReplantingPoints([1, 2], 'select');
+  });
+  assert.deepEqual(store.getState().replantingSelectedPointIds, []);
+  await click('Second site');
+  assert.equal(document.querySelector('#monitoring-map-project-site').value, '2');
+  assert.equal(store.getState().monitoringProjectSiteId, 2);
+  assert.ok([...document.querySelectorAll('.monitoring-map-tools button')].every((button) => !button.disabled));
+});
+
+test('switching sites clears selection and only allows the new site even within the same organization', async () => {
+  await mount();
+  await click('Brush select');
+  await click('Second site');
+  assert.equal(store.getState().replantingSelectionMode, 'click');
+  assert.deepEqual(store.getState().replantingSelectedPointIds, []);
+  await act(async () => {
+    store.getState().toggleReplantingPoint(1);
+    store.getState().paintReplantingPoints([1, 2], 'select');
+  });
+  assert.deepEqual(store.getState().replantingSelectedPointIds, [2]);
+  candidates = [{ planting_event_id: 20, planting_point_id: 2, project_site_id: 2, version: 3, can_release: true }];
+  await click('Release from project site');
+  assert.match(document.querySelector('[role="dialog"]').textContent, /Second site/);
+  await click('Release 1 location');
+  assert.deepEqual(requests.find((request) => request.body).body,
+    { project_site_id: 2, planting_event_ids: [20], versions: { 20: 3 } });
+});
+
+test('a candidate from another site cannot be released even if its point ID matches', async () => {
+  candidates[0].project_site_id = 2;
+  await mount();
+  await click('Release from project site');
+  assert.match(document.querySelector('[role="alert"]').textContent, /another project site/);
+  const confirm = [...document.querySelectorAll('.modal-actions button')].find((button) => button.textContent === 'Release 1 location');
+  assert.equal(confirm.disabled, true);
+  await act(async () => confirm.click());
+  assert.equal(requests.some((request) => request.body), false);
+});
+
+test('an unknown site in the URL leaves release tools unavailable', async () => {
+  await mount(Workspace, { entry: '/monitoring/map?project_site_id=999', select: false });
+  assert.equal(store.getState().monitoringProjectSiteId, null);
+  assert.ok([...document.querySelectorAll('.monitoring-map-tools button')].every((button) => button.disabled));
 });
 
 test('ineligible deaths cannot submit a release', async () => {
@@ -119,7 +178,7 @@ test('ineligible deaths cannot submit a release', async () => {
 test('an eroded release candidate shows the short replanting modal and cannot submit', async () => {
   candidates[0].can_release = false;
   candidates[0].eroded_unavailable = true;
-  await act(async () => root.render(createElement(MemoryRouter, null, createElement(Workspace))));
+  await mount();
   await click('Release from project site');
   assert.equal(document.querySelector('.modal-title').textContent, 'Replanting blocked');
   assert.equal(document.querySelector('.modal-body p').textContent,

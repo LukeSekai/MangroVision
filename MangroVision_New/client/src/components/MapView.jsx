@@ -182,6 +182,7 @@ export default function MapView() {
   const assignmentOrganizationId = useMapStore((s) => s.assignmentOrganizationId);
   const assignmentProjectSiteId = useMapStore((s) => s.assignmentProjectSiteId);
   const monitoringOrganizationId = useMapStore((s) => s.monitoringOrganizationId);
+  const monitoringProjectSiteId = useMapStore((s) => s.monitoringProjectSiteId);
   const showDeadPointsOnly = useMapStore((s) => s.showDeadPointsOnly);
   const toggleReplantingPoint = useMapStore((s) => s.toggleReplantingPoint);
   const replantingSelectedPointIds = useMapStore((s) => s.replantingSelectedPointIds);
@@ -337,7 +338,7 @@ export default function MapView() {
         </div>
         <div class="map-zone-legend-row">
           <span class="map-zone-legend-swatch map-zone-legend-swatch-mortality" aria-hidden="true"></span>
-          <span class="map-zone-legend-label">High mortality (≥30%)</span>
+          <span class="map-zone-legend-label">Recorded wave-damage warning</span>
         </div>
       `;
       // Stop map drag/zoom from firing when the user interacts with the legend
@@ -372,18 +373,24 @@ export default function MapView() {
 
     let focusedZone = null;
     map.on('zonefocus', ({ feature, kind }) => {
-      const key = { site: 'projectSiteLayer', eroded: 'erodedLayer', warning: 'warningLayer', forbidden: 'forbiddenLayer' }[kind];
+      const siteSummary = kind === 'warning' && feature.properties?.automatic
+        && feature.properties.warning_type === 'high_mortality';
+      const key = siteSummary ? 'projectSiteLayer'
+        : { site: 'projectSiteLayer', eroded: 'erodedLayer', warning: 'warningLayer', forbidden: 'forbiddenLayer' }[kind];
       const group = layersRef.current[key];
-      const layer = group?.getLayers().find((candidate) => candidate.feature === feature);
+      const layer = group?.getLayers().find((candidate) => siteSummary
+        ? String(projectSiteId(candidate.feature)) === String(feature.properties.project_site_id)
+        : candidate.feature === feature);
       const bounds = layer?.getBounds();
       if (!bounds?.isValid()) return;
 
       if (focusedZone) focusedZone.group.resetStyle(focusedZone.layer);
       focusedZone = { group, layer };
-      const visibilityKey = { site: 'projectSites', eroded: 'eroded', warning: 'warnings', forbidden: 'forbidden' }[kind];
+      const visibilityKey = siteSummary ? 'projectSites'
+        : { site: 'projectSites', eroded: 'eroded', warning: 'warnings', forbidden: 'forbidden' }[kind];
       useMapStore.getState().showLayers([visibilityKey]);
       if (!map.hasLayer(group)) group.addTo(map);
-      layer.setStyle({ weight: 4, fillOpacity: projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity });
+      layer.setStyle({ weight: 4, fillOpacity: siteSummary ? 0 : projectSiteStyle(feature, { fillOpacity: 0.22 }).fillOpacity });
       orderZoneLayers(layersRef.current);
       focusMapArea(map, bounds);
       layer.openTooltip(bounds.getCenter());
@@ -498,10 +505,10 @@ export default function MapView() {
     // selection/filter context match the last render.
     const assignmentSelectedIds = new Set(assignmentSelectedPointIds.map(Number));
     const modeKey = isMonitoringMapMode
-      ? `monitor:${showDeadPointsOnly}:${monitoringOrganizationId ?? 'all'}`
+      ? `monitor:${showDeadPointsOnly}:${monitoringOrganizationId ?? 'all'}:${monitoringProjectSiteId ?? 'all'}`
       : (isPlanterMode ? 'planters' : isAnalyticsMode ? 'analytics' : 'normal');
     const scopedPoints = isMonitoringMapMode
-      ? filterMonitoringPoints(spacedPoints, monitoringOrganizationId)
+      ? filterMonitoringPoints(spacedPoints, monitoringOrganizationId, monitoringProjectSiteId)
       : spacedPoints;
     const displayPoints = filterMapPoints(scopedPoints, {
       deadOnly: isMonitoringMapMode && showDeadPointsOnly,
@@ -544,12 +551,12 @@ export default function MapView() {
           p.source_project_site_id == null || Number(p.source_project_site_id) !== Number(assignmentProjectSiteId)
         ));
       const outsideAssignmentScope = belongsToAnotherOrganization || belongsToAnotherProjectSite;
-      const hasWarning = Boolean(p.survival_warning);
-      // Negative zone IDs identify automatic site mortality warnings. Keep
-      // their points' ordinary outlines; the amber site boundary carries it.
+      // A site mortality statistic must not flag an unaffected plant,
+      // including when older cached responses still contain those zone IDs.
       const mortalityWarningOnly = p.warning_zone_ids?.length > 0
         && p.warning_zone_ids.every((id) => Number(id) < 0);
-      const showWarningRing = hasWarning && !mortalityWarningOnly;
+      const hasWarning = Boolean(p.survival_warning) && !mortalityWarningOnly;
+      const showWarningRing = hasWarning;
 
       // In Planter Management, override the single "assigned = blue" with a
       // organization hue so the admin can identify the owner without hovering.
@@ -645,7 +652,7 @@ export default function MapView() {
           </div>
         `
         : '';
-      const monitorHint = isMonitoringMapMode && isDeadPoint
+      const monitorHint = isMonitoringMapMode && isDeadPoint && monitoringProjectSiteId != null
         ? '<div style="margin-top:8px;padding:6px 8px;border-radius:6px;background:#fff7ed;border:1px dashed #fdba74;font-size:11px;color:#9a3412;font-weight:600;">Click to select this dead point for release from its project site.</div>'
         : '';
 
@@ -712,6 +719,7 @@ export default function MapView() {
     assignmentOrganizationId,
     assignmentProjectSiteId,
     monitoringOrganizationId,
+    monitoringProjectSiteId,
   ]);
 
   // Recolor changed selections in place, keeping brush movement smooth.
@@ -738,7 +746,7 @@ export default function MapView() {
   // Brush selection uses screen-space sweeps, independent of marker redraws.
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !isMonitoringMapMode || replantingSelectionMode === 'click' || !layerVisibility.points) return;
+    if (!map || !isMonitoringMapMode || monitoringProjectSiteId == null || replantingSelectionMode === 'click' || !layerVisibility.points) return;
     const container = map.getContainer();
     const brush = document.createElement('div');
     brush.className = `replanting-brush is-${replantingSelectionMode}`;
@@ -755,7 +763,7 @@ export default function MapView() {
     let activePointer = null;
     let frame = null;
     const pending = new Set();
-    const eligible = filterMonitoringPoints(filterCrossSpeciesDisplayPoints(points), monitoringOrganizationId)
+    const eligible = filterMonitoringPoints(filterCrossSpeciesDisplayPoints(points), monitoringOrganizationId, monitoringProjectSiteId)
       .filter((point) => point.death_at);
     let projected = [];
     const project = () => {
@@ -855,7 +863,7 @@ export default function MapView() {
       container.classList.remove('is-brushing');
       brush.remove();
     };
-  }, [isMonitoringMapMode, replantingSelectionMode, layerVisibility.points, points, monitoringOrganizationId]);
+  }, [isMonitoringMapMode, replantingSelectionMode, layerVisibility.points, points, monitoringOrganizationId, monitoringProjectSiteId]);
 
   // Sync zones
   useEffect(() => {
@@ -871,6 +879,7 @@ export default function MapView() {
         try {
           const automaticMortality = kind === 'warning' && feature.properties?.automatic
             && feature.properties.warning_type === 'high_mortality';
+          if (automaticMortality || feature.properties?.render_mode === 'points_only') return;
           const parentSite = automaticMortality ? projectSites?.features?.find((site) =>
             String(projectSiteId(site)) === String(feature.properties.project_site_id)) : null;
           const layer = L.geoJSON(feature, { ...group.options, interactive: !automaticMortality || Boolean(parentSite) });
@@ -1231,6 +1240,7 @@ export default function MapView() {
     }
     const map = mapRef.current;
     const features = projectSites?.features;
+    if (monitoringProjectSiteId != null) return;
     if (!map || !Array.isArray(features) || !features.length) return;
     const focusKey = monitoringOrganizationId == null ? 'all' : String(monitoringOrganizationId);
     if (focusKey === focusedMonitoringOrganizationRef.current) return;
@@ -1248,7 +1258,7 @@ export default function MapView() {
       maxZoom: 20,
       animate: true,
     });
-  }, [isMonitoringMapMode, monitoringOrganizationId, projectSites, showLayers]);
+  }, [isMonitoringMapMode, monitoringOrganizationId, monitoringProjectSiteId, projectSites, showLayers]);
 
   // Dashboard links frame the site's actual planting points. Risk links frame
   // just its risk points, with the site boundary as a no-points fallback.
